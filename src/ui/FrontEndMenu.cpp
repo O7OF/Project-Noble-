@@ -978,6 +978,10 @@ std::mutex s_depthMutex;
 ID3D11Texture2D* s_frameDepth = nullptr;   // chosen this engine frame (AddRef'd)
 float s_frameDepthClear = 1.0f;
 int s_frameDepthClears = 0;
+bool s_frameDepthAspectOk = false;         // the chosen depth matches the frame's aspect (not a square shadow map)
+double s_screenAspect = 0.0;               // swap-chain aspect, used to recognise the scene depth buffer
+ID3D11Texture2D* s_sceneDepth = nullptr;   // the persistent scene depth buffer (AddRef'd), once identified
+float s_sceneDepthClear = 0.0f;
 std::string s_frameDepthLog;               // every depth clear this frame, for the diagnostic log
 bool s_depthHookTried = false;
 ID3D11Texture2D* s_depthCopy = nullptr;
@@ -1002,12 +1006,51 @@ void STDMETHODCALLTYPE HookClearDsv(ID3D11DeviceContext* ctx, ID3D11DepthStencil
             }
             D3D11_TEXTURE2D_DESC best{};
             if (s_frameDepth) s_frameDepth->GetDesc(&best);
-            // Biggest wins; on a tie the first one of the frame stays (the scene is drawn before later passes).
-            if (d.SampleDesc.Count == 1 && d.ArraySize == 1 && static_cast<uint64_t>(d.Width) * d.Height > static_cast<uint64_t>(best.Width) * best.Height) {
-                if (s_frameDepth) s_frameDepth->Release();
-                s_frameDepth = tex;
-                s_frameDepth->AddRef();
-                s_frameDepthClear = depth;
+            // The scene depth must match the screen's aspect ratio. Larger depth buffers are often square shadow maps
+            // (seen: a 1600x1600 R32G8X24 shadow pass outranking the 1920x1080 D24S8 scene depth), and using one as
+            // the lattice mask drew the lattice over the character. Among matching ones the biggest wins; with no
+            // aspect yet, depth formats (D24S8 / D32) outrank typeless depth-stencil (shadow) formats.
+            if (d.SampleDesc.Count == 1 && d.ArraySize == 1) {
+                const double candidateAspect = static_cast<double>(d.Width) / static_cast<double>(d.Height);
+                const bool aspectOk = s_screenAspect > 0.0 &&
+                                      std::abs(candidateAspect - s_screenAspect) <= s_screenAspect * 0.02;
+                auto formatRank = [](DXGI_FORMAT f) {
+                    switch (f) {
+                    case DXGI_FORMAT_D24_UNORM_S8_UINT:
+                    case DXGI_FORMAT_D32_FLOAT:
+                    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: return 2;   // scene depth formats
+                    case DXGI_FORMAT_R32G8X24_TYPELESS:                // shadow passes use typeless depth-stencil
+                    case DXGI_FORMAT_R24G8_TYPELESS: return 0;
+                    default: return 1;
+                    }
+                };
+                const uint64_t area = static_cast<uint64_t>(d.Width) * d.Height;
+                const uint64_t bestArea = static_cast<uint64_t>(best.Width) * best.Height;
+                // Keep the scene depth across frames: the engine does not clear it every frame, and re-ranking each
+                // frame let a shadow map win on the frames where only the shadow pass was cleared.
+                if (aspectOk && s_sceneDepth != tex) {
+                    if (s_sceneDepth) s_sceneDepth->Release();
+                    s_sceneDepth = tex;
+                    s_sceneDepth->AddRef();
+                    s_sceneDepthClear = depth;
+                    NOBLE_INFO("ArmoryDepth: scene depth is {}x{} (format {}, cleared to {:.1f})", d.Width, d.Height,
+                               static_cast<int>(d.Format), depth);
+                }
+                bool better = false;
+                if (aspectOk != s_frameDepthAspectOk) {
+                    better = aspectOk;
+                } else {
+                    const int candidateRank = formatRank(d.Format);
+                    const int bestRank = formatRank(best.Format);
+                    better = candidateRank != bestRank ? candidateRank > bestRank : area > bestArea;
+                }
+                if (better) {
+                    if (s_frameDepth) s_frameDepth->Release();
+                    s_frameDepth = tex;
+                    s_frameDepth->AddRef();
+                    s_frameDepthClear = depth;
+                    s_frameDepthAspectOk = aspectOk;
+                }
             }
             tex->Release();
         }
@@ -1055,10 +1098,20 @@ void CaptureEngineDepth(ID3D11Device* device, ID3D11DeviceContext* context) {
     std::string log;
     {
         std::lock_guard<std::mutex> lock(s_depthMutex);
-        src = s_frameDepth;
-        s_frameDepth = nullptr;
-        clear = s_frameDepthClear;
-        clears = s_frameDepthClears;
+        if (s_sceneDepth) {
+            // The persistent scene depth is the right buffer even on frames where the engine did not clear it.
+            src = s_sceneDepth;
+            src->AddRef();
+            clear = s_sceneDepthClear;
+            clears = 1;
+            if (s_frameDepth) { s_frameDepth->Release(); s_frameDepth = nullptr; }
+        } else {
+            src = s_frameDepth;
+            s_frameDepth = nullptr;
+            s_frameDepthAspectOk = false;
+            clear = s_frameDepthClear;
+            clears = s_frameDepthClears;
+        }
         s_frameDepthClears = 0;
         log.swap(s_frameDepthLog);
     }
@@ -9560,6 +9613,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
     if (context && rtv) {
         D3D11_TEXTURE2D_DESC bbDesc{};
         backBuffer->GetDesc(&bbDesc);
+        ArmoryStage::s_screenAspect = bbDesc.Height ? static_cast<double>(bbDesc.Width) / static_cast<double>(bbDesc.Height) : 0.0;
 
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
