@@ -38,7 +38,7 @@ Copy-Item $exe (Join-Path $pkg 'Noble.exe') -Force
 
 # Ship data\menumaps\mainmenu_all.map, data\armor, and tools\vgmstream inside the release zip
 # so the 3D Armory and custom audio work out of the box. Never ship dev builds, userdata, save files, appearance.dat, or career.dat.
-$excludeDirs = 'userdata','autosave','cache','sandbox','blocks','mods','menumaps','armor'
+$excludeDirs = 'userdata','autosave','cache','sandbox','blocks','mods','menumaps','armor','armor_noble_parked'
 $excludeFiles = 'appearance*','career*','settings*','preferences*','*.pncsold','menu-background-deck.txt','launch_block_1.bin','lb_m_c_1.bin','profile_1.bin','*.log','*.dmp','*.tmp','*.bmp','*.obj','*.mtl','*.PMGC','*.rdc','*.map','*.csv','*.bin'
 & robocopy (Join-Path $release 'data') (Join-Path $pkg 'data') /E /XD $excludeDirs /XF $excludeFiles /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "robocopy data failed ($LASTEXITCODE)" }
