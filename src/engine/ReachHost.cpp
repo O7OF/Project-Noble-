@@ -1879,6 +1879,7 @@ bool ReachHost::IsKeyHeld(int vk) {
 static uint8_t s_paddlesHeld = 0;
 static uint8_t s_paddleBoundMask = 0;
 static bool s_padConnected = false;
+static bool s_padMode = false;
 static std::array<int, PadLayouts::kPaddleCount> s_paddleKeys{};
 
 bool ReachHost::IsPaddleKey(int vk) {
@@ -1890,7 +1891,6 @@ bool ReachHost::IsPaddleKey(int vk) {
 }
 
 static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
-    static bool s_padMode = false;
     static WORD s_lastButtons = 0;
     static SyntheticPadPress s_synth = ParseSyntheticPadPress();
     NobleXInputState state{};
@@ -2028,7 +2028,12 @@ static void FillLocalInput(uint8_t* st) {
     }
     s_lastWindow = hwnd;
 
+    static bool s_toggleCrouch = false;
+    static bool s_crouchToggled = false;
+    static bool s_crouchWasDown = false;
     if (ReachArmory::IsMenuMode()) {
+        s_crouchToggled = false;
+        s_crouchWasDown = false;
         InputRelease(hwnd, "front-end menu open");
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
         return;
@@ -2194,10 +2199,11 @@ static void FillLocalInput(uint8_t* st) {
 
     {
         static ULONGLONG s_paddleRead = 0;
-        if (GetTickCount64() - s_paddleRead > 500) {
+        if (firstCapturedFrame || GetTickCount64() - s_paddleRead > 500) {
             s_paddleRead = GetTickCount64();
             const SettingsData snap = Settings::Get().Snapshot();
             s_paddleKeys = snap.padPaddleKeys;
+            s_toggleCrouch = snap.toggleCrouch;
             uint8_t mask = 0;
             for (const auto& [actKey, input] : snap.padBindings) {
                 (void)actKey;
@@ -2231,6 +2237,25 @@ static void FillLocalInput(uint8_t* st) {
     }
     if (s_holdMouseUntilRelease) {
         st[0x004 + VK_LBUTTON] = st[0x004 + VK_RBUTTON] = st[0x004 + VK_MBUTTON] = 0;
+    }
+
+    // Toggle crouch (SETTINGS > CONTROLS > KEYBOARD & MOUSE > MOVEMENT): piggybacks off the bound Crouch key
+    // (slot 9, default Left Ctrl). When enabled, each rising-edge press flips crouch state on/off.
+    if (s_toggleCrouch) {
+        const int crouchVk = KeyBindings::EffectiveKey(9);
+        if (crouchVk > 0 && crouchVk < 256) {
+            const bool crouchDown = !uiPointer && !boardDown && !s_holdMouseUntilRelease && st[0x004 + crouchVk] != 0;
+            if (s_padMode && !crouchDown) {
+                s_crouchToggled = false;
+            } else if (crouchDown && !s_crouchWasDown) {
+                s_crouchToggled = !s_crouchToggled;
+            }
+            s_crouchWasDown = crouchDown;
+            st[0x004 + crouchVk] = (!uiPointer && !DevCheats::IsFreecam() && s_crouchToggled) ? 0x80 : 0;
+        }
+    } else {
+        s_crouchToggled = false;
+        s_crouchWasDown = false;
     }
 
     // Lower weapon keybind (SETTINGS > CONTROLS > KEYBOARD & MOUSE > ACTIONS, unbound by default):

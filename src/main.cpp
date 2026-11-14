@@ -437,7 +437,7 @@ char __fastcall MapParseHook(void* a1, void* a2) {
                   SafeReadPtr(table + 0xC + static_cast<uint64_t>(index) * 4, &fileId, sizeof(fileId)) &&
                   SafeReadPtr(table + 0x10 + static_cast<uint64_t>(index) * 4, &fileType, sizeof(fileType));
         const int want = s_requestedMapType.load();
-        static const bool s_mapTypePatchOff = std::getenv("NOBLE_MAPTYPE_OFF") != nullptr;
+        static const bool s_mapTypePatchOff = GetEnvironmentVariableA("NOBLE_MAPTYPE_OFF", nullptr, 0) > 0;
         const int wantId = s_requestedMapId.load();
         if (ok) NOBLE_INFO("main: map declares id {} type 0x{:X}; launch requested id {} type 0x{:X}", fileId, fileType,
                            wantId, want);

@@ -176,6 +176,7 @@ void Settings::Load() {
             Read(j, "mouseAcceleration", d.mouseAcceleration);
             Read(j, "mouseSmoothing", d.mouseSmoothing);
             Read(j, "invertLook", d.invertLook);
+            Read(j, "toggleCrouch", d.toggleCrouch);
             Read(j, "wheelUpAction", d.wheelUpAction);
             Read(j, "wheelDownAction", d.wheelDownAction);
             Read(j, "padVibration", d.padVibration);
@@ -362,6 +363,7 @@ bool Settings::Save() {
         j["mouseAcceleration"] = d.mouseAcceleration;
         j["mouseSmoothing"] = d.mouseSmoothing;
         j["invertLook"] = d.invertLook;
+        j["toggleCrouch"] = d.toggleCrouch;
         j["wheelUpAction"] = d.wheelUpAction;
         j["wheelDownAction"] = d.wheelDownAction;
         j["padVibration"] = d.padVibration;
