@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 if(WIN32)
     set(CMAKE_EXE_LINKER_FLAGS_INIT "/machine:x64 /MANIFEST:NO")
     set(CMAKE_SHARED_LINKER_FLAGS_INIT "/machine:x64 /MANIFEST:NO")
@@ -206,6 +206,7 @@ set(SOURCES
     src/ui/CareerPanel.cpp
     src/common/Settings.cpp
     src/common/Updater.cpp
+    src/common/RecommendedMaps.cpp
     src/common/DeviceIdentity.cpp
     src/common/SaveCodec.cpp
     src/engine/KeyBindings.cpp
@@ -286,6 +287,7 @@ set(HEADERS
     src/ui/CareerPanel.hpp
     src/common/Settings.hpp
     src/common/Updater.hpp
+    src/common/RecommendedMaps.hpp
     src/engine/KeyBindings.hpp
     src/career/Career.hpp
     src/network/MasterServerClient.hpp

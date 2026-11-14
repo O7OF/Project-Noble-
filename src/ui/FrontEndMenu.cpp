@@ -35,6 +35,7 @@
 #include "career/Career.hpp"
 #include "common/Logger.hpp"
 #include "common/Relaunch.hpp"
+#include "common/RecommendedMaps.hpp"
 #include "common/Settings.hpp"
 #include "common/Version.hpp"
 #include "common/Updater.hpp"
@@ -8246,6 +8247,50 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                                                             std::filesystem::path(exe).parent_path() / "data" / "mods");
                 ctx.modsScanned = true;
             }
+            // RECOMMENDED MAPS: optional map packs that live on this client's GitHub release (Forge World etc.).
+            // Drawn above the mod list so the rows are visible without scrolling.
+            {
+                RecommendedMaps& recommended = RecommendedMaps::Get();
+                ImGui::TextColored(ImVec4(0.56f, 0.85f, 1.0f, 1.0f), "RECOMMENDED MAPS");
+                ImGui::Dummy(ImVec2(0.0f, 2.0f));
+                for (const RecommendedMaps::Item& item : recommended.Items()) {
+                    const bool installed = recommended.IsInstalled(item);
+                    const RecommendedMaps::Status status = recommended.Snapshot(item.id);
+                    ImGui::PushID(item.id.c_str());
+                    ImGui::TextUnformatted(item.title.c_str());
+                    ImGui::TextColored(ImVec4(0.65f, 0.72f, 0.80f, 1.0f), "%s", item.description.c_str());
+                    if (installed) {
+                        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.45f, 1.0f), "INSTALLED");
+                    } else if (status.state == RecommendedMaps::State::Resolving ||
+                               status.state == RecommendedMaps::State::Downloading ||
+                               status.state == RecommendedMaps::State::Verifying ||
+                               status.state == RecommendedMaps::State::Installing) {
+                        const char* phase = status.state == RecommendedMaps::State::Resolving ? "Contacting GitHub..."
+                                           : status.state == RecommendedMaps::State::Verifying ? "Verifying..."
+                                           : status.state == RecommendedMaps::State::Installing ? "Installing..." : "Downloading...";
+                        char label[160];
+                        if (status.total) {
+                            std::snprintf(label, sizeof(label), "%s %s / %s", phase,
+                                          RecommendedMaps::FormatBytes(status.received).c_str(),
+                                          RecommendedMaps::FormatBytes(status.total).c_str());
+                        } else {
+                            std::snprintf(label, sizeof(label), "%s", phase);
+                        }
+                        ImGui::ProgressBar(status.progress, ImVec2(380.0f, 20.0f), label);
+                    } else {
+                        if (status.state == RecommendedMaps::State::Error) {
+                            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1.0f), "DOWNLOAD FAILED: %s", status.error.c_str());
+                        }
+                        std::string buttonLabel = "DOWNLOAD##dl";
+                        if (item.approxBytes) buttonLabel = "DOWNLOAD (" + RecommendedMaps::FormatBytes(item.approxBytes) + ")##dl";
+                        if (ImGui::Button(buttonLabel.c_str(), ImVec2(200.0f, 28.0f))) recommended.StartDownload(item.id);
+                    }
+                    ImGui::Dummy(ImVec2(0.0f, 12.0f));
+                    ImGui::PopID();
+                }
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                ImGui::Separator();
+            }
             UIManager::GetWorkshopManager().Render();
         }
         ImGui::EndChild();
@@ -8383,6 +8428,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     ReachAudio::PlayMenuMusic(Settings::Get().Snapshot().menuMusicTrack);
 
     int startTab = 0;
+    std::string recommendedDownload;   // test-only: "-recommended-download <id>" starts a download at menu start
     {
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -8390,8 +8436,20 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             if (std::wstring(argv[i]) == L"-menu-screen") ctx.st.screen = ParseScreenArg(argv[i + 1]);
             if (std::wstring(argv[i]) == L"-menu-capture") ctx.captureFrame = _wtoi64(argv[i + 1]);
             if (std::wstring(argv[i]) == L"-menu-tab") startTab = _wtoi(argv[i + 1]);
+            if (std::wstring(argv[i]) == L"-recommended-download") {
+                recommendedDownload.clear();
+                for (const wchar_t* c = argv[i + 1]; c && *c; ++c) recommendedDownload.push_back(static_cast<char>(*c));
+            }
         }
         if (argv) LocalFree(argv);
+    }
+    // Recommended maps (MODS > RECOMMENDED MAPS). The install folder is the one that holds Noble.exe; the marker
+    // files decide whether an item already shows as installed.
+    {
+        wchar_t exePath[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        RecommendedMaps::Get().Initialize(std::filesystem::path(exePath).parent_path());
+        if (!recommendedDownload.empty()) RecommendedMaps::Get().StartDownload(recommendedDownload);
     }
     // Test-only: "-lobby-demo host|guest [-lobby-demo-players N] [-lobby-demo-red N] [-lobby-demo-ffa 1] [-lobby-demo-mode campaign|firefight|forge]" opens
     // the pre-game lobby with a made-up roster and no network, so a capture can show every state on one PC.
