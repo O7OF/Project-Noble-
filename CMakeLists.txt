@@ -398,6 +398,7 @@ set(DEDICATED_SOURCES
     src/host/PoolReport.cpp
     src/host/SpawnTest.cpp
     src/engine/PelicanControls.cpp
+    src/host/CollisionWalkGuard.cpp
     src/host/SchedulerGuard.cpp
     src/host/PoolResize.cpp
     src/host/MemberTrace.cpp
@@ -426,6 +427,7 @@ set(DEDICATED_HEADERS
     src/host/PoolReport.hpp
     src/host/SpawnTest.hpp
     src/engine/PelicanControls.hpp
+    src/host/CollisionWalkGuard.hpp
     src/host/SchedulerGuard.hpp
     src/host/PoolResize.hpp
     src/host/MemberTrace.hpp

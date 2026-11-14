@@ -424,8 +424,10 @@ static void __fastcall Hook_GameFinish() {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME FINISH requested by hr+0x{:X} stack: {}", RefuseRole(), GetCurrentProcessId(),
                    CallerRva(_ReturnAddress()), ReachStack());
     }
+#ifndef NOBLE_DEDICATED   // client only: career save + game-over screen
     Career::EnsureMatchSaved("game_finish");
     PauseMenu::ShowGameOver();
+#endif
     if (s_originalGameFinish) s_originalGameFinish();
 }
 
@@ -439,8 +441,10 @@ static void __fastcall Hook_GameOver(int32_t reason) {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME OVER reason {} (0x{:X}) from hr+0x{:X}", RefuseRole(), GetCurrentProcessId(),
                    reason, reason, CallerRva(_ReturnAddress()));
     }
+#ifndef NOBLE_DEDICATED   // client only: career save + game-over screen
     Career::EnsureMatchSaved("game_over");
     PauseMenu::ShowGameOver();
+#endif
     if (s_originalGameOver) s_originalGameOver(reason);
 }
 

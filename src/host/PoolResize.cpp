@@ -92,6 +92,31 @@ uintptr_t __fastcall Hook_AiSpawnSearch(uintptr_t a, uintptr_t b, uintptr_t c, u
 uint64_t ArrayBytes(int64_t count, uint64_t recordSize) {
     return static_cast<uint64_t>(count) * recordSize + static_cast<uint64_t>((count + 31) / 32) * 4;
 }
+
+// Game-state bank 3 accounting, read from the engine's bank table (the same record PoolReport logs as BANK|3:
+// +0xA0 capacity, +0xA8 bytes handed out by the bump allocator). The allocator has no bounds check, so any
+// expansion that does not fit is silent corruption rather than a failure: the merged build's beam expansion
+// (v0.19.69 runtime profile) took bank 3 to 68,052,044 of its 67,043,328 bytes and every session ended inside
+// its first frame. kLaterPoolsReserve is the room the pools created after the beams need; it matches the
+// 58.6 MB a full campaign load reaches without the beam expansion.
+constexpr uintptr_t kBankTableRva = 0x27BF270;
+constexpr size_t kBankStride = 0x18F0;
+constexpr int kRenderBankIndex = 3;
+constexpr uint64_t kLaterPoolsReserve = 9ull * 1024 * 1024;
+
+bool BankRoomFor(uint64_t extra) {
+    if (!s_engineBase) return false;
+    __try {
+        const uint8_t* entry = reinterpret_cast<const uint8_t*>(s_engineBase + kBankTableRva + kRenderBankIndex * kBankStride);
+        uint64_t capacity = 0, used = 0;
+        std::memcpy(&capacity, entry + 0xA0, 8);
+        std::memcpy(&used, entry + 0xA8, 8);
+        if (!capacity || used > capacity) return false;
+        return extra + kLaterPoolsReserve + kSafetyMargin <= capacity - used;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
 int s_actors = 0;   // 0 = off
 uint64_t s_renderBudget = 0, s_renderSpent = 0;   // added room in render bank 3 (see InstallResize)
 int s_renderStates = 0;   // -render-states N: opt-in only; the game-state bank cannot take it yet (see below)
@@ -241,6 +266,22 @@ void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t rec
                 else if (std::strcmp(name, "beam") == 0 && count == 160) wanted = 65535;
                 else if (std::strcmp(name, "beam_location") == 0 && count == 160) wanted = 65535;
                 else if (std::strcmp(name, "beam_system") == 0 && count == 160) wanted = 65535;
+                // The three beam pools cost ~9.2 MB inside game-state bank 3. On the merged build (v0.19.69 runtime
+                // profile) that is more room than the bank has left once the later pools are accounted for, and the
+                // overflow ended every session at frame 1. Charge the expansion against the bank's real headroom and
+                // keep the stock pool when it does not fit.
+                const bool beamPool = std::strcmp(name, "beam") == 0 || std::strcmp(name, "beam_location") == 0 ||
+                                      std::strcmp(name, "beam_system") == 0;
+                if (beamPool && wanted > count) {
+                    const uint64_t extra = ArrayBytes(wanted, recordSize) - ArrayBytes(count, recordSize);
+                    if (!BankRoomFor(extra)) {
+                        static int s_beamRefused = 0;
+                        if (s_beamRefused++ < 3)
+                            NOBLE_WARN("Engine limits: {} {} -> {} needs {} KB of game-state bank 3 and does not fit; keeping stock {}",
+                                name, count, wanted, extra / 1024, count);
+                        wanted = count;
+                    }
+                }
             }
         }
 

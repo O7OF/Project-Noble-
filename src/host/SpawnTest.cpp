@@ -592,10 +592,16 @@ bool CinematicInProgress() {
 uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e) {
     const uint64_t result = s_originalTick(a, b, c, d, e);
     if (a != 0) return result; // Process Noble ticks, hotkeys and spawner steps only once per frame (player 0)
+#ifndef NOBLE_DEDICATED
     noble::DevCheats::GameTick(a);
+#endif
     noble::pelican::GameTick(s_base);
     if (!s_firstTick) s_firstTick = GetTickCount64();
+#ifndef NOBLE_DEDICATED
     const bool isDev = noble::AuthClient::Get().IsDeveloper();
+#else
+    const bool isDev = false;   // dedicated server: no login, no dev hotkeys
+#endif
     const bool np9 = isDev && (GetAsyncKeyState(VK_NUMPAD9) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
     if (np9 && !s_np9Down) {
         s_pending += 500;
