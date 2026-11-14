@@ -222,6 +222,10 @@ void Settings::Load() {
             Read(j, "padRightDeadZone", d.padRightDeadZone);
             Read(j, "volumeGame", d.volumeGame);
             Read(j, "volumeMusic", d.volumeMusic);
+            // Migrate legacy 50% default to 15% so menu music is not uncomfortably loud.
+            if (std::fabs(d.volumeMusic - 0.50f) < 1e-4f) {
+                d.volumeMusic = 0.15f;
+            }
             Read(j, "volumeOther", d.volumeOther);
             Read(j, "menuSounds", d.menuSounds);
             Read(j, "masterMute", d.masterMute);

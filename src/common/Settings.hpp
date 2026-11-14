@@ -70,7 +70,7 @@ struct SettingsData {
 
     // Audio (engine volumes, 0..1, profile +0xA5C/+0xA60/+0xA64)
     float volumeGame = 0.50f;
-    float volumeMusic = 0.50f;
+    float volumeMusic = 0.15f;
     float volumeOther = 0.50f;
     bool menuSounds = true;
     bool masterMute = false;         // silences Noble's own audio (menu music and menu sounds)

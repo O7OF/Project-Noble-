@@ -1095,16 +1095,16 @@ void SettingsPanel::RenderGraphics() {
 void SettingsPanel::RenderAudio() {
     const SettingsData def;
     Section("VOLUME");
-    auto volume = [&](const char* label, const char* text, float& v, float saved) {
-        if (Row(label, text, When::Apply, "50 %", std::fabs(v - saved) > 1e-4f, false, Preview::Volume)) {
-            if (SliderValue(v, 0.0f, 1.0f, 0.01f, 0.50f, Percent(v).c_str())) {
+    auto volume = [&](const char* label, const char* text, float& v, float saved, float defVal = 0.50f, const char* defText = "50 %") {
+        if (Row(label, text, When::Apply, defText, std::fabs(v - saved) > 1e-4f, false, Preview::Volume)) {
+            if (SliderValue(v, 0.0f, 1.0f, 0.01f, defVal, Percent(v).c_str())) {
                 ProcessAudio::ApplyAll(m_edit.volumeGame, m_edit.volumeMusic, m_edit.volumeOther, m_edit.masterMute);
             }
         }
     };
-    volume("GAME", "Gunfire, vehicles, footsteps and everything else in the world.", m_edit.volumeGame, m_saved.volumeGame);
-    volume("MUSIC", "Halo: Reach's score in game, and the menu music.", m_edit.volumeMusic, m_saved.volumeMusic);
-    volume("VOICE / OTHER", "Dialogue, radio chatter, announcer and menu sounds.", m_edit.volumeOther, m_saved.volumeOther);
+    volume("GAME", "Gunfire, vehicles, footsteps and everything else in the world.", m_edit.volumeGame, m_saved.volumeGame, 0.50f, "50 %");
+    volume("MUSIC", "Halo: Reach's score in game, and the menu music.", m_edit.volumeMusic, m_saved.volumeMusic, 0.15f, "15 %");
+    volume("VOICE / OTHER", "Dialogue, radio chatter, announcer and menu sounds.", m_edit.volumeOther, m_saved.volumeOther, 0.50f, "50 %");
     Section("MENUS");
     if (Row("MENU SOUNDS", "Reach's own clicks and swooshes when you move through the menus.",
             When::Apply, "On", m_edit.menuSounds != m_saved.menuSounds)) {
