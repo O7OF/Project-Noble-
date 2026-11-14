@@ -3,6 +3,9 @@
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
 #include "network/NetworkTransport.hpp"
+#include "engine/BlamEngine.hpp"
+#include "engine/ReachHost.hpp"
+#include "ui/PauseMenu.hpp"
 #include <psapi.h>
 #include <atomic>
 #include <cstring>
@@ -181,6 +184,177 @@ static uint8_t __fastcall Hook_ObserverChannelSendMessage(
     return sent;
 }
 
+
+static std::atomic<int> s_cutsceneRecoveryFrames{0};
+static std::atomic<ULONGLONG> s_lastCutsceneSkipTick{0};
+
+// Detour for cinematic_skip_stop_internal (RVA 0x1ADE80)
+// When HaloScript skips a cutscene, this is the first engine function called.
+typedef int64_t(__fastcall* CinematicSkipStopInternalFn)(int16_t a1, int32_t a2, uint8_t a3);
+static CinematicSkipStopInternalFn s_originalCinematicSkipStopInternal = nullptr;
+
+static int64_t __fastcall Hook_CinematicSkipStopInternal(int16_t a1, int32_t a2, uint8_t a3) {
+    NOBLE_INFO("EnginePatches: cinematic_skip_stop_internal invoked (a1=0x{:X}, a2=0x{:X}) - triggering cutscene recovery", a1, a2);
+    EnginePatches::RecoverFromCutsceneSkip();
+    return s_originalCinematicSkipStopInternal ? s_originalCinematicSkipStopInternal(a1, a2, a3) : 0;
+}
+
+bool EnginePatches::CinematicInProgress() {
+    uintptr_t reachBase = s_baseAddress ? s_baseAddress : reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    if (!reachBase) return false;
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(reachBase + 0xC17B18);
+        const uintptr_t tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t root = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIdx * 8);
+        if (!root) return false;
+        const uint8_t* flag = *reinterpret_cast<uint8_t* const*>(root + 0x130);
+        if (!flag) return false;
+        return *flag != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void EnginePatches::ClearRasterizerScreenFade(uintptr_t base) {
+    uintptr_t reachBase = base ? base : (s_baseAddress ? s_baseAddress : reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll")));
+    if (!reachBase) return;
+
+    __try {
+        // 1. Clear rasterizer render-target screen fade overlay at [0xC1A3E8 + 0x30C] and [0xC1A3E8 + 0x310]
+        const uintptr_t rasterizerGlobals = *reinterpret_cast<const uintptr_t*>(reachBase + 0xC1A3E8);
+        if (rasterizerGlobals) {
+            *reinterpret_cast<float*>(rasterizerGlobals + 0x30C) = 0.0f;
+            *reinterpret_cast<float*>(rasterizerGlobals + 0x310) = 0.0f;
+        }
+
+        // 2. Clear TLS root fade structure at [root + 0xE0]
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(reachBase + 0xC17B18);
+        const uintptr_t tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        if (tlsArray) {
+            const uintptr_t root = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIdx * 8);
+            if (root) {
+                uint8_t* fade = *reinterpret_cast<uint8_t* const*>(root + 0xE0);
+                if (fade) {
+                    fade[0x25] = 0;
+                    fade[0x26] = 1; // 1 = fade in (clear)
+                    uint32_t* pStart = reinterpret_cast<uint32_t*>(fade + 0x28);
+                    uint32_t* pEnd = reinterpret_cast<uint32_t*>(fade + 0x2C);
+                    if (pStart && pEnd) *pEnd = *pStart;
+                    *reinterpret_cast<float*>(fade + 0x30) = 0.0f;
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+static void ResetCinematicTlsAndNative(uintptr_t reachBase) {
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(reachBase + 0xC17B18);
+        const uintptr_t tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        if (tlsArray) {
+            const uintptr_t root = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIdx * 8);
+            if (root) {
+                // [root + 0x130] -> cinematic flag byte
+                uint8_t* pCin = *reinterpret_cast<uint8_t* const*>(root + 0x130);
+                if (pCin) *pCin = 0; // Turn off cinematic in progress!
+
+                // [root + 0x5A0] -> camera control flag byte
+                uint8_t* pCam = *reinterpret_cast<uint8_t* const*>(root + 0x5A0);
+                if (pCam) *pCam = 0; // Turn off cinematic camera control!
+
+                // [root + 0x48] -> game globals
+                uint8_t* pGlobals = *reinterpret_cast<uint8_t* const*>(root + 0x48);
+                if (pGlobals) pGlobals[0x1F0D4] = 0;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+
+    __try {
+        using CinematicStopFn = void(__fastcall*)();
+        reinterpret_cast<CinematicStopFn>(reachBase + 0xD3444)();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+    __try {
+        using CameraControlFn = void(__fastcall*)(uint8_t);
+        reinterpret_cast<CameraControlFn>(reachBase + 0xC4C94)(0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+    __try {
+        using FadeInInputFn = void(__fastcall*)(float, float);
+        reinterpret_cast<FadeInInputFn>(reachBase + 0x660F4)(1.0f, 0.0f);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+void EnginePatches::RecoverFromCutsceneSkip() {
+    uintptr_t reachBase = s_baseAddress ? s_baseAddress : reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    if (!reachBase) return;
+
+    s_lastCutsceneSkipTick.store(GetTickCount64());
+    s_cutsceneRecoveryFrames.store(90); // Pump clear fade for next 90 frames (1.5 seconds)
+
+    NOBLE_INFO("EnginePatches: RecoverFromCutsceneSkip - clearing black screen fade, camera, and input lock");
+
+    // 1. Immediately reset rasterizer screen fade overlay
+    ClearRasterizerScreenFade(reachBase);
+
+    // 2. Clear TLS root cinematic and camera flags & call native engine helpers
+    ResetCinematicTlsAndNative(reachBase);
+
+    // 3. Dispatch Blam! engine HaloScript commands
+    if (BlamEngine* engine = BlamEngine::Active()) {
+        engine->ExecuteCommand("cinematic_stop");
+        engine->ExecuteCommand("camera_control 0");
+        engine->ExecuteCommand("player_control_fade_in_all_input 0");
+        engine->ExecuteCommand("fade_in 0 0 0 0");
+        engine->ExecuteCommand("designer_fade_in");
+        engine->ExecuteCommand("cinematic_snap_from_black");
+        engine->ExecuteCommand("cinematic_show_letterbox 0");
+        engine->ExecuteCommand("chud_cinematic_fade 1 0");
+        engine->ExecuteCommand("chud_show 1");
+        engine->ExecuteCommand("show_hud 1");
+        engine->ExecuteCommand("unit_raise_weapon (unit (local_player))");
+        engine->ExecuteCommand("object_can_take_damage (players)");
+    }
+
+    // 4. Dismiss any false GameOver screen
+    PauseMenu::CancelGameOver();
+}
+
+void EnginePatches::OnFrameTick() {
+    uintptr_t reachBase = s_baseAddress ? s_baseAddress : reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    if (!reachBase) return;
+
+    // Active recovery pumping
+    if (s_cutsceneRecoveryFrames.load() > 0) {
+        s_cutsceneRecoveryFrames.fetch_sub(1);
+        ClearRasterizerScreenFade(reachBase);
+    }
+
+    // Continuous safety: if cinematic is not in progress, never allow the rasterizer screen fade to stay black
+    if (!CinematicInProgress()) {
+        __try {
+            const uintptr_t rasterizerGlobals = *reinterpret_cast<const uintptr_t*>(reachBase + 0xC1A3E8);
+            if (rasterizerGlobals) {
+                float* pFade1 = reinterpret_cast<float*>(rasterizerGlobals + 0x30C);
+                float* pFade2 = reinterpret_cast<float*>(rasterizerGlobals + 0x310);
+                if (*pFade1 > 0.01f || *pFade2 > 0.01f) {
+                    *pFade1 = 0.0f;
+                    *pFade2 = 0.0f;
+                }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
+}
+
+bool EnginePatches::ShouldBlockPrematureGameOver() {
+    // If cinematic is playing, or cutscene skip occurred in the last 15 seconds, block GameOver
+    if (CinematicInProgress()) return true;
+    const ULONGLONG lastSkip = s_lastCutsceneSkipTick.load();
+    if (lastSkip > 0 && (GetTickCount64() - lastSkip) < 15000) return true;
+    return false;
+}
 
 static void* AllocateNear(uintptr_t target, size_t size, DWORD protect) {
     SYSTEM_INFO si{};
@@ -710,6 +884,24 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
             }
         } else {
             NOBLE_INFO("EnginePatches: RVA 0x4E9F5C already patched or unexpected opcodes.");
+        }
+    }
+
+    // 9. Cutscene skip hook (RVA 0x1ADE80)
+    {
+        uintptr_t skipStopAddr = baseAddress + 0x1ADE80;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(skipStopAddr);
+        if (p[0] == 0x40 && p[1] == 0x53 && p[2] == 0x48 && p[3] == 0x83) {
+            if (HookManager::InstallHook(
+                reinterpret_cast<void*>(skipStopAddr),
+                reinterpret_cast<void*>(&Hook_CinematicSkipStopInternal),
+                reinterpret_cast<void**>(&s_originalCinematicSkipStopInternal),
+                "cinematic_skip_stop_internal"
+            )) {
+                NOBLE_INFO("EnginePatches: Installed detour on cinematic_skip_stop_internal at 0x{:X}.", skipStopAddr);
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to install detour on cinematic_skip_stop_internal at 0x{:X}.", skipStopAddr);
+            }
         }
     }
 

@@ -35,6 +35,7 @@ public:
 
     // Post-game panel. Once shown it stays up (the engine has nothing more to play).
     static void ShowGameOver();
+    static void CancelGameOver();
     // In-match scoreboard overlay (drawn while the scoreboard key is held).
     struct ScoreboardEntry {
         std::string name;

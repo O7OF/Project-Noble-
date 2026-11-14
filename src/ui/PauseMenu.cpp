@@ -73,6 +73,9 @@ std::atomic<IDXGISwapChain *> s_swapChain{
 std::atomic<ULONGLONG> s_lastEngineFrame{
     0}; // GetTickCount64 of the last slot-1 frame
 std::atomic<ULONGLONG> s_gameOverAt{0};
+bool s_autoCancelled = false;
+double s_autoAt = 0.0;
+bool s_autoInited = false;
 std::mutex s_mapMutex;
 std::string s_loadingMap;
 std::string s_loadingMapName;
@@ -783,6 +786,15 @@ void PauseMenu::ShowGameOver() {
     s_gameOverAt.store(GetTickCount64());
     Window::TakeLeftClicks();
     NOBLE_INFO("PauseMenu: game over, showing post-game panel");
+  }
+}
+
+void PauseMenu::CancelGameOver() {
+  if (s_gameOver.exchange(false)) {
+    s_autoAt = 0.0;
+    s_autoCancelled = true;
+    s_autoInited = false;
+    NOBLE_INFO("PauseMenu: game over dismissed - gameplay resumed");
   }
 }
 
@@ -3034,20 +3046,10 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   // Auto-return / auto-advance countdown for host
   if (hostRole && t >= tEnd) {
     static const int s_autoSeconds = _wtoi(ArgValue(GetCommandLineW(), L"-lobby-playlist-auto").c_str());
-    static bool s_autoCancelled = false;
-    static double s_autoAt = 0.0;
-    static bool s_autoInited = false;
     if (!s_autoInited) {
       s_autoInited = true;
       if (s_autoSeconds > 0) {
         s_autoAt = ImGui::GetTime() + s_autoSeconds;
-      } else {
-        const std::wstring cmd = GetCommandLineW();
-        const std::wstring gameArgs = Relaunch::CurrentGameArgs();
-        const bool isParty = !ArgValue(cmd, L"-session-id").empty() || !ArgValue(gameArgs, L"-session-id").empty() || gameArgs.find(L"-wait-peers") != std::wstring::npos;
-        if (isParty) {
-          s_autoAt = ImGui::GetTime() + 25.0; // 25s auto-pull party back to lobby
-        }
       }
     }
     if (s_autoAt > 0.0 && !s_autoCancelled && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {

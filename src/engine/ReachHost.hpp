@@ -17,6 +17,9 @@ public:
 
     static ReachHost& Get();
 
+    // True once the host simulation session has started.
+    static bool IsSessionStarted();
+
     // True while an engine UI screen (e.g. the native Forge menu) is up.
     static bool IsUiScreenActive();
     // GetTickCount64 of the last engine frame (0 until the first), for the stall watchdog.
