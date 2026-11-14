@@ -24,6 +24,7 @@
 #include "InputPrompts.hpp"
 #include "audio/ReachAudio.hpp"
 #include "audio/ProcessAudio.hpp"
+#include "engine/ReachHost.hpp"
 #include "UiArt.hpp"
 #include "hooks/HookManager.hpp"
 #include "ServerBrowser.hpp"
@@ -8952,7 +8953,10 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 if (bgMuted) muted = true;
             }
             ReachAudio::SetMuted(muted);
-            ProcessAudio::ApplyVolume(audio.volumeGame, muted);
+            // MASTER MUTE / menu-music mute are menu-only; muteInBackground mutes the game mix itself.
+            ReachHost::SetRuntimeVolumes(bgMuted ? 0.0f : audio.volumeGame,
+                                         bgMuted ? 0.0f : audio.volumeMusic,
+                                         bgMuted ? 0.0f : audio.volumeOther);
         }
     }
 

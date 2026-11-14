@@ -1124,6 +1124,9 @@ static uint8_t s_hostProfileBuffer[0x10000] = { 0 };
 static constexpr size_t kVolumeGameOffset = 0xA5C;
 static constexpr size_t kVolumeMusicOffset = 0xA60;
 static constexpr size_t kVolumeOtherOffset = 0xA64;
+// Live mixer floats in haloreach.dll's data (game/music/other), written by the reference host's
+// live::audio::set_volume in addition to the profile fields above.
+static constexpr uintptr_t kLiveVolumeRva = 0xAFC108;
 
 static void WriteDefaultVolumes(uint8_t* profile) {
     const SettingsData settings = Settings::Get().Snapshot();
@@ -1139,6 +1142,39 @@ void ReachHost::SetRuntimeVolumes(float game, float music, float other) {
     memcpy(s_hostProfileBuffer + kVolumeGameOffset, &g, sizeof(float));
     memcpy(s_hostProfileBuffer + kVolumeMusicOffset, &m, sizeof(float));
     memcpy(s_hostProfileBuffer + kVolumeOtherOffset, &o, sizeof(float));
+
+    // Live mixer. The engine copies the profile only while it loads it, so writing the profile during a
+    // match never changed the mix: MUSIC/OTHER did nothing and GAME moved everything. The reference host's
+    // live::audio::set_volume also writes these three floats in haloreach.dll (game/music/other). Same
+    // shape as CameraFov::Apply: make the page writable, write under SEH, restore protection.
+    const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    if (!base)
+        return;
+    struct LiveMix {
+        float game, music, other;
+    } live{g, m, o};
+    void* const address = reinterpret_cast<void*>(base + kLiveVolumeRva);
+    float previous[3] = {0.0f, 0.0f, 0.0f};
+    __try {
+        std::memcpy(previous, address, sizeof(previous));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(address, sizeof(live), PAGE_READWRITE, &oldProtect))
+        return;
+    __try {
+        std::memcpy(address, &live, sizeof(live));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    DWORD ignored = 0;
+    VirtualProtect(address, sizeof(live), oldProtect, &ignored);
+    static bool s_loggedLiveMix = false;
+    if (!s_loggedLiveMix) {
+        s_loggedLiveMix = true;
+        NOBLE_INFO("ReachHost: live mixer at haloreach+0x{:X} (was {:.3f}/{:.3f}/{:.3f}, now "
+                   "{:.3f}/{:.3f}/{:.3f})",
+                   static_cast<unsigned>(kLiveVolumeRva), previous[0], previous[1], previous[2], g, m, o);
+    }
 }
 
 // Look / controller settings block (+0x1B4..+0x1DF). Without it zoomed look sensitivity is 0 and

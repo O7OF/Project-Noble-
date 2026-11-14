@@ -3,13 +3,11 @@
 namespace noble {
 namespace ProcessAudio {
 
-// Controls the entire process audio endpoint in Windows (WASAPI / SimpleAudioVolume).
-// This directly changes in-game audio volume and muting in real time mid-match.
-void ApplyVolume(float gameVolume, bool masterMute);
-
-// Updates ReachHost profile buffer (+0xA5C, +0xA60, +0xA64), ReachAudio music/sfx, and Windows process audio.
+// Writes the three real levels to the engine (profile + live mixer) and updates Noble's own menu audio.
+// There is deliberately no process/session volume stage: the engine mixes game audio itself, and adding a
+// second WASAPI gain multiplied every level twice and made MASTER MUTE silence the game.
+// masterMute only affects Noble's own audio (menu music and menu sounds), matching Settings.hpp.
 void ApplyAll(float gameVolume, float musicVolume, float otherVolume, bool masterMute);
 
 } // namespace ProcessAudio
 } // namespace noble
-
