@@ -1114,42 +1114,42 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 block[0] |= 0x08;
                 *reinterpret_cast<uint64_t*>(&block[0x60]) = localMachineId;
                 block[0xE8] = 0x01;
-                *reinterpret_cast<uint64_t*>(&block[0xF0]) = 0x000000003F59F3BEULL;
                 *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
-                block[0x100] = 0x00;
-                block[0x101] = 0x00;
-                block[0x102] = 0x00;
-                block[0x103] = 0x00;
-                block[0x104] = 0x02;
-                block[0x108] = 0x00;
-                block[0x109] = 0x00;
-                block[0x10A] = 0x00;
-                block[0x10B] = 0x00;
-                block[0x2F0] = 0x01;
-                *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
-                *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
-            }
-
-            // In authentic prebuilt blocks (Campaign & Firefight), ensure host network listening socket is active
-            if (!isGuest) {
-                block[0x2BF14] = 0xF3;
-                block[0x2BF15] = 0x01;
+                if (!isCampaign && !isFirefight) {
+                    *reinterpret_cast<uint64_t*>(&block[0xF0]) = 0x000000003F59F3BEULL;
+                    block[0x100] = 0x00;
+                    block[0x101] = 0x00;
+                    block[0x102] = 0x00;
+                    block[0x103] = 0x00;
+                    block[0x104] = 0x02;
+                    block[0x108] = 0x00;
+                    block[0x109] = 0x00;
+                    block[0x10A] = 0x00;
+                    block[0x10B] = 0x00;
+                    block[0x2F0] = 0x01;
+                    *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
+                    *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
+                    block[0x2BF14] = 0xF3;
+                    block[0x2BF15] = 0x01;
+                }
             }
 
             // Reset unassigned slots on host and guest so remote peers can be registered
-            size_t startSlot = isGuest ? 2 : 1;
-            for (size_t slot = startSlot; slot < 16; ++slot) {
-                size_t offset = 0x100 + (slot * 0x20);
-                block[offset + 0] = 0xFF;
-                block[offset + 1] = 0xFF;
-                block[offset + 2] = 0xFF;
-                block[offset + 3] = 0xFF;
-                block[offset + 4] = 0x00;
-                block[offset + 5] = 0x00;
-                block[offset + 6] = 0x00;
-                block[offset + 7] = 0x00;
-                for (size_t b = 8; b < 16; ++b) {
-                    block[offset + b] = 0xFF;
+            if (!isCampaign && !isFirefight) {
+                size_t startSlot = isGuest ? 2 : 1;
+                for (size_t slot = startSlot; slot < 16; ++slot) {
+                    size_t offset = 0x100 + (slot * 0x20);
+                    block[offset + 0] = 0xFF;
+                    block[offset + 1] = 0xFF;
+                    block[offset + 2] = 0xFF;
+                    block[offset + 3] = 0xFF;
+                    block[offset + 4] = 0x00;
+                    block[offset + 5] = 0x00;
+                    block[offset + 6] = 0x00;
+                    block[offset + 7] = 0x00;
+                    for (size_t b = 8; b < 16; ++b) {
+                        block[offset + b] = 0xFF;
+                    }
                 }
             }
         }

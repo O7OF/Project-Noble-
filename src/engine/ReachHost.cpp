@@ -860,6 +860,28 @@ static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint
     return 0;
 }
 
+// Slot 9: Cinematic skip query from engine (called from RVA 0xD2BE8 in haloreach.dll)
+// Returns 1 if the player requested to skip the active cinematic, 0 otherwise.
+// When returning 1, the engine advances the script, teleports the player, and attaches player control.
+static std::atomic<bool> s_cinematicSkipRequested{false};
+
+void ReachHost::RequestCinematicSkip() {
+    s_cinematicSkipRequested.store(true, std::memory_order_release);
+}
+
+bool ReachHost::IsCinematicSkipRequested() {
+    return s_cinematicSkipRequested.load(std::memory_order_acquire);
+}
+
+static uint64_t __fastcall HostSlot9_CinematicSkipCheck(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    if (s_cinematicSkipRequested.exchange(false, std::memory_order_acq_rel)) {
+        NOBLE_INFO("ReachHost [Slot 9 - CinematicSkipCheck]: Reporting cinematic skip request to engine");
+        return 1;
+    }
+    return 0;
+}
+
 // Slot 10: Secondary host interface (host_probe case 10 returns SECOND, the iface2 object
 // that host::new_host stores at host[1]). Returning 1 here would hand the engine a bad pointer.
 static uint64_t __fastcall HostSlot10_Heartbeat(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -1999,7 +2021,7 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     s_lastButtons = buttons;
     if (noble::EnginePatches::CinematicInProgress()) {
         if (pressed & (0x1000 | 0x2000 | 0x0010)) { // A, B, or Start
-            noble::EnginePatches::RecoverFromCutsceneSkip();
+            ReachHost::RequestCinematicSkip();
         }
     }
     if ((pressed & 0x0010) && !PauseMenu::IsGameOver()) PauseMenu::Toggle();
@@ -2066,6 +2088,7 @@ void InjectTestSkipInput(uint8_t* st) {
             NOBLE_INFO("ReachHost: InjectTestSkipInput - injecting VK_SPACE to skip cinematic (duration {} s)", s_seconds);
         }
         st[0x004 + VK_SPACE] = 0x80;
+        ReachHost::RequestCinematicSkip();
     }
 }
 
@@ -2079,7 +2102,7 @@ static void FillLocalInput(uint8_t* st) {
         const bool spaceDown = (st[0x004 + VK_SPACE] != 0) || ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0);
         const bool enterDown = (st[0x004 + VK_RETURN] != 0) || ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
         if (spaceDown || enterDown) {
-            noble::EnginePatches::RecoverFromCutsceneSkip();
+            ReachHost::RequestCinematicSkip();
         }
     }
 
@@ -2221,7 +2244,7 @@ static void FillLocalInput(uint8_t* st) {
         const bool spaceDown = (st[0x004 + VK_SPACE] != 0) || ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0);
         const bool enterDown = (st[0x004 + VK_RETURN] != 0) || ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
         if (spaceDown || enterDown) {
-            noble::EnginePatches::RecoverFromCutsceneSkip();
+            ReachHost::RequestCinematicSkip();
         }
     }
     {
@@ -4312,6 +4335,7 @@ void ReachHost::InitializeVTable() {
     s_vtable[2]   = reinterpret_cast<void*>(&HostSlot2_ResizeBuffers);
     s_vtable[4]   = reinterpret_cast<void*>(&HostSlot4_LogMessage);
     s_vtable[6]   = reinterpret_cast<void*>(&HostSlot6_GameResults);
+    s_vtable[9]   = reinterpret_cast<void*>(&HostSlot9_CinematicSkipCheck);
     s_vtable[10]  = reinterpret_cast<void*>(&HostSlot10_Heartbeat);
     s_vtable[18]  = reinterpret_cast<void*>(&HostSlot18_AssetLookup);
     s_vtable[23]  = reinterpret_cast<void*>(&HostSlot23_LoadProgress);
