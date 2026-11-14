@@ -173,6 +173,10 @@ Write-Host "Armor directory in package? $(Test-Path (Join-Path $Destination 'dat
 Write-Host "Loose blocks directory in package? $(Test-Path (Join-Path $Destination 'data\blocks'))"
 Write-Host "Loose .bin files in package? $((Get-ChildItem -Path $Destination -Recurse -Filter '*.bin' -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)"
 Write-Host "Nested mods in package? $(Test-Path (Join-Path $Destination 'data\mods\mods'))"
+# Rebuilt Forge World (Pelican, Spectre, Boathog, targeting laser) served in place of the stock map by the VFS
+# (user storage wins over MCC). Every player needs the same file or Forge World lobbies won't match.
+Write-Host "Noble Forge World in package? $(Test-Path (Join-Path $destData 'maps\forge_halo.map'))"
+Write-Host "Spectre sound bank in package? $(Test-Path (Join-Path $destData 'fmod\pc\sfx.st_spectre.fsb'))"
 Write-Host "Master server script in package? $((Get-ChildItem -Path $Destination -Recurse -Filter '*master*server*.js' -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)"
 Write-Host '== Packaging Complete =='
 $global:LASTEXITCODE = 0
