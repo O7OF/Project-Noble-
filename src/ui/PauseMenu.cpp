@@ -3330,7 +3330,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   const double hostSilence = guest ? NetworkTransport::Get().SecondsSinceRemotePacket() : 0.0;
   static ULONGLONG s_lastStateCheck = 0;
   const ULONGLONG nowTick = GetTickCount64();
-  if (guest && hostSilence > 3.0 && nowTick - s_lastStateCheck > 1500) {
+  if (guest && hostSilence > 5.0 && nowTick - s_lastStateCheck > 2000) {
     s_lastStateCheck = nowTick;
     std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
     if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
@@ -3342,15 +3342,16 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         if (state.ok && !state.isClosed && !state.inProgress) {
           NOBLE_INFO("PauseMenu: host lobby poll shows inProgress=false, returning guest to pre-game lobby");
           s_guestShouldReturnLobby.store(true);
-        } else if (!state.ok || state.isClosed || hostSilence > 8.0) {
-          NOBLE_INFO("PauseMenu: host lobby poll shows closed/404 or host silence {:.1f}s, disbanding to main menu", hostSilence);
+        } else if ((state.ok && state.isClosed) || (!state.ok && hostSilence > 30.0)) {
+          NOBLE_INFO("PauseMenu: host lobby poll shows closed={} ok={} after {:.1f}s silence, disbanding to main menu",
+                     state.isClosed, state.ok, hostSilence);
           s_guestShouldDisband.store(true);
         }
       }).detach();
     }
   }
 
-  if (!loading && !open && !gameOver && guest && hostSilence > 8.0) {
+  if (!loading && !open && !gameOver && guest && hostSilence > 15.0) {
     if (!s_connectionLost) {
       s_connectionLost = true;
       NOBLE_WARN("PauseMenu: host connection lost ({:.1f}s without packets) - holding the match for host migration",
