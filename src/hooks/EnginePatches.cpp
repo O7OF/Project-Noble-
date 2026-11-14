@@ -322,7 +322,20 @@ void EnginePatches::RecoverFromCutsceneSkip() {
     PauseMenu::CancelGameOver();
 }
 
+// The 0.19.82 merge added a "cutscene recovery" detour on cinematic_skip_stop_internal. It also fires while a
+// mission's opening cinematic runs: it stops the cinematic and dispatches cinematic_stop/camera/HUD/fade commands
+// while the intro script still owns the player, which spawned the player out of bounds with input locked
+// (reproduced on m20, 2026-11-14). Off by default; NOBLE_CUTSCENE_RECOVERY=1 re-enables it for testing.
+bool EnginePatches::CutsceneRecoveryEnabled() {
+    static const bool enabled = [] {
+        wchar_t value[8] = {};
+        return GetEnvironmentVariableW(L"NOBLE_CUTSCENE_RECOVERY", value, 8) > 0 && value[0] != L'0';
+    }();
+    return enabled;
+}
+
 void EnginePatches::OnFrameTick() {
+    if (!CutsceneRecoveryEnabled()) return;   // the fade clearing below belongs to the disabled recovery
     uintptr_t reachBase = s_baseAddress ? s_baseAddress : reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
     if (!reachBase) return;
 
@@ -887,8 +900,10 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         }
     }
 
-    // 9. Cutscene skip hook (RVA 0x1ADE80)
-    {
+    // 9. Cutscene skip hook (RVA 0x1ADE80). Disabled by default: see CutsceneRecoveryEnabled above.
+    if (!CutsceneRecoveryEnabled()) {
+        NOBLE_INFO("EnginePatches: cutscene recovery disabled (set NOBLE_CUTSCENE_RECOVERY=1 to enable).");
+    } else {
         uintptr_t skipStopAddr = baseAddress + 0x1ADE80;
         const uint8_t* p = reinterpret_cast<const uint8_t*>(skipStopAddr);
         if (p[0] == 0x40 && p[1] == 0x53 && p[2] == 0x48 && p[3] == 0x83) {

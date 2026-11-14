@@ -1997,7 +1997,7 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     }
     const WORD pressed = static_cast<WORD>(buttons & ~s_lastButtons);
     s_lastButtons = buttons;
-    if (noble::EnginePatches::CinematicInProgress()) {
+    if (noble::EnginePatches::CutsceneRecoveryEnabled() && noble::EnginePatches::CinematicInProgress()) {
         if (pressed & (0x1000 | 0x2000 | 0x0010)) { // A, B, or Start
             noble::EnginePatches::RecoverFromCutsceneSkip();
         }
@@ -2074,8 +2074,10 @@ static void FillLocalInput(uint8_t* st) {
     *reinterpret_cast<float*>(st + 0x118) = 1.0f;
     InjectTestSkipInput(st);
 
-    // Cutscene skip check: when in a cinematic and player/test presses Space or Enter:
-    if (noble::EnginePatches::CinematicInProgress()) {
+    // Cutscene skip check: when in a cinematic and player/test presses Space or Enter. The extra recovery pass is
+    // opt-in (NOBLE_CUTSCENE_RECOVERY=1): it breaks mission intros (player out of bounds, input locked) when a skip
+    // is pressed during the opening cinematic, so by default the skip goes through the engine as before.
+    if (noble::EnginePatches::CutsceneRecoveryEnabled() && noble::EnginePatches::CinematicInProgress()) {
         const bool spaceDown = (st[0x004 + VK_SPACE] != 0) || ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0);
         const bool enterDown = (st[0x004 + VK_RETURN] != 0) || ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
         if (spaceDown || enterDown) {
@@ -2216,8 +2218,8 @@ static void FillLocalInput(uint8_t* st) {
     }
     InjectTestSkipInput(st);
 
-    // Cutscene skip check: when in a cinematic and player presses Space or Enter:
-    if (noble::EnginePatches::CinematicInProgress()) {
+    // Cutscene skip check: when in a cinematic and player presses Space or Enter (recovery is opt-in; see above).
+    if (noble::EnginePatches::CutsceneRecoveryEnabled() && noble::EnginePatches::CinematicInProgress()) {
         const bool spaceDown = (st[0x004 + VK_SPACE] != 0) || ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0);
         const bool enterDown = (st[0x004 + VK_RETURN] != 0) || ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
         if (spaceDown || enterDown) {
