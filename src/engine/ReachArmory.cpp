@@ -2863,6 +2863,20 @@ static uint32_t LocalUnitDatumNowSEH(uintptr_t base) {
     __try { return LocalUnitDatumNow(base); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0xFFFFFFFFu; }
 }
 
+// The object's definition (first dword of the object data = its biped tag datum), or 0xFFFFFFFF.
+static uint32_t UnitDefinitionSEH(uintptr_t base, uint32_t unit) {
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
+        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
+        const uint8_t* obj = *reinterpret_cast<uint8_t* const*>(entries + static_cast<size_t>(unit & 0xFFFFu) * 0x18 + 0x10);
+        return obj ? *reinterpret_cast<const uint32_t*>(obj) : 0xFFFFFFFFu;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0xFFFFFFFFu;
+    }
+}
+
 void ReachArmory::SyncMarine() {
     static ULONGLONG s_next = 0;
     const ULONGLONG now = GetTickCount64();
@@ -2956,7 +2970,8 @@ void ReachArmory::SyncMarine() {
         // Female marine (objects\characters\marine_female): the only one with a flair_helmet_a region.
         const uint32_t helmetASid = sid("flair_helmet_a");
         if (s_isMarine && helmetASid && MarineRegionIndexSEH(base, unit, helmetASid) >= 0) s_isMarine = 2;
-        NOBLE_INFO("MarineArmor: local unit 0x{:08X} is {}", unit, s_isMarine == 2 ? "a female Marine" : (s_isMarine ? "a Marine" : "not a Marine"));
+        NOBLE_INFO("MarineArmor: local unit 0x{:08X} (biped 0x{:08X}) is {}", unit, UnitDefinitionSEH(base, unit),
+                   s_isMarine == 2 ? "a female Marine" : (s_isMarine ? "a Marine" : "not a Marine"));
     }
     if (s_isMarine != 1 && s_isMarine != 2) return;
 
