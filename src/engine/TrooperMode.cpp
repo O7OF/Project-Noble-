@@ -39,6 +39,10 @@ std::atomic<bool> s_active{false};
 using RebuildFn = void(__fastcall*)(uint8_t*);
 RebuildFn s_original = nullptr;
 
+// Test-only (NOBLE_TROOPER_JMAD=1): give the marine model the Spartan animation graph. Defined with the dump helpers
+// further down; declared here so the rebuild hook can call it once the tags are loaded.
+void MaybeSwapAnimationGraph();
+
 uint8_t* TagAt(uint32_t packed) {
     const uint64_t* bases = reinterpret_cast<const uint64_t*>(s_base + kPointerBases);
     return reinterpret_cast<uint8_t*>(bases[packed >> 28] + (static_cast<uint64_t>(packed) << 2));
@@ -122,6 +126,7 @@ void __fastcall RebuildHook(uint8_t* arg) {
             NOBLE_INFO("TrooperMode: zone-set rebuild, not ready ({})", n);
         }
     }
+    MaybeSwapAnimationGraph();   // test-only, env-gated, runs once
 }
 
 } // namespace
@@ -175,6 +180,41 @@ const uint8_t* TagDataAt(uintptr_t base, const uint8_t* tagInstances, uint32_t d
     if (!tagInstances || datum == 0xFFFFFFFFu) return nullptr;
     const uint32_t packed = *reinterpret_cast<const uint32_t*>(tagInstances + static_cast<size_t>(datum & 0xFFFFu) * 8 + 4);
     return PagesAt(base, packed);
+}
+
+// Test-only (NOBLE_TROOPER_JMAD=1): copy the Spartan model's animation-graph reference onto the marine model. The
+// hypothesis is that the campaign marine's NPC animation graph has no player standing stance, which folds the legs.
+void MaybeSwapAnimationGraph() {
+    static int enabled = -1;
+    if (enabled < 0) {
+        wchar_t value[8] = {};
+        enabled = (GetEnvironmentVariableW(L"NOBLE_TROOPER_JMAD", value, 8) > 0) ? 1 : 0;
+    }
+    if (!enabled || !s_base || !s_entry) return;
+    static bool done = false;
+    if (done) return;
+    done = true;
+    __try {
+        const uint8_t* tagInstances = *reinterpret_cast<const uint8_t* const*>(s_base + 0xC1A600);
+        const uint8_t* marineBiped = TagDataAt(s_base, tagInstances, static_cast<uint32_t>(s_entry->marine));
+        const uint8_t* spartanBiped = TagDataAt(s_base, tagInstances, static_cast<uint32_t>(s_entry->spartan));
+        if (!marineBiped || !spartanBiped) { NOBLE_WARN("TrooperMode jmad: biped tags missing"); return; }
+        uint8_t* marineHlmt = const_cast<uint8_t*>(
+            TagDataAt(s_base, tagInstances, *reinterpret_cast<const uint32_t*>(marineBiped + 0x70)));
+        const uint8_t* spartanHlmt =
+            TagDataAt(s_base, tagInstances, *reinterpret_cast<const uint32_t*>(spartanBiped + 0x70));
+        if (!marineHlmt || !spartanHlmt) { NOBLE_WARN("TrooperMode jmad: hlmt tags missing"); return; }
+        const uint32_t marineGroup = *reinterpret_cast<const uint32_t*>(marineHlmt + 0x20);
+        const uint32_t spartanGroup = *reinterpret_cast<const uint32_t*>(spartanHlmt + 0x20);
+        const uint32_t marineAnim = *reinterpret_cast<const uint32_t*>(marineHlmt + 0x2C);
+        const uint32_t spartanAnim = *reinterpret_cast<const uint32_t*>(spartanHlmt + 0x2C);
+        NOBLE_INFO("TrooperMode jmad: marine group 0x{:08X} anim 0x{:08X}; spartan group 0x{:08X} anim 0x{:08X}",
+                   marineGroup, marineAnim, spartanGroup, spartanAnim);
+        std::memcpy(marineHlmt + 0x20, spartanHlmt + 0x20, 16);
+        NOBLE_INFO("TrooperMode jmad: marine model now points at the Spartan animation graph");
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        NOBLE_WARN("TrooperMode jmad: fault during swap");
+    }
 }
 
 uint32_t LocalUnitDatumForDump(uintptr_t base) {
