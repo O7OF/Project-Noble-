@@ -205,6 +205,27 @@ const FrameOp kAiFrame3Caps[] = {
 // the stock 16 and log it. "simulation distributed view" is not created here (SlotPatch handles it).
 const char* const kPlayerPools[] = { "players", "fire team", "simulation view data array" };
 
+struct NobleAllocator {
+    void* const* vtable;
+};
+
+void* __fastcall NobleHeapAlloc(NobleAllocator*, uint64_t size) {
+    return VirtualAlloc(nullptr, static_cast<SIZE_T>(size), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+}
+
+void __fastcall NobleHeapFree(NobleAllocator*, void* ptr) {
+    if (ptr) VirtualFree(ptr, 0, MEM_RELEASE);
+}
+
+void* const kNobleAllocatorVtable[] = {
+    reinterpret_cast<void*>(&NobleHeapAlloc),
+    reinterpret_cast<void*>(&NobleHeapFree),
+    nullptr,
+    nullptr,
+};
+
+NobleAllocator g_nobleAllocator = { kNobleAllocatorVtable };
+
 void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t recordSize, int32_t alignBits, void* allocator) {
     if (name && count == 16 && slots::Players32Active()) {
         for (const char* pool : kPlayerPools) {
@@ -245,11 +266,19 @@ void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t rec
         }
 
         if (wanted > count) {
-            void* header = s_original(name, wanted, recordSize, alignBits, allocator);
+            void* header = s_hasOfflinePatches
+                ? s_original(name, wanted, recordSize, alignBits, allocator)
+                : nullptr;
+            bool heapBacked = false;
+            if (!header) {
+                header = s_original(name, wanted, recordSize, alignBits, &g_nobleAllocator);
+                heapBacked = (header != nullptr);
+            }
             if (header) {
-                NOBLE_INFO("Engine limits: {} {} -> {} ({} KB)", name, count, wanted,
-                    (static_cast<uint64_t>(wanted - count) * recordSize) / 1024);
-                Trace(name, wanted, recordSize, allocator, header);
+                NOBLE_INFO("Engine limits: {} {} -> {} ({} KB{})", name, count, wanted,
+                    (static_cast<uint64_t>(wanted - count) * recordSize) / 1024,
+                    heapBacked ? ", heap-backed" : "");
+                Trace(name, wanted, recordSize, heapBacked ? &g_nobleAllocator : allocator, header);
                 return header;
             } else {
                 NOBLE_WARN("Engine limits: memory allocation fallback for '{}' (wanted {}); using {}", name, wanted, count);
@@ -273,23 +302,26 @@ void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t rec
                 const uint64_t budget = renderStates ? s_renderBudget : s_budget;
                 const uint64_t spent = renderStates ? s_renderSpent : s_spent;
                 const uint64_t left = budget > spent ? budget - spent : 0;
-                if (ArrayBytes(wanted, recordSize) - ArrayBytes(count, recordSize) > left) {
-                    const auto fit = static_cast<int32_t>(count + left / (recordSize + 1));
-                    NOBLE_WARN("AI limits: {} {} does not fit the AI memory bank ({} KB left); using {}", name, wanted, left / 1024,
-                        (std::max)(fit, count));
-                    wanted = (std::max)(fit, count);
+                const uint64_t extraBytes = ArrayBytes(wanted, recordSize) - ArrayBytes(count, recordSize);
+                void* header = nullptr;
+                bool heapBacked = false;
+                if (budget > 0 && extraBytes <= left) {
+                    header = s_original(name, wanted, recordSize, alignBits, allocator);
+                    if (header) (renderStates ? s_renderSpent : s_spent) += extraBytes;
                 }
-            }
-            if (wanted > count) {
-                NOBLE_INFO("AI limits: {} {} -> {} ({} KB more game-state memory)", name, count, wanted,
-                    (static_cast<uint64_t>(wanted - count) * recordSize) / 1024);
-                void* header = s_original(name, wanted, recordSize, alignBits, allocator);
-                if (header) (renderStates ? s_renderSpent : s_spent) += ArrayBytes(wanted, recordSize) - ArrayBytes(count, recordSize);
                 if (!header) {
-                    NOBLE_ERROR("AI limits: game-state memory ran out raising '{}' to {}; using {}", name, wanted, count);
+                    header = s_original(name, wanted, recordSize, alignBits, &g_nobleAllocator);
+                    heapBacked = (header != nullptr);
+                }
+                if (header) {
+                    NOBLE_INFO("AI limits: {} {} -> {} ({} KB{})", name, count, wanted,
+                        (static_cast<uint64_t>(wanted - count) * recordSize) / 1024,
+                        heapBacked ? ", heap-backed" : " more game-state memory");
+                } else {
+                    NOBLE_ERROR("AI limits: memory allocation failed raising '{}' to {}; using {}", name, wanted, count);
                     header = s_original(name, count, recordSize, alignBits, allocator);
                 }
-                Trace(name, wanted, recordSize, allocator, header);
+                Trace(name, wanted, recordSize, heapBacked ? &g_nobleAllocator : allocator, header);
                 return header;
             }
             break;
@@ -396,13 +428,14 @@ void InstallResize(HMODULE engine, bool extendedProfile) {
     const auto* sizeInsn = reinterpret_cast<const uint8_t*>(base + kAiBankSizeInsnRva);
     uint32_t aiBank = 0;
     if (sizeInsn[0] == 0xBA) std::memcpy(&aiBank, sizeInsn + 1, 4);
+    if (actors > 96) s_actors = (std::min)(actors, 1024);
     if (aiBank <= kStockAiBank + kSafetyMargin) {
-        NOBLE_WARN("AI limits: this engine build has stock AI memory bank (0x{:X}); actor pool stays at 96 on stock DLL", aiBank);
         s_budget = 0;
-        s_actors = 0;
+        if (s_actors > 0) {
+            NOBLE_INFO("AI limits: stock AI memory bank (0x{:X}); using heap-backed pools for {} actors", aiBank, s_actors);
+        }
     } else {
         s_budget = aiBank - kStockAiBank - kSafetyMargin;
-        if (actors > 96) s_actors = (std::min)(actors, 1024);
     }
 
     // Bank 3 (Render memory bank)

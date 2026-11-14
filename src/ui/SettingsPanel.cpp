@@ -1291,6 +1291,7 @@ void SettingsPanel::RenderGame() {
                 When::Restart, kEngineLimitLabels[0], m_edit.extendedLimits != m_saved.extendedLimits)) {
             if (const int d = CycleValue(kEngineLimitLabels[current], current, count, false)) {
                 m_edit.extendedLimits = std::clamp(current + d, 0, count - 1);
+                if (m_edit.extendedLimits == 0) m_edit.aiActors = 0;
             }
         }
     }
@@ -1313,17 +1314,20 @@ void SettingsPanel::RenderGame() {
         int current = 0;
         for (int i = 0; i < count; ++i) if (kAiActorValues[i] == m_edit.aiActors) current = i;
         const bool extended = m_edit.extendedLimits != 0;
+        const int displayIdx = extended ? current : 0;
         if (Row("AI ACTORS", "How many AI actors the engine can hold (stock 96). Active when ENGINE LIMITS is set to Extended or Full; every player and the server must use the same value. Takes effect after a restart. 1,024 is experimental.",
                 When::Restart, kAiActorLabels[0], m_edit.aiActors != m_saved.aiActors, !extended)) {
-            if (const int d = CycleValue(kAiActorLabels[current], current, count, false)) {
-                const int next = std::clamp(current + d, 0, count - 1);
+            if (const int d = CycleValue(kAiActorLabels[displayIdx], displayIdx, count, false)) {
+                const int next = std::clamp(displayIdx + d, 0, count - 1);
                 m_edit.aiActors = extended ? kAiActorValues[next] : 0;
             }
         }
     }
-    if (noble::limits::ActiveProfile() != noble::limits::Profile::Stock) {
+    {
         const int activeActors = noble::pools::ActiveActors();
-        const std::string actorStr = std::to_string(activeActors) + " ACTORS";
+        const std::string actorStr = activeActors <= 96
+            ? "96 ACTORS (STOCK)"
+            : (std::to_string(activeActors) + " ACTORS");
         if (Row("ACTIVE AI POOL", "The active AI actor capacity running in the loaded engine.", When::Info, actorStr.c_str(), false)) {
             InfoValue(actorStr.c_str());
         }
