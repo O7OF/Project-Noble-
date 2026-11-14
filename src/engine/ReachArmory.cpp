@@ -1481,14 +1481,14 @@ static void EnsurePmcgLoaded() {
         }
     }
     size_t embPmcgSize = 0;
-    if (const uint8_t* embPmcg = EmbeddedBlocks::GetBlock("spartan.rrpmcg", &embPmcgSize); embPmcg && embPmcgSize > 0) {
+    if (const uint8_t* embPmcg = EmbeddedBlocks::GetBlock("spartan_armor_parts.txt", &embPmcgSize); embPmcg && embPmcgSize > 0) {
         std::stringstream in{ std::string(reinterpret_cast<const char*>(embPmcg), embPmcgSize) };
         std::string line, list, item;
         size_t items = 0;
         while (std::getline(in, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
-            // The embedded spartan.rrpmcg starts with a UTF-8 BOM (2026-11-12): without this the first line's "L 20"
-            // was not recognised, every helmet landed under the key ":name", and the whole pmcg mapping was skipped.
+            // The embedded spartan_armor_parts.txt starts with a UTF-8 BOM (2026-11-12): without this the first line's
+            // "L 20" was not recognised, every helmet landed under the key ":name", and the whole mapping was skipped.
             if (line.size() >= 3 && static_cast<uint8_t>(line[0]) == 0xEF && static_cast<uint8_t>(line[1]) == 0xBB &&
                 static_cast<uint8_t>(line[2]) == 0xBF) line.erase(0, 3);
             char kind = line.empty() ? 0 : line[0];
@@ -1507,7 +1507,7 @@ static void EnsurePmcgLoaded() {
                 s_pmcg[item].push_back({ f[1], f[2], f.size() >= 4 ? std::atoi(f[3].c_str()) : 0 });
             }
         }
-        NOBLE_INFO("ReachArmory: {} Armory items -> model regions from embedded 'spartan.rrpmcg'", items);
+        NOBLE_INFO("ReachArmory: {} Armory items -> model regions from embedded 'spartan_armor_parts.txt'", items);
         return;
     }
     NOBLE_WARN("ReachArmory: no data\\armor\\*.rrpmcg; Armory items go to the 3D model by name only (attachments won't show)");
