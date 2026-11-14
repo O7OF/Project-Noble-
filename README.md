@@ -45,15 +45,7 @@ the in-client updater lives in `src/common/Updater.cpp`.
 
 ## Master-server cluster
 
-Three federated regions (see `src/common/BuildIdentity.hpp`):
-
-| Region | URL |
-|---|---|
-| US East (Virginia) | https://projectnobleeast.onrender.com |
-| US West (Oregon) | https://projectnoblewest.onrender.com |
-| UK (London) | https://projectnobleuk.onrender.com |
-
-Backend: `C:\Users\Chey1\Desktop\ServerTestDeploy` (private). It enforces a
+It enforces a
 **closed-source build gate**: only `0.19.x` clients speaking protocol 2 may
 register, join or relay. Open-source 0.9.16.x builds are refused with
 `403 client_outdated`, are hidden from the browser, and cannot attach to the
