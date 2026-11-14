@@ -1640,7 +1640,19 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
             }
         }
     }
-    const noble::limits::Profile requestedLimits = noble::limits::ProfileFromInt(startupSettings.extendedLimits);
+    noble::limits::Profile requestedLimits = noble::limits::ProfileFromInt(startupSettings.extendedLimits);
+    // Every Extended profile patches the engine's renderer (AI/particle/light-volume limits). On campaign maps that
+    // leaves the frame black after the intro cutscene: m10 reproduced 2026-11-14 on V16, V16+Particles and Full,
+    // while the same launch on Stock shows the cutscene and then hands over to gameplay (played through, 185 s).
+    // Campaign never needs those limits, so force the stock DLL for campaign launches. The saved setting is
+    // untouched: Forge, multiplayer and Firefight still get the saved profile on their next launch.
+    if (!showMenu && _stricmp(launchMode.c_str(), "campaign") == 0 &&
+        requestedLimits != noble::limits::Profile::Stock) {
+        requestedLimits = noble::limits::Profile::Stock;
+        NOBLE_WARN("main: Engine limits {} leave campaign missions black after the intro cutscene; using Stock for "
+                   "this campaign launch",
+                   noble::limits::ProfileName(noble::limits::ProfileFromInt(startupSettings.extendedLimits)));
+    }
     const noble::limits::PrepareResult engineDll =
         noble::limits::PrepareEngineDll(reachInstall->reachDllPath, requestedLimits);
     NOBLE_INFO("Engine limits: requested {}, active {}, reason {}", noble::limits::ProfileName(requestedLimits),
