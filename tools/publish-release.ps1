@@ -51,7 +51,8 @@ if (-not (Test-Path (Join-Path $srcArmor 'rr_elite_pack.map'))) {
 }
 if (Test-Path (Join-Path $srcArmor 'rr_elite_pack.map')) {
     New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\armor') | Out-Null
-    & robocopy $srcArmor (Join-Path $pkg 'data\armor') /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    # Never the dev backups kept next to the packs (*.before-*, *.bak*, *.heuristic: 500 MB each).
+    & robocopy $srcArmor (Join-Path $pkg 'data\armor') /E /XF '*.before*' '*.bak*' '*.heuristic' /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -gt 7) { throw "robocopy armor failed ($LASTEXITCODE)" }
 } else {
     Write-Warning "data\armor\rr_elite_pack.map was not found to package"
@@ -68,6 +69,19 @@ if (-not (Test-Path (Join-Path $srcMenuMaps 'mainmenu_all.map'))) {
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\menumaps') | Out-Null
 & robocopy $srcMenuMaps (Join-Path $pkg 'data\menumaps') mainmenu_all.map *.string_ids.csv /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "robocopy menumaps failed ($LASTEXITCODE)" }
+
+# Noble's Forge World (Pelican, Spectre, Boathog, targeting laser in the Forge palette). The VFS serves data\maps\<name>.map
+# in place of MCC's map, so every player must have this same file or Forge World lobbies won't match. The data copy above
+# skips *.map, so copy it here. Its Spectre sound bank (data\fmod\pc\sfx.st_spectre.fsb) comes with the data copy.
+$srcForge = Join-Path $root 'data\maps\forge_halo.map'
+if (-not (Test-Path $srcForge)) { $srcForge = Join-Path $release 'data\maps\forge_halo.map' }
+if (Test-Path $srcForge) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\maps') | Out-Null
+    Copy-Item $srcForge (Join-Path $pkg 'data\maps\forge_halo.map') -Force
+    if (-not (Test-Path (Join-Path $pkg 'data\fmod\pc\sfx.st_spectre.fsb'))) { Write-Warning "Spectre sound bank missing from data\fmod\pc" }
+} else {
+    Write-Warning "data\maps\forge_halo.map (Noble Forge World) was not found to package"
+}
 
 # Guarantee zero dev binaries or user save/appearance/career files in the staged release directory
 Get-ChildItem -Path $pkg -Recurse -Include "noble-dev*","noble-dedicated*","noble-client*","*.pdb","appearance*","career*","settings*","preferences*","*.pncsold","menu-background-deck.txt" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
