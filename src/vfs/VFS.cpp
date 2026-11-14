@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <mutex>
+#include <set>
 
 namespace noble {
 
@@ -274,6 +276,16 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             // Priority A: Check user storage (custom downloaded mods / custom variants)
             fs::path userOverride = s_userStoragePath / p;
             if (RawPathExists(userOverride.wstring())) {
+                // Noble's own maps (e.g. data\maps\forge_halo.map with the Pelican, Spectre, Boathog and targeting
+                // laser) replace MCC's: say so once per file so a log shows which map a match really used.
+                if (_wcsicmp(p.extension().c_str(), L".map") == 0) {
+                    static std::mutex s_loggedMutex;
+                    static std::set<std::wstring> s_logged;
+                    std::lock_guard<std::mutex> lock(s_loggedMutex);
+                    if (s_logged.insert(userOverride.wstring()).second) {
+                        NOBLE_INFO("VFS: serving Noble's '{}' in place of MCC's", userOverride.string());
+                    }
+                }
                 return userOverride.wstring();
             }
 

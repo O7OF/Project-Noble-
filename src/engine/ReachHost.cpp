@@ -632,10 +632,6 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
             IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
             InstallPresentSettingsHook(swapChain);
             ExecuteGammaPass(swapChain);
-            // Dev (2026-11-13): env NOBLE_CAPTURE_NO_UI=1 saves -capture-at frames BEFORE the menu UI is drawn
-            // (scene only), for Armory preset pictures.
-            static const bool s_captureNoUi = (std::getenv("NOBLE_CAPTURE_NO_UI") != nullptr);
-            if (s_captureNoUi) FrameCapture::OnFrame(swapChain, frames);
             try {
                 FrontEndMenu::RenderOverlay(swapChain);
             } catch (const std::exception& e) {
@@ -644,7 +640,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
                 NOBLE_ERROR("ReachHost [Slot 1]: unknown exception in FrontEndMenu::RenderOverlay");
             }
             if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
-            if (!s_captureNoUi) FrameCapture::OnFrame(swapChain, frames);
+            FrameCapture::OnFrame(swapChain, frames);
         }
         return 0;
     }
@@ -1369,24 +1365,6 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // the profile field exists (the engine: Steel) and the Armory's third colour word follows it.
         put(0xA0, kColor + accentColor);
 
-        // Dev (2026-11-13): NOBLE_FORCE_PROFILE="species=0;helmet=69;chest=126;lsh=..;rsh=.." overrides raw profile item ids
-        // (test: does the player's armour customization drive a Marine mod's look?).
-        if (const char* fp = std::getenv("NOBLE_FORCE_PROFILE")) {
-            std::string spec(fp), item;
-            std::stringstream ss(spec);
-            while (std::getline(ss, item, ';')) {
-                const size_t eq = item.find('=');
-                if (eq == std::string::npos) continue;
-                const std::string k = item.substr(0, eq);
-                const uint32_t v = static_cast<uint32_t>(std::strtoul(item.substr(eq + 1).c_str(), nullptr, 10));
-                if (k == "species") { profile[0x27] = static_cast<uint8_t>(v); profile[0x38] = static_cast<uint8_t>(v); }
-                else if (k == "helmet") put(0x40, v);
-                else if (k == "lsh") put(0x44, v);
-                else if (k == "rsh") put(0x48, v);
-                else if (k == "chest") put(0x4C, v);
-            }
-            NOBLE_INFO("ReachHost [Slot 34]: NOBLE_FORCE_PROFILE {}", spec);
-        }
         const std::string settingsTag = Settings::Get().Snapshot().serviceTag;
         const std::string armoryTag = str(appearance, "service_tag");
         const std::string effectiveTag =
@@ -1421,10 +1399,6 @@ static void RefreshArmoryAppearance(uint8_t* profile, bool force = false) {
     const auto t = std::filesystem::last_write_time(path, ec);
     if (!force && (ec || t == s_lastWrite)) return;
     if (!ec) s_lastWrite = t;
-    // Dev (2026-11-13): NOBLE_NO_APPEARANCE skips Noble's Armory appearance (test: does the profile drive the Marine look
-    // in Marine mods?).
-    static const bool s_noAppearance = std::getenv("NOBLE_NO_APPEARANCE") != nullptr;
-    if (s_noAppearance) return;
     ApplyArmoryAppearance(profile);
 }
 
@@ -4185,10 +4159,8 @@ void ReachHost::InitializeVTable() {
     s_vtable[65]  = reinterpret_cast<void*>(&HostSlot65_TextKerning);
     s_vtable[66]  = reinterpret_cast<void*>(&HostSlot66_TextRegisterIcon);
     s_vtable[67]  = reinterpret_cast<void*>(&HostSlot67_TextMetrics);
-    if (!std::getenv("NOBLE_NO_EMBLEM")) {   // dev A/B switch (2026-11-13)
-        s_vtable[73]  = reinterpret_cast<void*>(&HostSlot73_EmblemTexture);
-        s_vtable[74]  = reinterpret_cast<void*>(&HostSlot74_EmblemColors);
-    }
+    s_vtable[73]  = reinterpret_cast<void*>(&HostSlot73_EmblemTexture);
+    s_vtable[74]  = reinterpret_cast<void*>(&HostSlot74_EmblemColors);
     s_vtable[88]  = reinterpret_cast<void*>(&HostSlot88_UserIdentity);
     s_vtable[97]  = reinterpret_cast<void*>(&HostSlot97_ColorFilter);
     s_vtable[116] = reinterpret_cast<void*>(&HostSlot116_ControllerMap);

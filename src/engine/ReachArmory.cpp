@@ -1089,8 +1089,6 @@ static void InstallEmblemTraceOnce() {
 }
 
 static void ApplyLocalEmblem(const ReachArmorySelection& sel, uint32_t onlyUnit = 0xFFFFFFFFu) {
-    static const bool s_noEmblem = (std::getenv("NOBLE_NO_EMBLEM") != nullptr);   // dev A/B switch (2026-11-13)
-    if (s_noEmblem) return;
     InstallEmblemTraceOnce();
     PatchEmblemCallbackCheckOnce();
     const uint8_t want[8] = {
@@ -1153,18 +1151,6 @@ static bool EliteFixedChangeColorsSEH(float slot2[3], float slot3[3]) {
 
 static bool EliteFixedChangeColors(float slot2[3], float slot3[3]) {
     const bool ok = EliteFixedChangeColorsSEH(slot2, slot3);
-    // Dev test (2026-11-13): env NOBLE_ELITE_SLOT2 / NOBLE_ELITE_SLOT3 = "r,g,b" (linear 0..1) overrides that slot,
-    // to see which Elite parts (Honor Guard gold?) each fixed slot colours.
-    if (ok) {
-        auto over = [](const char* var, float* s) {
-            const char* v = std::getenv(var);
-            if (!v) return;
-            float r = 0, g = 0, b = 0;
-            if (sscanf_s(v, "%f,%f,%f", &r, &g, &b) == 3) { s[0] = r; s[1] = g; s[2] = b; }
-        };
-        over("NOBLE_ELITE_SLOT2", slot2);
-        over("NOBLE_ELITE_SLOT3", slot3);
-    }
     static bool s_logged = false;
     if (ok && !s_logged) {
         s_logged = true;
@@ -2053,8 +2039,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                 // carries the knife (noble_nk in the script). A live change into or out of one of those chests kept
                 // the old variant, so the knife came back (Tyler 2026-11-13). (2) AKIS: a live change to the AKIS
                 // helmet (dlc2_helmet_hilands) does not show; a rebuild does (tests akh2 vs akh3, 2026-11-13).
-                static const bool s_liveOld = (std::getenv("NOBLE_LIVE_OLD") != nullptr);   // dev A/B test
-                if (!needsRebuild && anyDiff && !s_liveOld) {
+                if (!needsRebuild && anyDiff) {
                     const uint32_t chestA = LookupStringId("flair_chest_a");
                     static const char* const kKnifeHiddenChests[] = { "player_joshua", "jun", "emile", "player_kelly", "player_jai" };
                     auto knifeHidden = [&](const std::vector<std::pair<uint32_t, uint32_t>>& v) {
@@ -2846,9 +2831,7 @@ static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs,
         auto SetRegionPermutation = reinterpret_cast<SetRegionPermutationFn>(base + 0x4729F4);
         auto SetChangeColor = reinterpret_cast<SetChangeColorFn>(base + 0x473858);
         for (size_t p = 0; p < pairCount; ++p) {
-            // Dev (2026-11-13): env NOBLE_MARINE_FLAG = last argument of the engine call (default 1).
-            static const uint8_t s_flag = std::getenv("NOBLE_MARINE_FLAG") ? static_cast<uint8_t>(std::atoi(std::getenv("NOBLE_MARINE_FLAG"))) : 1;
-            const uint8_t rc = SetRegionPermutation(unit, pairs[p * 2], pairs[p * 2 + 1], s_flag);
+            const uint8_t rc = SetRegionPermutation(unit, pairs[p * 2], pairs[p * 2 + 1], 1);
             if (results && p < 16) results[p] = rc;
         }
         if (pri) SetChangeColor(unit, 0, pri);
@@ -2859,39 +2842,6 @@ static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs,
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
-}
-
-// Dev (2026-11-13, env NOBLE_MARINE_ALL): apply the pairs to EVERY object (any type) whose model has the marine regions,
-// to test whether the Marine on screen is another object than the player unit (an attached puppet). Returns the count;
-// types[] gets each hit's object type byte.
-static int MarineApplyAllSEH(uintptr_t base, uint32_t helmetSid, uint32_t backpackSid, const uint32_t* pairs, size_t pairCount,
-                             uint32_t* hits, uint8_t* types, int maxHits) {
-    int n = 0;
-    __try {
-        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
-        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
-        if (!tlsArray) return -1;
-        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
-        if (!objTable) return -2;
-        const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
-        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
-        if (!entries) return -3;
-        using SetRegionPermutationFn = uint8_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint8_t);
-        auto SetRegionPermutation = reinterpret_cast<SetRegionPermutationFn>(base + 0x4729F4);
-        for (int32_t i = 0; i < maxObjects; ++i) {
-            const uint8_t* entry = entries + static_cast<size_t>(i) * 0x18;
-            const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry + 0x00);
-            if (salt == 0 || !*reinterpret_cast<uint8_t* const*>(entry + 0x10)) continue;
-            const uint32_t datum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
-            if (MarineRegionIndexSEH(base, datum, helmetSid) < 0 || MarineRegionIndexSEH(base, datum, backpackSid) < 0) continue;
-            for (size_t p = 0; p < pairCount; ++p) SetRegionPermutation(datum, pairs[p * 2], pairs[p * 2 + 1], 1);
-            if (n < maxHits) { hits[n] = datum; types[n] = entry[0x04]; }
-            ++n;
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return -100 - n;
-    }
-    return n;
 }
 
 // Dev (2026-11-13): the object's per-region permutation byte array, as haloreach+0x4729F4 reads it via +0x473028
@@ -2906,44 +2856,6 @@ static int MarinePermByteSEH(uintptr_t base, uint32_t object, int ri, int* count
         return perms[ri];
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -2;
-    }
-}
-
-// 2026-11-13: in Trooper Firefight the game re-imposes the Marine's model variant every frame: haloreach+0x6A4BA0
-// (one int argument, per player) checks each variant region's permutation against the variant's allowed list and
-// puts an allowed one back (proven: helmet byte 5 after our call, back to 7/2 by the next frame; NOBLE_MARINE_PERMLOG).
-// Hook it and re-apply the player's Marine pieces right after it returns, so the renderer sees ours.
-using MarineVariantFn = uint64_t(__fastcall*)(int32_t);
-static MarineVariantFn s_origMarineVariant = nullptr;
-static std::atomic<bool> s_marineHookArmed{false};
-static std::mutex s_marineHookMutex;
-static uint32_t s_marineHookUnit = 0xFFFFFFFFu;
-static std::vector<uint32_t> s_marineHookPairs;
-static std::atomic<uint64_t> s_marineHookCalls{0};
-static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs, size_t pairCount, const float* pri, const float* sec, const float* c3, const float* c4, uint8_t* results, uint32_t variantSid);
-static uint64_t __fastcall MarineVariantDetour(int32_t arg) {
-    const uint64_t r = s_origMarineVariant(arg);
-    if (s_marineHookArmed.load(std::memory_order_relaxed)) {
-        std::unique_lock<std::mutex> lock(s_marineHookMutex, std::try_to_lock);
-        if (lock.owns_lock() && s_marineHookUnit != 0xFFFFFFFFu && !s_marineHookPairs.empty()) {
-            const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
-            if (base) MarineApplySEH(base, s_marineHookUnit, s_marineHookPairs.data(), s_marineHookPairs.size() / 2,
-                                     nullptr, nullptr, nullptr, nullptr, nullptr, 0);
-            s_marineHookCalls.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    return r;
-}
-static void InstallMarineVariantHookOnce(uintptr_t base) {
-    static bool s_done = false;
-    if (s_done) return;
-    s_done = true;
-    void* target = reinterpret_cast<void*>(base + 0x6A4BA0);
-    if (HookManager::InstallHook(target, reinterpret_cast<void*>(&MarineVariantDetour), reinterpret_cast<void**>(&s_origMarineVariant), "MarineVariant")) {
-        HookManager::EnableAll();
-        NOBLE_INFO("MarineArmor: hooked +0x6A4BA0 (variant re-impose)");
-    } else {
-        NOBLE_WARN("MarineArmor: could not hook +0x6A4BA0");
     }
 }
 
@@ -3033,18 +2945,6 @@ static uint32_t s_simMarineUnit = 0xFFFFFFFFu;
 static std::vector<uint32_t> s_simMarinePairs;
 static std::atomic<int> s_simMarineTicks{0};
 static std::atomic<uint64_t> s_simMarineApplied{0};
-static std::atomic<uint32_t> s_simHelmetSid{0}, s_simBackpackSid{0};
-
-// Dev (2026-11-13, NOBLE_MARINE_REFRESH): the permutation setter's "changed" tail (+0x4730CC) calls +0x472F80(obj) and,
-// with its flag, +0x47B210(obj). Run those on the render thread too (render-side state of the object).
-static void MarineRefreshSEH(uintptr_t base, uint32_t unit) {
-    __try {
-        using ObjFn = void(__fastcall*)(uint32_t);
-        reinterpret_cast<ObjFn>(base + 0x472F80)(unit);
-        reinterpret_cast<ObjFn>(base + 0x47B210)(unit);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-    }
-}
 
 static uint32_t LocalUnitDatumNow(uintptr_t base) {
     using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
@@ -3058,10 +2958,7 @@ static uint32_t LocalUnitDatumNowSEH(uintptr_t base) {
 void ReachArmory::SyncMarine() {
     static ULONGLONG s_next = 0;
     const ULONGLONG now = GetTickCount64();
-    // Dev (2026-11-13): NOBLE_MARINE_HOLD also drops the 100 ms throttle (apply on every call; tests a mod script that
-    // re-sets the look every tick).
-    static const bool s_holdEvery = std::getenv("NOBLE_MARINE_HOLD") != nullptr;
-    if (!s_holdEvery && now < s_next) return;
+    if (now < s_next) return;
     s_next = now + 100;
 
     ReachArmorySelection sel = GetSelection();
@@ -3108,7 +3005,6 @@ void ReachArmory::SyncMarine() {
     if (!s_marineSidsTried) {
         s_marineSidsTried = true;
         std::vector<std::string> wanted = { "helmet", "flair_backpack" };
-        if (const char* v = std::getenv("NOBLE_MARINE_VARIANT")) wanted.push_back(v);
         wanted.push_back("flair_helmet_a");
         for (const auto& [r, p] : sel.marinePieces) { wanted.push_back(r); wanted.push_back(p); }
         for (const auto& [r, p] : sel.femalePieces) { wanted.push_back(r); wanted.push_back(p); }
@@ -3142,9 +3038,7 @@ void ReachArmory::SyncMarine() {
         s_lastPri = sel.marinePrimaryRgb; s_lastSec = sel.marineSecondaryRgb;
         s_ticksLeft = 30;
     }
-    // Dev (2026-11-13): env NOBLE_MARINE_HOLD=1 keeps applying (tests whether something re-sets the helmet).
-    static const bool s_hold = std::getenv("NOBLE_MARINE_HOLD") != nullptr;
-    if (s_ticksLeft <= 0 && !s_hold) return;
+    if (s_ticksLeft <= 0) return;
     if (s_ticksLeft > 0) --s_ticksLeft;
 
     if (s_isMarine < 0) {
@@ -3164,16 +3058,6 @@ void ReachArmory::SyncMarine() {
         const uint32_t rs = sid(r), ps = sid(p);
         if (rs && ps) { pairs.push_back(rs); pairs.push_back(ps); }
     }
-    // Re-apply after the game's per-frame variant check (see MarineVariantDetour). Dev switch while being proven.
-    if (std::getenv("NOBLE_MARINE_HOOK") && !pairs.empty()) {
-        InstallMarineVariantHookOnce(base);
-        {
-            std::lock_guard<std::mutex> lock(s_marineHookMutex);
-            s_marineHookUnit = unit;
-            s_marineHookPairs = pairs;
-        }
-        s_marineHookArmed.store(true);
-    }
     const float pri[3] = { sel.marinePrimaryRgb[0], sel.marinePrimaryRgb[1], sel.marinePrimaryRgb[2] };
     const float sec[3] = { sel.marineSecondaryRgb[0], sel.marineSecondaryRgb[1], sel.marineSecondaryRgb[2] };
     const float c3[3] = { sel.marineThirdRgb[0], sel.marineThirdRgb[1], sel.marineThirdRgb[2] };
@@ -3187,6 +3071,7 @@ void ReachArmory::SyncMarine() {
             int count = 0;
             const int before = MarinePermByteSEH(base, unit, ri, &count);
             NOBLE_INFO("MarineArmor: PERMLOG helmet region {} of {}: stored perm byte {} (read before this frame's apply)", ri, count, before);
+            // Diagnostic kept while the Trooper Firefight pieces are open (with NOBLE_MARINE_TEST and NOBLE_MARINE_WATCH).
         }
     }
     if (std::getenv("NOBLE_MARINE_WATCH")) {   // dev: who rewrites the helmet piece? (see MarineWatchVeh)
@@ -3210,35 +3095,18 @@ void ReachArmory::SyncMarine() {
         s_simMarineUnit = unit;
         s_simMarinePairs = pairs;
     }
-    s_simHelmetSid.store(sid("helmet")); s_simBackpackSid.store(sid("flair_backpack"));
-    s_simMarineTicks.store(s_hold ? 1000000 : 60);
+    s_simMarineTicks.store(60);
     uint8_t results[16] = {};
-    // Dev (2026-11-13): env NOBLE_MARINE_VARIANT=<model variant> runs object_set_variant first, on the first apply tick.
-    static const char* s_variant = std::getenv("NOBLE_MARINE_VARIANT");
-    const uint32_t variantSid = (s_variant && s_ticksLeft == 29) ? sid(s_variant) : 0u;
-    // Pieces: simulation thread (NotifyMatchTick). Here only colours, unless the dev switch NOBLE_MARINE_RENDERAPPLY.
-    static const bool s_renderApply = std::getenv("NOBLE_MARINE_RENDERAPPLY") != nullptr;
-    if (std::getenv("NOBLE_MARINE_REFRESH")) MarineRefreshSEH(base, unit);
-    const bool ok = MarineApplySEH(base, unit, pairs.data(), s_renderApply ? pairs.size() / 2 : 0, sel.marineColors ? pri : nullptr,
-                                   sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr, results, variantSid);
+    // Pieces: simulation thread (NotifyMatchTick). Here (render thread) only the colours.
+    const bool ok = MarineApplySEH(base, unit, pairs.data(), 0, sel.marineColors ? pri : nullptr,
+                                   sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr, results, 0);
     if (std::getenv("NOBLE_MARINE_PERMLOG")) {   // dev: the same byte right after this frame's apply
         static ULONGLONG s_nextLog2 = 0;
         const ULONGLONG t = GetTickCount64();
         if (t >= s_nextLog2) {
             s_nextLog2 = t + 1000;
             const int ri = MarineRegionIndexSEH(base, unit, sid("helmet"));
-            NOBLE_INFO("MarineArmor: PERMLOG helmet byte right after the apply: {} (hook re-applies so far: {})", MarinePermByteSEH(base, unit, ri, nullptr), s_marineHookCalls.load());
-        }
-    }
-    if (std::getenv("NOBLE_MARINE_ALL")) {
-        uint32_t hits[16] = {}; uint8_t types[16] = {};
-        const int n = MarineApplyAllSEH(base, sid("helmet"), sid("flair_backpack"), pairs.data(), pairs.size() / 2, hits, types, 16);
-        static int s_lastN = -999;
-        if (n != s_lastN) {
-            s_lastN = n;
-            std::string list;
-            for (int k = 0; k < n && k < 16; ++k) { char buf[40]; snprintf(buf, sizeof(buf), " 0x%08X(type %u)", hits[k], types[k]); list += buf; }
-            NOBLE_INFO("MarineArmor: ALL -> {} marine-model object(s):{} (player unit 0x{:08X})", n, list, unit);
+            NOBLE_INFO("MarineArmor: PERMLOG helmet byte right after the apply: {}", MarinePermByteSEH(base, unit, ri, nullptr));
         }
     }
     if (s_ticksLeft == 29) {
@@ -3341,55 +3209,7 @@ void ReachArmory::TickFlashlight() {
     }
 }
 
-static uint32_t TagDatumForIndexSEH(uintptr_t base, uint32_t id) {
-    __try {
-        const uint8_t* tagTable = *reinterpret_cast<const uint8_t* const*>(base + 0xC1A600);
-        if (!tagTable) return 0xFFFFFFFFu;
-        const uint16_t salt = *reinterpret_cast<const uint16_t*>(tagTable + static_cast<size_t>(id) * 8u + 2);
-        return (static_cast<uint32_t>(salt) << 16) | id;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0xFFFFFFFFu;
-    }
-}
-
-// Dev (2026-11-13): "-spawn-test <seconds> <tagId>[,<tagId>...]": in a match, after <seconds>, queue a Forge spawn of each
-// tag (by tag index; the datum's salt is read from the live tag table) one per second. Proves new Forge palette items.
-static void DevSpawnTestTick() {
-    static int s_state = -1;   // -1 not parsed, 0 off, 1 armed
-    static ULONGLONG s_at = 0;
-    static std::vector<uint32_t> s_ids;
-    static size_t s_next = 0;
-    if (s_state < 0) {
-        s_state = 0;
-        int argc = 0;
-        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        for (int i = 1; argv && i + 2 < argc; ++i) {
-            if (_wcsicmp(argv[i], L"-spawn-test") == 0) {
-                s_at = GetTickCount64() + static_cast<ULONGLONG>(_wtoi(argv[i + 1])) * 1000ull;
-                std::wstring list = argv[i + 2];
-                size_t p = 0;
-                while (p < list.size()) {
-                    size_t q = list.find(L',', p); if (q == std::wstring::npos) q = list.size();
-                    s_ids.push_back(static_cast<uint32_t>(_wtoi(list.substr(p, q - p).c_str())));
-                    p = q + 1;
-                }
-                s_state = 1;
-            }
-        }
-        if (argv) LocalFree(argv);
-    }
-    if (s_state != 1 || s_next >= s_ids.size() || GetTickCount64() < s_at) return;
-    s_at = GetTickCount64() + 1000;
-    const uint32_t id = s_ids[s_next++];
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
-    if (!hReach) return;
-    const uint32_t datum = TagDatumForIndexSEH(reinterpret_cast<uintptr_t>(hReach), id);
-    NOBLE_INFO("SpawnTest: tag index {} -> datum 0x{:08X}", id, datum);
-    if (datum != 0xFFFFFFFFu) SharedTagCache::QueueSpawn(datum, "spawn-test");
-}
-
 void ReachArmory::NotifyMatchTick() {
-    DevSpawnTestTick();
     if (s_simMarineTicks.load(std::memory_order_relaxed) <= 0) return;
     s_simMarineTicks.fetch_sub(1);
     uint32_t unit; std::vector<uint32_t> pairs;
@@ -3402,14 +3222,6 @@ void ReachArmory::NotifyMatchTick() {
     if (!hReach) return;
     MarineApplySEH(reinterpret_cast<uintptr_t>(hReach), unit, pairs.data(), pairs.size() / 2, nullptr, nullptr, nullptr, nullptr,
                    nullptr, 0);
-    static const bool s_all = std::getenv("NOBLE_MARINE_ALL") != nullptr;   // dev: every marine-model object, sim thread
-    if (s_all) {
-        uint32_t hits[16] = {}; uint8_t types[16] = {};
-        const int n = MarineApplyAllSEH(reinterpret_cast<uintptr_t>(hReach), s_simHelmetSid.load(), s_simBackpackSid.load(),
-                                        pairs.data(), pairs.size() / 2, hits, types, 16);
-        static int s_lastN = -999;
-        if (n != s_lastN) { s_lastN = n; NOBLE_INFO("MarineArmor: sim ALL -> {} marine-model object(s)", n); }
-    }
     if (s_simMarineApplied.fetch_add(1) == 0) NOBLE_INFO("MarineArmor: pieces applied on the simulation thread (thread {})", GetCurrentThreadId());
 }
 
