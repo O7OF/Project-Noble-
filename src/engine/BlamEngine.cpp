@@ -85,6 +85,8 @@ std::mutex s_candidateMutex;
 void* s_variantCandidates[kMaxVariantCandidates] = {};
 int s_variantCandidateCount = 0;
 std::atomic<bool> s_armVariantCapture{ false };
+std::atomic<void*> s_lastLiveVariantSource{ nullptr };
+std::atomic<void*> s_lastCopyVariantSource{ nullptr };
 
 void RecordVariantCandidate(void* pointer) {
     if (!pointer || !s_armVariantCapture.load(std::memory_order_relaxed)) return;
@@ -100,6 +102,9 @@ CopyMapVariantFn s_origCopyMapVariant = nullptr;
 
 void HookCopyMapVariant(void* dst, void* src, long long mode, void* extra) {
     if (s_origCopyMapVariant) s_origCopyMapVariant(dst, src, mode, extra);
+    if (src && mode == 0) {
+        s_lastCopyVariantSource.store(src, std::memory_order_release);
+    }
     RecordVariantCandidate(src);
 }
 
@@ -108,6 +113,9 @@ GetVariantSourceFn s_origGetVariantSource = nullptr;
 
 void* HookGetVariantSource() {
     void* source = s_origGetVariantSource ? s_origGetVariantSource() : nullptr;
+    if (source) {
+        s_lastLiveVariantSource.store(source, std::memory_order_release);
+    }
     RecordVariantCandidate(source);
     return source;
 }
@@ -268,78 +276,63 @@ bool CallMapVariantSerialize(HMODULE module, void* out, void* variant) {
 bool BlamEngine::TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk) {
     if (!m_hModule) return false;
 
-    // The engine's own save path asks 0x6BCEC for the live variant; calling it directly avoids both the save
-    // routine and the TLS walk, and works from the pause menu.
-    if (void* source = CallGetVariantSource(m_hModule)) {
-        std::vector<uint8_t> chunk(0x7028, 0);
-        if (CallMapVariantSerialize(m_hModule, chunk.data(), source)) {
-            const auto be32 = [](const uint8_t* p) {
-                return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
-                       (static_cast<uint32_t>(p[2]) << 8) | p[3];
-            };
-            if (std::memcmp(chunk.data(), "mvar", 4) == 0 && be32(chunk.data() + 4) == 0x7028) {
-                const uint32_t packed = be32(chunk.data() + 0x20);
-                if (packed > 0 && packed <= 0x7000) {
-                    NOBLE_INFO("BlamEngine: serialized the live variant from the engine getter at {:p} ({} packed bytes)",
-                               source, packed);
-                    outChunk = std::move(chunk);
-                    return true;
-                }
-            }
-        }
-    }
-    DWORD tlsIndex = 0;
-    if (!ReadModuleTlsIndex(m_hModule, tlsIndex)) {
-        NOBLE_WARN("BlamEngine: haloreach.dll has no TLS directory");
-        return false;
-    }
-    void* tlsBlock = nullptr;
-    if (!ReadTlsBlock(tlsIndex, tlsBlock) || !tlsBlock) return false;
-    void* engineState = nullptr;
-    if (!ReadEngineState(tlsBlock, engineState) || !engineState) return false;
-
-    void* variant = static_cast<uint8_t*>(engineState) + 0x110F0;
-    std::vector<uint8_t> chunk(0x7028, 0);
-    uint32_t rawPacked = 0;
-    if (CallMapVariantSerialize(m_hModule, chunk.data(), variant) && std::memcmp(chunk.data(), "mvar", 4) == 0) {
-        rawPacked = (static_cast<uint32_t>(chunk[0x20]) << 24) | (static_cast<uint32_t>(chunk[0x21]) << 16) |
-                    (static_cast<uint32_t>(chunk[0x22]) << 8) | chunk[0x23];
-    }
-
-    // What the engine's own save does before serializing: initialise a map-variant struct and copy the live one into
-    // it. Log both lengths: if they match, the copy is a no-op and the placements live somewhere else entirely.
-    std::vector<uint8_t> committed(0x20000, 0);
-    const bool initOk = CallVariantInit(m_hModule, committed.data());
-    const bool copyOk = initOk && CallVariantCopy(m_hModule, committed.data(), variant, 1);
-    uint32_t committedPacked = 0;
-    if (copyOk && CallMapVariantSerialize(m_hModule, chunk.data(), committed.data()) &&
-        std::memcmp(chunk.data(), "mvar", 4) == 0) {
-        committedPacked = (static_cast<uint32_t>(chunk[0x20]) << 24) | (static_cast<uint32_t>(chunk[0x21]) << 16) |
-                          (static_cast<uint32_t>(chunk[0x22]) << 8) | chunk[0x23];
-    }
-    NOBLE_INFO("BlamEngine: live variant probe: raw {} bytes, committed {} bytes (init {}, copy {})", rawPacked,
-               committedPacked, initOk, copyOk);
-    if (committedPacked == 0) {
-        if (rawPacked == 0) return false;
-        if (!CallMapVariantSerialize(m_hModule, chunk.data(), variant)) return false;
-    }
-
     const auto be32 = [](const uint8_t* p) {
         return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
                (static_cast<uint32_t>(p[2]) << 8) | p[3];
     };
-    if (std::memcmp(chunk.data(), "mvar", 4) != 0 || be32(chunk.data() + 4) != 0x7028) {
-        NOBLE_WARN("BlamEngine: live variant at {:p} did not serialize to an mvar chunk", variant);
-        return false;
+
+    const auto trySerializeSource = [&](void* src, int copyFlags, const char* label) -> bool {
+        if (!src) return false;
+        std::vector<uint8_t> chunk(0x7028, 0);
+        std::vector<uint8_t> committed(0x20000, 0);
+        const bool initOk = CallVariantInit(m_hModule, committed.data());
+        const bool copyOk = initOk && CallVariantCopy(m_hModule, committed.data(), src, copyFlags);
+        uint32_t packed = 0;
+        if (copyOk && CallMapVariantSerialize(m_hModule, chunk.data(), committed.data()) &&
+            std::memcmp(chunk.data(), "mvar", 4) == 0 && be32(chunk.data() + 4) == 0x7028) {
+            packed = be32(chunk.data() + 0x20);
+        }
+        if (packed == 0 || packed > 0x7000) {
+            std::fill(chunk.begin(), chunk.end(), uint8_t{0});
+            if (!CallMapVariantSerialize(m_hModule, chunk.data(), src) ||
+                std::memcmp(chunk.data(), "mvar", 4) != 0 || be32(chunk.data() + 4) != 0x7028) {
+                return false;
+            }
+            packed = be32(chunk.data() + 0x20);
+        }
+        if (packed == 0 || packed > 0x7000) return false;
+        NOBLE_INFO("BlamEngine: serialized live map variant from {} at {:p} ({} packed bytes, copyFlags={}, init={}, copy={})",
+                   label, src, packed, copyFlags, initOk, copyOk);
+        outChunk = std::move(chunk);
+        return true;
+    };
+
+    // Match haloreach.dll's MapVariantSave (0x156974): when a map is loaded in Forge mode,
+    // CallGetVariantSource (0x6BCEC) returns tls[0x290]+0x308 (the live sandbox variant), which
+    // must be copied into a fresh variant struct with copyFlags=0 before serializing.
+    // TrySerializeLiveMapVariant usually runs on the DX11 Present thread where tls[0x290] is null,
+    // so check the live source pointer captured from the simulation thread's HookGetVariantSource first.
+    if (void* source = CallGetVariantSource(m_hModule)) {
+        if (trySerializeSource(source, 0, "CallGetVariantSource")) return true;
     }
-    const uint32_t packed = be32(chunk.data() + 0x20);
-    if (packed == 0 || packed > 0x7000) {
-        NOBLE_WARN("BlamEngine: live variant serialized with implausible packed length {}", packed);
-        return false;
+    if (void* source = s_lastLiveVariantSource.load(std::memory_order_acquire)) {
+        if (trySerializeSource(source, 0, "HookGetVariantSource")) return true;
     }
-    NOBLE_INFO("BlamEngine: serialized live map variant at {:p} ({} packed bytes)", variant, packed);
-    outChunk = std::move(chunk);
-    return true;
+    if (void* source = s_lastCopyVariantSource.load(std::memory_order_acquire)) {
+        if (trySerializeSource(source, 0, "HookCopyMapVariant")) return true;
+    }
+
+    DWORD tlsIndex = 0;
+    void* tlsBlock = nullptr;
+    void* engineState = nullptr;
+    if (ReadModuleTlsIndex(m_hModule, tlsIndex) && ReadTlsBlock(tlsIndex, tlsBlock) && tlsBlock &&
+        ReadEngineState(tlsBlock, engineState) && engineState) {
+        void* variant = static_cast<uint8_t*>(engineState) + 0x110F0;
+        if (trySerializeSource(variant, 1, "engineState+0x110F0")) return true;
+    }
+
+    NOBLE_WARN("BlamEngine: failed to serialize live map variant");
+    return false;
 }
 
 namespace {
@@ -1227,9 +1220,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                         }
                     }
                     memcpy(&block[0x1D308], parsedVariant.data(), 0xE800);
-                    uint32_t mvarMapId = *reinterpret_cast<uint32_t*>(&block[0x1D5C0]);
-                    *reinterpret_cast<uint32_t*>(&block[0x10]) = mvarMapId;
-                    *reinterpret_cast<uint32_t*>(&block[0x14]) = mvarMapId;
+                    uint32_t mvarMapId = *reinterpret_cast<uint32_t*>(&block[0x1D5BC]);
                     NOBLE_INFO("BlamEngine: Custom map variant parsed successfully. Target MapId: {}", mvarMapId);
                 } else {
                     NOBLE_WARN("BlamEngine: Failed to parse map variant header (status=0x{:X})", status);
@@ -1447,6 +1438,8 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                            const std::string& connectAddress, int expectedPeers) {
     // A fresh launch starts with no remote players in membership; the host's Command 11 barrier counts msg 27s.
     noble::LobbyPatches::ResetRemotePlayerJoined();
+    s_lastLiveVariantSource.store(nullptr, std::memory_order_release);
+    s_lastCopyVariantSource.store(nullptr, std::memory_order_release);
     if (!m_isInitialized || !m_engineInstance) return false;
 
     m_currentMap = mapName;
@@ -1768,6 +1761,8 @@ bool BlamEngine::DumpGameVariant(const std::string& path) {
 
 void BlamEngine::Shutdown() {
     if (s_active == this) s_active = nullptr;
+    s_lastLiveVariantSource.store(nullptr, std::memory_order_release);
+    s_lastCopyVariantSource.store(nullptr, std::memory_order_release);
     if (!m_isInitialized) return;
 
     NOBLE_INFO("Shutting down Blam! engine network transport...");

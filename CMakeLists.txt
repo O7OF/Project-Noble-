@@ -197,7 +197,6 @@ set(SOURCES
     src/ui/LoadScreen.cpp
     src/ui/PauseMenu.cpp
     src/ui/SocialOverlay.cpp
-    src/ui/ForgeMenu.cpp
     src/ui/DevMenu.cpp
     src/ui/FrontEndMenu.cpp
     src/ui/NobleStyle.cpp

@@ -11,7 +11,6 @@
 #include "hooks/EnginePatches.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
-#include "ui/ForgeMenu.hpp"
 #include "ui/DevMenu.hpp"
 #include "network/AuthClient.hpp"
 #include "career/Career.hpp"
@@ -709,15 +708,10 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
             }
         }
         if (!loading) EndRoundForTest();
-        ForgeMenu::Tick(loading);
         std::function<void()> overlayFunc;
         const bool devOpen = DevMenu::IsOpen() && !PauseMenu::IsOpen() && !PauseMenu::IsGameOver();
-        const bool forgeOpen = ForgeMenu::IsOpen() && !PauseMenu::IsOpen() && !PauseMenu::IsGameOver();
-        if (devOpen || forgeOpen) {
-            overlayFunc = [devOpen, forgeOpen] {
-                if (forgeOpen) ForgeMenu::DrawOverlay();
-                if (devOpen) DevMenu::Draw();
-            };
+        if (devOpen) {
+            overlayFunc = [] { DevMenu::Draw(); };
         }
         PauseMenu::Render(swapChain, loading, overlayFunc);  // overlays on top, unaffected by gamma
         if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
@@ -1681,17 +1675,54 @@ using UiScreenFn = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t)
 static UiScreenFn s_origUiScreen = nullptr;
 static std::atomic<ULONGLONG> s_uiScreenLastTick{0};
 
-static uint64_t __fastcall UiScreenHook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    s_uiScreenLastTick.store(GetTickCount64(), std::memory_order_relaxed);
-    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
-        auto* w = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A90);
-        auto* h = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A94);
-        if (*w == 0 || *h == 0) {
-            *w = 1920;
-            *h = 1080;
+static void EnsureUiDimensions(HMODULE reach) {
+    if (!reach) return;
+    auto* engineHwndPtr = reinterpret_cast<HWND*>(reinterpret_cast<uint8_t*>(reach) + 0xC1A188);
+    if (*engineHwndPtr == nullptr) {
+        if (HWND own = noble::Window::ActiveHwnd()) {
+            *engineHwndPtr = own;
         }
     }
+    auto* w = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A90);
+    auto* h = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A94);
+    if (*w == 0 || *h == 0) {
+        *w = 1920;
+        *h = 1080;
+    }
+    static bool s_loggedUiDims = false;
+    if (!s_loggedUiDims) {
+        s_loggedUiDims = true;
+        RECT rc{};
+        if (*engineHwndPtr) GetClientRect(*engineHwndPtr, &rc);
+        NOBLE_INFO("ReachHost [UI cursor]: engineHwnd=0x{:X} activeHwnd=0x{:X} uiDims={}x{} client={}x{}",
+                   reinterpret_cast<uintptr_t>(*engineHwndPtr),
+                   reinterpret_cast<uintptr_t>(noble::Window::ActiveHwnd()),
+                   *w, *h, rc.right, rc.bottom);
+    }
+}
+
+static uint64_t __fastcall UiScreenHook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    s_uiScreenLastTick.store(GetTickCount64(), std::memory_order_relaxed);
+    EnsureUiDimensions(GetModuleHandleW(L"haloreach.dll"));
     return s_origUiScreen(a1, a2, a3, a4);
+}
+
+// Widget mouse-move/hit-test routine (checks *(uint32_t*)(a3 + 8) == 0x1E for pointer events,
+// reads GetCursorPos/ScreenToClient/GetClientRect, scales by 0xB43A90/0xB43A94, and dispatches vtable[0xB0]).
+// Hooking this keeps s_uiScreenLastTick alive on all Reach UI screens including the native Forge palette.
+static constexpr uintptr_t kWidgetMouseInputRva = 0x34E774;
+using WidgetMouseInputFn = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
+static WidgetMouseInputFn s_origWidgetMouseInput = nullptr;
+
+static uint64_t __fastcall HookWidgetMouseInput(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    if (a3 != 0) {
+        uint32_t eventType = 0;
+        if (SafeCopyMemory(&eventType, reinterpret_cast<const void*>(a3 + 8), sizeof(eventType)) && eventType == 0x1E) {
+            s_uiScreenLastTick.store(GetTickCount64(), std::memory_order_relaxed);
+            EnsureUiDimensions(GetModuleHandleW(L"haloreach.dll"));
+        }
+    }
+    return s_origWidgetMouseInput(a1, a2, a3, a4);
 }
 
 // In container mode (-container-hwnd), haloreach.dll's g_hwnd (haloreach+0xC1A188) is a WS_CHILD
@@ -1782,6 +1813,17 @@ static void EnsureUiCursorHook() {
     if (HookManager::InstallHook(target, reinterpret_cast<void*>(&UiScreenHook),
                                  reinterpret_cast<void**>(&s_origUiScreen), "ui_cursor_screen")) {
         NOBLE_INFO("ReachHost [UI cursor]: screen hook installed");
+    }
+    uint8_t* widgetTarget = reinterpret_cast<uint8_t*>(reach) + kWidgetMouseInputRva;
+    static const uint8_t kWidgetPrologue[5] = { 0x40, 0x55, 0x53, 0x56, 0x57 };  // push rbp; push rbx; push rsi; push rdi
+    uint8_t widgetCurrent[5] = {};
+    if (SafeCopyMemory(widgetCurrent, widgetTarget, sizeof(widgetCurrent)) && memcmp(widgetCurrent, kWidgetPrologue, sizeof(kWidgetPrologue)) == 0) {
+        if (HookManager::InstallHook(widgetTarget, reinterpret_cast<void*>(&HookWidgetMouseInput),
+                                     reinterpret_cast<void**>(&s_origWidgetMouseInput), "ui_widget_mouse_input")) {
+            NOBLE_INFO("ReachHost [UI cursor]: widget mouse-input hook installed");
+        }
+    } else {
+        NOBLE_WARN("ReachHost [UI cursor]: haloreach+0x{:X} does not match expected prologue; widget mouse hook skipped", kWidgetMouseInputRva);
     }
 }
 
@@ -1939,28 +1981,17 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
         s_pad = Settings::Get().Snapshot();
     }
     // The preset and the player's bindings decide every button, Start and Back included.
+    // Skip gameplay layout remapping while a Reach UI screen is active so BUTTON_B (0x2000) and
+    // menu navigation buttons pass straight through to the engine's UI handlers.
     WORD buttons = g.wButtons;
     uint8_t lt = g.bLeftTrigger, rt = g.bRightTrigger;
-    PadLayouts::Apply(s_pad.padLayout, buttons, lt, rt, &s_pad.padBindings, g.sThumbLX, g.sThumbLY, g.sThumbRX, g.sThumbRY, s_paddlesHeld);
+    if (!UiCursorActive()) {
+        PadLayouts::Apply(s_pad.padLayout, buttons, lt, rt, &s_pad.padBindings, g.sThumbLX, g.sThumbLY, g.sThumbRX, g.sThumbRY, s_paddlesHeld);
+    }
     const WORD pressed = static_cast<WORD>(buttons & ~s_lastButtons);
     s_lastButtons = buttons;
     if ((pressed & 0x0010) && !PauseMenu::IsGameOver()) PauseMenu::Toggle();
     if (!s_padMode) return;
-    // Controller shortcut: D-pad Left opens/closes the custom palette (monitor mode is enforced by Toggle).
-    if ((pressed & 0x0004) && !PauseMenu::IsGameOver()) {
-        ForgeMenu::Toggle();
-        buttons = static_cast<WORD>(buttons & ~0x0004);
-    }
-    if (ForgeMenu::IsOpen() && !PauseMenu::IsGameOver()) {
-        if (pressed & 0x2000) {
-            ForgeMenu::Close();
-            MenuSounds::Back();
-        }
-        buttons = 0;
-        lt = 0;
-        rt = 0;
-        return;
-    }
     // The scoreboard button shows Noble's panel, like the key: the engine never opens its own screen.
     if (buttons & 0x0020) {
         const int boardKey = KeyBindings::EffectiveKey(20);
@@ -2047,7 +2078,6 @@ static void FillLocalInput(uint8_t* st) {
     const bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     if (escDown && !s_escWasDown && !uiPointer && !PauseMenu::IsGameOver() && !SocialOverlay::OwnsEscape()) {
         if (DevMenu::IsOpen()) DevMenu::Close();
-        else if (ForgeMenu::IsOpen()) ForgeMenu::Close();
         else PauseMenu::Toggle();
     }
     s_escWasDown = escDown;
@@ -2060,16 +2090,10 @@ static void FillLocalInput(uint8_t* st) {
     }
     s_plusWasDown = plusDown;
 
-    // Insert / F3 opens/closes the custom palette; it never uses the native Forge menu's keys.
-    static bool s_insertWasDown = false;
-    const bool insertDown = ((GetAsyncKeyState(VK_INSERT) & 0x8000) != 0) || ((GetAsyncKeyState(VK_F3) & 0x8000) != 0);
-    if (insertDown && !s_insertWasDown && !uiPointer && !PauseMenu::IsGameOver()) ForgeMenu::Toggle();
-    s_insertWasDown = insertDown;
-
-    // While the pause menu, post-game panel, dev cheat menu or custom palette is up the game gets no keys or mouse, and the pointer is free.
+    // While the pause menu, post-game panel or dev cheat menu is up the game gets no keys or mouse, and the pointer is free.
     static bool s_holdMouseUntilRelease = false;
-    if (PauseMenu::WantsPointer() || DevMenu::WantsPointer() || ForgeMenu::WantsPointer() || SocialOverlay::IsTyping()) {
-        InputRelease(hwnd, SocialOverlay::IsTyping() ? "typing in chat" : DevMenu::WantsPointer() ? "dev cheat menu open" : ForgeMenu::WantsPointer() ? "Forge palette open" : (PauseMenu::IsGameOver() ? "post-game panel open" : "pause menu open"));
+    if (PauseMenu::WantsPointer() || DevMenu::WantsPointer() || SocialOverlay::IsTyping()) {
+        InputRelease(hwnd, SocialOverlay::IsTyping() ? "typing in chat" : DevMenu::WantsPointer() ? "dev cheat menu open" : (PauseMenu::IsGameOver() ? "post-game panel open" : "pause menu open"));
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
         s_holdMouseUntilRelease = true;
         return;

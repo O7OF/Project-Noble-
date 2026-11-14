@@ -1,6 +1,5 @@
 #include "audio/VoiceChat.hpp"
 #include "../engine/DevCheats.hpp"
-#include "ForgeMenu.hpp"
 #include "FrontEndMenu.hpp"
 #include "LoadScreen.hpp"
 #include "SocialOverlay.hpp"
@@ -508,6 +507,8 @@ static bool s_waitForRelease = true;
 static bool s_confirmRestart = false;
 static std::string s_saveMapVariantResult;   // shown under the SAVE MAP VARIANT row after a save
 static bool s_saveVariantOpen = false;      // the "name this map variant" box is up
+static bool s_saveVariantJustOpened = false;
+static bool s_saveVariantNeedsFocus = false;
 static char s_saveVariantName[64] = "My Forge Map";
 } // namespace
 
@@ -615,40 +616,18 @@ std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
         const bool captured = BlamEngine::Active() && BlamEngine::Active()->TrySerializeLiveMapVariant(liveChunk);
         if (BlamEngine::Active()) BlamEngine::Active()->ExecuteCommand("game_speed 0");
         if (captured) {
+            (void)noble::TakeForgePlacements();
             const fs::path tmpl = FindVariantTemplate(dataDir);
             if (!tmpl.empty()) {
-                // Apply the objects placed since the map loaded, using the captures taken at object_new.
-                std::vector<noble::mvar::WorldPlacement> placements = noble::TakeForgePlacements();
-                if (!placements.empty()) {
-                    noble::mvar::MapVariant base;
-                    std::string buildDetail;
-                    if (noble::mvar::BuildVariantFromChunk(liveChunk, tmpl, name, base, buildDetail)) {
-                        std::string applyError;
-
-                        const noble::mvar::TagPalette palette = LoadMapPalette(dataDir, base.header.mapId);
-                        const int added = noble::mvar::ApplyWorldPlacements(base, placements, palette, applyError);
-
-                        NOBLE_INFO("PauseMenu: {} placement(s) captured, {} encoded{}", placements.size(), added,
-
-                                   (added < static_cast<int>(placements.size()) && !applyError.empty()) ? ": " + applyError : std::string());
-                        std::error_code dirEc;
-                        std::filesystem::create_directories(library, dirEc);
-                        const fs::path placedOut = library / (noble::mvar::SanitizeVariantName(name) + ".json");
-                        std::string saveError;
-                        if (noble::mvar::SaveMapVariantJson(base, placedOut, name, saveError)) {
-                            NOBLE_INFO("PauseMenu: map variant '{}' saved with {} Forge placement(s) to '{}'", name, added,
-                                       placedOut.string());
-                            FrontEndMenu::InvalidateForgeMaps();
-                            return placedOut;
-                        }
-                        NOBLE_WARN("PauseMenu: placements could not be saved: {}", saveError);
-                    } else {
-                        NOBLE_WARN("PauseMenu: could not build the variant for placements: {}", buildDetail);
-                    }
-                }
                 std::string detail;
                 const fs::path out = noble::mvar::SaveVariantChunkToLibrary(liveChunk, tmpl, name, library, detail);
                 if (!out.empty()) {
+                    if (out.extension() == ".json") {
+                        fs::path staleMvar = out;
+                        staleMvar.replace_extension(".mvar");
+                        fs::remove(staleMvar, ec);
+                    }
+                    noble::SetSessionMapVariantPath(out);
                     NOBLE_INFO("PauseMenu: map variant '{}' saved from the live variant to '{}' (template '{}')", name,
                                out.string(), tmpl.string());
                     FrontEndMenu::InvalidateForgeMaps();
@@ -1198,6 +1177,8 @@ void PauseMenu::DrawMenu(HWND hwnd) {
             std::snprintf(s_saveVariantName, sizeof(s_saveVariantName), "%s", suggested.c_str());
         }
         s_saveVariantOpen = true;
+        s_saveVariantJustOpened = true;
+        s_saveVariantNeedsFocus = true;
         ImGui::OpenPopup("##save_map_variant");
     } else if (teamEntry >= 0 && activated == teamEntry) {
         ChangeLocalTeam();
@@ -1242,30 +1223,39 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     if (ImGui::BeginPopupModal("##save_map_variant", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
-        if (!ImGui::IsAnyItemActive() && ImGui::GetIO().Framerate > 0) {
-            // Focus on the first frame the box is up, so typing goes straight into the name.
-            static bool s_focused = false;
-            if (!s_focused) { ImGui::SetKeyboardFocusHere(); s_focused = true; }
-        }
         ImGui::TextUnformatted("MAP VARIANT NAME");
         ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
         ImGui::TextWrapped("Shown under its base map in the maps menu, for Custom Game and Forge.");
         ImGui::PopStyleColor();
         ImGui::Spacing();
+        if (s_saveVariantNeedsFocus) {
+            ImGui::SetKeyboardFocusHere(0);
+            s_saveVariantNeedsFocus = false;
+        }
         ImGui::InputText("##variant_name", s_saveVariantName, sizeof(s_saveVariantName));
         ImGui::Spacing();
         const bool typed = s_saveVariantName[0] != 0;
         const std::filesystem::path library = ReachHost::Get().GetDataDir() / "map_variants";
-        // The variant this session was launched with is what OVERWRITE updates; SAVE AS COPY always makes a new file.
-        const std::string currentName = noble::mvar::VariantTitle(noble::SessionMapVariantPath());
-        const bool canOverwrite = !currentName.empty();
+        // Only variants inside the user's map_variants library can be overwritten; stock MCC variants
+        // must be saved as a new copy.
+        const std::filesystem::path sessionPath = noble::SessionMapVariantPath();
+        std::error_code overEc;
+        const bool inUserLibrary = !sessionPath.empty() && std::filesystem::exists(sessionPath, overEc) &&
+            std::filesystem::equivalent(sessionPath.parent_path(), library, overEc);
+        std::string currentName = inUserLibrary ? noble::mvar::VariantTitle(sessionPath) : std::string{};
+        if (inUserLibrary && currentName.empty()) {
+            currentName = sessionPath.stem().string();
+        }
+        const bool canOverwrite = inUserLibrary && !currentName.empty();
         const auto finishSave = [](const std::filesystem::path& saved) {
             s_saveMapVariantResult = saved.empty() ? "Could not save the map variant (see the log)."
                                                    : "Saved: " + saved.filename().string();
             s_saveVariantOpen = false;
             ImGui::CloseCurrentPopup();
         };
-        if (typed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
+        if (s_saveVariantJustOpened) {
+            s_saveVariantJustOpened = false;
+        } else if (typed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
             MenuSounds::Click();
             finishSave(SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
         }
@@ -1274,22 +1264,27 @@ void PauseMenu::DrawMenu(HWND hwnd) {
             ImGui::TextWrapped("This map was not opened from a saved variant; use SAVE AS COPY.");
             ImGui::PopStyleColor();
         }
+        ImGui::BeginDisabled(!canOverwrite);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
         if (ImGui::Button("OVERWRITE", ImVec2(150.0f * s, 34.0f * s)) && canOverwrite) {
             MenuSounds::Click();
-            finishSave(SaveForgeMapVariant(currentName));
+            finishSave(SaveForgeMapVariant(sessionPath.stem().string()));
         }
         ImGui::PopStyleColor();
+        ImGui::EndDisabled();
         ImGui::SameLine();
+        ImGui::BeginDisabled(!typed);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
         if (ImGui::Button("SAVE AS COPY", ImVec2(170.0f * s, 34.0f * s)) && typed) {
             MenuSounds::Click();
             finishSave(SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
         }
         ImGui::PopStyleColor();
+        ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("CANCEL", ImVec2(120.0f * s, 34.0f * s)) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             MenuSounds::Back();
             s_saveVariantOpen = false;
             ImGui::CloseCurrentPopup();
@@ -3262,7 +3257,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   // the next frame resumes it, so online play keeps the old non-pausing behaviour.
   const size_t peers = NetworkTransport::Get().GetGamePeerCount();
   SetLocalSimulationPaused(open && !loading && !gameOver && peers == 0);
-  SocialOverlay::Poll(!open && !loading && !ForgeMenu::IsOpen());
+  SocialOverlay::Poll(!open && !loading);
   const bool showFps = Settings::Get().Snapshot().showFps;
   static const bool s_scoreboardTest = wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
   const int boardVk = KeyBindings::EffectiveKey(20);
@@ -3478,6 +3473,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     }
 
     UiPad::Feed(io);
+    // Keyboard/WM_CHAR events are already forwarded to ImGui by UIManager::HandleWndProc -> ImGui_ImplWin32_WndProcHandler.
     // Plain ImGui text (pause list, challenges, buttons, settings) uses the fonts' fixed 15-18 px. The front-end
     // menu scales it with the back buffer (FrontEndMenu sets this before its NewFrame); the match frame never did,
     // so on a 4K back buffer every pause-menu label drew at about half size inside full-size rows.

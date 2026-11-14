@@ -32,7 +32,6 @@
 #include "engine/SessionVariant.hpp"
 #include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
-#include "ui/ForgeMenu.hpp"
 #include "ui/FrontEndMenu.hpp"
 #include "ui/LoadScreen.hpp"
 #include "network/SessionManager.hpp"
@@ -1049,7 +1048,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Initialize ImGui UI Manager
     noble::UIManager::Initialize(window->GetHwnd(), renderer->GetDevice(), renderer->GetContext());
-    noble::ForgeMenu::Initialize(userStoragePath.wstring());
     window->SetCustomWndProc([](HWND h, UINT m, WPARAM w, LPARAM l) {
         return noble::UIManager::HandleWndProc(h, m, w, l);
     });
@@ -1750,11 +1748,6 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
 
     // Initialize Developer Cheats & Mod Menu engine hooks
     noble::DevCheats::Initialize(loader->GetModuleHandle());
-
-    // Wire Forge palette placement handler
-    noble::ForgeMenu::SetPlaceHandler([](const noble::ForgeMenu::Item& item) -> bool {
-        return noble::ForgePatches::PlaceObject(item.tag, item.tagIndex);
-    });
 
     // 9. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();

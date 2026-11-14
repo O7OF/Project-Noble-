@@ -1,5 +1,6 @@
 #include "mvar/MapVariantLibrary.hpp"
 
+#include "mvar/BitReader.hpp"
 #include "mvar/MapVariant.hpp"
 #include "mvar/MapVariantWriter.hpp"
 
@@ -22,6 +23,20 @@ void SetContainerTitle(std::vector<uint8_t>& bytes, const std::string& name) {
         bytes[kTitleOffset + i * 2] = static_cast<uint8_t>(name[i]);
         bytes[kTitleOffset + i * 2 + 1] = 0;
     }
+}
+
+bool TryReadEngineMvarChunkMapId(const std::vector<uint8_t>& chunk, uint32_t& outMapId) {
+    if (chunk.size() != 0x7028 || std::memcmp(chunk.data(), "mvar", 4) != 0) return false;
+    const uint32_t chunkSize = (static_cast<uint32_t>(chunk[4]) << 24) | (static_cast<uint32_t>(chunk[5]) << 16) |
+                               (static_cast<uint32_t>(chunk[6]) << 8) | chunk[7];
+    const uint32_t packedLen = (static_cast<uint32_t>(chunk[0x20]) << 24) | (static_cast<uint32_t>(chunk[0x21]) << 16) |
+                               (static_cast<uint32_t>(chunk[0x22]) << 8) | chunk[0x23];
+    if (chunkSize != 0x7028 || packedLen == 0 || packedLen > 0x7000) return false;
+
+    BitReader stream(chunk.data(), chunk.size());
+    stream.Seek(589); // fixed header bit offset before author/title/object/quota data
+    outMapId = static_cast<uint32_t>(stream.ReadBits(32));
+    return !stream.Overran() && outMapId != 0;
 }
 
 } // namespace
@@ -137,25 +152,29 @@ std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvar
     const std::string safe = SanitizeVariantName(name);
     SetContainerTitle(bytes, safe);
 
+    std::vector<uint8_t> containerBytes = bytes;
+    uint32_t mapId = 0;
     MapVariant variant = ReadMapVariantBytes(std::move(bytes), safe);
-    if (!variant.valid) {
+    if (variant.valid) {
+        containerBytes = std::move(variant.fileBytes);
+        mapId = variant.header.mapId;
+    } else if (!TryReadEngineMvarChunkMapId(mvarChunk, mapId)) {
         detail = "the assembled variant did not parse: " + variant.error;
         return {};
     }
 
     // The maps menu groups a variant by the base-map id in the chdr, while the engine loads the map and objects from
     // the mvar chunk. Writing the chunk's id over it keeps the two copies agreeing when the template is another map.
-    if (variant.fileBytes.size() > 0x70) {
-        const uint32_t mapId = variant.header.mapId;
-        variant.fileBytes[0x6C] = static_cast<uint8_t>(mapId & 0xFF);
-        variant.fileBytes[0x6D] = static_cast<uint8_t>((mapId >> 8) & 0xFF);
-        variant.fileBytes[0x6E] = static_cast<uint8_t>((mapId >> 16) & 0xFF);
-        variant.fileBytes[0x6F] = static_cast<uint8_t>((mapId >> 24) & 0xFF);
+    if (containerBytes.size() > 0x70) {
+        containerBytes[0x6C] = static_cast<uint8_t>(mapId & 0xFF);
+        containerBytes[0x6D] = static_cast<uint8_t>((mapId >> 8) & 0xFF);
+        containerBytes[0x6E] = static_cast<uint8_t>((mapId >> 16) & 0xFF);
+        containerBytes[0x6F] = static_cast<uint8_t>((mapId >> 24) & 0xFF);
     }
 
     // A variant created on a base map has no container of its own; use a shipped variant of the same base map so the
     // chdr (description, author, image) belongs to that map rather than to whichever template was passed in.
-    const int32_t baseMapId = static_cast<int32_t>(variant.header.mapId);
+    const int32_t baseMapId = static_cast<int32_t>(mapId);
     if (ReadBaseMapId(templateMvar) != baseMapId) {
         std::error_code searchEc;
         const std::filesystem::path folder = templateMvar.parent_path();
@@ -177,9 +196,7 @@ std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvar
             if (at == SIZE_MAX || at + 0x7028 > candidateBytes.size()) continue;
             std::memcpy(candidateBytes.data() + at, mvarChunk.data(), mvarChunk.size());
             SetContainerTitle(candidateBytes, safe);
-            MapVariant retry = ReadMapVariantBytes(std::move(candidateBytes), safe);
-            if (!retry.valid) continue;
-            variant = std::move(retry);
+            containerBytes = std::move(candidateBytes);
             break;
         }
     }
@@ -189,7 +206,7 @@ std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvar
     const std::filesystem::path out = directory / (safe + ".json");
     std::string error;
     // The chunk came from the engine's serializer: keep its bytes, hash and trailing padding exactly as written.
-    if (!SaveContainerJson(variant.fileBytes, variant.header.mapId, safe, out, error)) {
+    if (!SaveContainerJson(containerBytes, mapId, safe, out, error)) {
         detail = error;
         return {};
     }
