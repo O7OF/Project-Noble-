@@ -9,7 +9,7 @@ if(WIN32)
     set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
     set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
 endif()
-project(ProjectNoble VERSION 0.19.64 LANGUAGES C CXX)
+project(ProjectNoble VERSION 0.19.83 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -163,7 +163,6 @@ set(SOURCES
     src/engine/ReachHost.cpp
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
-    src/engine/TrooperMode.cpp
     src/engine/MvarDump.cpp
     src/engine/MemoryDiff.cpp
     src/engine/ForgePlacement.cpp
@@ -254,7 +253,6 @@ set(HEADERS
     src/engine/ReachHost.hpp
     src/engine/ReachArmory.hpp
     src/engine/ElitePack.hpp
-    src/engine/TrooperMode.hpp
     src/engine/SharedTagCache.hpp
     src/engine/DevCheats.hpp
     src/engine/CameraFov.hpp

@@ -1715,46 +1715,6 @@ bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount, int 
     return true;
 }
 
-// CAMPAIGN source tabs: VANILLA / TROOPER / MODDED. TROOPER lists the stock missions and starts them with the
-// player as a UNSC Marine (the menu equivalent of the -trooper launch flag); MODDED lists campaign mods.
-bool DrawCampaignTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount, float* tabsEnd = nullptr) {
-    const int tabs = 3;
-    if (active < 0 || active >= tabs) active = 0;
-    int next = active;
-    float x = pos.x;
-    for (int i = 0; i < tabs; ++i) {
-        char text[48];
-        if (i == 2) std::snprintf(text, sizeof(text), "MODDED (%d)", moddedCount);
-        else std::snprintf(text, sizeof(text), "%s", i == 0 ? "VANILLA" : "TROOPER");
-        const float w = TextWidth(NobleStyle::TitleFont(), 20.0f * ui.s, text) + 24.0f * ui.s;
-        const float h = 30.0f * ui.s;
-        ImGui::SetCursorScreenPos(ImVec2(x, pos.y));
-        ImGui::PushID("camptab");
-        ImGui::PushID(i);
-        if (ImGui::InvisibleButton("##t", ImVec2(w, h))) next = i;
-        const bool hovered = ImGui::IsItemHovered();
-        ImGui::PopID();
-        ImGui::PopID();
-        const bool on = active == i;
-        if (on) {
-            ui.dl->AddRectFilled(ImVec2(x, pos.y), ImVec2(x + w, pos.y + h), IM_COL32(60, 120, 170, 90));
-            ui.dl->AddRectFilled(ImVec2(x, pos.y + h - 2.0f * ui.s), ImVec2(x + w, pos.y + h), kAccent);
-        } else if (hovered) {
-            ui.dl->AddRectFilled(ImVec2(x, pos.y), ImVec2(x + w, pos.y + h), IM_COL32(255, 255, 255, 18));
-        }
-        Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(x + 12.0f * ui.s, pos.y + 4.0f * ui.s), on ? kWhite : kDim, text);
-        x += w + 6.0f * ui.s;
-    }
-    if (tabsEnd) *tabsEnd = x;
-    const bool typing = ImGui::GetIO().WantTextInput;   // Q and E are letters in a search box
-    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_Q, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) next = std::max(0, active - 1);
-    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_E, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) next = std::min(tabs - 1, active + 1);
-    if (next == active) return false;
-    MenuSounds::Tab(next > active ? 1 : -1);
-    active = next;
-    return true;
-}
-
 using InputPrompts::Prompt;
 
 // A button hint at the bottom (ESC Back, ENTER Select, ...) clicked with the mouse. Set by DrawHints,
@@ -3546,11 +3506,6 @@ struct OverlayContext {
     bool closed = false;
     void* hMatchProcess = nullptr;
     bool matchRunning = false;
-    // CAMPAIGN > TROOPER: an installed campaign mod whose maps carry a player-capable marine biped (the
-    // "Improved Trooper Campaign" style mods). The TROOPER tab launches with that mod's maps when present.
-    std::filesystem::path trooperModFolder;
-    std::string trooperModTitle;
-    bool trooperModScanned = false;
 };
 
 // The engine draws the menu scene and calls RenderOverlay from slot 1. MCC ships no Reach menu map,
@@ -3565,66 +3520,6 @@ OverlayContext& GetOverlayCtx() {
     static OverlayContext s_ctx;
     return s_ctx;
 }
-
-// True when a map file contains an ASCII token. Mod maps are uncompressed, so tag paths such as
-// "objects\characters\marine - copy\marineplayer2" appear as readable strings in them.
-static bool MapFileContains(const std::filesystem::path& file, const std::string& token) {
-    if (token.empty()) return false;
-    std::ifstream in(file, std::ios::binary);
-    if (!in) return false;
-    std::vector<char> buffer(1 << 20);
-    const size_t overlap = token.size() - 1;
-    std::string tail;
-    while (in) {
-        in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const size_t got = static_cast<size_t>(in.gcount());
-        if (got == 0) break;
-        std::string chunk;
-        chunk.reserve(tail.size() + got);
-        chunk += tail;
-        chunk.append(buffer.data(), got);
-        if (chunk.find(token) != std::string::npos) return true;
-        tail = chunk.size() > overlap ? chunk.substr(chunk.size() - overlap) : chunk;
-    }
-    return false;
-}
-
-// Campaign > Trooper: find an installed campaign mod whose maps ship a player-capable marine biped (like the
-// "Improved Trooper Campaign" workshop mod). Such a biped has its own player animation graph and health setup, so
-// the Marine's legs and shield HUD are correct without the built-in NPC-biped swap. Runs once, when the TROOPER
-// tab is opened: a map scan is not free, so it stays out of the menu start-up scan. Mods that name themselves
-// "trooper" are checked first; everything else is only scanned when none matched.
-static void EnsureTrooperModScanned(OverlayContext& ctx) {
-    if (ctx.trooperModScanned) return;
-    ctx.trooperModScanned = true;
-    auto firstCampaignMap = [](const ModEntry& mod) -> std::filesystem::path {
-        for (const ModMap& m : mod.campaign) {
-            if (!m.hasMapFile) continue;
-            const std::filesystem::path file = mod.folder / "maps" / (m.scenario + ".map");
-            if (std::filesystem::exists(file)) return file;
-        }
-        return {};
-    };
-    auto mentionsTrooper = [](const ModEntry& mod) {
-        std::string text = mod.title + " " + mod.description;
-        for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        return text.find("trooper") != std::string::npos;
-    };
-    auto check = [&](const ModEntry& mod) {
-        const std::filesystem::path file = firstCampaignMap(mod);
-        if (file.empty()) return false;
-        if (!MapFileContains(file, "marineplayer")) return false;
-        ctx.trooperModFolder = mod.folder;
-        ctx.trooperModTitle = mod.title;
-        NOBLE_INFO("Campaign > Trooper: using player-capable Marine assets from mod \"{}\" ({})", mod.title,
-                   file.string());
-        return true;
-    };
-    for (const ModEntry& mod : ctx.mods) if (mentionsTrooper(mod) && check(mod)) return;
-    for (const ModEntry& mod : ctx.mods) if (!mentionsTrooper(mod) && check(mod)) return;
-    NOBLE_INFO("Campaign > Trooper: no installed mod has player-capable Marine model; using the built-in swap");
-}
-
 
 // Rescans Workshop + data\mods and rebuilds the per-mode lists the setup screens use. Called at menu start
 // and again after the Download & Join prompt installs the lobby's mod.
@@ -7080,16 +6975,11 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     }
 
     case Screen::Campaign: {
-        const bool campaignTrooper = st.campaignSource == 1;
-        if (campaignTrooper) EnsureTrooperModScanned(ctx);
-        DrawTitle(ui, ImVec2(left, top), "CAMPAIGN", campaignTrooper ? "TROOPER" : "SOLO");
-        float campaignTabsEnd = 0.0f;
-        if (DrawCampaignTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
-                             static_cast<int>(ctx.campaignMods.size()), &campaignTabsEnd)) st.focusRow = 0;
-        const bool modded = st.campaignSource == 2;
-        // Keep the search box clear of the third tab (MODDED), which now sits where the box used to start.
-        const float searchX = std::max(left + 34.0f * ui.s + 240.0f * ui.s, campaignTabsEnd + 24.0f * ui.s);
-        if (DrawSearchBox(ui, "##mission_search", ImVec2(searchX, top + 70.0f * ui.s), 160.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
+        DrawTitle(ui, ImVec2(left, top), "CAMPAIGN", "SOLO");
+        if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
+                           static_cast<int>(ctx.campaignMods.size()))) st.focusRow = 0;
+        const bool modded = st.campaignSource == 1;
+        if (DrawSearchBox(ui, "##mission_search", ImVec2(left + 34.0f * ui.s + 240.0f * ui.s, top + 70.0f * ui.s), 160.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
         if (ImGui::IsItemActive()) st.focusRow = 0;
         const bool searching = st.mapSearch[0] != 0;
         const std::vector<MapEntry> missions = ListedMaps(modded, ctx.campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods, "m10", st.mapSearch);
@@ -7134,11 +7024,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const char* blurb = row ? row->blurb.c_str() : "";
         const float blurbH = BlurbBlockHeight(ui, pw, blurb);
         const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
-        const std::string kicker = mod ? "MOD: " + Upper(mod->title) : row && row->header ? std::string("MOD")
-            : campaignTrooper
-                ? (ctx.trooperModFolder.empty() ? std::string("HALO: REACH \xC2\xB7 TROOPER (BUILT-IN)")
-                                                : "TROOPER \xC2\xB7 " + Upper(ctx.trooperModTitle))
-                : std::string("HALO: REACH \xC2\xB7 CAMPAIGN");
+        const std::string kicker = mod ? "MOD: " + Upper(mod->title) : row && row->header ? std::string("MOD") : std::string("HALO: REACH \xC2\xB7 CAMPAIGN");
         float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, row ? row->scenario : "", kicker,
                              row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb,
                              row ? row->imageLarge : std::filesystem::path());
@@ -7197,7 +7083,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             if (st.focusRow > 0) st.focusRow = 0;
             else goBack(Screen::Main);
         }
-        DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Trooper / Modded" } });
+        DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
         break;
     }
 
@@ -8643,10 +8529,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     // -menu-tab also picks the VANILLA / MODDED source tab of the setup screens, so a test run can capture
     // the modded lists (long workshop names and descriptions) without clicking.
     switch (ctx.st.screen) {
-    case Screen::Campaign:
-        // -menu-tab 1 still opens the MODDED tab for captures; otherwise restore VANILLA / TROOPER.
-        ctx.st.campaignSource = startTab ? 2 : (Settings::Get().Snapshot().campaignTrooper ? 1 : 0);
-        break;
+    case Screen::Campaign:   ctx.st.campaignSource = startTab ? 1 : 0; break;
     case Screen::Firefight:  ctx.st.ffSource = startTab ? 1 : 0; break;
     case Screen::CustomGame: ctx.st.mpSource = startTab ? 1 : 0; break;
     case Screen::Forge:      ctx.st.forgeSource = startTab ? 1 : 0; break;
@@ -9072,22 +8955,9 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     d.lastPlayedDifficulty = choice.difficulty;
                     d.lastPlayedSkulls = choice.skulls;
                     d.lastPlayedMod = choice.modFolder.empty() ? std::string() : choice.modFolder.string();
-                    // Remember CAMPAIGN > TROOPER so CONTINUE and the next menu visit start in the same tab.
-                    d.campaignTrooper = (ctx.st.campaignSource == 1);
                     Settings::Get().Update(d);
                 }
                 std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
-                // CAMPAIGN > TROOPER: when an installed mod ships player-capable Marine assets, launch its maps like a
-                // modded campaign (the mod's biped has the player animation graph and shields); otherwise use the
-                // built-in -trooper NPC-biped swap.
-                if (choice.mode == "campaign" && ctx.st.campaignSource == 1) {
-                    EnsureTrooperModScanned(ctx);
-                    if (!ctx.trooperModFolder.empty()) {
-                        args += L" -mod \"" + ctx.trooperModFolder.wstring() + L"\"";
-                    } else {
-                        args += L" -trooper";
-                    }
-                }
                 // Forward the test-only capture hooks, so a harness that opened the menu can still photograph the
                 // match (the child is a fresh process with its own command line).
                 for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-scoreboard-demo", L"-scoreboard-demo-players", L"-postgame-role", L"-pad-script", L"-quit-after", L"-fake-pad", L"-fake-pad-amount", L"-capture-at" }) {

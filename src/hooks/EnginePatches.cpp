@@ -337,7 +337,24 @@ void EnginePatches::RecoverFromCutsceneSkip() {
   PauseMenu::CancelGameOver();
 }
 
+// The 0.19.82 merge added a "cutscene recovery" detour on cinematic_skip_stop_internal. It also fires while a
+// mission's opening cinematic runs: it stops the cinematic and dispatches cinematic_stop/camera/HUD/fade commands
+// while the intro script still owns the player, which spawned the player out of bounds with input locked
+// (reproduced on m20, 2026-11-14). Off by default; NOBLE_CUTSCENE_RECOVERY=1 re-enables it for testing.
+bool EnginePatches::CutsceneRecoveryEnabled() {
+    static const bool enabled = [] {
+        wchar_t value[8] = {};
+        return GetEnvironmentVariableW(L"NOBLE_CUTSCENE_RECOVERY", value, 8) > 0 && value[0] != L'0';
+    }();
+    return enabled;
+}
+
 void EnginePatches::OnFrameTick() {
+  // Only the short post-skip pump runs by default. The continuous fade wipe below stays behind
+  // NOBLE_CUTSCENE_RECOVERY=1: wiping every frame while the renderer holds a fade makes the picture
+  // flash (visible on campaign transitions), and it is not needed once campaign launches on Stock.
+  if (!CutsceneRecoveryEnabled() && s_cutsceneRecoveryFrames.load() <= 0)
+    return;
   uintptr_t reachBase =
       s_baseAddress
           ? s_baseAddress
@@ -345,11 +362,14 @@ void EnginePatches::OnFrameTick() {
   if (!reachBase)
     return;
 
-  // Active recovery pumping
+  // Active recovery pumping (set by the skip detour: 90 frames of fade clearing).
   if (s_cutsceneRecoveryFrames.load() > 0) {
     s_cutsceneRecoveryFrames.fetch_sub(1);
     ClearRasterizerScreenFade(reachBase);
   }
+
+  if (!CutsceneRecoveryEnabled())
+    return;
 
   // Continuous safety: if cinematic is not in progress, never allow the
   // rasterizer screen fade to stay black
@@ -1059,7 +1079,10 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
     }
   }
 
-  // 9. Cutscene skip hook (RVA 0x1ADE80)
+  // 9. Cutscene skip hook (RVA 0x1ADE80). The detour always installs: it only clears the leftover screen
+  // fade and dismisses a false game-over (RecoverFromCutsceneSkip). The 0.19.82 command batch and the
+  // cinematic/camera TLS resets that broke mission intros are gone. NOBLE_CUTSCENE_RECOVERY=1 additionally
+  // enables the old continuous fade wipe and the input-side recovery (see CutsceneRecoveryEnabled).
   {
     uintptr_t skipStopAddr = baseAddress + 0x1ADE80;
     const uint8_t *p = reinterpret_cast<const uint8_t *>(skipStopAddr);
