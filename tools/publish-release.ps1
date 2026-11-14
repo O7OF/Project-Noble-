@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$Repo = 'O7OF/Project-Noble-',
     [string]$Version = '',
     [switch]$SkipBuild,
@@ -62,17 +62,16 @@ if (Test-Path (Join-Path $srcArmor 'rr_elite_pack.map')) {
     Write-Warning "data\armor\rr_elite_pack.map was not found to package"
 }
 
-# Copy the public Armory menu maps and their string_id tables into data\menumaps\.
-# - mainmenu_all.map: RR's public menu map (Armory scripts / GLOBALS tables / Spartan + Elite previews).
-# - noble_menu.map: Noble's rebuilt menu map. It embeds the campaign marine model and animation
-#   (hlmt/mode objects\characters\marine\marine plus its campaign shaders/bitmaps) and the
-#   objects\characters\marine\noble_menu_marine + marine_female\noble_menu_marine_female bipeds that the Armory's
-#   Marine tab previews. Without it a player without a Marine mod cannot customise a Marine in the menu.
+# Copy the Armory menu map and its string_id tables into data\menumaps\.
+# Only noble_menu.map is needed: it is the rebuilt menu map (Armory scripts / GLOBALS tables / Spartan, Elite,
+# Marine and Female Marine previews, with the campaign marine model and animation embedded). VFS serves it as
+# haloreach\maps\mainmenu.map and prefers it over mainmenu_all.map. Tested 2026-11-14 with mainmenu_all.map absent:
+# the Armory and the Marine tab work. mainmenu_all.map (285 MB) is no longer shipped.
 $srcMenuMaps = Join-Path $root 'data\menumaps'
 $relMenuMaps = Join-Path $release 'data\menumaps'
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\menumaps') | Out-Null
 $copiedMaps = @()
-foreach ($name in 'mainmenu_all.map', 'noble_menu.map') {
+foreach ($name in 'noble_menu.map') {
     $src = Join-Path $srcMenuMaps $name
     if (-not (Test-Path $src)) { $src = Join-Path $relMenuMaps $name }
     if (Test-Path $src) {
@@ -80,13 +79,11 @@ foreach ($name in 'mainmenu_all.map', 'noble_menu.map') {
         $copiedMaps += $name
     }
 }
-if ($copiedMaps -notcontains 'mainmenu_all.map') {
-    throw "missing mainmenu_all.map in data\menumaps (required for Armory in release zip)"
-}
 if ($copiedMaps -notcontains 'noble_menu.map') {
-    Write-Warning 'noble_menu.map is missing from the package: the Armory Marine tab needs it (players would need a Marine mod to customise a Marine)'
+    throw "missing noble_menu.map in data\menumaps (required for the Armory and the Marine previews in the release zip)"
 }
-# Loose string_id tables next to the maps (noble_menu.string_ids.csv is the newest table).
+# Loose string_id tables next to the maps (noble_menu.string_ids.csv is the one the Armory reads; the
+# mainmenu_all tables are kept because they are small and older installs may still reference them).
 foreach ($dir in $srcMenuMaps, $relMenuMaps) {
     if (-not (Test-Path $dir)) { continue }
     Get-ChildItem $dir -Filter '*.string_ids.csv' | ForEach-Object {

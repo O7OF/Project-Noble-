@@ -25,15 +25,11 @@ New-Item -ItemType Directory -Force -Path $destData | Out-Null
 & robocopy (Join-Path $release 'data') $destData /E /XD userdata autosave cache sandbox /XF appearance.dat settings.json career.json launch_block_1.bin lb_m_c_1.bin profile_1.bin *.log *.dmp *.tmp /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "robocopy failed ($LASTEXITCODE)" }
 
-foreach ($check in @('data\menumaps\mainmenu_all.map', 'data\menumaps\noble_menu.map', 'data\armor\rr_elite_pack.map')) {
-    if (-not (Test-Path (Join-Path $pkg $check))) {
-        if ($check -like '*noble_menu.map') {
-            Write-Warning 'noble_menu.map is missing: the Armory Marine tab needs it (players would need a Marine mod)'
-        } else {
-            throw "Package is missing $check"
-        }
-    }
+foreach ($check in @('data\menumaps\noble_menu.map', 'data\armor\rr_elite_pack.map')) {
+    if (-not (Test-Path (Join-Path $pkg $check))) { throw "Package is missing $check" }
 }
+# mainmenu_all.map is superseded by noble_menu.map (tested 2026-11-14: Armory + Marine tab work without it).
+Remove-Item (Join-Path $pkg 'data\menumaps\mainmenu_all.map') -Force -ErrorAction SilentlyContinue
 
 $zip = Join-Path $OutDir "$Name.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
