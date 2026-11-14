@@ -3,9 +3,13 @@
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
 #include "host/SlotPatch.hpp"
+#ifndef NOBLE_DEDICATED
 #include "network/NetworkTransport.hpp"
 #include "career/Career.hpp"
 #include "ui/PauseMenu.hpp"
+#include "EnginePatches.hpp"
+#include "engine/ReachHost.hpp"
+#endif
 #include <psapi.h>
 #include <vector>
 #include <string>
@@ -16,6 +20,31 @@
 #include <intrin.h>
 
 namespace noble {
+
+static bool IsNobleHost() {
+#ifdef NOBLE_DEDICATED
+    return true;
+#else
+    const bool isGuest = (wcsstr(GetCommandLineW(), L"-connect") != nullptr);
+    return !isGuest || NetworkTransport::Get().IsHost();
+#endif
+}
+
+static bool ShouldBlockPrematureEnd() {
+#ifdef NOBLE_DEDICATED
+    return false;
+#else
+    return noble::EnginePatches::ShouldBlockPrematureGameOver();
+#endif
+}
+
+static bool IsSessionActive() {
+#ifdef NOBLE_DEDICATED
+    return true;
+#else
+    return noble::ReachHost::IsSessionStarted();
+#endif
+}
 
 bool LobbyPatches::s_isApplied = false;
 uint32_t LobbyPatches::s_maxMultiplayerPlayers = 128; // Expanded 128 players for Custom Games / Forge
@@ -163,8 +192,9 @@ static void __fastcall Hook_SessionAbort(void* session, uint32_t reason) {
     uintptr_t caller = CallerRva(_ReturnAddress());
     NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::abort called: session=0x{:p}, reason={} (0x{:X}), caller hr+0x{:X}",
         RefuseRole(), GetCurrentProcessId(), session, reason, reason, caller);
-    if (s_campaignCoop.load() || (reason >= 0x05 && reason <= 0x28)) {
-        NOBLE_WARN("LobbyPatches: SUPPRESSED session abort reason 0x{:X} from hr+0x{:X} to keep co-op match running!", reason, caller);
+    const bool isHost = IsNobleHost();
+    if (isHost || s_campaignCoop.load() || (reason >= 0x05 && reason <= 0x28)) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED session abort reason 0x{:X} from hr+0x{:X} to keep host / match running!", reason, caller);
         return;
     }
     if (s_originalSessionAbort) {
@@ -374,20 +404,23 @@ static uint64_t __fastcall Hook_BootPeer(void* session, int32_t peerIndex, int32
     if (session) std::memcpy(&sessionState, static_cast<const uint8_t*>(session) + 0x60EF8, sizeof(sessionState));
     NOBLE_WARN("LobbyPatches: [{} pid {}] BOOT peer {} reason {} (session state {}) stack: {}", RefuseRole(),
                GetCurrentProcessId(), peerIndex, reason, sessionState, ReachStack());
-    // A campaign co-op host boots its guest with reason 9 a few seconds after both spawn (the guest's campaign
-    // progress does not match the host's, so the engine treats the peer as incompatible for network co-op) and the
-    // mission ends with "Error hosting co-op". Dropping that boot keeps both players in the mission; the engine
-    // re-evaluates it every frame, which is harmless once the peer stays. NOBLE_COOP_NO_KEEP_PEER=1 disables it.
-    static const bool keepCoopPeer = [] {
+    // Never allow the engine to boot the local host (peer 0)!
+    if (peerIndex == 0) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED engine boot of local host peer 0 (reason {})", reason);
+        return 0;
+    }
+
+    static const bool keepPeers = [] {
         wchar_t env[8] = {};
         return !(GetEnvironmentVariableW(L"NOBLE_COOP_NO_KEEP_PEER", env, 8) > 0 && env[0] != L'0');
     }();
-    // Suppress automatic engine peer boots during campaign/firefight co-op so peers are never dropped with "Error hosting co-op".
-    if (keepCoopPeer && s_campaignCoop.load()) {
+
+    const bool isHost = IsNobleHost();
+    // Suppress automatic engine peer boots during matches so peers are never dropped.
+    if (keepPeers && (isHost || s_campaignCoop.load())) {
         static std::atomic<int> logged{0};
-        if (logged.fetch_add(1) == 0) {
-            NOBLE_WARN("LobbyPatches: keeping guest peer {} in the co-op session (engine boot reason {}); "
-                       "further occurrences are not logged", peerIndex, reason);
+        if (logged.fetch_add(1) < 20) {
+            NOBLE_WARN("LobbyPatches: keeping peer {} in the session (engine boot reason {}); match stays alive", peerIndex, reason);
         }
         return 0;
     }
@@ -424,6 +457,10 @@ static void __fastcall Hook_GameFinish() {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME FINISH requested by hr+0x{:X} stack: {}", RefuseRole(), GetCurrentProcessId(),
                    CallerRva(_ReturnAddress()), ReachStack());
     }
+    if (ShouldBlockPrematureEnd()) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED premature GAME FINISH during cutscene / match startup!");
+        return;
+    }
 #ifndef NOBLE_DEDICATED   // client only: career save + game-over screen
     Career::EnsureMatchSaved("game_finish");
     PauseMenu::ShowGameOver();
@@ -440,6 +477,10 @@ static void __fastcall Hook_GameOver(int32_t reason) {
     if (s_gameOverLogCount.fetch_add(1) < 20) {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME OVER reason {} (0x{:X}) from hr+0x{:X}", RefuseRole(), GetCurrentProcessId(),
                    reason, reason, CallerRva(_ReturnAddress()));
+    }
+    if (ShouldBlockPrematureEnd()) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED premature GAME OVER (reason {}) during cutscene / match startup!", reason);
+        return;
     }
 #ifndef NOBLE_DEDICATED   // client only: career save + game-over screen
     Career::EnsureMatchSaved("game_over");
@@ -548,6 +589,15 @@ static TeamCountFn s_originalTeamCount = nullptr;
 static std::atomic<int> s_teamCountLogCount{0};
 static void __fastcall Hook_TeamCount(int32_t* a1, int32_t* alive, int32_t* teams) {
     if (s_originalTeamCount) s_originalTeamCount(a1, alive, teams);
+
+    // Keep at least 1 alive player and 1 team while the match is running to prevent false GameOver (0x7A61C)
+    if (alive && *alive <= 0 && IsSessionActive()) {
+        *alive = 1;
+    }
+    if (teams && *teams <= 0 && IsSessionActive()) {
+        *teams = 1;
+    }
+
     static int32_t lastA = -99, lastAlive = -99, lastTeams = -99;
     const int32_t a = a1 ? *a1 : -98, al = alive ? *alive : -98, tm = teams ? *teams : -98;
     if ((a != lastA || al != lastAlive || tm != lastTeams) && s_teamCountLogCount.fetch_add(1) < 40) {

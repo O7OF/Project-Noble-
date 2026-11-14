@@ -3886,7 +3886,7 @@ static void TakePendingLobbyEvents(MenuState& st) {
         ev = std::move(s_lobbyEvents);
         s_lobbyEvents = PendingLobbyEvents{};
     }
-    if (ev.closed) {
+    if (ev.closed && !st.isLobbyHost) {
         st.screen = Screen::Main;
         st.lobbySessionId.clear();
         st.lobbySessionToken.clear();
@@ -4009,6 +4009,7 @@ static void EnterLobby(OverlayContext& ctx, const ServerEntry& s, const std::str
             ctx.st.lobbyLaunchMap = state.launchMap.empty() ? state.map : state.launchMap;
             ctx.st.lobbyLaunchMode = state.launchMode.empty() ? state.mode : state.launchMode;
             ctx.st.lobbyLaunchVariant = state.launchVariant;
+            ctx.st.lobbyLaunchMapVariant = state.launchMapVariant;
             ctx.st.lobbyLaunchDiff = state.launchDifficulty;
             ctx.st.lobbyLaunchSkulls = state.launchSkulls;
             ctx.st.lobbyLaunchMapOverride = state.launchMapOverride;
@@ -6653,6 +6654,12 @@ namespace {
 // Starts a match process inside this launcher window and remembers it. The launcher is the only process
 // that starts matches in container mode (a match cannot replace itself: see Relaunch::HandOff).
 bool StartContainerChild(const std::wstring& args, OverlayContext& ctx) {
+    if (ctx.matchRunning && ctx.hMatchProcess) {
+        if (WaitForSingleObject(reinterpret_cast<HANDLE>(ctx.hMatchProcess), 0) == WAIT_TIMEOUT) {
+            NOBLE_WARN("FrontEndMenu: StartContainerChild ignored because a match process is already running");
+            return false;
+        }
+    }
     std::wstring full = args;
     if (full.find(L"-container-hwnd") == std::wstring::npos) {
         full += L" -container-hwnd " + std::to_wstring(reinterpret_cast<uintptr_t>(Window::ActiveHwnd()));
@@ -6720,7 +6727,7 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
     }
 
     const bool isLobbyReturn = successor.find(L"-lobby-return") != std::wstring::npos;
-    const bool isLeaveLobby = successor.empty() || successor == L"-leave-lobby";
+    const bool isLeaveLobby = successor.empty() || successor == L"-leave-lobby" || successor == L"-main-menu";
     if (!isLobbyReturn && !isLeaveLobby) {
         if (StartContainerChild(successor, ctx)) {
             NOBLE_INFO("FrontEndMenu: container match relaunched (the previous match exited with {})", exitCode);

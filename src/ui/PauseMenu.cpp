@@ -73,6 +73,9 @@ std::atomic<IDXGISwapChain *> s_swapChain{
 std::atomic<ULONGLONG> s_lastEngineFrame{
     0}; // GetTickCount64 of the last slot-1 frame
 std::atomic<ULONGLONG> s_gameOverAt{0};
+bool s_autoCancelled = false;
+double s_autoAt = 0.0;
+bool s_autoInited = false;
 std::mutex s_mapMutex;
 std::string s_loadingMap;
 std::string s_loadingMapName;
@@ -783,6 +786,15 @@ void PauseMenu::ShowGameOver() {
     s_gameOverAt.store(GetTickCount64());
     Window::TakeLeftClicks();
     NOBLE_INFO("PauseMenu: game over, showing post-game panel");
+  }
+}
+
+void PauseMenu::CancelGameOver() {
+  if (s_gameOver.exchange(false)) {
+    s_autoAt = 0.0;
+    s_autoCancelled = true;
+    s_autoInited = false;
+    NOBLE_INFO("PauseMenu: game over dismissed - gameplay resumed");
   }
 }
 
@@ -3034,20 +3046,10 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   // Auto-return / auto-advance countdown for host
   if (hostRole && t >= tEnd) {
     static const int s_autoSeconds = _wtoi(ArgValue(GetCommandLineW(), L"-lobby-playlist-auto").c_str());
-    static bool s_autoCancelled = false;
-    static double s_autoAt = 0.0;
-    static bool s_autoInited = false;
     if (!s_autoInited) {
       s_autoInited = true;
       if (s_autoSeconds > 0) {
         s_autoAt = ImGui::GetTime() + s_autoSeconds;
-      } else {
-        const std::wstring cmd = GetCommandLineW();
-        const std::wstring gameArgs = Relaunch::CurrentGameArgs();
-        const bool isParty = !ArgValue(cmd, L"-session-id").empty() || !ArgValue(gameArgs, L"-session-id").empty() || gameArgs.find(L"-wait-peers") != std::wstring::npos;
-        if (isParty) {
-          s_autoAt = ImGui::GetTime() + 25.0; // 25s auto-pull party back to lobby
-        }
       }
     }
     if (s_autoAt > 0.0 && !s_autoCancelled && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
@@ -3330,7 +3332,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   const double hostSilence = guest ? NetworkTransport::Get().SecondsSinceRemotePacket() : 0.0;
   static ULONGLONG s_lastStateCheck = 0;
   const ULONGLONG nowTick = GetTickCount64();
-  if (guest && hostSilence > 3.0 && nowTick - s_lastStateCheck > 1500) {
+  if (guest && hostSilence > 5.0 && nowTick - s_lastStateCheck > 2000) {
     s_lastStateCheck = nowTick;
     std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
     if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
@@ -3342,15 +3344,16 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         if (state.ok && !state.isClosed && !state.inProgress) {
           NOBLE_INFO("PauseMenu: host lobby poll shows inProgress=false, returning guest to pre-game lobby");
           s_guestShouldReturnLobby.store(true);
-        } else if (!state.ok || state.isClosed || hostSilence > 8.0) {
-          NOBLE_INFO("PauseMenu: host lobby poll shows closed/404 or host silence {:.1f}s, disbanding to main menu", hostSilence);
+        } else if ((state.ok && state.isClosed) || (!state.ok && hostSilence > 30.0)) {
+          NOBLE_INFO("PauseMenu: host lobby poll shows closed={} ok={} after {:.1f}s silence, disbanding to main menu",
+                     state.isClosed, state.ok, hostSilence);
           s_guestShouldDisband.store(true);
         }
       }).detach();
     }
   }
 
-  if (!loading && !open && !gameOver && guest && hostSilence > 8.0) {
+  if (!loading && !open && !gameOver && guest && hostSilence > 15.0) {
     if (!s_connectionLost) {
       s_connectionLost = true;
       NOBLE_WARN("PauseMenu: host connection lost ({:.1f}s without packets) - holding the match for host migration",

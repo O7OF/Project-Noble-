@@ -1528,9 +1528,9 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         noble::VFS::EnsureMultiplayerMapInfo(mapName);
     }
 
-    // Campaign co-op: keep the joining peer even when the engine decides its campaign progress is incompatible
+    // Campaign & Firefight co-op: keep joining peers even when the engine decides their progress is incompatible
     // (see LobbyPatches::Hook_BootPeer) - otherwise the mission ends with "Error hosting co-op".
-    noble::LobbyPatches::SetCampaignCoop(gameModeTag == 1);
+    noble::LobbyPatches::SetCampaignCoop(gameModeTag == 1 || gameModeTag == 1035);
 
     // Career pays by base type, so modded maps/variants earn exactly what their stock type earns.
     if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), mapName, difficulty, skulls);

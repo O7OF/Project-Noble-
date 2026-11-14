@@ -273,6 +273,7 @@ static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, 
 static void ExecuteGammaPass(IDXGISwapChain* swapChain);
 static void ResetGammaPass();
 static std::atomic<bool> s_sessionStarted{false};
+bool ReachHost::IsSessionStarted() { return s_sessionStarted.load(); }
 // Last time the engine pumped a frame; a stall watchdog (main.cpp, NOBLE_STALL_DUMP=1) reads this to dump the
 // thread stacks when the engine stops making progress without crashing.
 std::atomic<uint64_t> s_lastFrameTickMs{0};
@@ -710,7 +711,10 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
                 loading = true;
             }
         }
-        if (!loading) EndRoundForTest();
+        if (!loading) {
+            noble::EnginePatches::OnFrameTick();
+            EndRoundForTest();
+        }
         std::function<void()> overlayFunc;
         const bool devOpen = DevMenu::IsOpen() && !PauseMenu::IsOpen() && !PauseMenu::IsGameOver();
         if (devOpen) {
@@ -1993,6 +1997,11 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     }
     const WORD pressed = static_cast<WORD>(buttons & ~s_lastButtons);
     s_lastButtons = buttons;
+    if (noble::EnginePatches::CinematicInProgress()) {
+        if (pressed & (0x1000 | 0x2000 | 0x0010)) { // A, B, or Start
+            noble::EnginePatches::RecoverFromCutsceneSkip();
+        }
+    }
     if ((pressed & 0x0010) && !PauseMenu::IsGameOver()) PauseMenu::Toggle();
     if (!s_padMode) return;
     // The scoreboard button shows Noble's panel, like the key: the engine never opens its own screen.
@@ -2045,18 +2054,34 @@ void InjectTestSkipInput(uint8_t* st) {
     if (s_seconds < 0) {
         wchar_t value[16] = {};
         s_seconds = (GetEnvironmentVariableW(L"NOBLE_TEST_SKIP_CINEMATICS", value, 16) > 0) ? _wtoi(value) : 0;
-        s_start = GetTickCount64();
     }
     if (s_seconds <= 0) return;
+    if (!s_sessionStarted.load()) return;
+    if (s_start == 0) s_start = GetTickCount64();
     const ULONGLONG elapsed = GetTickCount64() - s_start;
-    if (elapsed < static_cast<ULONGLONG>(s_seconds) * 1000 && elapsed > 3000 && (elapsed % 2500) < 2000)
+    if (elapsed < static_cast<ULONGLONG>(s_seconds) * 1000 && elapsed > 2000 && (elapsed % 2500) < 2000) {
+        static bool s_logged = false;
+        if (!s_logged) {
+            s_logged = true;
+            NOBLE_INFO("ReachHost: InjectTestSkipInput - injecting VK_SPACE to skip cinematic (duration {} s)", s_seconds);
+        }
         st[0x004 + VK_SPACE] = 0x80;
+    }
 }
 
 static void FillLocalInput(uint8_t* st) {
     *reinterpret_cast<uint32_t*>(st + 0x000) = 1;
     *reinterpret_cast<float*>(st + 0x118) = 1.0f;
     InjectTestSkipInput(st);
+
+    // Cutscene skip check: when in a cinematic and player/test presses Space or Enter:
+    if (noble::EnginePatches::CinematicInProgress()) {
+        const bool spaceDown = (st[0x004 + VK_SPACE] != 0) || ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0);
+        const bool enterDown = (st[0x004 + VK_RETURN] != 0) || ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
+        if (spaceDown || enterDown) {
+            noble::EnginePatches::RecoverFromCutsceneSkip();
+        }
+    }
 
     if (SharedTagCache::HasPendingSpawn()) {
         SharedTagCache::ProcessPendingSpawn();
@@ -2188,6 +2213,16 @@ static void FillLocalInput(uint8_t* st) {
             s_keyDownSince[vk] = 0;
         }
         st[0x004 + vk] = v;
+    }
+    InjectTestSkipInput(st);
+
+    // Cutscene skip check: when in a cinematic and player presses Space or Enter:
+    if (noble::EnginePatches::CinematicInProgress()) {
+        const bool spaceDown = (st[0x004 + VK_SPACE] != 0) || ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0);
+        const bool enterDown = (st[0x004 + VK_RETURN] != 0) || ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
+        if (spaceDown || enterDown) {
+            noble::EnginePatches::RecoverFromCutsceneSkip();
+        }
     }
     {
         // Test option "-scoreboard-at <seconds>": hold Tab (scoreboard) for 3 s that long after the first

@@ -983,8 +983,8 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
             break;
         }
 
-        NOBLE_WARN("NetworkTransport: WebSocket relay disconnected; reconnecting in 2s...");
-        for (int i = 0; i < 20 && !m_relayStopRequested.load(); ++i) {
+        NOBLE_WARN("NetworkTransport: WebSocket relay disconnected; reconnecting in 500ms...");
+        for (int i = 0; i < 5 && !m_relayStopRequested.load(); ++i) {
             Sleep(100);
         }
     }
