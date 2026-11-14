@@ -266,8 +266,12 @@ bool HandOff(const std::wstring& args) {
     // over instead of spawning a second Noble this process cannot supervise (the launcher used to see this
     // process exit and bring its menu back over the top of the new game), and never wait for a top-level
     // window, which a hosted child does not have (that used to be a 30 s stall on PLAY AGAIN).
-    if (args.find(L"-container-hwnd") != std::wstring::npos) {
-        if (!RequestContainerRelaunch(args)) {
+    const wchar_t* cmdLine = GetCommandLineW();
+    const bool inContainer = (args.find(L"-container-hwnd") != std::wstring::npos) ||
+                             (cmdLine && std::wcsstr(cmdLine, L"-container-hwnd") != nullptr);
+    if (inContainer) {
+        const std::wstring handoffArgs = args.empty() ? std::wstring(L"-main-menu") : args;
+        if (!RequestContainerRelaunch(handoffArgs)) {
             NOBLE_ERROR("Relaunch: container match relaunch could not be handed to the launcher window");
             return false;
         }

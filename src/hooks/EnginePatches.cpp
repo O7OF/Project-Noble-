@@ -648,6 +648,71 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         }
     }
 
+    // 8. Firefight / AI render worker-thread null TLS actors table crash patch (RVA 0x4E9F5C)
+    // On render worker threads, TLS slot 1 ([r10 + 8], the actors s_data_array) is NULL.
+    // When an AI unit has actor_index != -1 ([r9 + 0x1bc] != -1), RVA 0x4E9F65 executes
+    // 'mov r8, [rcx + 0x50]' with rcx == 0, causing an immediate 0xC0000005 crash in Firefight.
+    // Replace the 13 bytes at 0x4E9F5C with a near-trampoline that checks rcx == 0 and jumps
+    // to 0x4E9FA6 (the same skip path as actor_index == -1) if NULL, otherwise resumes at 0x4E9F69.
+    {
+        static const uint8_t kExpectedBytes[13] = {
+            0xB9, 0x08, 0x00, 0x00, 0x00, // mov ecx, 8
+            0x4A, 0x8B, 0x0C, 0x11,       // mov rcx, qword ptr [rcx + r10]
+            0x4C, 0x8B, 0x41, 0x50        // mov r8, qword ptr [rcx + 0x50]
+        };
+        uint8_t* patchAddr = reinterpret_cast<uint8_t*>(baseAddress + 0x4E9F5C);
+        if (0x4E9F5C + sizeof(kExpectedBytes) <= modInfo.SizeOfImage &&
+            std::memcmp(patchAddr, kExpectedBytes, sizeof(kExpectedBytes)) == 0) {
+            void* trampoline = AllocateNear(reinterpret_cast<uintptr_t>(patchAddr), 64, PAGE_EXECUTE_READWRITE);
+            if (trampoline) {
+                uint8_t* trampBytes = reinterpret_cast<uint8_t*>(trampoline);
+                const uintptr_t trampAddr = reinterpret_cast<uintptr_t>(trampoline);
+                const uintptr_t targetNull = baseAddress + 0x4E9FA6;
+                const uintptr_t targetValid = baseAddress + 0x4E9F69;
+
+                const int32_t relNull = static_cast<int32_t>(targetNull - (trampAddr + 0x14 + 5));
+                const int32_t relValid = static_cast<int32_t>(targetValid - (trampAddr + 0x19 + 5));
+
+                uint8_t code[30] = {
+                    0xB9, 0x08, 0x00, 0x00, 0x00, // 0x00: mov ecx, 8
+                    0x4A, 0x8B, 0x0C, 0x11,       // 0x05: mov rcx, [rcx + r10]
+                    0x48, 0x85, 0xC9,             // 0x09: test rcx, rcx
+                    0x74, 0x06,                   // 0x0C: jz +6 (to 0x14)
+                    0x4C, 0x8B, 0x41, 0x50,       // 0x0E: mov r8, [rcx + 0x50]
+                    0xEB, 0x05,                   // 0x12: jmp +5 (to 0x19)
+                    0xE9, 0x00, 0x00, 0x00, 0x00, // 0x14: jmp rel32 to targetNull (0x4E9FA6)
+                    0xE9, 0x00, 0x00, 0x00, 0x00  // 0x19: jmp rel32 to targetValid (0x4E9F69)
+                };
+                std::memcpy(code + 0x15, &relNull, sizeof(int32_t));
+                std::memcpy(code + 0x1A, &relValid, sizeof(int32_t));
+
+                std::memcpy(trampBytes, code, sizeof(code));
+                FlushInstructionCache(GetCurrentProcess(), trampBytes, sizeof(code));
+
+                const int32_t relToTramp = static_cast<int32_t>(trampAddr - (reinterpret_cast<uintptr_t>(patchAddr) + 5));
+                uint8_t patch[13] = {
+                    0xE9, 0, 0, 0, 0,
+                    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+                };
+                std::memcpy(patch + 1, &relToTramp, sizeof(int32_t));
+
+                DWORD oldProt = 0;
+                if (VirtualProtect(patchAddr, sizeof(patch), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                    std::memcpy(patchAddr, patch, sizeof(patch));
+                    FlushInstructionCache(GetCurrentProcess(), patchAddr, sizeof(patch));
+                    VirtualProtect(patchAddr, sizeof(patch), oldProt, &oldProt);
+                    NOBLE_INFO("EnginePatches: Installed Firefight worker-thread null TLS actors patch at RVA 0x4E9F5C -> trampoline 0x{:X}.", trampAddr);
+                } else {
+                    NOBLE_WARN("EnginePatches: Failed to VirtualProtect at RVA 0x4E9F5C.");
+                }
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to allocate near trampoline for RVA 0x4E9F5C crash patch.");
+            }
+        } else {
+            NOBLE_INFO("EnginePatches: RVA 0x4E9F5C already patched or unexpected opcodes.");
+        }
+    }
+
     s_isApplied = true;
     return true;
 }
