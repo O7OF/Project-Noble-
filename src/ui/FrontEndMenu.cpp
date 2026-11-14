@@ -701,7 +701,7 @@ float BlurbBlockHeight(const Ui& ui, float width, const char* blurb) {
     return std::min(textH, lineH * 2.0f) + 16.0f * ui.s;
 }
 
-enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career, PreGameLobby, Social };
+enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Theater, Servers, Settings, Armory, Mods, Career, PreGameLobby, Social };
 
 std::string s_lobbyBackdropMap;   // set each frame from the lobby state
 std::filesystem::path s_lobbyBackdropImage; // mod map art for the pre-game backdrop
@@ -2714,7 +2714,7 @@ const MainEntry kMainEntries[] = {
     { "Firefight",    "Hold out against waves of Covenant on the map and game type you choose.", Screen::Firefight, true, false },
     { "Custom Game",  "Play any multiplayer map and game type, host a game or join one.",     Screen::CustomGame, true, false },
     { "Forge",        "Edit multiplayer maps with Forge. Experimental in Noble.",             Screen::Forge, true, false },
-    { "Theater",      "Saved films aren't supported in Noble yet.",                           Screen::Main, false, false },
+    { "Theater",      "Watch saved films and local video clips from Campaign, Firefight, Custom Games, and Forge.", Screen::Theater, true, false },
     { "Social",       "Manage your friends list, find players, and view game invites.",       Screen::Social, true, false },
     { "Service Record", "Your rank, credits, challenges, commendations and recent games.",   Screen::Career, true, false },
     { "Armory",       "Customize your Spartan and Sangheili armor in Reach's 3D Armory.",     Screen::Armory, true, false },
@@ -2885,6 +2885,13 @@ struct MenuState {
     bool socialSearching = false;
     double lastSocialPoll = 0.0;
     Screen socialPreviousScreen = Screen::Main;
+    // Theater screen state
+    int theaterSource = 0;          // 0 = All, 1 = Recent Films, 2 = Saved Films, 3 = Local Videos
+    int theaterIndex = 0;           // Selected row in Theater list
+    char theaterSearch[64] = "";
+    int theaterSearchRow = 0;
+    std::string theaterStatusMsg;
+    std::string theaterConfirmDelete;
 };
 
 
@@ -3466,6 +3473,7 @@ Screen ParseScreenArg(const std::wstring& v) {
     if (s == L"firefight") return Screen::Firefight;
     if (s == L"custom") return Screen::CustomGame;
     if (s == L"forge") return Screen::Forge;
+    if (s == L"theater" || s == L"theatre") return Screen::Theater;
     if (s == L"servers") return Screen::Servers;
     if (s == L"settings") return Screen::Settings;
     if (s == L"armory") return Screen::Armory;
@@ -3485,6 +3493,343 @@ std::wstring ToWide(const std::string& s) {
     return w;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Theater Mode: Local Saved Film (.film) BLF parser, autosave sync, and local video manager
+// ---------------------------------------------------------------------------------------------
+struct TheaterEntry {
+    std::filesystem::path path;
+    std::string title;
+    std::string description;
+    std::string author;
+    std::string scenario;      // e.g. "20_sword_slayer", "m10", "ff60_icecave"
+    std::string mapDisplay;    // e.g. "Sword Base", "Winter Contingency"
+    std::string launchMode;    // "campaign", "multiplayer", "forge", "firefight"
+    std::string modeLabel;     // "CAMPAIGN", "CUSTOM GAME", "FORGE", "FIREFIGHT", "LOCAL VIDEO"
+    uint32_t durationSec = 0;
+    uint64_t timestamp = 0;    // Unix epoch seconds
+    uint64_t fileSize = 0;
+    bool isVideo = false;      // true for .mp4/.mkv/.webm/.avi/.mov/.wmv
+    bool isSaved = false;      // true if stored in data\theater\saved
+};
+
+std::string ScenarioFromReachMapId(int32_t mapId) {
+    switch (mapId) {
+        case 5005: return "m05";
+        case 5010: return "m10";
+        case 5020: return "m20";
+        case 5030: return "m30";
+        case 5035: return "m35";
+        case 5045: return "m45";
+        case 5050: return "m50";
+        case 5052: return "m52";
+        case 5060: return "m60";
+        case 5070: return "m70";
+        case 5075: return "m70_a";
+        case 5080: return "m70_bonus";
+        case 1000: return "20_sword_slayer";
+        case 1020: return "45_launch_station";
+        case 1035: return "50_panopticon";
+        case 1040: return "45_aftship";
+        case 1055: return "30_settlement";
+        case 1080: return "70_boneyard";
+        case 1150: return "52_ivory_tower";
+        case 1200: return "35_island";
+        case 1500: return "condemned";
+        case 1510: return "trainingpreserve";
+        case 2001: return "dlc_slayer";
+        case 2002: return "dlc_invasion";
+        case 2004: return "dlc_medium";
+        case 3006: return "forge_halo";
+        case 10010: return "cex_damnation";
+        case 10020: return "cex_beaver_creek";
+        case 10030: return "cex_timberland";
+        case 10050: return "cex_headlong";
+        case 10060: return "cex_hangemhigh";
+        case 10070: return "cex_prisoner";
+        case 7000: return "ff10_prototype";
+        case 7020: return "ff20_courtyard";
+        case 7030: return "ff30_waterfront";
+        case 7040: return "ff45_corvette";
+        case 7060: return "ff50_park";
+        case 7080: return "ff60_airview";
+        case 7100: return "ff60_icecave";
+        case 7110: return "ff70_holdout";
+        case 7130: return "ff_unearthed";
+        case 7500: return "cex_ff_halo";
+        default: return "20_sword_slayer";
+    }
+}
+
+std::string ReadUtf16LeToUtf8(const uint8_t* bytes, size_t maxChars) {
+    std::wstring w;
+    w.reserve(maxChars);
+    for (size_t i = 0; i < maxChars; ++i) {
+        const wchar_t ch = static_cast<wchar_t>(bytes[i * 2] | (static_cast<uint16_t>(bytes[i * 2 + 1]) << 8));
+        if (ch == 0) break;
+        w.push_back(ch);
+    }
+    if (w.empty()) return {};
+    const int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return {};
+    std::string out(static_cast<size_t>(len), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), out.data(), len, nullptr, nullptr);
+    return out;
+}
+
+std::string FormatDurationMmSs(uint32_t seconds) {
+    const uint32_t hrs = seconds / 3600;
+    const uint32_t mins = (seconds % 3600) / 60;
+    const uint32_t secs = seconds % 60;
+    char buf[32];
+    if (hrs > 0) std::snprintf(buf, sizeof(buf), "%u:%02u:%02u", hrs, mins, secs);
+    else std::snprintf(buf, sizeof(buf), "%02u:%02u", mins, secs);
+    return buf;
+}
+
+std::string FormatTimestampUtcOrLocal(uint64_t unixSec) {
+    if (unixSec == 0) return "Unknown Date";
+    const std::time_t t = static_cast<std::time_t>(unixSec);
+    std::tm tmLocal{};
+    if (localtime_s(&tmLocal, &t) != 0) return "Unknown Date";
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d",
+                  tmLocal.tm_year + 1900, tmLocal.tm_mon + 1, tmLocal.tm_mday,
+                  tmLocal.tm_hour, tmLocal.tm_min);
+    return buf;
+}
+
+std::string FormatFileSizeShort(uint64_t bytes) {
+    char buf[48];
+    if (bytes >= 1024ULL * 1024ULL) {
+        std::snprintf(buf, sizeof(buf), "%.2f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    } else if (bytes >= 1024ULL) {
+        std::snprintf(buf, sizeof(buf), "%.1f KB", static_cast<double>(bytes) / 1024.0);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%llu B", static_cast<unsigned long long>(bytes));
+    }
+    return buf;
+}
+
+std::filesystem::path TheaterRootDir() {
+    return VFS::GetUserStoragePath() / "theater";
+}
+
+void SyncAutosaveFilmsToTheater() {
+    std::error_code ec;
+    const std::filesystem::path theaterRoot = TheaterRootDir();
+    const std::filesystem::path filmsDir = theaterRoot / "films";
+    const std::filesystem::path savedDir = theaterRoot / "saved";
+    const std::filesystem::path videosDir = theaterRoot / "videos";
+    std::filesystem::create_directories(filmsDir, ec);
+    std::filesystem::create_directories(savedDir, ec);
+    std::filesystem::create_directories(videosDir, ec);
+
+    const std::filesystem::path userdataRoot = VFS::GetUserStoragePath() / "userdata";
+    if (!std::filesystem::exists(userdataRoot, ec)) return;
+
+    auto readFilmTimestamp = [](const std::filesystem::path& p) -> uint64_t {
+        std::ifstream f(p, std::ios::binary);
+        if (!f.is_open()) return 0;
+        uint8_t hdr[0x90] = {};
+        f.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
+        if (f.gcount() < 0x80 || std::memcmp(hdr, "_blf", 4) != 0) return 0;
+        uint64_t ts = 0;
+        std::memcpy(&ts, hdr + 0x78, sizeof(uint64_t));
+        return ts;
+    };
+
+    for (std::filesystem::recursive_directory_iterator it(userdataRoot, std::filesystem::directory_options::skip_permission_denied, ec), end;
+         it != end && !ec; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        const std::filesystem::path src = it->path();
+        std::string ext = src.extension().string();
+        for (char& c : ext) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+        if (ext != ".film") continue;
+
+        const uint64_t srcSize = std::filesystem::file_size(src, ec);
+        if (srcSize < 0x340) continue;
+        const uint64_t srcTs = readFilmTimestamp(src);
+
+        std::filesystem::path dst = filmsDir / src.filename();
+        if (std::filesystem::exists(dst, ec)) {
+            const uint64_t dstSize = std::filesystem::file_size(dst, ec);
+            const uint64_t dstTs = readFilmTimestamp(dst);
+            if (dstTs == srcTs && srcTs != 0) {
+                // Same film session: update if the autosave grew as the match finished
+                if (srcSize > dstSize) {
+                    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+                }
+                continue;
+            }
+            if (dstSize == srcSize && dstTs == srcTs) continue;
+            // Different match with the same gametype filename: suffix with its timestamp so older films are never lost
+            const std::string stem = src.stem().string();
+            const uint64_t tag = srcTs != 0 ? srcTs : static_cast<uint64_t>(srcSize);
+            dst = filmsDir / (stem + "_" + std::to_string(tag) + ".film");
+            if (std::filesystem::exists(dst, ec)) {
+                if (srcSize > std::filesystem::file_size(dst, ec)) {
+                    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+                }
+                continue;
+            }
+        }
+        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) {
+            NOBLE_INFO("Theater: Synced saved film '{}' -> '{}'", src.filename().string(), dst.string());
+        }
+    }
+}
+
+bool ParseSavedFilmFile(const std::filesystem::path& filePath, bool isSavedFolder, TheaterEntry& out) {
+    std::error_code ec;
+    const uint64_t fsize = std::filesystem::file_size(filePath, ec);
+    if (ec || fsize < 0x340) return false;
+
+    std::ifstream in(filePath, std::ios::binary);
+    if (!in.is_open()) return false;
+
+    uint8_t buf[0x0A40] = {};
+    in.read(reinterpret_cast<char*>(buf), sizeof(buf));
+    const std::streamsize got = in.gcount();
+    if (got < 0x340) return false;
+    if (std::memcmp(buf, "_blf", 4) != 0 || std::memcmp(buf + 0x30, "chdr", 4) != 0) return false;
+
+    out = TheaterEntry{};
+    out.path = filePath;
+    out.fileSize = fsize;
+    out.isVideo = false;
+    out.isSaved = isSavedFolder;
+
+    const uint8_t chdrMode = buf[0x006A];
+    int32_t mapId = 0;
+    std::memcpy(&mapId, buf + 0x006C, sizeof(int32_t));
+    std::memcpy(&out.timestamp, buf + 0x0078, sizeof(uint64_t));
+    std::memcpy(&out.durationSec, buf + 0x02C0, sizeof(uint32_t));
+
+    char authorBuf[17] = {};
+    std::memcpy(authorBuf, buf + 0x0088, 16);
+    out.author = authorBuf;
+    if (out.author.empty()) {
+        out.author = Settings::Get().Snapshot().playerName;
+        if (out.author.empty()) out.author = "Noble Six";
+    }
+
+    out.title = ReadUtf16LeToUtf8(buf + 0x00C0, 128);
+    out.description = ReadUtf16LeToUtf8(buf + 0x01C0, 128);
+    if (out.title.empty()) out.title = filePath.stem().string();
+
+    // Extract scenario stem from flmh + 0x0914 (e.g. "levels\multi\20_sword_slayer\20_sword_slayer")
+    std::string scenarioPath;
+    if (got >= 0x0A18 && std::memcmp(buf + 0x0340, "flmh", 4) == 0) {
+        const char* rawScen = reinterpret_cast<const char*>(buf + 0x0914);
+        size_t len = 0;
+        while (len < 259 && rawScen[len] != '\0') ++len;
+        scenarioPath.assign(rawScen, len);
+    }
+    if (!scenarioPath.empty()) {
+        const size_t slash = scenarioPath.find_last_of("\\/");
+        out.scenario = (slash != std::string::npos) ? scenarioPath.substr(slash + 1) : scenarioPath;
+    }
+    if (out.scenario.empty()) {
+        out.scenario = ScenarioFromReachMapId(mapId);
+    }
+    out.mapDisplay = MapNames::Display(out.scenario);
+
+    const bool looksForge = ContainsNoCase(out.title, "Basic Editing") || ContainsNoCase(out.title, "Forge") ||
+                            ContainsNoCase(out.description, "Basic Editing") || out.scenario == "forge_halo";
+    if (chdrMode == 3) {
+        out.launchMode = "campaign";
+        out.modeLabel = "CAMPAIGN";
+    } else if (chdrMode == 4) {
+        out.launchMode = "firefight";
+        out.modeLabel = "FIREFIGHT";
+    } else if (looksForge) {
+        out.launchMode = "forge";
+        out.modeLabel = "FORGE";
+    } else {
+        out.launchMode = "multiplayer";
+        out.modeLabel = "CUSTOM GAME";
+    }
+
+    if (out.description.empty()) {
+        out.description = out.title + " on " + out.mapDisplay + " \xC2\xB7 " + FormatTimestampUtcOrLocal(out.timestamp);
+    }
+    return true;
+}
+
+bool IsVideoExtension(const std::string& extLower) {
+    return extLower == ".mp4" || extLower == ".mkv" || extLower == ".webm" ||
+           extLower == ".avi" || extLower == ".mov" || extLower == ".wmv";
+}
+
+std::vector<TheaterEntry> ScanTheaterEntries() {
+    SyncAutosaveFilmsToTheater();
+
+    std::vector<TheaterEntry> entries;
+    std::set<std::wstring> seenPaths;
+    std::error_code ec;
+
+    const std::filesystem::path root = TheaterRootDir();
+    const std::filesystem::path savedDir = root / "saved";
+    const std::filesystem::path filmsDir = root / "films";
+    const std::filesystem::path videosDir = root / "videos";
+
+    auto scanFolder = [&](const std::filesystem::path& folder, bool isSavedFolder) {
+        if (!std::filesystem::exists(folder, ec)) return;
+        for (std::filesystem::directory_iterator it(folder, std::filesystem::directory_options::skip_permission_denied, ec), end;
+             it != end && !ec; it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            const std::filesystem::path p = it->path();
+            const std::filesystem::path absP = std::filesystem::weakly_canonical(p, ec);
+            if (!seenPaths.insert(absP.empty() ? p.wstring() : absP.wstring()).second) continue;
+
+            std::string ext = p.extension().string();
+            for (char& c : ext) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+
+            if (ext == ".film") {
+                TheaterEntry e;
+                if (ParseSavedFilmFile(p, isSavedFolder, e)) {
+                    entries.push_back(std::move(e));
+                }
+            } else if (IsVideoExtension(ext)) {
+                TheaterEntry e;
+                e.path = p;
+                e.title = p.stem().string();
+                e.fileSize = std::filesystem::file_size(p, ec);
+                e.isVideo = true;
+                e.isSaved = isSavedFolder;
+                e.scenario = "20_sword_slayer";
+                for (const MenuMap& m : kMissions) if (ContainsNoCase(e.title, m.scenario) || ContainsNoCase(e.title, m.name)) { e.scenario = m.scenario; break; }
+                for (const MenuMap& m : kMaps) if (ContainsNoCase(e.title, m.scenario) || ContainsNoCase(e.title, m.name)) { e.scenario = m.scenario; break; }
+                for (const MenuMap& m : kFirefightMaps) if (ContainsNoCase(e.title, m.scenario) || ContainsNoCase(e.title, m.name)) { e.scenario = m.scenario; break; }
+                e.mapDisplay = "Local Video (" + Upper(ext.substr(1)) + ")";
+                e.launchMode = "video";
+                e.modeLabel = "LOCAL VIDEO";
+                e.author = Settings::Get().Snapshot().playerName.empty() ? "Local Recording" : Settings::Get().Snapshot().playerName;
+                const auto ftime = std::filesystem::last_write_time(p, ec);
+                if (!ec) {
+                    const auto sctp = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
+                    e.timestamp = static_cast<uint64_t>(std::chrono:: duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
+                }
+                e.description = "Local video file in " + p.parent_path().filename().string() + "\\" + p.filename().string() +
+                                " (" + FormatFileSizeShort(e.fileSize) + ") \xC2\xB7 " + FormatTimestampUtcOrLocal(e.timestamp);
+                entries.push_back(std::move(e));
+            }
+        }
+    };
+
+    scanFolder(savedDir, true);
+    scanFolder(filmsDir, false);
+    scanFolder(videosDir, false);
+    scanFolder(root, false);
+
+    std::sort(entries.begin(), entries.end(), [](const TheaterEntry& a, const TheaterEntry& b) {
+        if (a.timestamp != b.timestamp) return a.timestamp > b.timestamp;
+        return a.title < b.title;
+    });
+    return entries;
+}
+
 // Persistent state for in-engine overlay mode
 struct OverlayContext {
     bool initialized = false;
@@ -3494,6 +3839,9 @@ struct OverlayContext {
     std::vector<ForgeMap> forgeMaps;
     bool forgeMapsScanned = false;   // the scan is lazy: the maps menu needs it before the Forge tab is opened
     std::filesystem::path forgeVariant;
+    std::vector<TheaterEntry> theaterEntries;
+    bool theaterScanned = false;
+    bool launchedFromTheater = false;
     std::vector<ModEntry> mods;
     std::vector<const ModEntry*> campaignMods;
     std::vector<const ModEntry*> ffMods;
@@ -3617,6 +3965,9 @@ void UpdateSceneForScreen(Screen screen) {
         break;
     case Screen::Forge:
         ReachArmory::SetTargetScene("forge");
+        break;
+    case Screen::Theater:
+        ReachArmory::SetTargetScene("theater");
         break;
     case Screen::Armory:
         UIManager::GetArmorCustomizer().UpdateArmoryCamera();
@@ -6644,6 +6995,10 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
         ctx.st.isLobbyHost = (successor.find(L"-lobby-return host") != std::wstring::npos);
         ctx.st.lastLobbyPoll = 0.0;
         NOBLE_INFO("FrontEndMenu: container returned to lobby as {}", ctx.st.isLobbyHost ? "host" : "guest");
+    } else if (ctx.launchedFromTheater) {
+        ctx.launchedFromTheater = false;
+        ctx.st.screen = Screen::Theater;
+        NOBLE_INFO("FrontEndMenu: container returned to Theater lobby");
     } else {
         ctx.st.screen = Screen::Main;
         NOBLE_INFO("FrontEndMenu: container returned to main menu");
@@ -6656,6 +7011,7 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
     }
     NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
     FrontEndMenu::InvalidateForgeMaps();   // a variant saved in Forge must show up without restarting Noble
+    FrontEndMenu::SyncTheaterFiles();      // sync any newly recorded .film from the match into data\theater\films
     SessionManager::Get().Initialize();
     MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
 
@@ -8165,6 +8521,324 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         break;
     }
 
+    case Screen::Theater: {
+        if (!ctx.theaterScanned) {
+            ctx.theaterEntries = ScanTheaterEntries();
+            ctx.theaterScanned = true;
+        }
+
+        DrawTitle(ui, ImVec2(left, top), "THEATER", "LOBBY");
+
+        // Count items per Theater category tab
+        int countAll = static_cast<int>(ctx.theaterEntries.size());
+        int countRecent = 0, countSaved = 0, countVideos = 0;
+        for (const TheaterEntry& e : ctx.theaterEntries) {
+            if (e.isVideo) ++countVideos;
+            else if (e.isSaved) ++countSaved;
+            else ++countRecent;
+        }
+
+        // Category tabs: ALL / RECENT FILMS / SAVED FILMS / VIDEOS (Q / E or LB / RB to cycle)
+        if (!ImGui::GetIO().WantTextInput) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+                st.theaterSource = (st.theaterSource + 3) % 4;
+                st.focusRow = 0;
+                st.theaterStatusMsg.clear();
+                st.theaterConfirmDelete.clear();
+                MenuSounds::Scroll();
+            } else if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || HintClicked(Prompt::Tabs)) {
+                st.theaterSource = (st.theaterSource + 1) % 4;
+                st.focusRow = 0;
+                st.theaterStatusMsg.clear();
+                st.theaterConfirmDelete.clear();
+                MenuSounds::Scroll();
+            }
+        }
+
+        const std::string tabLabels[4] = {
+            "ALL (" + std::to_string(countAll) + ")",
+            "RECENT (" + std::to_string(countRecent) + ")",
+            "SAVED (" + std::to_string(countSaved) + ")",
+            "VIDEOS (" + std::to_string(countVideos) + ")"
+        };
+        float tabX = left + 34.0f * ui.s;
+        const float tabY = top + 70.0f * ui.s;
+        const float tabH = 26.0f * ui.s;
+        for (int t = 0; t < 4; ++t) {
+            const float tw = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, tabLabels[t].c_str()) + 16.0f * ui.s;
+            const ImVec2 a(tabX, tabY);
+            const ImVec2 b(tabX + tw, tabY + tabH);
+            ImGui::SetCursorScreenPos(a);
+            ImGui::PushID(8800 + t);
+            const bool pressed = ImGui::InvisibleButton("##thtab", ImVec2(tw, tabH));
+            const bool hovered = ImGui::IsItemHovered();
+            ImGui::PopID();
+            const bool active = (st.theaterSource == t);
+            ui.dl->AddRectFilled(a, b, active ? IM_COL32(36, 78, 112, 235) : (hovered ? IM_COL32(28, 44, 62, 210) : IM_COL32(12, 18, 26, 185)));
+            ui.dl->AddRect(a, b, active ? kAccent : IM_COL32(110, 145, 175, 80));
+            Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(a.x + 8.0f * ui.s, a.y + 5.0f * ui.s), active ? kWhite : kDim, tabLabels[t].c_str());
+            if (pressed) {
+                st.theaterSource = t;
+                st.focusRow = 0;
+                st.theaterStatusMsg.clear();
+                st.theaterConfirmDelete.clear();
+                MenuSounds::Scroll();
+            }
+            tabX += tw + 5.0f * ui.s;
+        }
+
+        // Filter entries by tab and search query
+        std::vector<const TheaterEntry*> filtered;
+        for (const TheaterEntry& e : ctx.theaterEntries) {
+            if (st.theaterSource == 1 && (e.isVideo || e.isSaved)) continue;
+            if (st.theaterSource == 2 && (e.isVideo || !e.isSaved)) continue;
+            if (st.theaterSource == 3 && !e.isVideo) continue;
+            if (st.theaterSearch[0] != '\0') {
+                if (!ContainsNoCase(e.title, st.theaterSearch) &&
+                    !ContainsNoCase(e.mapDisplay, st.theaterSearch) &&
+                    !ContainsNoCase(e.modeLabel, st.theaterSearch) &&
+                    !ContainsNoCase(e.author, st.theaterSearch)) {
+                    continue;
+                }
+            }
+            filtered.push_back(&e);
+        }
+
+        int& pick = (st.theaterSearch[0] != '\0') ? st.theaterSearchRow : st.theaterIndex;
+        pick = filtered.empty() ? 0 : std::clamp(pick, 0, static_cast<int>(filtered.size()) - 1);
+
+        std::vector<ListItem> items;
+        items.reserve(filtered.size());
+        for (size_t i = 0; i < filtered.size(); ++i) {
+            const TheaterEntry* e = filtered[i];
+            std::string rowLabel = e->title;
+            if (e->isVideo) {
+                rowLabel = "[VIDEO] " + rowLabel + "  (" + FormatFileSizeShort(e->fileSize) + ")";
+            } else {
+                if (e->isSaved && st.theaterSource == 0) rowLabel = "[SAVED] " + rowLabel;
+                if (e->durationSec > 0) rowLabel += "  [" + FormatDurationMmSs(e->durationSec) + "]";
+            }
+            ListItem it{ rowLabel, true, false, false };
+            it.thumb = e->scenario;
+            it.number = static_cast<int>(i) + 1;
+            items.push_back(std::move(it));
+        }
+        if (filtered.empty()) {
+            const char* emptyMsg = (st.theaterSearch[0] != '\0') ? "Nothing matches your search"
+                                 : (st.theaterSource == 2) ? "No bookmarked films in data\\theater\\saved"
+                                 : (st.theaterSource == 3) ? "No video clips in data\\theater\\videos"
+                                                           : "No saved films or videos in data\\theater yet";
+            items.push_back({ emptyMsg, false, false, false });
+        }
+
+        const float listTop = top + 108.0f * ui.s;
+        const float listRow = 40.0f;
+        const int listRows = std::max(4, static_cast<int>((ui.origin.y + ui.size.y - 74.0f * ui.s - listTop) / (listRow * ui.s)));
+        const int hit = DrawList(ui, "theater_list", ImVec2(left + 34.0f * ui.s, listTop), 400.0f * ui.s, items, pick,
+                                 st.focusRow == 0 && !ImGui::GetIO().WantTextInput, listRow, listRows, false);
+        if (hit >= 0 && !filtered.empty()) {
+            pick = std::clamp(hit, 0, static_cast<int>(filtered.size()) - 1);
+            st.focusRow = 1;
+            st.theaterStatusMsg.clear();
+            st.theaterConfirmDelete.clear();
+        }
+
+        const TheaterEntry* sel = filtered.empty() ? nullptr : filtered[pick];
+
+        // Right column: Halo: Reach Theater Lobby card + metadata + controls + action buttons
+        const float px = ui.origin.x + ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
+        const RightColumnY col = RightColumnLayout(ui);
+        const float actionsY = col.actions;
+
+        // Search box sits neatly at top-right of the right column header
+        if (DrawSearchBox(ui, "##theater_search", ImVec2(px + pw - 180.0f * ui.s, top + 64.0f * ui.s), 180.0f * ui.s,
+                          st.theaterSearch, sizeof(st.theaterSearch), "Search films/videos")) {
+            st.theaterSearchRow = 0;
+        }
+
+        const float rowsH = 36.0f * ui.s * 4.0f + 56.0f * ui.s;
+        const float bannerTop = top + 96.0f * ui.s;
+        const std::string fallbackBlurb = "Play any Campaign, Firefight, Custom Game, or Forge match to automatically record a saved film, or drop .film and video files (.mp4, .mkv, .webm, .avi) into data\\theater.";
+        const char* blurb = sel ? sel->description.c_str() : fallbackBlurb.c_str();
+        const float blurbH = BlurbBlockHeight(ui, pw, blurb);
+        const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
+        const std::string kicker = sel ? ("HALO: REACH \xC2\xB7 THEATER \xC2\xB7 " + sel->modeLabel)
+                                       : std::string("HALO: REACH \xC2\xB7 THEATER");
+        const std::string bannerTitle = sel ? sel->title : std::string("NO FILM SELECTED");
+        const std::string bannerScen = sel ? sel->scenario : std::string("20_sword_slayer");
+
+        float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, bannerScen, kicker, bannerTitle.c_str(), blurb);
+
+        // Info / option rows
+        const std::string mapAndMode = sel ? (sel->mapDisplay + " \xC2\xB7 " + sel->modeLabel) : std::string("None");
+        const std::string durationAndSize = sel
+            ? ((sel->isVideo ? std::string("Video Clip") : ("Length " + FormatDurationMmSs(sel->durationSec))) + " \xC2\xB7 " + FormatFileSizeShort(sel->fileSize))
+            : std::string("-");
+        const std::string authorAndDate = sel
+            ? (sel->author + " \xC2\xB7 " + FormatTimestampUtcOrLocal(sel->timestamp))
+            : std::string("-");
+
+        OptionRow(ui, "th_location", ImVec2(px, y), pw, "MAP & MODE", mapAndMode.c_str(), false, nullptr, false);
+        y += 36.0f * ui.s;
+        OptionRow(ui, "th_details", ImVec2(px, y), pw, "DURATION & SIZE", durationAndSize.c_str(), false, nullptr, false);
+        y += 36.0f * ui.s;
+        OptionRow(ui, "th_recorded", ImVec2(px, y), pw, "RECORDED BY", authorAndDate.c_str(), false, nullptr, false);
+        y += 36.0f * ui.s;
+
+        // File management bar: SAVE FILM (bookmark to data\theater\saved), DELETE FILE, REFRESH
+        {
+            const float btnGap = 8.0f * ui.s;
+            const float btnW = (pw - btnGap * 2.0f) / 3.0f;
+            const float btnH = 30.0f * ui.s;
+            auto smallAction = [&](const char* id, float bx, const char* label, bool enabled, bool focused, bool danger = false) {
+                const ImVec2 a(bx, y);
+                const ImVec2 b(bx + btnW, y + btnH);
+                ImGui::SetCursorScreenPos(a);
+                ImGui::PushID(id);
+                const bool pressed = ImGui::InvisibleButton("##thact", ImVec2(btnW, btnH)) && enabled;
+                const bool hovered = ImGui::IsItemHovered() && enabled;
+                ImGui::PopID();
+                const ImU32 bg = !enabled ? IM_COL32(16, 20, 26, 140)
+                               : danger ? (hovered || focused ? IM_COL32(130, 36, 36, 235) : IM_COL32(80, 24, 24, 210))
+                                        : (hovered || focused ? IM_COL32(42, 86, 124, 235) : IM_COL32(20, 32, 46, 210));
+                const ImU32 edge = !enabled ? IM_COL32(80, 90, 100, 60)
+                                 : (hovered || focused) ? kAccent : IM_COL32(120, 155, 185, 95);
+                ui.dl->AddRectFilled(a, b, bg);
+                ui.dl->AddRect(a, b, edge);
+                const float tw = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, label);
+                Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(a.x + (btnW - tw) * 0.5f, a.y + 6.0f * ui.s),
+                     enabled ? kWhite : kDisabled, label);
+                if (pressed) MenuSounds::Click();
+                return pressed;
+            };
+
+            const bool canSaveBookmark = sel && !sel->isVideo && !sel->isSaved;
+            const char* saveLabel = (sel && sel->isSaved) ? "SAVED IN LIBRARY" : "SAVE TO LIBRARY";
+            if (smallAction("th_save", px, saveLabel, canSaveBookmark, st.focusRow == 1)) {
+                std::error_code ec;
+                const std::filesystem::path savedDir = TheaterRootDir() / "saved";
+                std::filesystem::create_directories(savedDir, ec);
+                const std::filesystem::path dst = savedDir / sel->path.filename();
+                std::filesystem::copy_file(sel->path, dst, std::filesystem::copy_options::overwrite_existing, ec);
+                if (!ec) {
+                    st.theaterStatusMsg = "Saved '" + sel->title + "' to data\\theater\\saved.";
+                    ctx.theaterScanned = false;
+                } else {
+                    st.theaterStatusMsg = "Could not copy film to data\\theater\\saved.";
+                }
+            }
+
+            const bool confirmingDelete = sel && st.theaterConfirmDelete == sel->path.string();
+            const char* delLabel = confirmingDelete ? "CONFIRM DELETE?" : "DELETE FILE";
+            if (smallAction("th_delete", px + btnW + btnGap, delLabel, sel != nullptr, st.focusRow == 2, confirmingDelete)) {
+                if (!confirmingDelete) {
+                    st.theaterConfirmDelete = sel->path.string();
+                    st.theaterStatusMsg = "Press CONFIRM DELETE? again to permanently remove '" + sel->path.filename().string() + "'.";
+                    MenuSounds::Error();
+                } else {
+                    std::error_code ec;
+                    const std::string removedName = sel->path.filename().string();
+                    std::filesystem::remove(sel->path, ec);
+                    st.theaterConfirmDelete.clear();
+                    if (!ec) {
+                        st.theaterStatusMsg = "Deleted '" + removedName + "'.";
+                        ctx.theaterScanned = false;
+                    } else {
+                        st.theaterStatusMsg = "Could not delete '" + removedName + "'.";
+                    }
+                }
+            }
+
+            if (smallAction("th_refresh", px + (btnW + btnGap) * 2.0f, "REFRESH LIST", true, st.focusRow == 3)) {
+                ctx.theaterScanned = false;
+                st.theaterConfirmDelete.clear();
+                st.theaterStatusMsg = "Rescanned data\\theater and synced recent autosave films.";
+            }
+            y += 38.0f * ui.s;
+        }
+
+        // Theater Controls reference card / status message
+        {
+            const ImVec2 c0(px, y);
+            const ImVec2 c1(px + pw, y + 48.0f * ui.s);
+            ui.dl->AddRectFilled(c0, c1, IM_COL32(10, 16, 24, 195));
+            ui.dl->AddRect(c0, c1, IM_COL32(100, 140, 175, 75));
+            Text(ui, NobleStyle::SmallFont(), 12.5f, ImVec2(c0.x + 10.0f * ui.s, c0.y + 6.0f * ui.s), kAccent,
+                 "THEATER CAMERA & PLAYBACK CONTROLS");
+            Text(ui, NobleStyle::SmallFont(), 12.5f, ImVec2(c0.x + 10.0f * ui.s, c0.y + 24.0f * ui.s), kDim,
+                 "SPACE Pause/Play  \xC2\xB7  F Free Camera  \xC2\xB7  C 1st/3rd Person  \xC2\xB7  X Timeline  \xC2\xB7  Z Hide HUD  \xC2\xB7  RMB Fast-Forward");
+            y += 54.0f * ui.s;
+        }
+
+        if (!st.theaterStatusMsg.empty()) {
+            Text(ui, NobleStyle::SmallFont(), 13.5f, ImVec2(px + 4.0f * ui.s, col.strip + 6.0f * ui.s),
+                 IM_COL32(143, 216, 255, 240), st.theaterStatusMsg.c_str());
+        } else {
+            const std::string folderHint = "Local Theater Folder: " + TheaterRootDir().string();
+            Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(px + 4.0f * ui.s, col.strip + 6.0f * ui.s),
+                 kDim, folderHint.c_str());
+        }
+
+        // Primary action buttons at bottom of right column
+        const float bw = (pw - 10.0f * ui.s) * 0.5f;
+        const bool canWatch = sel != nullptr;
+        const char* watchLabel = (sel && sel->isVideo) ? "WATCH VIDEO" : "START FILM";
+        const std::string watchSub = !sel ? "Select a film or video"
+                                   : sel->isVideo ? ("Open " + sel->path.filename().string())
+                                                  : (sel->mapDisplay + " \xC2\xB7 " + sel->modeLabel);
+        const int watchRow = 4;
+        const int folderRow = 5;
+
+        const bool startWatch = ((BigAction(ui, "th_watch", ImVec2(px, actionsY), bw, watchLabel, watchSub.c_str(),
+                                            true, canWatch, st.focusRow == watchRow) ||
+                                  (st.focusRow == watchRow && AcceptPressed())) && canWatch);
+        const bool openFolder = BigAction(ui, "th_folder", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s,
+                                          "THEATER FOLDER", "Open data\\theater in Explorer", true, true, st.focusRow == folderRow) ||
+                                (st.focusRow == folderRow && AcceptPressed());
+
+        if (startWatch && sel) {
+            if (sel->isVideo) {
+                const std::filesystem::path absVideo = std::filesystem::absolute(sel->path);
+                ShellExecuteW(nullptr, L"open", absVideo.c_str(), nullptr, absVideo.parent_path().c_str(), SW_SHOWNORMAL);
+                st.theaterStatusMsg = "Opened video '" + sel->path.filename().string() + "' in media player.";
+            } else {
+                choice.play = true;
+                choice.host = false;
+                choice.map = sel->scenario;
+                choice.mode = sel->launchMode;
+                choice.savedFilm = sel->path;
+                choice.mapTitle = sel->title;
+                done = true;
+            }
+        }
+        if (openFolder) {
+            std::error_code ec;
+            const std::filesystem::path root = std::filesystem::absolute(TheaterRootDir(), ec);
+            std::filesystem::create_directories(root / "films", ec);
+            std::filesystem::create_directories(root / "saved", ec);
+            std::filesystem::create_directories(root / "videos", ec);
+            ShellExecuteW(nullptr, L"explore", root.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            st.theaterStatusMsg = "Opened '" + root.string() + "' in Windows Explorer.";
+        }
+
+        if (!s_pickerBlocksNav && st.focusRow > 0 &&
+            (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) {
+            st.focusRow = std::min(folderRow, st.focusRow + 1);
+        }
+        if (!s_pickerBlocksNav && st.focusRow > 0 &&
+            (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) ||
+             ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))) {
+            st.focusRow = std::max(1, st.focusRow - 1);
+        }
+        if (back) {
+            if (st.focusRow > 0) st.focusRow = 0;
+            else goBack(Screen::Main);
+        }
+        DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "All / Recent / Saved / Videos" } });
+        break;
+    }
+
     case Screen::Armory: {
         // MCC Halo: Reach "CUSTOMIZATION / APPEARANCE" header + nameplate + live in-engine 3D Spartan/Elite
         ArmoryStage::Draw(ui, device, context, top + 64.0f * ui.s);
@@ -8350,6 +9024,13 @@ void FrontEndMenu::InvalidateForgeMaps() {
     OverlayContext& ctx = GetOverlayCtx();
     ctx.forgeMapsScanned = false;
     ctx.forgeMaps.clear();
+    ctx.theaterScanned = false;
+}
+
+void FrontEndMenu::SyncTheaterFiles() {
+    SyncAutosaveFilmsToTheater();
+    OverlayContext& ctx = GetOverlayCtx();
+    ctx.theaterScanned = false;
 }
 
 
@@ -8592,6 +9273,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     case Screen::Firefight:  ctx.st.ffSource = startTab ? 1 : 0; break;
     case Screen::CustomGame: ctx.st.mpSource = startTab ? 1 : 0; break;
     case Screen::Forge:      ctx.st.forgeSource = startTab ? 1 : 0; break;
+    case Screen::Theater:    ctx.st.theaterSource = std::clamp(startTab, 0, 3); break;
     default: break;
     }
     ctx.modsScanned = false;
@@ -9009,7 +9691,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 // (connectAddress) is not a local game, so it does not overwrite this.
                 // CONTINUE is a campaign feature (MCC's Continue = the campaign mission you were on), so only a
                 // campaign launch updates it; Firefight, Forge, multiplayer and lobby joins leave it alone.
-                if (choice.connectAddress.empty() && !choice.map.empty() && choice.mode == "campaign") {
+                if (choice.connectAddress.empty() && choice.savedFilm.empty() && !choice.map.empty() && choice.mode == "campaign") {
                     SettingsData d = Settings::Get().Snapshot();
                     d.lastPlayedMode = choice.mode;
                     d.lastPlayedMap = choice.map;
@@ -9062,6 +9744,8 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 if (!choice.modFolder.empty()) args += L" -mod \"" + choice.modFolder.wstring() + L"\"";
                 if (!choice.mapOverride.empty()) args += L" -map-override \"" + choice.mapOverride.wstring() + L"\"";
                 if (!choice.mapVariant.empty()) args += L" -mvar \"" + choice.mapVariant.wstring() + L"\"";
+                if (!choice.savedFilm.empty()) args += L" -film \"" + choice.savedFilm.wstring() + L"\"";
+                ctx.launchedFromTheater = !choice.savedFilm.empty();
                 if (noble::LiveDumpSeconds() > 0) args += L" -mvar-live-dump " + std::to_wstring(noble::LiveDumpSeconds());
                 if (noble::PageScanSeconds() > 0) args += L" -mvar-page-scan " + std::to_wstring(noble::PageScanSeconds());
                 if (!choice.mapTitle.empty()) args += L" -map-title \"" + ToWide(choice.mapTitle) + L"\"";

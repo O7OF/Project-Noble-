@@ -33,6 +33,7 @@ struct FrontEndChoice {
     std::filesystem::path mapImage;    // mod map's loading-screen picture
     std::filesystem::path mapThumb;    // mod map's preview picture
     std::filesystem::path mapVariant;  // Forge map (.mvar) laid over `map`, empty for the plain map
+    std::filesystem::path savedFilm;   // Theater saved film (.film) to play back, empty for normal match
 };
 
 class FrontEndMenu {
@@ -45,6 +46,9 @@ public:
 
     // The Forge map list is scanned once; a map saved during a match must show up without restarting Noble.
     static void InvalidateForgeMaps();
+
+    // Syncs any newly recorded .film files from the engine's autosave/userdata folders into data\theater\films.
+    static void SyncTheaterFiles();
 
     // Initializes the front-end menu state for in-engine overlay rendering over mainmenu_all.map.
     static void Initialize(const std::filesystem::path& reachDir);

@@ -699,6 +699,7 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
 int BlamEngine::s_engineModeOverride = 0;
 BlamEngine* BlamEngine::s_active = nullptr;
 bool BlamEngine::s_guestPostStart = false;
+std::string BlamEngine::s_savedFilmPath;
 std::optional<VariantFields> BlamEngine::s_variantOverrides;
 std::string BlamEngine::s_variantPatch;
 std::atomic<bool> BlamEngine::s_gameTeamsEnabled{false};
@@ -1404,6 +1405,63 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             }
         }
         if (argv) LocalFree(argv);
+    }
+
+    // Theater Mode saved film playback: launch_block + 0x2BF20 holds a const char* pointer to the .film path.
+    // When non-null, haloreach.dll (RVA 0x100C4 -> 0x5A1BC) opens the .film file, loads the embedded flmh
+    // game_options (map, game variant, map variant, players, seed) and activates c_saved_film_director.
+    if (!isMainMenu && !s_savedFilmPath.empty()) {
+        static std::string s_activeFilmPathBuf;
+        std::error_code ec;
+        const std::filesystem::path srcPath(s_savedFilmPath);
+        if (std::filesystem::is_regular_file(srcPath, ec)) {
+            // Read the film's chdr/flmh mode byte so launch_block +0x0C/+0x28 match the recorded engine mode.
+            std::ifstream filmIn(srcPath, std::ios::binary);
+            if (filmIn.is_open()) {
+                uint8_t headerBuf[0x0900] = {};
+                filmIn.read(reinterpret_cast<char*>(headerBuf), sizeof(headerBuf));
+                const std::streamsize got = filmIn.gcount();
+                uint32_t filmEngineMode = 0;
+                if (got >= 0x08EC && headerBuf[0x0340] == 'f' && headerBuf[0x0341] == 'l' &&
+                    headerBuf[0x0342] == 'm' && headerBuf[0x0343] == 'h') {
+                    const uint8_t flmhMode = headerBuf[0x08E8];
+                    if (flmhMode == 1 || flmhMode == 3 || flmhMode == 5) filmEngineMode = flmhMode;
+                }
+                if (filmEngineMode == 0 && got >= 0x0070) {
+                    const uint8_t chdrMode = headerBuf[0x006A];
+                    if (chdrMode == 3) filmEngineMode = 1;      // Campaign
+                    else if (chdrMode == 4) filmEngineMode = 5; // Firefight
+                    else if (chdrMode == 2) filmEngineMode = 3; // Multiplayer / Forge
+                }
+                if (filmEngineMode != 0) {
+                    *reinterpret_cast<uint32_t*>(&block[0x0C]) = filmEngineMode;
+                    *reinterpret_cast<uint32_t*>(&block[0x28]) = filmEngineMode;
+                }
+            }
+
+            // Stage the .film into data\sandbox\theater\<filename> because main.cpp sets the working directory
+            // to data\sandbox, and haloreach.dll (RVA 0x5A1BC / 0x5AB98) copies the path into a 256-byte char
+            // buffer and requires a backslash ('\\') to open it directly via CreateFileW.
+            std::string stagedRelative;
+            const std::filesystem::path sandboxTheaterDir = ReachHost::Get().GetDataDir() / "sandbox" / "theater";
+            std::filesystem::create_directories(sandboxTheaterDir, ec);
+            std::string safeName = srcPath.filename().string();
+            if (safeName.empty() || safeName.size() > 120) safeName = "playback.film";
+            const std::filesystem::path stagedPath = sandboxTheaterDir / safeName;
+            std::filesystem::copy_file(srcPath, stagedPath, std::filesystem::copy_options::overwrite_existing, ec);
+            if (!ec && std::filesystem::is_regular_file(stagedPath, ec)) {
+                s_activeFilmPathBuf = "theater\\" + safeName;
+            } else {
+                s_activeFilmPathBuf = std::filesystem::absolute(srcPath, ec).make_preferred().string();
+            }
+
+            *reinterpret_cast<const char**>(&block[0x2BF20]) = s_activeFilmPathBuf.c_str();
+            NOBLE_INFO("BlamEngine: Configured Theater Saved Film playback '{}' (staged as '{}') at launch_block+0x2BF20",
+                       srcPath.string(), s_activeFilmPathBuf);
+        } else {
+            NOBLE_ERROR("BlamEngine: Requested Theater Saved Film '{}' does not exist", s_savedFilmPath);
+        }
+        s_savedFilmPath.clear();
     }
 
     return block;
