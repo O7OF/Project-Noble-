@@ -2,71 +2,24 @@
 #include "ReachAudio.hpp"
 #include "engine/ReachHost.hpp"
 
-#include <windows.h>
-#include <mmdeviceapi.h>
-#include <audiopolicy.h>
-#include <endpointvolume.h>
 #include <algorithm>
-#include <atomic>
-#include <cmath>
-
-#pragma comment(lib, "ole32.lib")
 
 namespace noble {
 namespace ProcessAudio {
 
-namespace {
-std::atomic<float> s_lastVolume{-1.0f};
-std::atomic<int> s_lastMute{-1};
-}
-
-void ApplyVolume(float gameVolume, bool masterMute) {
-    const float clamped = std::clamp(gameVolume, 0.0f, 1.0f);
-    const int muteInt = masterMute ? 1 : 0;
-    if (std::fabs(s_lastVolume.load() - clamped) < 1e-4f && s_lastMute.load() == muteInt) {
-        return;
-    }
-    s_lastVolume.store(clamped);
-    s_lastMute.store(muteInt);
-
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    IMMDeviceEnumerator* enumerator = nullptr;
-    hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                          __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator));
-    if (SUCCEEDED(hr) && enumerator) {
-        IMMDevice* device = nullptr;
-        hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
-        if (SUCCEEDED(hr) && device) {
-            IAudioSessionManager2* sessionManager = nullptr;
-            hr = device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
-                                  reinterpret_cast<void**>(&sessionManager));
-            if (SUCCEEDED(hr) && sessionManager) {
-                ISimpleAudioVolume* simpleVolume = nullptr;
-                hr = sessionManager->GetSimpleAudioVolume(nullptr, 0, &simpleVolume);
-                if (SUCCEEDED(hr) && simpleVolume) {
-                    simpleVolume->SetMasterVolume(clamped, nullptr);
-                    simpleVolume->SetMute(masterMute ? TRUE : FALSE, nullptr);
-                    simpleVolume->Release();
-                }
-                sessionManager->Release();
-            }
-            device->Release();
-        }
-        enumerator->Release();
-    }
-}
-
+// Game audio is mixed by haloreach.dll. Noble used to also set this process's WASAPI session volume to
+// GAME, so every level was scaled twice (GAME 0.5 gave 0.25 to music/dialogue), a mute at launch wrote
+// 0 into the engine profile and could leave the running mixer silent, and mid-match MUSIC/OTHER changes
+// never reached the live mixer. Write the three real levels straight to the engine instead.
+// masterMute is Noble's own menu audio only (see Settings.hpp), so it must not touch the game mix.
 void ApplyAll(float gameVolume, float musicVolume, float otherVolume, bool masterMute) {
-    ApplyVolume(gameVolume, masterMute);
-    ReachAudio::SetMusicVolume(musicVolume);
+    const float game = std::clamp(gameVolume, 0.0f, 1.0f);
+    const float music = std::clamp(musicVolume, 0.0f, 1.0f);
+    const float other = std::clamp(otherVolume, 0.0f, 1.0f);
+    ReachAudio::SetMusicVolume(music);
     ReachAudio::SetMuted(masterMute);
-    if (masterMute) {
-        ReachHost::SetRuntimeVolumes(0.0f, 0.0f, 0.0f);
-    } else {
-        ReachHost::SetRuntimeVolumes(gameVolume, musicVolume, otherVolume);
-    }
+    ReachHost::SetRuntimeVolumes(game, music, other);
 }
 
 } // namespace ProcessAudio
 } // namespace noble
-
