@@ -3546,6 +3546,11 @@ struct OverlayContext {
     bool closed = false;
     void* hMatchProcess = nullptr;
     bool matchRunning = false;
+    // CAMPAIGN > TROOPER: an installed campaign mod whose maps carry a player-capable marine biped (the
+    // "Improved Trooper Campaign" style mods). The TROOPER tab launches with that mod's maps when present.
+    std::filesystem::path trooperModFolder;
+    std::string trooperModTitle;
+    bool trooperModScanned = false;
 };
 
 // The engine draws the menu scene and calls RenderOverlay from slot 1. MCC ships no Reach menu map,
@@ -3559,6 +3564,65 @@ static std::atomic<bool> s_isMatchRunning{false};
 OverlayContext& GetOverlayCtx() {
     static OverlayContext s_ctx;
     return s_ctx;
+}
+
+// True when a map file contains an ASCII token. Mod maps are uncompressed, so tag paths such as
+// "objects\characters\marine - copy\marineplayer2" appear as readable strings in them.
+static bool MapFileContains(const std::filesystem::path& file, const std::string& token) {
+    if (token.empty()) return false;
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return false;
+    std::vector<char> buffer(1 << 20);
+    const size_t overlap = token.size() - 1;
+    std::string tail;
+    while (in) {
+        in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const size_t got = static_cast<size_t>(in.gcount());
+        if (got == 0) break;
+        std::string chunk;
+        chunk.reserve(tail.size() + got);
+        chunk += tail;
+        chunk.append(buffer.data(), got);
+        if (chunk.find(token) != std::string::npos) return true;
+        tail = chunk.size() > overlap ? chunk.substr(chunk.size() - overlap) : chunk;
+    }
+    return false;
+}
+
+// Campaign > Trooper: find an installed campaign mod whose maps ship a player-capable marine biped (like the
+// "Improved Trooper Campaign" workshop mod). Such a biped has its own player animation graph and health setup, so
+// the Marine's legs and shield HUD are correct without the built-in NPC-biped swap. Runs once, when the TROOPER
+// tab is opened: a map scan is not free, so it stays out of the menu start-up scan. Mods that name themselves
+// "trooper" are checked first; everything else is only scanned when none matched.
+static void EnsureTrooperModScanned(OverlayContext& ctx) {
+    if (ctx.trooperModScanned) return;
+    ctx.trooperModScanned = true;
+    auto firstCampaignMap = [](const ModEntry& mod) -> std::filesystem::path {
+        for (const ModMap& m : mod.campaign) {
+            if (!m.hasMapFile) continue;
+            const std::filesystem::path file = mod.folder / "maps" / (m.scenario + ".map");
+            if (std::filesystem::exists(file)) return file;
+        }
+        return {};
+    };
+    auto mentionsTrooper = [](const ModEntry& mod) {
+        std::string text = mod.title + " " + mod.description;
+        for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return text.find("trooper") != std::string::npos;
+    };
+    auto check = [&](const ModEntry& mod) {
+        const std::filesystem::path file = firstCampaignMap(mod);
+        if (file.empty()) return false;
+        if (!MapFileContains(file, "marineplayer")) return false;
+        ctx.trooperModFolder = mod.folder;
+        ctx.trooperModTitle = mod.title;
+        NOBLE_INFO("Campaign > Trooper: using player-capable Marine assets from mod \"{}\" ({})", mod.title,
+                   file.string());
+        return true;
+    };
+    for (const ModEntry& mod : ctx.mods) if (mentionsTrooper(mod) && check(mod)) return;
+    for (const ModEntry& mod : ctx.mods) if (!mentionsTrooper(mod) && check(mod)) return;
+    NOBLE_INFO("Campaign > Trooper: no installed mod has player-capable Marine model; using the built-in swap");
 }
 
 
@@ -7010,6 +7074,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     case Screen::Campaign: {
         const bool campaignTrooper = st.campaignSource == 1;
+        if (campaignTrooper) EnsureTrooperModScanned(ctx);
         DrawTitle(ui, ImVec2(left, top), "CAMPAIGN", campaignTrooper ? "TROOPER" : "SOLO");
         float campaignTabsEnd = 0.0f;
         if (DrawCampaignTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
@@ -7062,7 +7127,11 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const char* blurb = row ? row->blurb.c_str() : "";
         const float blurbH = BlurbBlockHeight(ui, pw, blurb);
         const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
-        const std::string kicker = mod ? "MOD: " + Upper(mod->title) : row && row->header ? std::string("MOD") : std::string("HALO: REACH \xC2\xB7 CAMPAIGN");
+        const std::string kicker = mod ? "MOD: " + Upper(mod->title) : row && row->header ? std::string("MOD")
+            : campaignTrooper
+                ? (ctx.trooperModFolder.empty() ? std::string("HALO: REACH \xC2\xB7 TROOPER (BUILT-IN)")
+                                                : "TROOPER \xC2\xB7 " + Upper(ctx.trooperModTitle))
+                : std::string("HALO: REACH \xC2\xB7 CAMPAIGN");
         float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, row ? row->scenario : "", kicker,
                              row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb,
                              row ? row->imageLarge : std::filesystem::path());
@@ -9001,9 +9070,17 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     Settings::Get().Update(d);
                 }
                 std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
-                // CAMPAIGN > TROOPER: the menu equivalent of the -trooper launch flag (the match process swaps the
-                // local player's biped for the UNSC Marine and locks third person).
-                if (choice.mode == "campaign" && ctx.st.campaignSource == 1) args += L" -trooper";
+                // CAMPAIGN > TROOPER: when an installed mod ships player-capable Marine assets, launch its maps like a
+                // modded campaign (the mod's biped has the player animation graph and shields); otherwise use the
+                // built-in -trooper NPC-biped swap.
+                if (choice.mode == "campaign" && ctx.st.campaignSource == 1) {
+                    EnsureTrooperModScanned(ctx);
+                    if (!ctx.trooperModFolder.empty()) {
+                        args += L" -mod \"" + ctx.trooperModFolder.wstring() + L"\"";
+                    } else {
+                        args += L" -trooper";
+                    }
+                }
                 // Forward the test-only capture hooks, so a harness that opened the menu can still photograph the
                 // match (the child is a fresh process with its own command line).
                 for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-scoreboard-demo", L"-scoreboard-demo-players", L"-postgame-role", L"-pad-script", L"-quit-after", L"-fake-pad", L"-fake-pad-amount", L"-capture-at" }) {
