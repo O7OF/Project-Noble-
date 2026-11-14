@@ -116,7 +116,6 @@ struct SettingsData {
     int lastPlayedDifficulty = 1;
     unsigned long long lastPlayedSkulls = 0;
     std::string lastPlayedMod;          // mod folder, empty when the game was vanilla
-    bool campaignTrooper = false;       // CAMPAIGN source tab TROOPER: start missions as a UNSC Marine (Noble Trooper mode)
     std::string playerName = "NobleSix";
     std::string serviceTag = "NOBL";  // Reach service tag: 1-4 letters/digits, upper case (profile +0x1AC)
     std::string masterServerUrl = std::string(kMasterDefault); // empty = LAN only

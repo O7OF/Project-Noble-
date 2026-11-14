@@ -22,7 +22,6 @@
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
-#include "engine/TrooperMode.hpp"
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
 #include "engine/MvarDump.hpp"
@@ -1778,10 +1777,6 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     // Armory models and scripts built in, so ElitePack is only needed in matches.
     if (!showMenu || !noble::ReachArmory::HasCustomMenuMap()) {
         noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
-    }
-    // Trooper mode prototype (-trooper): the campaign player is a UNSC Marine.
-    if (!showMenu && noble::TrooperMode::Install(loader->GetModuleHandle(), launchMap, launchMode)) {
-        noble::CameraThirdPerson::LockThirdPerson();   // Tyler: Trooper mode is third person only
     }
 
     if (!connectAddress.empty()) {

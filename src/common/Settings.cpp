@@ -252,7 +252,6 @@ void Settings::Load() {
             Read(j, "lastPlayedDifficulty", d.lastPlayedDifficulty);
             Read(j, "lastPlayedSkulls", d.lastPlayedSkulls);
             Read(j, "lastPlayedMod", d.lastPlayedMod);
-            Read(j, "campaignTrooper", d.campaignTrooper);
             Read(j, "serviceTag", d.serviceTag);
             Read(j, "masterServerUrl", d.masterServerUrl);
             // Free federation: the West registry merges East and UK server-side. URL cleanup happens
@@ -414,7 +413,6 @@ bool Settings::Save() {
         j["lastPlayedDifficulty"] = d.lastPlayedDifficulty;
         j["lastPlayedSkulls"] = d.lastPlayedSkulls;
         j["lastPlayedMod"] = d.lastPlayedMod;
-        j["campaignTrooper"] = d.campaignTrooper;
         j["serviceTag"] = d.serviceTag;
         j["masterServerUrl"] = d.masterServerUrl;
         j["favorites"] = d.favorites;

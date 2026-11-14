@@ -163,7 +163,6 @@ set(SOURCES
     src/engine/ReachHost.cpp
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
-    src/engine/TrooperMode.cpp
     src/engine/MvarDump.cpp
     src/engine/MemoryDiff.cpp
     src/engine/ForgePlacement.cpp
@@ -254,7 +253,6 @@ set(HEADERS
     src/engine/ReachHost.hpp
     src/engine/ReachArmory.hpp
     src/engine/ElitePack.hpp
-    src/engine/TrooperMode.hpp
     src/engine/SharedTagCache.hpp
     src/engine/DevCheats.hpp
     src/engine/CameraFov.hpp

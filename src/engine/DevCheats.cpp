@@ -660,29 +660,6 @@ void DevCheats::GameTick(int32_t userIndex) {
     s_localUnitDatum.store(player.unitHandle);
     s_localVehicleDatum.store(player.vehicleHandle);
 
-    // Test-only (NOBLE_DUMP_VITALS=1): log the local unit's shield/health once, to compare Spartan vs Marine.
-    {
-        static int dumpVitals = -1;
-        static int vitalsFrames = 0;
-        if (dumpVitals < 0) {
-            wchar_t value[8] = {};
-            dumpVitals = (GetEnvironmentVariableW(L"NOBLE_DUMP_VITALS", value, 8) > 0) ? 1 : 0;
-        }
-        if (dumpVitals && vitalsFrames >= 0 && ++vitalsFrames == 120) {
-            NOBLE_INFO("Vitals: havePlayer {} unit 0x{:X} data {}", havePlayer, player.unitHandle,
-                       reinterpret_cast<uintptr_t>(player.biped));
-            if (havePlayer && player.biped) {
-                __try {
-                    const float shield = *reinterpret_cast<const float*>(player.biped + 0xDC);
-                    const float health = *reinterpret_cast<const float*>(player.biped + 0xE0);
-                    NOBLE_INFO("Vitals: shield {:.3f} health {:.3f}", shield, health);
-                } __except (EXCEPTION_EXECUTE_HANDLER) {
-                    NOBLE_WARN("Vitals: fault reading shield/health");
-                }
-            }
-            vitalsFrames = -1;
-        }
-    }
     if (havePlayer && player.biped) {
         // 1. Apply Godmode
         if (s_godmode.load()) {

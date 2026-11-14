@@ -24,7 +24,6 @@
 #include "engine/DevCheats.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
-#include "engine/TrooperMode.hpp"
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
 #include "vfs/VFS.hpp"
@@ -2045,34 +2044,9 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     memcpy(st + 0x12C, &ry, sizeof(SHORT));
 }
 
-// Test-only: NOBLE_TEST_SKIP_CINEMATICS=<seconds> pulses Space (2 s down, 0.5 s up) for that many seconds, so a
-// campaign test can skip its intro cutscene without the game window ever being focused. It must run BEFORE the
-// focus gate: FillLocalInput returns early when the window is unfocused, which is exactly how tests run now.
-void InjectTestSkipInput(uint8_t* st) {
-    static ULONGLONG s_start = 0;
-    static int s_seconds = -1;
-    if (s_seconds < 0) {
-        wchar_t value[16] = {};
-        s_seconds = (GetEnvironmentVariableW(L"NOBLE_TEST_SKIP_CINEMATICS", value, 16) > 0) ? _wtoi(value) : 0;
-    }
-    if (s_seconds <= 0) return;
-    if (!s_sessionStarted.load()) return;
-    if (s_start == 0) s_start = GetTickCount64();
-    const ULONGLONG elapsed = GetTickCount64() - s_start;
-    if (elapsed < static_cast<ULONGLONG>(s_seconds) * 1000 && elapsed > 2000 && (elapsed % 2500) < 2000) {
-        static bool s_logged = false;
-        if (!s_logged) {
-            s_logged = true;
-            NOBLE_INFO("ReachHost: InjectTestSkipInput - injecting VK_SPACE to skip cinematic (duration {} s)", s_seconds);
-        }
-        st[0x004 + VK_SPACE] = 0x80;
-    }
-}
-
 static void FillLocalInput(uint8_t* st) {
     *reinterpret_cast<uint32_t*>(st + 0x000) = 1;
     *reinterpret_cast<float*>(st + 0x118) = 1.0f;
-    InjectTestSkipInput(st);
 
     // Cutscene skip check: when in a cinematic and player/test presses Space or Enter. The extra recovery pass is
     // opt-in (NOBLE_CUTSCENE_RECOVERY=1): it breaks mission intros (player out of bounds, input locked) when a skip
@@ -2093,7 +2067,6 @@ static void FillLocalInput(uint8_t* st) {
         ReachArmory::NotifyEngineTick();
     } else {
         ReachArmory::NotifyMatchTick();   // Marine pieces: must be set on this (simulation) thread
-        TrooperMode::DumpModelState();    // test-only (NOBLE_MODEL_DUMP=1): log the local unit's regions/permutations once
     }
 
     static HWND s_lastWindow = nullptr;
@@ -2216,7 +2189,6 @@ static void FillLocalInput(uint8_t* st) {
         }
         st[0x004 + vk] = v;
     }
-    InjectTestSkipInput(st);
 
     // Cutscene skip check: when in a cinematic and player presses Space or Enter (recovery is opt-in; see above).
     if (noble::EnginePatches::CutsceneRecoveryEnabled() && noble::EnginePatches::CinematicInProgress()) {
