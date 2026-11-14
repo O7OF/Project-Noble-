@@ -2,7 +2,10 @@ param(
     [string]$Repo = 'O7OF/Project-Noble-',
     [string]$Version = '',
     [switch]$SkipBuild,
-    [switch]$NoUpload
+    [switch]$NoUpload,
+    # Forge World is ~760 MB of uncompressed map data; it ships as its own optional asset so the base release stays
+    # small. -NoForgePack skips that second asset.
+    [switch]$NoForgePack
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,18 +94,12 @@ foreach ($dir in $srcMenuMaps, $relMenuMaps) {
     }
 }
 
-# Noble's Forge World (Pelican, Spectre, Boathog, targeting laser in the Forge palette). The VFS serves data\maps\<name>.map
-# in place of MCC's map, so every player must have this same file or Forge World lobbies won't match. The data copy above
-# skips *.map, so copy it here. Its Spectre sound bank (data\fmod\pc\sfx.st_spectre.fsb) comes with the data copy.
+# Noble's Forge World (Pelican, Spectre, Boathog, targeting laser in the Forge palette) is a 760 MB uncompressed
+# HREK map. It is NOT part of the base package: it ships as a separate optional asset (see the forge pack below) so
+# players who never play Forge World do not download it. Only the map path is remembered here.
 $srcForge = Join-Path $root 'data\maps\forge_halo.map'
 if (-not (Test-Path $srcForge)) { $srcForge = Join-Path $release 'data\maps\forge_halo.map' }
-if (Test-Path $srcForge) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\maps') | Out-Null
-    Copy-Item $srcForge (Join-Path $pkg 'data\maps\forge_halo.map') -Force
-    if (-not (Test-Path (Join-Path $pkg 'data\fmod\pc\sfx.st_spectre.fsb'))) { Write-Warning "Spectre sound bank missing from data\fmod\pc" }
-} else {
-    Write-Warning "data\maps\forge_halo.map (Noble Forge World) was not found to package"
-}
+if (-not (Test-Path $srcForge)) { $srcForge = $null; Write-Warning "data\maps\forge_halo.map (Noble Forge World) was not found to package" }
 
 # Guarantee zero dev binaries or user save/appearance/career files in the staged release directory
 Get-ChildItem -Path $pkg -Recurse -Include "noble-dev*","noble-dedicated*","noble-client*","*.pdb","appearance*","career*","settings*","preferences*","*.pncsold","menu-background-deck.txt" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
@@ -138,6 +135,11 @@ $readme = @(
     'Your settings and appearance live in data\userdata and are never replaced by',
     'an update.',
     '',
+    'Forge World: the rebuilt Forge World map (Pelican, Spectre, Boathog, targeting',
+    'laser) ships as a separate optional download ("ForgeWorld" zip). Extract its',
+    'data folder over this installation to play/forge on that map; everyone in a',
+    'Forge World lobby needs the same pack.',
+    '',
     'Releases: https://github.com/O7OF/Project-Noble-/releases'
 )
 Set-Content -Path (Join-Path $pkg 'README.txt') -Value ($readme -join [Environment]::NewLine) -Encoding UTF8
@@ -158,11 +160,59 @@ $sizeMb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
 $hashFile = $zip + '.sha256'
 Set-Content -Path $hashFile -Value ($hash + '  ' + $assetName) -Encoding ASCII
+
+# == Optional Forge World asset (the 760 MB map stays out of the base package) ==
+$forgeZip = $null
+$forgeHashFile = $null
+$forgeAssetName = 'Project-Noble-ForgeWorld-' + $tag + '-win64.zip'
+if (-not $NoForgePack -and $srcForge) {
+    Write-Host '== Creating the optional Forge World pack =='
+    $forgePkg = Join-Path $env:TEMP 'noble-forge-world-pack'
+    if (Test-Path $forgePkg) { Remove-Item $forgePkg -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path (Join-Path $forgePkg 'data\maps') | Out-Null
+    Copy-Item $srcForge (Join-Path $forgePkg 'data\maps\forge_halo.map') -Force
+    $specFsb = Join-Path $release 'data\fmod\pc\sfx.st_spectre.fsb'
+    $specInfo = Join-Path $release 'data\fmod\pc\sfx.st_spectre.fsb.info'
+    if (Test-Path $specFsb) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $forgePkg 'data\fmod\pc') | Out-Null
+        Copy-Item $specFsb (Join-Path $forgePkg 'data\fmod\pc\sfx.st_spectre.fsb') -Force
+        if (Test-Path $specInfo) { Copy-Item $specInfo (Join-Path $forgePkg 'data\fmod\pc\sfx.st_spectre.fsb.info') -Force }
+    } else {
+        Write-Warning 'Spectre sound bank missing from data\fmod\pc'
+    }
+    $forgeReadme = @(
+        ('Project Noble ' + $Version + ' - optional Forge World pack'),
+        '',
+        'Copy the data folder in this zip over your Project Noble installation',
+        '(the folder that contains Noble.exe). It adds:',
+        '  data\maps\forge_halo.map        Noble Forge World (Pelican, Spectre, Boathog,',
+        '                                  targeting laser in the Forge palette)',
+        '  data\fmod\pc\sfx.st_spectre.fsb Spectre sound bank',
+        '',
+        ('Requires Project Noble ' + $Version + ' or newer. Everyone in a Forge World'),
+        'lobby needs this same pack so the maps match.'
+    )
+    Set-Content -Path (Join-Path $forgePkg 'FORGE-WORLD-README.txt') -Value ($forgeReadme -join [Environment]::NewLine) -Encoding UTF8
+    $forgeZip = Join-Path $dist $forgeAssetName
+    if (Test-Path $forgeZip) { Remove-Item $forgeZip -Force }
+    Push-Location $forgePkg
+    & tar.exe -a -c -f $forgeZip 'data' 'FORGE-WORLD-README.txt'
+    $forgeTarExit = $LASTEXITCODE
+    Pop-Location
+    if ($forgeTarExit -ne 0 -or -not (Test-Path $forgeZip)) {
+        Compress-Archive -Path (Join-Path $forgePkg '*') -DestinationPath $forgeZip -CompressionLevel Fastest -Force
+    }
+    $forgeHash = (Get-FileHash -Path $forgeZip -Algorithm SHA256).Hash.ToLower()
+    $forgeHashFile = $forgeZip + '.sha256'
+    Set-Content -Path $forgeHashFile -Value ($forgeHash + '  ' + $forgeAssetName) -Encoding ASCII
+    Write-Host ('Forge World pack: ' + $forgeZip + ' (' + [math]::Round((Get-Item $forgeZip).Length / 1MB, 1) + ' MB)')
+}
 Write-Host ('Zip: ' + $zip + ' (' + $sizeMb + ' MB)')
 Write-Host ('SHA256: ' + $hash)
 
 if ($NoUpload) {
-    Write-Host '== NoUpload: package is ready in dist/ =='
+    Write-Host '== NoUpload: packages are ready in dist/ =='
+    if ($forgeZip) { Write-Host ('   base:  ' + $zip + ' (' + $sizeMb + ' MB)') ; Write-Host ('   forge: ' + $forgeZip) }
     exit 0
 }
 
@@ -210,6 +260,16 @@ Write-Host '== Uploading the checksum =='
 $checksumUrl = 'https://uploads.github.com/repos/' + $Repo + '/releases/' + $releaseInfo.id + '/assets?name=' + [uri]::EscapeDataString($assetName + '.sha256')
 & curl.exe -sS -X POST -H ('Authorization: Bearer ' + $token) -H 'Content-Type: text/plain' --data-binary ('@' + $hashFile) $checksumUrl
 if ($LASTEXITCODE -ne 0) { throw 'checksum upload failed' }
+
+if ($forgeZip) {
+    Write-Host '== Uploading the optional Forge World pack =='
+    $forgeUploadUrl = 'https://uploads.github.com/repos/' + $Repo + '/releases/' + $releaseInfo.id + '/assets?name=' + [uri]::EscapeDataString($forgeAssetName)
+    & curl.exe -sS -X POST -H ('Authorization: Bearer ' + $token) -H 'Content-Type: application/zip' --data-binary ('@' + $forgeZip) $forgeUploadUrl
+    if ($LASTEXITCODE -ne 0) { throw 'forge pack upload failed' }
+    $forgeChecksumUrl = 'https://uploads.github.com/repos/' + $Repo + '/releases/' + $releaseInfo.id + '/assets?name=' + [uri]::EscapeDataString($forgeAssetName + '.sha256')
+    & curl.exe -sS -X POST -H ('Authorization: Bearer ' + $token) -H 'Content-Type: text/plain' --data-binary ('@' + $forgeHashFile) $forgeChecksumUrl
+    if ($LASTEXITCODE -ne 0) { throw 'forge checksum upload failed' }
+}
 
 Write-Host '== Publishing =='
 $notesAscii = $notes -replace '[^\x09\x0A\x0D\x20-\x7E]', '-'
