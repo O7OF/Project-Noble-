@@ -33,7 +33,6 @@
 #include "engine/SessionVariant.hpp"
 #include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
-#include "ui/ForgeMenu.hpp"
 #include "ui/FrontEndMenu.hpp"
 #include "ui/LoadScreen.hpp"
 #include "network/SessionManager.hpp"
@@ -1051,7 +1050,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Initialize ImGui UI Manager
     noble::UIManager::Initialize(window->GetHwnd(), renderer->GetDevice(), renderer->GetContext());
-    noble::ForgeMenu::Initialize(userStoragePath.wstring());
     window->SetCustomWndProc([](HWND h, UINT m, WPARAM w, LPARAM l) {
         return noble::UIManager::HandleWndProc(h, m, w, l);
     });
@@ -1590,12 +1588,27 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     // bad or missing patch) falls back to the stock DLL with the reason logged, so the game always starts.
     // AI ACTORS (C7d): the pool hook lives in Loader and only sees environment variables, so publish the saved
     // setting here. SetEnvironmentVariableW in this process is inherited by the relaunched match process.
-    // A value already in the environment (from -ai-actors in the menu process, or inherited by the relaunched
-    // match process) wins, so a command-line override is not replaced by the saved setting.
-    if (startupSettings.aiActors > 0 && startupSettings.extendedLimits != 0 &&
-        GetEnvironmentVariableW(L"NOBLE_AI_ACTORS", nullptr, 0) == 0) {
-        const std::wstring actors = std::to_wstring(startupSettings.aiActors);
-        SetEnvironmentVariableW(L"NOBLE_AI_ACTORS", actors.c_str());
+    // Only an explicit -ai-actors command-line override takes precedence over the saved setting.
+    {
+        const wchar_t* cmdLine = GetCommandLineW();
+        bool hasCmdAiActors = false;
+        if (cmdLine) {
+            for (const wchar_t* p = cmdLine; *p; ++p) {
+                if (_wcsnicmp(p, L"-ai-actors", 10) == 0 && (p == cmdLine || p[-1] == L' ' || p[-1] == L'\t') &&
+                    (p[10] == L'\0' || p[10] == L' ' || p[10] == L'\t' || p[10] == L'=')) {
+                    hasCmdAiActors = true;
+                    break;
+                }
+            }
+        }
+        if (!hasCmdAiActors) {
+            if (startupSettings.aiActors > 0 && startupSettings.extendedLimits != 0) {
+                const std::wstring actors = std::to_wstring(startupSettings.aiActors);
+                SetEnvironmentVariableW(L"NOBLE_AI_ACTORS", actors.c_str());
+            } else {
+                SetEnvironmentVariableW(L"NOBLE_AI_ACTORS", nullptr);
+            }
+        }
     }
     // A mod may ship its own patched haloreach.dll ("modded haloreach.dll (REQUIRED)"): the AI Battleground mods
     // do, and that binary carries patches Noble does not apply (e.g. the AI-spawn jump at RVA 0x6920B5). Load it
@@ -1737,11 +1750,6 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
 
     // Initialize Developer Cheats & Mod Menu engine hooks
     noble::DevCheats::Initialize(loader->GetModuleHandle());
-
-    // Wire Forge palette placement handler
-    noble::ForgeMenu::SetPlaceHandler([](const noble::ForgeMenu::Item& item) -> bool {
-        return noble::ForgePatches::PlaceObject(item.tag, item.tagIndex);
-    });
 
     // 9. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();
