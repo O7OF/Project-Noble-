@@ -1,14 +1,10 @@
 #include "PelicanControls.hpp"
-
-#if defined(NOBLE_DEV_BUILD)
 #include "common/Logger.hpp"
 
 #include <intrin.h>
-#endif
 
 namespace noble::pelican {
 
-#if defined(NOBLE_DEV_BUILD)
 namespace {
 
 // RVAs / offsets in haloreach.dll 1.3528.0.0 (same build as SpawnTest / DevCheats).
@@ -67,10 +63,8 @@ int ToggleDoors(uintptr_t base) {
 }
 
 } // namespace
-#endif
 
 void GameTick([[maybe_unused]] uintptr_t base) {
-#if defined(NOBLE_DEV_BUILD)
     if (!base) return;
     const bool down = (GetAsyncKeyState(kToggleKey) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
     if (down && !s_keyDown && GetTickCount64() - s_lastToggle > 400) {
@@ -81,7 +75,6 @@ void GameTick([[maybe_unused]] uintptr_t base) {
         else NOBLE_INFO("Pelican: X ignored (not in a vehicle)");
     }
     s_keyDown = down;
-#endif
 }
 
 } // namespace noble::pelican

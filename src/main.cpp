@@ -438,7 +438,7 @@ char __fastcall MapParseHook(void* a1, void* a2) {
                   SafeReadPtr(table + 0xC + static_cast<uint64_t>(index) * 4, &fileId, sizeof(fileId)) &&
                   SafeReadPtr(table + 0x10 + static_cast<uint64_t>(index) * 4, &fileType, sizeof(fileType));
         const int want = s_requestedMapType.load();
-        static const bool s_mapTypePatchOff = std::getenv("NOBLE_MAPTYPE_OFF") != nullptr;
+        static const bool s_mapTypePatchOff = GetEnvironmentVariableA("NOBLE_MAPTYPE_OFF", nullptr, 0) > 0;
         const int wantId = s_requestedMapId.load();
         if (ok) NOBLE_INFO("main: map declares id {} type 0x{:X}; launch requested id {} type 0x{:X}", fileId, fileType,
                            wantId, want);
@@ -943,6 +943,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
     noble::AuthClient::Get().Initialize();
     noble::SocialClient::Get().Initialize();
+    noble::UPnP::Get().Initialize();
     const noble::SettingsData startupSettings = noble::Settings::Get().Snapshot();
 
     // Front-end menu or a direct map launch? Needed before the swap chain is created: the menu process
@@ -1024,14 +1025,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }
     if (showMenu) {
-        const float scale = std::min(1.5f, std::min(static_cast<float>(kMaxRenderWidth) / static_cast<float>(renderWidth),
-                                                     static_cast<float>(kMaxRenderHeight) / static_cast<float>(renderHeight)));
-        if (scale > 1.0f) {
-            renderWidth = static_cast<uint32_t>(std::lround(static_cast<float>(renderWidth) * scale));
-            renderHeight = static_cast<uint32_t>(std::lround(static_cast<float>(renderHeight) * scale));
+        if (startupSettings.menuSupersampling && renderWidth < 2560 && renderHeight < 1440) {
+            const float scale = std::min(1.5f, std::min(static_cast<float>(kMaxRenderWidth) / static_cast<float>(renderWidth),
+                                                         static_cast<float>(kMaxRenderHeight) / static_cast<float>(renderHeight)));
+            if (scale > 1.0f) {
+                renderWidth = static_cast<uint32_t>(std::lround(static_cast<float>(renderWidth) * scale));
+                renderHeight = static_cast<uint32_t>(std::lround(static_cast<float>(renderHeight) * scale));
+            }
         }
-        NOBLE_INFO("main: menu render resolution {}x{} (window {}x{}, display {}x{})", renderWidth, renderHeight,
-                   window->GetWidth(), window->GetHeight(), monitorWidth, monitorHeight);
+        NOBLE_INFO("main: menu render resolution {}x{} (window {}x{}, display {}x{}, supersampling {})", renderWidth, renderHeight,
+                   window->GetWidth(), window->GetHeight(), monitorWidth, monitorHeight,
+                   startupSettings.menuSupersampling ? "enabled" : "disabled");
     } else {
         NOBLE_INFO("main: match render resolution {}x{} (window {}x{}, display {}x{})", renderWidth, renderHeight,
                    window->GetWidth(), window->GetHeight(), monitorWidth, monitorHeight);
@@ -1731,10 +1735,8 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         return false;
     });
 
-#if defined(NOBLE_DEV_BUILD)
-    // Initialize Developer Cheats & Mod Menu engine hooks (Dev builds only)
+    // Initialize Developer Cheats & Mod Menu engine hooks
     noble::DevCheats::Initialize(loader->GetModuleHandle());
-#endif
 
     // Wire Forge palette placement handler
     noble::ForgeMenu::SetPlaceHandler([](const noble::ForgeMenu::Item& item) -> bool {

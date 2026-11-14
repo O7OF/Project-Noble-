@@ -649,13 +649,180 @@ const char* DifficultyName(int d) {
     return d >= 0 && d < 4 ? kNames[d] : "?";
 }
 
-// The record for this machine's player. Offline, the local player is the first one present.
+struct LivePlayerInfo {
+    bool valid;
+    char name[32];
+    char tag[8];
+    int32_t score;
+    int32_t kills;
+    int32_t assists;
+    int32_t deaths;
+    int32_t medals;
+    bool isLocalMachine;
+};
+
+static int ProbeTlsLocalSlot(const uint8_t* reachBase) {
+    if (!reachBase) return -1;
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(reachBase + 0xC17B18);
+        if (tlsIdx < 64) {
+            const uintptr_t tlsVec = __readgsqword(0x58);
+            if (tlsVec) {
+                const uintptr_t tlsBase = *reinterpret_cast<const uintptr_t*>(tlsVec + static_cast<uintptr_t>(tlsIdx) * 8);
+                if (tlsBase) {
+                    const uint8_t* playersTable = *reinterpret_cast<const uint8_t* const*>(tlsBase + 0x18);
+                    if (playersTable) {
+                        const int32_t maxP = *reinterpret_cast<const int32_t*>(playersTable + 0x44);
+                        const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(playersTable + 0x50);
+                        if (entries && maxP > 0 && maxP <= 16) {
+                            for (int32_t i = 0; i < maxP && i < 16; ++i) {
+                                const uint8_t* entry = entries + static_cast<size_t>(i) * 0x490;
+                                const uint32_t flags = *reinterpret_cast<const uint32_t*>(entry + 0x04);
+                                if ((flags & 0x08u) != 0) {
+                                    return static_cast<int>(i);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return -1;
+}
+
+static int ProbeLiveEngineScores(const uint8_t* reachBase, LivePlayerInfo* outPlayers, int maxCount) {
+    if (!reachBase || !outPlayers || maxCount <= 0) return 0;
+    for (int i = 0; i < maxCount; ++i) {
+        outPlayers[i].valid = false;
+        outPlayers[i].name[0] = 0;
+        outPlayers[i].tag[0] = 0;
+        outPlayers[i].score = 0;
+        outPlayers[i].kills = 0;
+        outPlayers[i].assists = 0;
+        outPlayers[i].deaths = 0;
+        outPlayers[i].medals = 0;
+        outPlayers[i].isLocalMachine = false;
+    }
+    int count = 0;
+    __try {
+        const uint8_t* table = reachBase + 0x28B83B0;
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(reachBase + 0xC17B18);
+        uintptr_t tlsBase = 0;
+        if (tlsIdx < 64) {
+            const uintptr_t tlsVec = __readgsqword(0x58);
+            if (tlsVec) tlsBase = *reinterpret_cast<const uintptr_t*>(tlsVec + static_cast<uintptr_t>(tlsIdx) * 8);
+        }
+
+        for (int i = 0; i < 16 && i < maxCount; ++i) {
+            const uint8_t* p = table + 0xFEF8 + (i * 0xD8);
+            if (p[0] == 0) continue;
+
+            const wchar_t* wname = reinterpret_cast<const wchar_t*>(p + 0x10);
+            for (size_t c = 0; c < 31 && wname[c] != 0; ++c) {
+                outPlayers[i].name[c] = static_cast<char>(wname[c]);
+                outPlayers[i].name[c + 1] = 0;
+            }
+
+            const wchar_t* wtag = reinterpret_cast<const wchar_t*>(p + 0x6C);
+            for (size_t c = 0; c < 7 && wtag[c] != 0; ++c) {
+                outPlayers[i].tag[c] = static_cast<char>(wtag[c]);
+                outPlayers[i].tag[c + 1] = 0;
+            }
+
+            const uint8_t* statsBase = table + 0x10E50 + (i * 0x708);
+            const uint16_t raw8 = *reinterpret_cast<const uint16_t*>(statsBase + 8 * 2);
+            outPlayers[i].kills = (raw8 == 0xFFFFu) ? 0 : static_cast<int32_t>(raw8 & 0x7FFFu);
+
+            const uint16_t raw9 = *reinterpret_cast<const uint16_t*>(statsBase + 9 * 2);
+            outPlayers[i].assists = (raw9 == 0xFFFFu) ? 0 : static_cast<int32_t>(raw9 & 0x7FFFu);
+
+            const uint16_t raw10 = *reinterpret_cast<const uint16_t*>(statsBase + 10 * 2);
+            outPlayers[i].deaths = (raw10 == 0xFFFFu) ? 0 : static_cast<int32_t>(raw10 & 0x7FFFu);
+
+            const uint16_t raw7 = *reinterpret_cast<const uint16_t*>(statsBase + 7 * 2);
+            const int32_t totalScore = (raw7 == 0xFFFFu) ? 0 : static_cast<int32_t>(raw7 & 0x7FFFu);
+            const int16_t liveScore16 = *reinterpret_cast<const int16_t*>(p + 0xBA);
+            outPlayers[i].score = (liveScore16 != 0) ? static_cast<int32_t>(liveScore16) : totalScore;
+
+            int32_t medalsCount = 0;
+            for (size_t m = 0; m < 140; ++m) {
+                const uint16_t mraw = *reinterpret_cast<const uint16_t*>(statsBase + (20 + m) * 2);
+                if (mraw != 0xFFFFu) medalsCount += static_cast<int32_t>(mraw & 0x7FFFu);
+            }
+            outPlayers[i].medals = medalsCount;
+
+            if (tlsBase) {
+                const uint8_t* playersTable = *reinterpret_cast<const uint8_t* const*>(tlsBase + 0x18);
+                if (playersTable) {
+                    const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(playersTable + 0x50);
+                    if (entries) {
+                        const uint8_t* entry = entries + static_cast<size_t>(i) * 0x490;
+                        const uint32_t flags = *reinterpret_cast<const uint32_t*>(entry + 0x04);
+                        if ((flags & 0x08u) != 0) outPlayers[i].isLocalMachine = true;
+                    }
+                }
+            }
+
+            outPlayers[i].valid = true;
+            ++count;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return count;
+    }
+    return count;
+}
+
+static std::string RecordName(const uint8_t* pr, size_t off);
+
+// The record for this machine's player.
 int LocalPlayer(const uint8_t* rec) {
+    const SettingsData settings = Settings::Get().Snapshot();
+    const std::string localName = settings.playerName;
+
+    // 1. Check matching player name
+    if (!localName.empty()) {
+        for (int i = 0; i < kMaxPlayers; ++i) {
+            const uint8_t* pr = rec + kPlayerRecords + i * kPlayerRecordSize;
+            if (pr[0] == 0 && U64(pr, 0x08) == 0) continue;
+            std::string name = RecordName(pr, 0x4C);
+            if (name.empty()) {
+                const auto known = s_playerNames.find(U64(pr, 0x08));
+                if (known != s_playerNames.end()) name = known->second.first;
+            }
+            if (name.empty()) {
+                const auto bySlot = s_playerSlots.find(i);
+                if (bySlot != s_playerSlots.end()) name = bySlot->second.first;
+            }
+            if (!name.empty() && _stricmp(name.c_str(), localName.c_str()) == 0) {
+                return i;
+            }
+        }
+    }
+
+    // 2. Check TLS player datum local machine bit (_player_is_local_machine_bit = 0x08)
+    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        const int tlsSlot = ProbeTlsLocalSlot(reinterpret_cast<const uint8_t*>(reach));
+        if (tlsSlot >= 0 && tlsSlot < kMaxPlayers) {
+            return tlsSlot;
+        }
+    }
+
+    // 3. If guest and slot 0 is host, look for any other active slot
+    const bool isGuest = (wcsstr(GetCommandLineW(), L"-connect") != nullptr);
+    if (isGuest) {
+        for (int i = 1; i < kMaxPlayers; ++i) {
+            const uint8_t* pr = rec + kPlayerRecords + i * kPlayerRecordSize;
+            if (pr[0] != 0 || U64(pr, 0x08) != 0) return i;
+        }
+    }
+
+    // 4. Default fallback: first present player
     for (int i = 0; i < kMaxPlayers; ++i) {
         const uint8_t* pr = rec + kPlayerRecords + i * kPlayerRecordSize;
         if (pr[0] != 0 || U64(pr, 0x08) != 0) return i;
     }
-    return -1;
+    return 0;
 }
 
 void LogRecord(const uint8_t* rec) {
@@ -1001,6 +1168,298 @@ void OnGameResults(const uint8_t* record, size_t size) {
                "(today {}), total {} cR, rank {}",
                BaseTypeName(s_type), s_map, minutes, local, kills, assists, deaths, medals, total, s_totals.creditsToday,
                s_totals.credits, kRanks[a.rankAfter].name);
+}
+
+void OnMatchOverJson(const std::string& jsonStr) {
+    if (jsonStr.empty()) return;
+    try {
+        const auto j = nlohmann::json::parse(jsonStr);
+        if (j.value("type", "") != "match_over") return;
+
+        std::lock_guard<std::recursive_mutex> lock(s_mutex);
+        if (s_lastAward.valid) return;
+
+        LoadLocked();
+
+        Award a;
+        a.valid = true;
+        a.type = j.value("mode", BaseTypeName(s_type));
+        a.map = j.value("map", s_map);
+        a.minutes = j.value("minutes", 0.0);
+        a.difficulty = j.value("difficulty", -1);
+
+        const SettingsData settings = Settings::Get().Snapshot();
+        int64_t kills = 0, deaths = 0, assists = 0, medals = 0, score = 0;
+
+        if (j.contains("players") && j["players"].is_array()) {
+            for (const auto& pj : j["players"]) {
+                ScoreRow row;
+                row.name = pj.value("name", "Player");
+                row.score = pj.value("score", 0);
+                row.kills = pj.value("kills", 0);
+                row.assists = pj.value("assists", 0);
+                row.deaths = pj.value("deaths", 0);
+                row.medals = pj.value("medals", 0);
+
+                bool isLocal = false;
+                if (!settings.playerName.empty() && row.name.find(settings.playerName) != std::string::npos) {
+                    isLocal = true;
+                }
+                row.local = isLocal;
+                if (isLocal) {
+                    kills = row.kills;
+                    assists = row.assists;
+                    deaths = row.deaths;
+                    medals = row.medals;
+                    score = row.score;
+                }
+                a.players.push_back(row);
+            }
+        }
+
+        if (kills == 0 && assists == 0 && deaths == 0) {
+            HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+            if (reach) {
+                LivePlayerInfo live[16];
+                int n = ProbeLiveEngineScores(reinterpret_cast<const uint8_t*>(reach), live, 16);
+                for (int i = 0; i < 16; ++i) {
+                    if (!live[i].valid) continue;
+                    if ((!settings.playerName.empty() && _stricmp(live[i].name, settings.playerName.c_str()) == 0) || live[i].isLocalMachine) {
+                        kills = live[i].kills;
+                        assists = live[i].assists;
+                        deaths = live[i].deaths;
+                        score = live[i].score;
+                        medals = live[i].medals;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (a.players.empty()) {
+            ScoreRow row;
+            row.name = settings.playerName + "  [" + settings.serviceTag + "]";
+            row.kills = static_cast<int32_t>(kills);
+            row.assists = static_cast<int32_t>(assists);
+            row.deaths = static_cast<int32_t>(deaths);
+            row.score = static_cast<int32_t>(score);
+            row.local = true;
+            a.players.push_back(row);
+        }
+
+        const std::string today = Today();
+        if (s_totals.day != today) {
+            s_totals.day = today;
+            s_totals.creditsToday = 0;
+        }
+
+        a.creditsBefore = s_totals.credits;
+        a.rankBefore = RankIndex(s_totals.credits);
+
+        const double paidMinutes = std::clamp(a.minutes, 0.0, kMinuteCap);
+        const double perMinute = kPayPerMinuteBase + kPayPerMinutePerRank * a.rankBefore;
+        const int64_t complete = static_cast<int64_t>(paidMinutes * perMinute + 0.5);
+        a.lines.push_back({ "Game complete", complete });
+
+        const int64_t performance = kills * kPerKill + assists * kPerAssist + medals * kPerMedal;
+        if (performance > 0) a.lines.push_back({ "Performance", performance });
+
+        if (s_type == BaseType::Campaign) {
+            const int d = std::clamp(s_difficulty, 0, 3);
+            const int64_t bonus = kMissionBonus[d];
+            a.lines.push_back({ std::string("Mission complete (") + DifficultyName(d) + ")", bonus });
+        }
+
+        const int typeIndex = static_cast<int>(s_type);
+        s_extra.games[typeIndex] += 1;
+        s_extra.minutes[typeIndex] += a.minutes;
+        s_totals.gamesPlayed += 1;
+        s_totals.kills += kills;
+        s_totals.deaths += deaths;
+        s_totals.assists += assists;
+        s_totals.medals += medals;
+        s_totals.minutesPlayed += a.minutes;
+
+        int64_t total = 0;
+        for (const AwardLine& l : a.lines) total += l.credits;
+        a.total = total;
+
+        s_totals.credits += total;
+        s_totals.creditsToday += total;
+        s_extra.bestMatch = std::max(s_extra.bestMatch, total);
+
+        MatchSummary m;
+        {
+            std::tm tm = LocalNow();
+            char buf[32];
+            std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
+            m.date = buf;
+        }
+        m.type = a.type;
+        m.map = a.map;
+        m.difficulty = a.difficulty;
+        m.minutes = a.minutes;
+        m.kills = kills;
+        m.deaths = deaths;
+        m.assists = assists;
+        m.medals = medals;
+        m.score = score;
+        m.credits = total;
+        s_extra.history.insert(s_extra.history.begin(), m);
+        if (s_extra.history.size() > 20) s_extra.history.resize(20);
+
+        a.creditsAfter = s_totals.credits;
+        a.rankAfter = RankIndex(s_totals.credits);
+        s_lastAward = a;
+        SaveLocked();
+
+        NOBLE_INFO("Career [OnMatchOverJson]: {} on {} took {:.1f} min; local player kills {} assists {} deaths {} medals {}; paid {} cR (total {} cR, rank {})",
+                   a.type, a.map, a.minutes, kills, assists, deaths, medals, total, s_totals.credits, kRanks[a.rankAfter].name);
+    } catch (const std::exception& e) {
+        NOBLE_WARN("Career: OnMatchOverJson parse error: {}", e.what());
+    }
+}
+
+void EnsureMatchSaved(const char* reason) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    if (s_lastAward.valid) return;
+    if (s_matchStart.time_since_epoch().count() == 0) return;
+
+    const double elapsedSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - s_matchStart).count();
+    const double minutes = elapsedSec / 60.0;
+    if (minutes < 0.05) return;
+
+    LoadLocked();
+
+    int64_t kills = 0, deaths = 0, assists = 0, medals = 0, score = 0;
+    Award a;
+    a.valid = true;
+    a.type = BaseTypeName(s_type);
+    a.map = s_map;
+    a.minutes = minutes;
+    a.difficulty = s_type == BaseType::Multiplayer ? -1 : s_difficulty;
+
+    const SettingsData settings = Settings::Get().Snapshot();
+
+    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    if (reach) {
+        LivePlayerInfo live[16];
+        int count = ProbeLiveEngineScores(reinterpret_cast<const uint8_t*>(reach), live, 16);
+        for (int i = 0; i < 16; ++i) {
+            if (!live[i].valid) continue;
+
+            ScoreRow row;
+            row.kills = live[i].kills;
+            row.assists = live[i].assists;
+            row.deaths = live[i].deaths;
+            row.score = live[i].score;
+            row.medals = live[i].medals;
+
+            bool isLocal = live[i].isLocalMachine;
+            if (!settings.playerName.empty() && _stricmp(live[i].name, settings.playerName.c_str()) == 0) {
+                isLocal = true;
+            }
+            row.local = isLocal;
+            std::string nameStr = live[i].name[0] ? live[i].name : (isLocal ? settings.playerName : ("Player " + std::to_string(i + 1)));
+            if (live[i].tag[0]) nameStr += "  [" + std::string(live[i].tag) + "]";
+            row.name = nameStr;
+
+            if (isLocal) {
+                kills = row.kills;
+                assists = row.assists;
+                deaths = row.deaths;
+                medals = row.medals;
+                score = row.score;
+            }
+            a.players.push_back(row);
+        }
+    }
+
+    if (a.players.empty()) {
+        ScoreRow row;
+        row.local = true;
+        row.name = settings.playerName + "  [" + settings.serviceTag + "]";
+        row.kills = static_cast<int32_t>(kills);
+        row.assists = static_cast<int32_t>(assists);
+        row.deaths = static_cast<int32_t>(deaths);
+        row.score = static_cast<int32_t>(score);
+        a.players.push_back(row);
+    }
+
+    const std::string today = Today();
+    if (s_totals.day != today) {
+        s_totals.day = today;
+        s_totals.creditsToday = 0;
+    }
+
+    a.creditsBefore = s_totals.credits;
+    a.rankBefore = RankIndex(s_totals.credits);
+
+    const bool unpaid = UnpaidMission(s_type, s_map);
+    const double paidMinutes = std::clamp(minutes, 0.0, kMinuteCap);
+    const double perMinute = kPayPerMinuteBase + kPayPerMinutePerRank * a.rankBefore;
+    const int64_t complete = static_cast<int64_t>(paidMinutes * perMinute + 0.5);
+    a.lines.push_back({ "Game complete", complete });
+
+    const int64_t performance = kills * kPerKill + assists * kPerAssist + medals * kPerMedal;
+    if (performance > 0) a.lines.push_back({ "Performance", performance });
+
+    if (s_type == BaseType::Campaign) {
+        const int d = std::clamp(s_difficulty, 0, 3);
+        const int64_t bonus = kMissionBonus[d];
+        a.lines.push_back({ std::string("Mission complete (") + DifficultyName(d) + ")", bonus });
+    }
+
+    if (unpaid) {
+        a.lines.clear();
+        a.lines.push_back({ "No cR, challenges or commendations in Noble Actual or Lone Wolf", 0 });
+    }
+
+    const int typeIndex = static_cast<int>(s_type);
+    s_extra.games[typeIndex] += 1;
+    s_extra.minutes[typeIndex] += minutes;
+    s_totals.gamesPlayed += 1;
+    s_totals.kills += kills;
+    s_totals.deaths += deaths;
+    s_totals.assists += assists;
+    s_totals.medals += medals;
+    s_totals.minutesPlayed += minutes;
+
+    int64_t total = 0;
+    for (const AwardLine& l : a.lines) total += l.credits;
+    a.total = total;
+
+    s_totals.credits += total;
+    s_totals.creditsToday += total;
+    s_extra.bestMatch = std::max(s_extra.bestMatch, total);
+
+    MatchSummary m;
+    {
+        std::tm tm = LocalNow();
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
+        m.date = buf;
+    }
+    m.type = BaseTypeName(s_type);
+    m.map = s_map;
+    m.difficulty = s_type == BaseType::Multiplayer ? -1 : s_difficulty;
+    m.minutes = minutes;
+    m.kills = kills;
+    m.deaths = deaths;
+    m.assists = assists;
+    m.medals = medals;
+    m.score = score;
+    m.credits = total;
+    s_extra.history.insert(s_extra.history.begin(), m);
+    if (s_extra.history.size() > 20) s_extra.history.resize(20);
+
+    a.creditsAfter = s_totals.credits;
+    a.rankAfter = RankIndex(s_totals.credits);
+    s_lastAward = a;
+    SaveLocked();
+
+    NOBLE_INFO("Career: saved match ({}) took {:.1f} min; local player kills {} assists {} deaths {} medals {}; paid {} cR (total {} cR, rank {})",
+               reason, minutes, kills, assists, deaths, medals, total, s_totals.credits, kRanks[a.rankAfter].name);
 }
 
 Record GetRecord() {

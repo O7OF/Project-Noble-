@@ -21,12 +21,13 @@ public:
 
     void Initialize();
 
-    AuthResult Login(const std::string& username, const std::string& password);
-    AuthResult Register(const std::string& username, const std::string& password);
+    AuthResult Login(const std::string& username, const std::string& password, bool rememberMe = true);
+    AuthResult Register(const std::string& username, const std::string& password, bool rememberMe = true);
     AuthResult LoginWithSteam();
     bool SetPlayerName(const std::string& name);
     bool IsSteamLinked() const;
     void Logout();
+    void InvalidateSession(const std::string& reason = "");
 
     // Re-asks the master server whether this account is a developer (POST /api/dev/check).
     // The cached login keeps the flag from the last login, so an account promoted with
@@ -36,6 +37,8 @@ public:
 
     bool IsLoggedIn() const;
     bool IsDeveloper() const;
+    bool IsTester() const;
+    void SetRoles(bool isDev, bool isTester);
     std::string GetUsername() const;
     std::string GetSessionToken() const;
     int GetUserId() const;
@@ -47,6 +50,7 @@ private:
     bool m_isLoggedIn = false;
     bool m_steamLinked = false;
     std::atomic<bool> m_isDeveloper{ false };
+    std::atomic<bool> m_isTester{ false };
     std::atomic<bool> m_refreshing{ false };
     std::string m_username;
     std::string m_sessionToken;

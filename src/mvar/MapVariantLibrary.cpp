@@ -165,14 +165,14 @@ std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvar
             std::ifstream candidate(entry.path(), std::ios::binary);
             std::vector<uint8_t> candidateBytes((std::istreambuf_iterator<char>(candidate)),
                                                 std::istreambuf_iterator<char>());
-            size_t offset = 0, at = SIZE_MAX;
-            while (offset + 12 <= candidateBytes.size()) {
-                const uint32_t size = (static_cast<uint32_t>(candidateBytes[offset + 4]) << 24) |
-                                      (static_cast<uint32_t>(candidateBytes[offset + 5]) << 16) |
-                                      (static_cast<uint32_t>(candidateBytes[offset + 6]) << 8) | candidateBytes[offset + 7];
-                if (size < 12 || offset + size > candidateBytes.size()) break;
-                if (std::memcmp(candidateBytes.data() + offset, "mvar", 4) == 0) { at = offset; break; }
-                offset += size;
+            size_t candOffset = 0, at = SIZE_MAX;
+            while (candOffset + 12 <= candidateBytes.size()) {
+                const uint32_t size = (static_cast<uint32_t>(candidateBytes[candOffset + 4]) << 24) |
+                                      (static_cast<uint32_t>(candidateBytes[candOffset + 5]) << 16) |
+                                      (static_cast<uint32_t>(candidateBytes[candOffset + 6]) << 8) | candidateBytes[candOffset + 7];
+                if (size < 12 || candOffset + size > candidateBytes.size()) break;
+                if (std::memcmp(candidateBytes.data() + candOffset, "mvar", 4) == 0) { at = candOffset; break; }
+                candOffset += size;
             }
             if (at == SIZE_MAX || at + 0x7028 > candidateBytes.size()) continue;
             std::memcpy(candidateBytes.data() + at, mvarChunk.data(), mvarChunk.size());

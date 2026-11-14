@@ -92,6 +92,7 @@ public:
 
     void StartRelay(const std::string& relayUrl, const std::string& sessionId, bool isHost, uint64_t machineId);
     void StopRelay();
+    void EnsureGlobalRelay();
 
     // Voice frames share the relay socket but not the game packets' queues: they're dropped rather than ever delaying a
     // game packet. The server recognises them by their "NVOX" start. See audio/VoiceChat.cpp for the layout.

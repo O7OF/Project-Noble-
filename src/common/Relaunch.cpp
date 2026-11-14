@@ -117,6 +117,8 @@ bool Start(const std::wstring& args, unsigned long* outPid) {
         cmd += L" -account-token \"" + ToWideUtf8(AuthClient::Get().GetSessionToken()) + L"\"";
         cmd += L" -user-id " + std::to_wstring(AuthClient::Get().GetUserId());
         cmd += L" -account-dev " + std::to_wstring(AuthClient::Get().IsDeveloper() ? 1 : 0);
+        cmd += L" -account-tester " + std::to_wstring(AuthClient::Get().IsTester() ? 1 : 0);
+        if (snap.rememberAccount) cmd += L" -remember-account";
     }
     // Test switches the menu was started with carry on to the match process.
     for (const wchar_t* sw : { L"--guest-block", L"-armory-unlock-all" }) {
@@ -170,6 +172,8 @@ bool StartChildMatch(const std::wstring& args, void** outProcessHandle, unsigned
         cmd += L" -account-token \"" + ToWideUtf8(AuthClient::Get().GetSessionToken()) + L"\"";
         cmd += L" -user-id " + std::to_wstring(AuthClient::Get().GetUserId());
         cmd += L" -account-dev " + std::to_wstring(AuthClient::Get().IsDeveloper() ? 1 : 0);
+        cmd += L" -account-tester " + std::to_wstring(AuthClient::Get().IsTester() ? 1 : 0);
+        if (snap.rememberAccount) cmd += L" -remember-account";
     }
     for (const wchar_t* sw : { L"--guest-block", L"-armory-unlock-all" }) {
         if (std::wcsstr(GetCommandLineW(), sw) && cmd.find(sw) == std::wstring::npos) cmd += std::wstring(L" ") + sw;
@@ -284,7 +288,7 @@ bool HandOff(const std::wstring& args) {
     WindowSearch search;
     search.pid = childPid;
     bool appeared = false;
-    for (int attempt = 0; attempt < 300; ++attempt) {   // up to 30 s, then give up and swap anyway
+    for (int attempt = 0; attempt < 25; ++attempt) {   // up to 2.5 s
         Sleep(100);
         search.found = nullptr;
         EnumWindows(&FindVisibleWindow, reinterpret_cast<LPARAM>(&search));
@@ -295,7 +299,7 @@ bool HandOff(const std::wstring& args) {
         SetForegroundWindow(search.found);
         NOBLE_INFO("Relaunch: new window up after {} ms; swapping to it", GetTickCount64() - startTick);
     } else {
-        NOBLE_WARN("Relaunch: the new process did not show a window within 30 s; swapping anyway");
+        NOBLE_INFO("Relaunch: child pid {} started; closing current window immediately", childPid);
     }
 
     // The network was already released in Start, so the new process can bind its ports. Hide this window

@@ -16,6 +16,7 @@
 #include "engine/CameraFov.hpp"
 #include "engine/PadLayouts.hpp"
 #include "host/EngineLimits.hpp"
+#include "host/PoolResize.hpp"
 #include "common/DeviceIdentity.hpp"
 #include "network/AuthClient.hpp"
 #include <map>
@@ -1081,6 +1082,10 @@ void SettingsPanel::RenderGraphics() {
             When::Apply, "Off", m_edit.fxaa != m_saved.fxaa)) {
         ToggleValue(m_edit.fxaa);
     }
+    if (Row("MENU SUPERSAMPLING", "Renders Noble's menus and 3D Armory at 1.5x resolution for extra zoom detail. Off renders at your native display resolution (1:1), saving GPU power and recommended for AMD Radeon / mid-range graphics cards.",
+            When::Restart, "Off", m_edit.menuSupersampling != m_saved.menuSupersampling)) {
+        ToggleValue(m_edit.menuSupersampling);
+    }
     Section("REACH'S OWN SETTINGS");
     Paragraph("Texture filtering, shadows, motion blur and draw distance are handled inside Halo: Reach itself. Noble has no "
               "handle on them yet, so they are not offered here rather than shown as switches that do nothing. Set them in MCC's "
@@ -1314,6 +1319,14 @@ void SettingsPanel::RenderGame() {
             }
         }
     }
+    {
+        const noble::limits::Profile active = noble::limits::ActiveProfile();
+        const char* activeName = noble::limits::ProfileName(active);
+        if (Row("ACTIVE ENGINE LIMITS", "The engine limit profile currently running in this session. Change ENGINE LIMITS above and restart to switch profiles.",
+                When::Info, activeName, false)) {
+            InfoValue(activeName);
+        }
+    }
     // AI actor pool (LIMITS-TODO C7d). The engine build carries the extra AI memory and the bigger stack
     // frames; this only sizes the pools. Like ENGINE LIMITS it is a network-visible value (ProfileNetworkId)
     // and needs a restart. 1,024 is marked experimental: the last proved run was 512; 1,024 needs the
@@ -1325,12 +1338,19 @@ void SettingsPanel::RenderGame() {
         int current = 0;
         for (int i = 0; i < count; ++i) if (kAiActorValues[i] == m_edit.aiActors) current = i;
         const bool extended = m_edit.extendedLimits != 0;
-        if (Row("AI ACTORS", "How many AI actors the engine can hold (stock 96). Needs ENGINE LIMITS set to Extended; every player and the server must use the same value. Takes effect after a restart. 1,024 is experimental.",
+        if (Row("AI ACTORS", "How many AI actors the engine can hold (stock 96). Active when ENGINE LIMITS is set to Extended or Full; every player and the server must use the same value. Takes effect after a restart. 1,024 is experimental.",
                 When::Restart, kAiActorLabels[0], m_edit.aiActors != m_saved.aiActors, !extended)) {
             if (const int d = CycleValue(kAiActorLabels[current], current, count, false)) {
                 const int next = std::clamp(current + d, 0, count - 1);
                 m_edit.aiActors = extended ? kAiActorValues[next] : 0;
             }
+        }
+    }
+    if (noble::limits::ActiveProfile() != noble::limits::Profile::Stock) {
+        const int activeActors = noble::pools::ActiveActors();
+        const std::string actorStr = std::to_string(activeActors) + " ACTORS";
+        if (Row("ACTIVE AI POOL", "The active AI actor capacity running in the loaded engine.", When::Info, actorStr.c_str(), false)) {
+            InfoValue(actorStr.c_str());
         }
     }
 }
@@ -1474,6 +1494,12 @@ void SettingsPanel::RenderKeyboardMouse() {
             if (!Row(label.c_str(), "Click (or press Enter), then press the key or mouse button you want. Esc cancels, right-click unbinds, Delete puts the default back.",
                      When::Apply, defText, current != saved)) continue;
             KeyBindValue(action);
+        }
+        if (g == ActionGroup::Movement) {
+            if (Row("TOGGLE CROUCH", "On: press Crouch once to stay crouched, press again to stand up. Off: crouch only while you hold the Crouch key.",
+                    When::Apply, "Off", m_edit.toggleCrouch != m_saved.toggleCrouch)) {
+                ToggleValue(m_edit.toggleCrouch);
+            }
         }
     }
 }
@@ -1903,7 +1929,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
     case Cat::KeyboardMouse: {
         int n = f(a.mouseSensitivity, b.mouseSensitivity) + f(a.mouseSensitivityY, b.mouseSensitivityY) + (a.invertLook != b.invertLook) +
-                (a.wheelUpAction != b.wheelUpAction) + (a.wheelDownAction != b.wheelDownAction);
+                (a.toggleCrouch != b.toggleCrouch) + (a.wheelUpAction != b.wheelUpAction) + (a.wheelDownAction != b.wheelDownAction);
         for (int i = 0; i < KeyBindings::kActionCount; ++i) {
             auto ia = a.keyOverrides.find(i);
             auto ib = b.keyOverrides.find(i);
@@ -1975,6 +2001,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
         break;
     case Cat::KeyboardMouse:
         e.mouseSensitivity = d.mouseSensitivity; e.mouseSensitivityY = d.mouseSensitivityY; e.invertLook = d.invertLook;
+        e.toggleCrouch = d.toggleCrouch;
         e.wheelUpAction = d.wheelUpAction; e.wheelDownAction = d.wheelDownAction; e.keyOverrides.clear();
         break;
     case Cat::Controller:

@@ -13,6 +13,7 @@
 #include "ui/PauseMenu.hpp"
 #include "ui/ForgeMenu.hpp"
 #include "ui/DevMenu.hpp"
+#include "network/AuthClient.hpp"
 #include "career/Career.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/PadLayouts.hpp"
@@ -32,6 +33,7 @@
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
 #include "network/NetworkTransport.hpp"
+#include "network/MasterServerClient.hpp"
 #include <windows.h>
 #include <shellapi.h>
 #include <psapi.h>
@@ -336,22 +338,32 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
     // IsForeground() accepts the container, so a match in a container is not mistaken for a background
     // window (which used to throttle it to 30 FPS and made it look like it never had the focus).
     const bool isFocused = (hwnd == nullptr || noble::Window::IsForeground(hwnd));
-    if (isFocused) {
-        // ...and make that focus real: hand the keyboard focus to the match window at most once a second,
-        // so the match takes it back after the launcher (or an Alt-Tab) had it.
+    if (!isFocused) {
+        // Hand the keyboard focus to the match window at most once every 500 ms when focus is lost,
+        // so the match takes it back cleanly after the launcher (or an Alt-Tab) had it.
         static ULONGLONG s_nextFocusRequest = 0;
         const ULONGLONG focusNow = GetTickCount64();
         if (focusNow >= s_nextFocusRequest) {
-            s_nextFocusRequest = focusNow + 1000;
+            s_nextFocusRequest = focusNow + 500;
             noble::Window::RequestFocus();
         }
+    }
+
+    static thread_local ULONGLONG s_unfocusedSince = 0;
+    const ULONGLONG nowMs = GetTickCount64();
+    if (isFocused) {
+        s_unfocusedSince = 0;
+    } else if (s_unfocusedSince == 0) {
+        s_unfocusedSince = nowMs;
     }
 
     // FRAME-RATE LIMIT: 0 means what it says - no pacing at all while the window is active. (It used to be
     // silently capped at 120, which made "No limit" a lie and confused the FPS counter.)
     int targetFps = settings.fpsLimit;
-    if (!isFocused && settings.throttleUnfocused) {
-        // While unfocused (alt-tabbed, or waiting as a guest) throttle to 30 FPS so a background window cannot peg a
+    const bool shouldThrottle = !isFocused && settings.throttleUnfocused &&
+                               (s_unfocusedSince != 0 && (nowMs - s_unfocusedSince >= 1500));
+    if (shouldThrottle) {
+        // While unfocused (alt-tabbed for > 1.5s, or waiting as a guest) throttle to 30 FPS so a background window cannot peg a
         // CPU core or trip Windows' unresponsive-app detection. SETTINGS > Graphics can turn this off for streaming.
         targetFps = (targetFps > 0 && targetFps < 30) ? targetFps : 30;
     }
@@ -386,24 +398,46 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
         }
     }
 
-    if (targetFps <= 0) {
-        nextPresentTicks = now.QuadPart;   // uncapped: present immediately
+    // When hardware VSync is enabled (effectiveSyncInterval > 0) and target is 60+ FPS,
+    // DXGI's swap chain naturally synchronizes to the monitor's VBlank. Performing a software
+    // Sleep/Yield right before Present() causes the render thread to miss the hardware VBlank deadline,
+    // causing severe stutter and dropping frame rate to ~45-48 FPS. Only run software pacing when VSync
+    // is OFF or when background-throttling below 60 FPS (e.g. 30 FPS).
+    const bool hardwareSyncs = (effectiveSyncInterval > 0) && (targetFps >= 60);
+
+    if (targetFps <= 0 || hardwareSyncs) {
+        nextPresentTicks = now.QuadPart;   // Hardware VSync or uncapped: present immediately
     } else if (frequency.QuadPart > 0) {
         const LONGLONG interval = frequency.QuadPart / targetFps;
         if (now.QuadPart < nextPresentTicks) {
             LONGLONG remaining = nextPresentTicks - now.QuadPart;
-            while (remaining > (frequency.QuadPart / 500)) { // >= 2ms
-                Sleep(1);
-                QueryPerformanceCounter(&now);
-                remaining = nextPresentTicks - now.QuadPart;
+            const LONGLONG oneMs = frequency.QuadPart / 1000;
+            const LONGLONG twoMs = (frequency.QuadPart * 2) / 1000; // 2.0 ms safety margin
+
+            // High-resolution Sleep for multi-millisecond waits.
+            // On AMD Ryzen (Zen 2 / 3800X CCX architecture), sleeping the bulk of the wait instead of
+            // busy-spinning calling QPC hundreds of thousands of times per frame eliminates 100% CPU core
+            // burn and cross-CCX interconnect memory bus contention.
+            // We sleep down to 2.0 ms before the deadline so Sleep() never overshoots the frame presentation time.
+            if (remaining > twoMs) {
+                const DWORD msToSleep = static_cast<DWORD>((remaining - twoMs) / oneMs);
+                if (msToSleep > 0) {
+                    Sleep(msToSleep);
+                    QueryPerformanceCounter(&now);
+                }
             }
+            // For the final sub-2ms slice, spin with YieldProcessor() (_mm_pause) for microsecond precision
             while (now.QuadPart < nextPresentTicks) {
                 YieldProcessor();
                 QueryPerformanceCounter(&now);
             }
         }
         QueryPerformanceCounter(&now);
-        nextPresentTicks = now.QuadPart + interval;
+        if (now.QuadPart > nextPresentTicks + interval) {
+            nextPresentTicks = now.QuadPart + interval;
+        } else {
+            nextPresentTicks += interval;
+        }
     }
 
     if (!s_originalSwapChainPresent) return DXGI_ERROR_INVALID_CALL;
@@ -757,6 +791,13 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         static const char* const kMapStates[] = { "none", "loading_map", "running", "ending", "??" };
         const char* name = (mapState >= 0 && mapState <= 3) ? kMapStates[mapState] : "?";
         NOBLE_INFO("ReachHost [State]: frame {} launch {} map {} ({})", frames, launchState, mapState, name);
+
+        // Keep master server advert synchronized with live game state
+        if (MasterServerClient::Get().Enabled()) {
+            const bool inGame = (launchState >= 11 || mapState == 2);
+            const int players = static_cast<int>(NetworkTransport::Get().GetGamePeerCount()) + 1;
+            MasterServerClient::Get().UpdateAdvert(players, inGame);
+        }
     }
     if (frames == 2 || frames == 30) {
         // NOBLE_SCENARIO_DUMP=1: dump the scenario tag now that its data is loaded (it is still zeroes at palette time).
@@ -869,16 +910,45 @@ static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uin
     if (!stackStr.empty()) {
         NOBLE_INFO("ReachHost [Slot 6 - GameResults]: caller stack: {}", stackStr);
     }
-    if (launchState >= 11 && a1 > 0x10000) {
+    if (a1 > 0x10000) {
         static std::vector<uint8_t> s_record;
         s_record.assign(Career::kResultsSize, 0);
         if (SafeCopyMemory(s_record.data(), reinterpret_cast<const void*>(a1), s_record.size())) {
             Career::OnGameResults(s_record.data(), s_record.size());
+
+            // Broadcast match_over to connected peers
+            if (NetworkTransport::Get().IsActive() && NetworkTransport::Get().IsHost()) {
+                try {
+                    const Career::Award award = Career::LastAward();
+                    nlohmann::json j;
+                    j["type"] = "match_over";
+                    j["map"] = award.map;
+                    j["mode"] = award.type;
+                    j["minutes"] = award.minutes;
+                    j["difficulty"] = award.difficulty;
+                    j["players"] = nlohmann::json::array();
+                    for (const auto& p : award.players) {
+                        j["players"].push_back({
+                            { "name", p.name },
+                            { "score", p.score },
+                            { "kills", p.kills },
+                            { "assists", p.assists },
+                            { "deaths", p.deaths },
+                            { "medals", p.medals }
+                        });
+                    }
+                    NetworkTransport::Get().SendLobbyControlJson(j.dump());
+                    NOBLE_INFO("ReachHost: sent match_over JSON to all connected clients");
+                } catch (...) {}
+            }
         } else {
             NOBLE_WARN("ReachHost [Slot 6 - GameResults]: results record not readable");
+            Career::EnsureMatchSaved("slot6_unreadable");
         }
+    } else {
+        Career::EnsureMatchSaved("slot6_null");
     }
-    if (launchState >= 11) PauseMenu::ShowGameOver();  // only for a match that was actually running
+    PauseMenu::ShowGameOver();
     return 0;
 }
 
@@ -886,17 +956,23 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
     void* caller = _ReturnAddress();
     
-    // a1 is phase index or integer percentage, a2 is optional progress float
+    // a1 is phase index (e.g. 5) or integer percentage
     uint32_t phaseIndex = static_cast<uint32_t>(a1 & 0xFFFFFFFF);
     if (phaseIndex < 32) {
         s_loadPhases.fetch_or(1u << (phaseIndex & 0x1F));
     }
 
     float fraction = 0.0f;
-    if (a1 <= 100) {
-        fraction = static_cast<float>(a1) / 100.0f;
-    } else {
-        memcpy(&fraction, &a1, sizeof(float));
+    const HMODULE engineMod = GetModuleHandleW(L"haloreach.dll");
+    if (engineMod) {
+        fraction = *reinterpret_cast<const float*>(reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
+    }
+    if (fraction <= 0.0f || fraction > 1.0f) {
+        if (a1 <= 100 && a1 > 5) {
+            fraction = static_cast<float>(a1) / 100.0f;
+        } else if (a1 > 100) {
+            memcpy(&fraction, &a1, sizeof(float));
+        }
     }
 
     if (fraction < 0.0f) fraction = 0.0f;
@@ -906,7 +982,7 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
     LoadScreen::Get().SetLoadProgress(fraction);
 
     static float s_lastLoggedFraction = -1.0f;
-    if (std::abs(fraction - s_lastLoggedFraction) >= 0.01f || fraction >= 1.0f) {
+    if (std::abs(fraction - s_lastLoggedFraction) >= 0.05f || fraction >= 1.0f) {
         s_lastLoggedFraction = fraction;
         NOBLE_INFO("ReachHost [Slot 23 - LoadProgress]: progress={:.1f}% (raw=0x{:X}, phases=0x{:08X}) [Caller: 0x{:X}]",
             fraction * 100.0f, a1, s_loadPhases.load(), reinterpret_cast<uintptr_t>(caller));
@@ -1805,6 +1881,7 @@ bool ReachHost::IsKeyHeld(int vk) {
 static uint8_t s_paddlesHeld = 0;
 static uint8_t s_paddleBoundMask = 0;
 static bool s_padConnected = false;
+static bool s_padMode = false;
 static std::array<int, PadLayouts::kPaddleCount> s_paddleKeys{};
 
 bool ReachHost::IsPaddleKey(int vk) {
@@ -1816,7 +1893,6 @@ bool ReachHost::IsPaddleKey(int vk) {
 }
 
 static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
-    static bool s_padMode = false;
     static WORD s_lastButtons = 0;
     static SyntheticPadPress s_synth = ParseSyntheticPadPress();
     NobleXInputState state{};
@@ -1956,7 +2032,12 @@ static void FillLocalInput(uint8_t* st) {
     }
     s_lastWindow = hwnd;
 
+    static bool s_toggleCrouch = false;
+    static bool s_crouchToggled = false;
+    static bool s_crouchWasDown = false;
     if (ReachArmory::IsMenuMode()) {
+        s_crouchToggled = false;
+        s_crouchWasDown = false;
         InputRelease(hwnd, "front-end menu open");
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
         return;
@@ -1975,13 +2056,13 @@ static void FillLocalInput(uint8_t* st) {
     }
     s_escWasDown = escDown;
 
-#if defined(NOBLE_DEV_BUILD)
-    // + / Numpad+ opens/closes the developer mod/cheat menu (Dev builds only)
+    // + / Numpad+ opens/closes the developer mod/cheat menu (Developer accounts only)
     static bool s_plusWasDown = false;
     const bool plusDown = ((GetAsyncKeyState(VK_OEM_PLUS) & 0x8000) != 0) || ((GetAsyncKeyState(VK_ADD) & 0x8000) != 0);
-    if (plusDown && !s_plusWasDown && !uiPointer && !PauseMenu::IsGameOver()) DevMenu::Toggle();
+    if (plusDown && !s_plusWasDown && !uiPointer && !PauseMenu::IsGameOver()) {
+        if (AuthClient::Get().IsDeveloper()) DevMenu::Toggle();
+    }
     s_plusWasDown = plusDown;
-#endif
 
     // Insert / F3 opens/closes the custom palette; it never uses the native Forge menu's keys.
     static bool s_insertWasDown = false;
@@ -2122,10 +2203,11 @@ static void FillLocalInput(uint8_t* st) {
 
     {
         static ULONGLONG s_paddleRead = 0;
-        if (GetTickCount64() - s_paddleRead > 500) {
+        if (firstCapturedFrame || GetTickCount64() - s_paddleRead > 500) {
             s_paddleRead = GetTickCount64();
             const SettingsData snap = Settings::Get().Snapshot();
             s_paddleKeys = snap.padPaddleKeys;
+            s_toggleCrouch = snap.toggleCrouch;
             uint8_t mask = 0;
             for (const auto& [actKey, input] : snap.padBindings) {
                 (void)actKey;
@@ -2159,6 +2241,25 @@ static void FillLocalInput(uint8_t* st) {
     }
     if (s_holdMouseUntilRelease) {
         st[0x004 + VK_LBUTTON] = st[0x004 + VK_RBUTTON] = st[0x004 + VK_MBUTTON] = 0;
+    }
+
+    // Toggle crouch (SETTINGS > CONTROLS > KEYBOARD & MOUSE > MOVEMENT): piggybacks off the bound Crouch key
+    // (slot 9, default Left Ctrl). When enabled, each rising-edge press flips crouch state on/off.
+    if (s_toggleCrouch) {
+        const int crouchVk = KeyBindings::EffectiveKey(9);
+        if (crouchVk > 0 && crouchVk < 256) {
+            const bool crouchDown = !uiPointer && !boardDown && !s_holdMouseUntilRelease && st[0x004 + crouchVk] != 0;
+            if (s_padMode && !crouchDown) {
+                s_crouchToggled = false;
+            } else if (crouchDown && !s_crouchWasDown) {
+                s_crouchToggled = !s_crouchToggled;
+            }
+            s_crouchWasDown = crouchDown;
+            st[0x004 + crouchVk] = (!uiPointer && !DevCheats::IsFreecam() && s_crouchToggled) ? 0x80 : 0;
+        }
+    } else {
+        s_crouchToggled = false;
+        s_crouchWasDown = false;
     }
 
     // Lower weapon keybind (SETTINGS > CONTROLS > KEYBOARD & MOUSE > ACTIONS, unbound by default):
@@ -2296,7 +2397,6 @@ static void FillLocalInput(uint8_t* st) {
     }
     *reinterpret_cast<float*>(st + 0x114) = wheel;
 
-#if defined(NOBLE_DEV_BUILD)
     if (DevCheats::IsFreecam()) {
         // Suppress player character movement while freecam is active, so the Spartan does not walk away!
         st[0x004 + 'W'] = 0;
@@ -2312,7 +2412,6 @@ static void FillLocalInput(uint8_t* st) {
         st[0x004 + VK_SHIFT] = 0;
         st[0x004 + 'C'] = 0;
     }
-#endif
 
     for (int vk = 0; vk < 256; ++vk) {
         const bool down = st[0x004 + vk] != 0;

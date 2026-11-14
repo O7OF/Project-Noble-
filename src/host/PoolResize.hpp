@@ -16,5 +16,6 @@
 namespace noble::pools {
 
 void InstallResize(HMODULE engine, bool extendedProfile);
+int ActiveActors();
 
 } // namespace noble::pools

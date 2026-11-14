@@ -26,6 +26,15 @@ public:
     const std::string& GetInternalIP() const { return m_internalIp; }
     const std::string& GetStatus() const { return m_statusMessage; }
 
+    enum class NatType {
+        Open,
+        Moderate,
+        Strict
+    };
+
+    NatType GetNatType() const;
+    const char* GetNatTypeString() const;
+
     std::string QueryPublicIPWithIpify();
     bool IsPublicIP(const std::string& ip) const;
 

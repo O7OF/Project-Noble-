@@ -40,6 +40,7 @@ struct SettingsData {
     bool throttleUnfocused = true;   // drop to 30 FPS when Noble is not the active window
     float brightness = 1.0f;    // 0.7..1.4, applied as a gamma exponent by the post-process (1.0 = untouched)
     bool fxaa = false;          // post-process anti-aliasing in Noble's own pass (Noble's device can do this)
+    bool menuSupersampling = false; // 1.5x menu supersampling; off by default for optimal performance (native 1:1)
 
     // Controls
     float mouseSensitivity = 1.0f; // multiplier on Noble's base mouse scale (0.0008 per pixel); horizontal
@@ -47,6 +48,7 @@ struct SettingsData {
     float mouseAcceleration = 0.0f; // 0 = off: extra turn speed for fast flicks (0..1)
     float mouseSmoothing = 0.0f;    // 0 = off: evens out jitter, at the cost of a little latency (0..0.9)
     bool invertLook = false;
+    bool toggleCrouch = false;     // true: press Crouch once to stay crouched, press again to stand
     std::map<int, int> keyOverrides; // profile action index -> virtual-key code
     int wheelUpAction = 4;         // action the mouse wheel's up notches trigger (-1 = nothing); 4 = change weapon
     int wheelDownAction = 4;       // same for down notches (engine key 0xAE; up is 0xAF)
@@ -122,7 +124,9 @@ struct SettingsData {
     // Account / Auth
     std::string accountUsername = "";
     std::string accountToken = "";
+    bool rememberAccount = true;
     bool isDeveloper = false;
+    bool isTester = false;
     int accountUserId = 0; // "address:port" entries saved in the SERVERS tab
 };
 

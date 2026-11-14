@@ -4,6 +4,8 @@
 #include "common/Logger.hpp"
 #include "host/SlotPatch.hpp"
 #include "network/NetworkTransport.hpp"
+#include "career/Career.hpp"
+#include "ui/PauseMenu.hpp"
 #include <psapi.h>
 #include <vector>
 #include <string>
@@ -33,8 +35,8 @@ static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, i
         targetSlots = std::min(expandedMp, 128);
         NOBLE_INFO("LobbyPatches: Expanding multiplayer/forge session slot count from {} to {} (private={}, isRanked={})",
             publicSlots, targetSlots, privateSlots, isRanked);
-    } else if (publicSlots == 4 && expandedCoop > 4) {
-        targetSlots = std::min(expandedCoop, 16);
+    } else if (publicSlots <= 16 && expandedCoop > 1) {
+        targetSlots = std::max(publicSlots, std::min(expandedCoop, 16));
         NOBLE_INFO("LobbyPatches: Expanding campaign/firefight session slot count from {} to {} (private={}, isRanked={})",
             publicSlots, targetSlots, privateSlots, isRanked);
     }
@@ -161,7 +163,7 @@ static void __fastcall Hook_SessionAbort(void* session, uint32_t reason) {
     uintptr_t caller = CallerRva(_ReturnAddress());
     NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::abort called: session=0x{:p}, reason={} (0x{:X}), caller hr+0x{:X}",
         RefuseRole(), GetCurrentProcessId(), session, reason, reason, caller);
-    if (s_campaignCoop.load() || (reason >= 0x10 && reason <= 0x25)) {
+    if (s_campaignCoop.load() || (reason >= 0x05 && reason <= 0x28)) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED session abort reason 0x{:X} from hr+0x{:X} to keep co-op match running!", reason, caller);
         return;
     }
@@ -177,6 +179,10 @@ static AcknowledgeJoinRequestFn s_originalAcknowledgeJoinRequest = nullptr;
 static void __fastcall Hook_AcknowledgeJoinRequest(void* thisPtr, void* targetAddr, uint32_t reason) {
     NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::acknowledge_join_request: session={}, target={}, reason={} (0x{:X}) caller hr+0x{:X}",
         RefuseRole(), GetCurrentProcessId(), thisPtr, targetAddr, reason, reason, CallerRva(_ReturnAddress()));
+    if (reason != 0) {
+        NOBLE_WARN("LobbyPatches: acknowledge_join_request refusal 0x{:X} overridden to ACCEPT (0) for join-in-progress", reason);
+        reason = 0;
+    }
     if (s_originalAcknowledgeJoinRequest) {
         s_originalAcknowledgeJoinRequest(thisPtr, targetAddr, reason);
     }
@@ -418,6 +424,8 @@ static void __fastcall Hook_GameFinish() {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME FINISH requested by hr+0x{:X} stack: {}", RefuseRole(), GetCurrentProcessId(),
                    CallerRva(_ReturnAddress()), ReachStack());
     }
+    Career::EnsureMatchSaved("game_finish");
+    PauseMenu::ShowGameOver();
     if (s_originalGameFinish) s_originalGameFinish();
 }
 
@@ -431,6 +439,8 @@ static void __fastcall Hook_GameOver(int32_t reason) {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME OVER reason {} (0x{:X}) from hr+0x{:X}", RefuseRole(), GetCurrentProcessId(),
                    reason, reason, CallerRva(_ReturnAddress()));
     }
+    Career::EnsureMatchSaved("game_over");
+    PauseMenu::ShowGameOver();
     if (s_originalGameOver) s_originalGameOver(reason);
 }
 

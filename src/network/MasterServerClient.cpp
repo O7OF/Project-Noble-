@@ -1,6 +1,7 @@
 #include "MasterServerClient.hpp"
 #include "UPnP.hpp"
 #include "NetworkTransport.hpp"
+#include "AuthClient.hpp"
 #include "common/DeviceIdentity.hpp"
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
@@ -20,6 +21,7 @@
 #include <set>
 #include <unordered_set>
 #include <utility>
+#include <random>
 
 namespace noble {
 
@@ -180,29 +182,6 @@ int Int(const nlohmann::json& j, const char* key, int fallback, int lo, int hi) 
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-int CountLocalKnownPlayers() {
-    std::set<std::string> knownNames;
-    const DeviceIdentity& id = DeviceIdentityStore::Get();
-    if (!id.playerName.empty()) {
-        std::string lower = id.playerName;
-        for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        knownNames.insert(lower);
-    }
-    auto scanDir = [&](const std::filesystem::path& dir) {
-        std::error_code ec;
-        if (!std::filesystem::exists(dir, ec)) return;
-        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-            if (!entry.is_regular_file(ec) || entry.path().extension() != ".json") continue;
-            std::string stem = entry.path().stem().string();
-            for (char& c : stem) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (!stem.empty()) knownNames.insert(stem);
-        }
-    };
-    scanDir(DeviceIdentityStore::DataDir() / "players");
-    scanDir(DeviceIdentityStore::UserDir() / "players");
-    return std::max(1, static_cast<int>(knownNames.size()));
-}
-
 } // namespace
 
 uint64_t MasterServerClient::GetLobbyMachineId() {
@@ -238,7 +217,7 @@ void MasterServerClient::SetUrl(const std::string& url) {
 
 std::string MasterServerClient::Url() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_url;
+    return m_url.empty() ? std::string(kMasterDefault) : m_url;
 }
 
 std::string MasterServerClient::GetSessionRegionUrl(const std::string& sessionId) const {
@@ -273,10 +252,8 @@ std::vector<std::string> MasterServerClient::GetCandidateUrls(const std::string&
         }
         addUnique(m_url);
     }
-    if (!urls.empty()) {
-        addUnique(kMasterUsEast);
-        addUnique(kMasterUsWest);
-        addUnique(kMasterUk);
+    if (urls.empty()) {
+        addUnique(kMasterMain);
     }
     return urls;
 }
@@ -347,18 +324,15 @@ void MasterServerClient::EnsureThread() {
 
 void MasterServerClient::RequestList() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) return;
+    if (m_url.empty()) m_url = std::string(kMasterDefault);
     m_listRequested = true;
     EnsureThread();
     m_wake.notify_all();
 }
 
 void MasterServerClient::RequestOnlineCount() {
-    if (m_totalPlayers.load() == 0) {
-        m_totalPlayers.store(CountLocalKnownPlayers());
-    }
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) return;
+    if (m_url.empty()) m_url = std::string(kMasterDefault);
     m_onlineRequested = true;
     EnsureThread();
     m_wake.notify_all();
@@ -366,7 +340,7 @@ void MasterServerClient::RequestOnlineCount() {
 
 void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) return;
+    if (m_url.empty()) m_url = std::string(kMasterDefault);
     m_advert = advert;
     std::string pub = UPnP::Get().GetExternalIP();
     if (UPnP::Get().IsPublicIP(pub)) {
@@ -382,7 +356,12 @@ void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
         m_sessionId = advert.id;
         m_sessionToken = advert.token;
     } else {
-        m_sessionId.clear();
+        static std::random_device rd;
+        static std::mt19937_64 gen(rd());
+        char sidBuf[32];
+        std::snprintf(sidBuf, sizeof(sidBuf), "%016llx", static_cast<unsigned long long>(gen()));
+        m_sessionId = sidBuf;
+        m_advert.id = m_sessionId;
         m_sessionToken.clear();
     }
     m_unregisterRequested = false;
@@ -467,7 +446,7 @@ void MasterServerClient::WorkerLoop() {
         const bool doOnline = m_onlineRequested;
         const bool doHeartbeat = m_advertising && std::chrono::steady_clock::now() >= m_nextHeartbeat;
         const bool stop = m_stop;
-        const bool registered = !m_sessionId.empty();
+        const bool registered = !m_sessionId.empty() && !m_sessionToken.empty();
         m_unregisterRequested = false;
         m_listRequested = false;
         m_onlineRequested = false;
@@ -499,7 +478,15 @@ void MasterServerClient::DoOnline() {
         {"username", id.playerName},
         {"serviceTag", id.serviceTag}
     };
+    if (AuthClient::Get().IsLoggedIn()) {
+        presenceBody["userId"] = AuthClient::Get().GetUserId();
+        presenceBody["sessionToken"] = AuthClient::Get().GetSessionToken();
+        presenceBody["session_token"] = AuthClient::Get().GetSessionToken();
+    }
     HttpResult r = HttpRequest(Url(), L"POST", "/api/presence", presenceBody.dump());
+    if (r.status == 401 && AuthClient::Get().IsLoggedIn()) {
+        NOBLE_WARN("MasterServerClient: presence rejected by master server (401)");
+    }
     if (!r.ok) {
         r = HttpRequest(Url(), L"GET", "/api/players/online", {});
     }
@@ -511,42 +498,18 @@ void MasterServerClient::DoOnline() {
     try {
         const nlohmann::json j = nlohmann::json::parse(r.body);
         const int online = j.value("online", j.value("activeSessions", 0));
-        int total = j.value("totalPlayers", j.value("registeredPlayers", 0));
+        const int total = j.value("totalPlayers", j.value("registeredPlayers", online));
         const int servers = j.value("servers", j.value("masterSessions", 0));
 
-        // Master server cluster nodes (East, West, UK) register internal accounts for peer federation;
-        // ensure master server infrastructure nodes are never counted as total players.
-        int masterNodeCount = 0;
-        if (j.contains("cluster") && j["cluster"].is_object()) {
-            const auto& cluster = j["cluster"];
-            masterNodeCount = 1 + cluster.value("peerCount", 0);
-            if (cluster.contains("nodes") && cluster["nodes"].is_array()) {
-                masterNodeCount = std::max(masterNodeCount, 1 + static_cast<int>(cluster["nodes"].size()));
-            }
-        } else if (j.contains("peerRegistries") && j["peerRegistries"].is_array()) {
-            masterNodeCount = 1 + static_cast<int>(j["peerRegistries"].size());
-        } else {
-            masterNodeCount = 3;
-        }
-        total = std::max(0, total - masterNodeCount);
-
         m_onlinePlayers.store(std::max(0, online));
-        if (total <= 1) {
-            const HttpResult lb = HttpRequest(Url(), L"GET", "/api/leaderboard?limit=250", {});
-            if (lb.ok) {
-                try {
-                    const auto lbJson = nlohmann::json::parse(lb.body);
-                    if (lbJson.is_array() && static_cast<int>(lbJson.size()) > total) {
-                        total = static_cast<int>(lbJson.size());
-                    }
-                } catch (...) {}
-            }
-        }
-        const int localKnown = CountLocalKnownPlayers();
-        if (total > 0 || localKnown > 0) {
-            m_totalPlayers.store(std::max({ total, localKnown, m_totalPlayers.load() }));
-        }
+        m_totalPlayers.store(std::max(online, total));
         m_onlineServers.store(std::max(0, servers));
+
+        if (AuthClient::Get().IsLoggedIn() && (j.contains("is_developer") || j.contains("is_tester"))) {
+            const bool isDev = j.value("is_developer", false);
+            const bool isTester = j.value("is_tester", false);
+            AuthClient::Get().SetRoles(isDev, isTester);
+        }
     } catch (...) {
     }
 }
@@ -696,10 +659,7 @@ void MasterServerClient::DoList() {
     }
 
     if (online >= 0) m_onlinePlayers.store(std::max(0, online));
-    const int localKnown = CountLocalKnownPlayers();
-    if (total > 0 || localKnown > 0) {
-        m_totalPlayers.store(std::max({ total, localKnown, m_totalPlayers.load() }));
-    }
+    if (total > 0) m_totalPlayers.store(std::max(online, total));
     std::lock_guard<std::mutex> lock(m_mutex);
     m_status = std::to_string(list.size()) + " game(s) on the master server";
     m_sessions = std::move(list);
@@ -707,11 +667,13 @@ void MasterServerClient::DoList() {
 
 void MasterServerClient::DoRegister() {
     std::string existingId;
+    std::string existingToken;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         existingId = m_sessionId;
+        existingToken = m_sessionToken;
     }
-    if (!existingId.empty()) {
+    if (!existingId.empty() && !existingToken.empty()) {
         NOBLE_INFO("MasterServer: Continuing existing session {}", existingId);
         DoHeartbeat();
         return;
@@ -729,6 +691,7 @@ void MasterServerClient::DoRegister() {
     }
 
     nlohmann::json body = {
+        {"session_id", advert.id.empty() ? m_sessionId : advert.id},
         {"name", advert.name}, {"port", advert.port}, {"player_count", advert.playerCount},
         {"max_players", advert.maxPlayers}, {"map", advert.map}, {"mode", advert.mode},
         {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"mod_id", advert.modId}, {"mod_title", advert.modTitle},
@@ -737,9 +700,9 @@ void MasterServerClient::DoRegister() {
         {"host_peer_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId}, {"player_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId},
         {"host_machine_id", advert.hostMachineId.empty() ? "0x484F535400000001" : advert.hostMachineId},
         {"host_username", advert.hostUsername.empty() ? "Host" : advert.hostUsername}, {"player_name", advert.hostUsername.empty() ? "Host" : advert.hostUsername},
-        {"host_is_dev", advert.hostIsDev}, {"host_service_tag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
+        {"host_is_dev", advert.hostIsDev}, {"host_is_tester", advert.hostIsTester}, {"host_service_tag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
         {"host_rank_index", advert.hostRankIndex}, {"host_emblem_id", advert.hostEmblemId},
-      {"host_emblem_background_id", advert.hostEmblemBackgroundId},
+        {"host_emblem_background_id", advert.hostEmblemBackgroundId},
         {"host_nameplate_id", advert.hostNameplateId}, {"host_team", advert.hostTeam},
         {"host_games_played", advert.hostGamesPlayed}, {"host_kills", advert.hostKills},
         {"host_deaths", advert.hostDeaths}, {"host_challenges_done", advert.hostChallengesDone},
@@ -754,6 +717,7 @@ void MasterServerClient::DoRegister() {
                 {"username", advert.hostUsername.empty() ? "Host" : advert.hostUsername},
                 {"isHost", true},
                 {"isDev", advert.hostIsDev},
+                {"isTester", advert.hostIsTester},
                 {"serviceTag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
                 {"rankIndex", advert.hostRankIndex}, {"emblemId", advert.hostEmblemId},
         {"emblemBackgroundId", advert.hostEmblemBackgroundId},
@@ -795,6 +759,15 @@ void MasterServerClient::DoRegister() {
 
 void MasterServerClient::DoHeartbeat() {
     std::string id, token;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        id = m_sessionId;
+        token = m_sessionToken;
+    }
+    if (id.empty() || token.empty()) {
+        DoRegister();
+        return;
+    }
     nlohmann::json body;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -817,6 +790,7 @@ void MasterServerClient::DoHeartbeat() {
             {"host_machine_id", m_advert.hostMachineId},
             {"host_username", m_advert.hostUsername},
             {"host_is_dev", m_advert.hostIsDev},
+            {"host_is_tester", m_advert.hostIsTester},
             {"host_service_tag", m_advert.hostServiceTag},
             {"host_rank_index", m_advert.hostRankIndex},
             {"host_emblem_id", m_advert.hostEmblemId},
@@ -866,10 +840,11 @@ void MasterServerClient::DoHeartbeat() {
                 NetworkTransport::Get().StartRelay(relayUrl, id, true, NetworkTransport::Get().GetLocalMachineId());
             }
         } catch (...) {}
-    } else if (r.status == 404) {
+    } else if (r.status == 404 || r.status == 403) {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_sessionId.clear();
         m_sessionToken.clear();
+        m_nextHeartbeat = std::chrono::steady_clock::now();
     } else {
         SetStatus("heartbeat failed: " + r.error);
     }
@@ -1048,9 +1023,10 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
             p.challengesDone = item.value("challengesDone", item.value("challenges_done", 0));
             p.commendations = item.value("commendations", 0);
             p.armoryOwned = item.value("armoryOwned", item.value("armory_owned", 0));
-                p.isHost = item.value("isHost", false);
-                p.isDev = item.value("isDev", false);
-                p.ping = item.value("ping", 0);
+            p.isHost = item.value("isHost", false);
+            p.isDev = item.value("isDev", false);
+            p.isTester = item.value("isTester", false);
+            p.ping = item.value("ping", 0);
                 if (!p.isHost && !p.machineId.empty()) {
                     try {
                         uint64_t mid = std::stoull(p.machineId, nullptr, 0);
@@ -1095,7 +1071,8 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
                                              int team,
                                              uint16_t localPort,
                                              const std::string& fallbackHostIp,
-                                             uint16_t fallbackHostPort) {
+                                             uint16_t fallbackHostPort,
+                                             bool isTester) {
     LobbyState state;
 
     if (!Enabled()) return state;
@@ -1113,6 +1090,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "player_id", peerId },
         { "username", username },
         { "is_dev", isDev },
+        { "is_tester", isTester },
         { "service_tag", serviceTag },
         { "rank_index", rankIndex },
         { "emblem_id", emblemId },
@@ -1208,9 +1186,10 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
             p.challengesDone = item.value("challengesDone", item.value("challenges_done", 0));
             p.commendations = item.value("commendations", 0);
             p.armoryOwned = item.value("armoryOwned", item.value("armory_owned", 0));
-                p.isHost = item.value("isHost", false);
-                p.isDev = item.value("isDev", false);
-                p.ping = item.value("ping", 0);
+            p.isHost = item.value("isHost", false);
+            p.isDev = item.value("isDev", false);
+            p.isTester = item.value("isTester", false);
+            p.ping = item.value("ping", 0);
                 if (!p.isHost && !p.machineId.empty()) {
                     try {
                         uint64_t mid = std::stoull(p.machineId, nullptr, 0);

@@ -1,10 +1,9 @@
 #include "SpawnTest.hpp"
-
-#if defined(NOBLE_DEV_BUILD)
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
 #include "engine/DevCheats.hpp"
 #include "engine/PelicanControls.hpp"
+#include "network/AuthClient.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -16,11 +15,9 @@
 #include <string>
 #include <vector>
 #include <shellapi.h>
-#endif
 
 namespace noble::spawn {
 
-#if defined(NOBLE_DEV_BUILD)
 namespace {
 
 // RVAs in haloreach.dll 1.3528.0.0. Identical in stock, V16 and V16+particles (checked byte for byte).
@@ -598,13 +595,14 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
     noble::DevCheats::GameTick(a);
     noble::pelican::GameTick(s_base);
     if (!s_firstTick) s_firstTick = GetTickCount64();
-    const bool np9 = (GetAsyncKeyState(VK_NUMPAD9) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
+    const bool isDev = noble::AuthClient::Get().IsDeveloper();
+    const bool np9 = isDev && (GetAsyncKeyState(VK_NUMPAD9) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
     if (np9 && !s_np9Down) {
         s_pending += 500;
         NOBLE_INFO("SpawnTest: Numpad 9, queued 500 objects");
     }
     s_np9Down = np9;
-    const bool np8 = (GetAsyncKeyState(VK_NUMPAD8) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
+    const bool np8 = isDev && (GetAsyncKeyState(VK_NUMPAD8) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
     if (np8 && !s_np8Down && GetTickCount64() - s_lastNp8 > 600) {   // one press = one toggle
         s_lastNp8 = GetTickCount64();
         s_crowdOn = !s_crowdOn;
@@ -616,13 +614,13 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
         if (!s_crowdOn) NOBLE_INFO("SpawnTest: crowd was kept alive with {} respawns", s_crowdRespawns);
     }
     s_np8Down = np8;
-    const bool np7 = (GetAsyncKeyState(VK_NUMPAD7) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
+    const bool np7 = isDev && (GetAsyncKeyState(VK_NUMPAD7) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
     if (np7 && !s_np7Down && GetTickCount64() - s_lastNp7 > 600) {
         s_lastNp7 = GetTickCount64();
         if (s_aiPlace) PlaceAllSquads();
     }
     s_np7Down = np7;
-    const bool np6 = (GetAsyncKeyState(VK_NUMPAD6) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
+    const bool np6 = isDev && (GetAsyncKeyState(VK_NUMPAD6) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
     if (np6 && !s_np6Down && GetTickCount64() - s_lastNp6 > 600 && s_aiPlace && s_unitExitVehicle) {
         s_lastNp6 = GetTickCount64();
         s_hordePending += 100;
@@ -675,10 +673,8 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
 }
 
 } // namespace
-#endif
 
 void Install(HMODULE engine) {
-#if defined(NOBLE_DEV_BUILD)
     s_base = reinterpret_cast<uintptr_t>(engine);
     if (!s_base) return;
     auto head = [](uintptr_t rva, const uint8_t* expect, size_t n) { return std::memcmp(reinterpret_cast<void*>(s_base + rva), expect, n) == 0; };
@@ -805,12 +801,8 @@ void Install(HMODULE engine) {
         s_autoDelayExplicit ? ", override -horde-delay " + std::to_string(s_autoDelay) : "", s_maxObjects,
         (s_autoCount > 0 ? ", -spawn-test " + std::to_string(s_autoCount) : std::string()) +
         (s_autoHorde > 0 ? ", -horde " + std::to_string(s_autoHorde) : std::string()));
-#else
-    (void)engine;
-#endif
 }
 
-#if defined(NOBLE_DEV_BUILD)
 void TriggerAiHorde(int count) {
     if (s_aiPlace && s_unitExitVehicle) {
         s_hordePending += count;
@@ -836,13 +828,12 @@ void TriggerCrowdToggle() {
         s_refTag = -1;
         s_crowdHandle[0] = -2;
     }
-    NOBLE_INFO("SpawnTest: Numpad 8 Spartan crowd toggled {}", s_crowdOn ? "ON" : "OFF");
+    NOBLE_INFO("SpawnTest: Numpad 8 Spartan crowd toggled {}", s_crowdOn ? "on" : "off (bodies will be cleaned up by the engine)");
 }
 
 void TriggerSpawnObjects(int count) {
     s_pending += count;
     NOBLE_INFO("SpawnTest: TriggerSpawnObjects({}), total queued {}", count, s_pending.load());
 }
-#endif
 
 } // namespace noble::spawn

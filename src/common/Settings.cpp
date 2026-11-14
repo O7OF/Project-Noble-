@@ -103,6 +103,9 @@ void Clamp(SettingsData& d) {
             "https://servertestdeploy-jfxb.onrender.com",
             "https://noble-server-2.onrender.com",
             "https://servertestdeploy-1.onrender.com",
+            "https://projectnobleeast.onrender.com",
+            "https://projectnoblewest.onrender.com",
+            "https://projectnobleuk.onrender.com",
         };
         bool legacy = d.masterServerUrl.empty();
         for (const char* old : kLegacyMasterUrls) {
@@ -169,11 +172,13 @@ void Settings::Load() {
             Read(j, "throttleUnfocused", d.throttleUnfocused);
             Read(j, "brightness", d.brightness);
             Read(j, "fxaa", d.fxaa);
+            Read(j, "menuSupersampling", d.menuSupersampling);
             Read(j, "mouseSensitivity", d.mouseSensitivity);
             Read(j, "mouseSensitivityY", d.mouseSensitivityY);
             Read(j, "mouseAcceleration", d.mouseAcceleration);
             Read(j, "mouseSmoothing", d.mouseSmoothing);
             Read(j, "invertLook", d.invertLook);
+            Read(j, "toggleCrouch", d.toggleCrouch);
             Read(j, "wheelUpAction", d.wheelUpAction);
             Read(j, "wheelDownAction", d.wheelDownAction);
             Read(j, "padVibration", d.padVibration);
@@ -254,7 +259,9 @@ void Settings::Load() {
             Read(j, "favorites", d.favorites);
             Read(j, "accountUsername", d.accountUsername);
             Read(j, "accountToken", d.accountToken);
+            Read(j, "rememberAccount", d.rememberAccount);
             Read(j, "isDeveloper", d.isDeveloper);
+            Read(j, "isTester", d.isTester);
             Read(j, "accountUserId", d.accountUserId);
             auto keys = j.find("keyOverrides");
             if (keys != j.end() && keys->is_object()) {
@@ -299,6 +306,10 @@ void Settings::Load() {
                     d.accountUserId = _wtoi(argv[++i]);
                 } else if (arg == L"-account-dev") {
                     d.isDeveloper = (_wtoi(argv[++i]) != 0);
+                } else if (arg == L"-account-tester") {
+                    d.isTester = (_wtoi(argv[++i]) != 0);
+                } else if (arg == L"-remember-account") {
+                    d.rememberAccount = true;
                 }
             }
             LocalFree(argv);
@@ -349,11 +360,13 @@ bool Settings::Save() {
         j["throttleUnfocused"] = d.throttleUnfocused;
         j["brightness"] = d.brightness;
         j["fxaa"] = d.fxaa;
+        j["menuSupersampling"] = d.menuSupersampling;
         j["mouseSensitivity"] = d.mouseSensitivity;
         j["mouseSensitivityY"] = d.mouseSensitivityY;
         j["mouseAcceleration"] = d.mouseAcceleration;
         j["mouseSmoothing"] = d.mouseSmoothing;
         j["invertLook"] = d.invertLook;
+        j["toggleCrouch"] = d.toggleCrouch;
         j["wheelUpAction"] = d.wheelUpAction;
         j["wheelDownAction"] = d.wheelDownAction;
         j["padVibration"] = d.padVibration;
@@ -405,7 +418,9 @@ bool Settings::Save() {
         j["favorites"] = d.favorites;
         j["accountUsername"] = d.accountUsername;
         j["accountToken"] = d.accountToken;
+        j["rememberAccount"] = d.rememberAccount;
         j["isDeveloper"] = d.isDeveloper;
+        j["isTester"] = d.isTester;
         j["accountUserId"] = d.accountUserId;
         nlohmann::json keys = nlohmann::json::object();
         for (const auto& [action, vk] : d.keyOverrides) keys[std::to_string(action)] = vk;

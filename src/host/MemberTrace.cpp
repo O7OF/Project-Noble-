@@ -1,6 +1,4 @@
 #include "MemberTrace.hpp"
-
-#if defined(NOBLE_DEV_BUILD)
 #include "common/Logger.hpp"
 
 #include <algorithm>
@@ -11,11 +9,9 @@
 #include <set>
 #include <shellapi.h>
 #include <thread>
-#endif
 
 namespace noble::membertrace {
 
-#if defined(NOBLE_DEV_BUILD)
 namespace {
 
 // Layout of one session membership object (see docs/limits-players-audit.md).
@@ -131,10 +127,8 @@ bool Requested() {
 }
 
 } // namespace
-#endif
 
 void Install(HMODULE engine) {
-#if defined(NOBLE_DEV_BUILD)
     if (!engine || !Requested()) return;
     s_engine = reinterpret_cast<uintptr_t>(engine);
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(s_engine);
@@ -157,9 +151,6 @@ void Install(HMODULE engine) {
     NOBLE_WARN("MemberTrace: tracing the player/peer slots and the peer table of the 4 network sessions (slow; dev "
                "only). MEMBER-NEW| as soon as an unreviewed instruction is seen, all MEMBER| lines every 30 s; {} known",
                std::size(kKnown));
-#else
-    (void)engine;
-#endif
 }
 
 } // namespace noble::membertrace

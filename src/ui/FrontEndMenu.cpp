@@ -1788,6 +1788,12 @@ static void OpenAccountModal() {
     s_showAccountModal = true;
     s_openAccountPopup = true;
     s_accountStatusMsg.clear();
+    if (AuthClient::Get().IsLoggedIn()) {
+        std::snprintf(s_accountUser, sizeof(s_accountUser), "%s", AuthClient::Get().GetUsername().c_str());
+    } else {
+        std::snprintf(s_accountUser, sizeof(s_accountUser), "%s", Settings::Get().Snapshot().accountUsername.c_str());
+    }
+    s_accountPass[0] = 0;
 }
 
 static void OpenDevMenuModal() {
@@ -1910,9 +1916,10 @@ void DrawAccountModal(const Ui& ui) {
             }
 
             const bool isDev = AuthClient::Get().IsDeveloper();
-            // One line for the account, one gold chip for developer status - no more "[DEV] [DEVELOPER]".
-            ImGui::TextColored(isDev ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
-                               "Logged in as: %s", AuthClient::Get().GetUsername().c_str());
+            const bool isTester = AuthClient::Get().IsTester();
+            ImVec4 userCol = isDev ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f)
+                           : (isTester ? ImVec4(0.3f, 0.85f, 0.95f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f));
+            ImGui::TextColored(userCol, "Logged in as: %s", AuthClient::Get().GetUsername().c_str());
             if (isDev) {
                 ImGui::SameLine();
                 const ImVec2 chip = ImGui::GetCursorScreenPos();
@@ -1925,6 +1932,20 @@ void DrawAccountModal(const Ui& ui) {
                 ImGui::Dummy(ImVec2(0, 4));
                 ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
                 ImGui::TextWrapped("Developer account (ID: %d). The Developer Menu is on the main menu, above Quit.",
+                                   AuthClient::Get().GetUserId());
+                ImGui::PopStyleColor();
+            } else if (isTester) {
+                ImGui::SameLine();
+                const ImVec2 chip = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddRectFilled(chip, ImVec2(chip.x + 58.0f * ui.s, chip.y + 18.0f * ui.s),
+                                                          IM_COL32(30, 160, 210, 240), 3.0f * ui.s);
+                ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), 11.0f * ui.s,
+                                                    ImVec2(chip.x + 8.0f * ui.s, chip.y + 3.0f * ui.s),
+                                                    IM_COL32(10, 10, 10, 255), "TESTER");
+                ImGui::Dummy(ImVec2(62.0f * ui.s, 18.0f * ui.s));
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+                ImGui::TextWrapped("Tester account (ID: %d). Verified community tester tag active.",
                                    AuthClient::Get().GetUserId());
                 ImGui::PopStyleColor();
             } else {
@@ -1950,6 +1971,13 @@ void DrawAccountModal(const Ui& ui) {
                                    "%s", s_accountStatusMsg.c_str());
             }
             ImGui::Dummy(ImVec2(0, 8));
+            if (ImGui::Button("LOG OUT", ImVec2(-1, 30.0f * ui.s))) {
+                AuthClient::Get().Logout();
+                s_accountStatusMsg = "Logged out.";
+                s_accountStatusError = false;
+                s_accountPass[0] = 0;
+            }
+            ImGui::Dummy(ImVec2(0, 4));
             if (ImGui::Button("CLOSE", ImVec2(-1, 32.0f * ui.s))) {
                 s_showAccountModal = false;
                 ImGui::CloseCurrentPopup();
@@ -1977,6 +2005,15 @@ void DrawAccountModal(const Ui& ui) {
             ImGui::SetNextItemWidth(-FLT_MIN);
             ImGui::InputText("##acc_pass", s_accountPass, sizeof(s_accountPass), ImGuiInputTextFlags_Password);
 
+            static bool s_rememberMe = true;
+            static bool s_rememberInit = false;
+            if (!s_rememberInit) {
+                s_rememberMe = Settings::Get().Snapshot().rememberAccount;
+                s_rememberInit = true;
+            }
+            ImGui::Dummy(ImVec2(0, 2));
+            ImGui::Checkbox("Remember Me", &s_rememberMe);
+
             if (!s_accountStatusMsg.empty()) {
                 ImGui::Dummy(ImVec2(0, 4));
                 ImGui::TextColored(s_accountStatusError ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
@@ -1987,10 +2024,11 @@ void DrawAccountModal(const Ui& ui) {
             const float subW = (ImGui::GetContentRegionAvail().x - 10.0f * ui.s) * 0.5f;
             if (s_accountTab == 0) {
                 if (ImGui::Button("LOG IN##submit", ImVec2(subW, 32.0f * ui.s)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
-                    auto res = AuthClient::Get().Login(s_accountUser, s_accountPass);
+                    auto res = AuthClient::Get().Login(s_accountUser, s_accountPass, s_rememberMe);
                     if (res.success) {
                         s_accountStatusMsg = "Login successful!";
                         s_accountStatusError = false;
+                        s_accountPass[0] = 0;
                         s_showAccountModal = false;
                         ImGui::CloseCurrentPopup();
                     } else {
@@ -2000,10 +2038,11 @@ void DrawAccountModal(const Ui& ui) {
                 }
             } else {
                 if (ImGui::Button("REGISTER##submit", ImVec2(subW, 32.0f * ui.s)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
-                    auto res = AuthClient::Get().Register(s_accountUser, s_accountPass);
+                    auto res = AuthClient::Get().Register(s_accountUser, s_accountPass, s_rememberMe);
                     if (res.success) {
                         s_accountStatusMsg = "Registration successful! Logged in.";
                         s_accountStatusError = false;
+                        s_accountPass[0] = 0;
                         s_showAccountModal = false;
                         ImGui::CloseCurrentPopup();
                     } else {
@@ -2030,7 +2069,7 @@ void DrawAccountModal(const Ui& ui) {
 // player), in which case that piece is drawn as a plain placeholder or left out.
 float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblemIndex, int nameplateIndex,
                 int team, const std::string& serviceTag, const std::string& name, bool dev, bool selected,
-                int emblemBackground = 0, const UiArt::EmblemColors& emblemColors = {}) {
+                int emblemBackground = 0, const UiArt::EmblemColors& emblemColors = {}, bool tester = false) {
     const float h = 40.0f * ui.s;
     const float rankW = 29.0f * ui.s;      // square, centred on the row
     const float embW = 30.0f * ui.s;
@@ -2099,6 +2138,10 @@ float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblem
         const float tagW = TextWidth(NobleStyle::SmallFont(), 11.5f * ui.s, tagText.c_str());
         Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad + tagW + 5.0f * ui.s, tagY),
              IM_COL32(240, 196, 70, 255), "[DEV]");
+    } else if (tester) {
+        const float tagW = TextWidth(NobleStyle::SmallFont(), 11.5f * ui.s, tagText.c_str());
+        Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad + tagW + 5.0f * ui.s, tagY),
+             IM_COL32(70, 210, 240, 255), "[TESTER]");
     }
 
     ui.dl->PushClipRect(ImVec2(p0.x + pad, pos.y + 13.0f * ui.s), ImVec2(p1.x - pad, p1.y), true);
@@ -2206,7 +2249,8 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
         }
         y += PlayerRow(ui, ImVec2(x2, y), x + w - x2, s_rank, prof.emblemIndex, prof.nameplateIndex,
                        0 /* no team in the main menu */, PlayerServiceTag(sd), playerName,
-                       AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow());
+                       AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow(),
+                       AuthClient::Get().IsTester());
     }
     const float accH = 22.0f * ui.s;
     const ImVec2 accP0(x2, y);
@@ -2225,8 +2269,10 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     if (AuthClient::Get().IsLoggedIn()) {
         char buf[64];
         std::snprintf(buf, sizeof(buf), "ONLINE: %s", AuthClient::Get().GetUsername().c_str());
-        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s),
-             AuthClient::Get().IsDeveloper() ? IM_COL32(255, 215, 0, 255) : IM_COL32(120, 220, 160, 255), buf);
+        const ImU32 col = AuthClient::Get().IsDeveloper() ? IM_COL32(255, 215, 0, 255)
+                        : (AuthClient::Get().IsTester()   ? IM_COL32(70, 210, 240, 255)
+                                                          : IM_COL32(120, 220, 160, 255));
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), col, buf);
     } else {
         Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), IM_COL32(200, 210, 220, 200), "[ LOGIN / REGISTER ]");
     }
@@ -2794,6 +2840,11 @@ struct MenuState {
     std::filesystem::path optionsFile;  // the saved mode being edited; empty for a new one
     std::string confirmAction;          // a save-over or delete waiting for its second press
     bool optionsOpen = false;           // Custom Game: the game options editor replaces the setup screen
+    bool pendingInviteJoin = false;
+    std::string pendingInviteConnect;
+    std::string pendingInviteSession;
+    std::string pendingInviteMap;
+    std::string pendingInviteMode;
     int optionsRow = 0;
     char optionsName[48] = {};
     std::string optionsBase;            // base variant file name
@@ -2905,6 +2956,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
         adv.hostMachineId = "0x484F535400000001";
         adv.hostUsername = pName;
         adv.hostIsDev = AuthClient::Get().IsDeveloper();
+        adv.hostIsTester = AuthClient::Get().IsTester();
         adv.hostServiceTag = PlayerServiceTag(Settings::Get().Snapshot());
         // The host's own row identity, so guests can draw it (rank / emblem / nameplate / team).
         {
@@ -2941,6 +2993,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     me.serviceTag = PlayerServiceTag(Settings::Get().Snapshot());
     me.isHost = true;
     me.isDev = AuthClient::Get().IsDeveloper();
+    me.isTester = AuthClient::Get().IsTester();
     me.ping = 0;
     {
         const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
@@ -3793,6 +3846,93 @@ static void TakePendingLobbyEvents(MenuState& st) {
     }
 }
 
+static void EnterLobby(OverlayContext& ctx, const ServerEntry& s, const std::string& modId = {}, const std::string& modTitle = {},
+                       const std::filesystem::path& modFolder = {}) {
+    ctx.st.isLobbyHost = false;
+    ctx.st.lobbySessionId = s.id;
+    ctx.st.lobbyHostEndpoint = s.hostAddress + ":" + std::to_string(s.port);
+    ctx.st.lobbyMap = s.mapName.empty() ? "20_sword_slayer" : s.mapName;
+    ctx.st.lobbyMode = s.gameMode.empty() ? "multiplayer" : s.gameMode;
+    ctx.st.lobbyVariantName = s.variantName.empty() ? "Default" : s.variantName;
+    ctx.st.lobbyMaxPlayers = s.maxPlayers > 0 ? s.maxPlayers : 16;
+    ctx.st.lobbyModId = modId;
+    ctx.st.lobbyModTitle = modTitle;
+    ctx.st.lobbyModFolder = modFolder;
+    ctx.st.lobbyMapOverride.clear();
+    ctx.st.lobbyMapVariant.clear();
+    ctx.st.lobbyLaunchMapOverride.clear();
+    ctx.st.lobbyLaunchMapVariant.clear();
+    ctx.st.lobbyLaunchModFolder.clear();
+    ctx.st.lobbyLaunchModId.clear();
+    ctx.st.lobbyRoster.clear();
+    ctx.st.lobbyLaunchPending = false;
+    {
+        std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
+        s_lobbyEvents = PendingLobbyEvents{};
+    }
+    ctx.st.lastLobbyPoll = ImGui::GetTime();
+    NOBLE_INFO("EnterLobby: joining lobby '{}' ({}:{}) mod='{}' folder='{}'", s.name, s.hostAddress, s.port,
+               modId, modFolder.string());
+
+    std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+    if (pName.empty()) pName = "Guest";
+    uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+    if (fallbackId < 2ULL) fallbackId = 2ULL;
+    uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+    std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
+
+    LobbyState state = MasterServerClient::Get().JoinLobbySync(
+        s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
+        Career::RankIndex(Career::Get().credits),
+        UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
+        UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
+        UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
+        11774, s.hostAddress, s.port, AuthClient::Get().IsTester());
+    if (state.ok) {
+        if (!state.sessionId.empty()) ctx.st.lobbySessionId = state.sessionId;
+        ctx.st.lobbyRoster = state.roster;
+        ctx.st.lobbyMap = state.map;
+        ctx.st.lobbyMode = state.mode;
+        ctx.st.lobbyVariantName = state.variant;
+        ctx.st.lobbyDifficulty = state.difficulty;
+        ctx.st.lobbySkulls = state.skulls;
+        if (!state.modTitle.empty()) ctx.st.lobbyModTitle = state.modTitle;
+        if (state.isLan && !state.hostLanIp.empty()) {
+            ctx.st.lobbyHostEndpoint = state.hostLanIp + ":" + std::to_string(state.hostPort);
+        }
+        if (state.inProgress || state.launchTriggered) {
+            ctx.st.lobbyLaunchPending = true;
+            ctx.st.lobbyLaunchMap = state.launchMap.empty() ? state.map : state.launchMap;
+            ctx.st.lobbyLaunchMode = state.launchMode.empty() ? state.mode : state.launchMode;
+            ctx.st.lobbyLaunchVariant = state.launchVariant;
+            ctx.st.lobbyLaunchDiff = state.launchDifficulty;
+            ctx.st.lobbyLaunchSkulls = state.launchSkulls;
+            ctx.st.lobbyLaunchMapOverride = state.launchMapOverride;
+            ctx.st.lobbyLaunchModFolder = state.launchModFolder;
+            ctx.st.lobbyLaunchModId = state.launchModId.empty() ? state.modId : state.launchModId;
+        }
+    } else {
+        LobbyPlayer hostP;
+        hostP.peerId = 1;
+        hostP.username = s.name.empty() ? "Host" : s.name;
+        hostP.isHost = true;
+        hostP.ping = s.ping >= 0 ? s.ping : 25;
+        ctx.st.lobbyRoster.push_back(hostP);
+
+        LobbyPlayer me;
+        me.peerId = pId;
+        me.username = pName;
+        me.serviceTag = sTag;
+        me.isHost = false;
+        me.isDev = AuthClient::Get().IsDeveloper();
+        me.isTester = AuthClient::Get().IsTester();
+        me.ping = s.ping >= 0 ? s.ping : 25;
+        ctx.st.lobbyRoster.push_back(me);
+    }
+
+    ctx.st.screen = Screen::PreGameLobby;
+}
+
 // A line about each game type for the lobby's list. Only what the type itself is: a variant's own settings can't be read yet.
 static const char* GameTypeBlurb(const std::string& type) {
     if (type == "slayer") return "Score points by killing the other players.";
@@ -4238,45 +4378,72 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         if (!curTok.empty()) st.lobbySessionToken = curTok;
     }
 
-    // Polling for lobby state updates
+    // Non-blocking asynchronous lobby polling (never stalls the render thread)
+    static std::atomic<bool> s_lobbyPollActive{false};
+    static std::mutex s_lobbyPollMutex;
+    static LobbyState s_latestLobbyState;
+    static std::atomic<bool> s_hasNewLobbyState{false};
+
     const double now = ImGui::GetTime();
-    if (now - st.lastLobbyPoll > 1.2) {
+    if (now - st.lastLobbyPoll > 1.2 && !s_lobbyPollActive.load()) {
         st.lastLobbyPoll = now;
         if (st.isLobbyHost && st.lobbySessionId.empty()) {
             st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
             st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
         }
         if ((!st.lobbySessionId.empty() || (!st.isLobbyHost && !st.lobbyHostEndpoint.empty())) && MasterServerClient::Get().Enabled()) {
-            LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
-            if (!current.ok && !current.isClosed && !st.isLobbyHost && !st.lobbyHostEndpoint.empty()) {
-                // If the guest's configured region differs from the host's region or the host re-registered its session ID,
-                // re-resolve and re-join across all cluster regions using the host's IP:port before counting a failure.
-                std::string hostIp = st.lobbyHostEndpoint;
-                uint16_t hostPort = 11774;
-                const size_t colon = hostIp.rfind(':');
-                if (colon != std::string::npos) {
-                    hostPort = static_cast<uint16_t>(std::atoi(hostIp.c_str() + colon + 1));
-                    hostIp = hostIp.substr(0, colon);
+            s_lobbyPollActive.store(true);
+            const std::string pollSessionId = st.lobbySessionId;
+            const bool pollIsHost = st.isLobbyHost;
+            const std::string pollHostEndpoint = st.lobbyHostEndpoint;
+            const std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+            const uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL) < 2ULL ? 2ULL : (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+            const uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+            const std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
+            const bool isDev = AuthClient::Get().IsDeveloper();
+            const int rankIdx = Career::RankIndex(Career::Get().credits);
+            const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+            const int embIdx = prof.emblemIndex;
+            const int embBgIdx = prof.emblemBackgroundIndex;
+            const int npIdx = prof.nameplateIndex;
+
+            std::thread([pollSessionId, pollIsHost, pollHostEndpoint, pName, pId, sTag, isDev, rankIdx, embIdx, embBgIdx, npIdx]() {
+                LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(pollSessionId);
+                if (!current.ok && !current.isClosed && !pollIsHost && !pollHostEndpoint.empty()) {
+                    std::string hostIp = pollHostEndpoint;
+                    uint16_t hostPort = 11774;
+                    const size_t colon = hostIp.rfind(':');
+                    if (colon != std::string::npos) {
+                        hostPort = static_cast<uint16_t>(std::atoi(hostIp.c_str() + colon + 1));
+                        hostIp = hostIp.substr(0, colon);
+                    }
+                    LobbyState rejoined = MasterServerClient::Get().JoinLobbySync(
+                        pollSessionId, pId, pName.empty() ? "Guest" : pName, isDev, sTag,
+                        rankIdx, embIdx, embBgIdx, npIdx, 0, 11774, hostIp, hostPort);
+                    if (rejoined.ok) {
+                        current = std::move(rejoined);
+                    }
                 }
-                std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
-                if (pName.empty()) pName = "Guest";
-                uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-                if (fallbackId < 2ULL) fallbackId = 2ULL;
-                const uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
-                const std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
-                LobbyState rejoined = MasterServerClient::Get().JoinLobbySync(
-                    st.lobbySessionId, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
-                    Career::RankIndex(Career::Get().credits),
-                    UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
-                    UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
-                    UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
-                    11774, hostIp, hostPort);
-                if (rejoined.ok) {
-                    if (!rejoined.sessionId.empty()) st.lobbySessionId = rejoined.sessionId;
-                    current = std::move(rejoined);
+                {
+                    std::lock_guard<std::mutex> lk(s_lobbyPollMutex);
+                    s_latestLobbyState = std::move(current);
+                    s_hasNewLobbyState.store(true);
                 }
-            }
-            if (current.ok) st.lobbyPollFailures = 0;
+                s_lobbyPollActive.store(false);
+            }).detach();
+        }
+    }
+
+    if (s_hasNewLobbyState.exchange(false)) {
+        LobbyState current;
+        {
+            std::lock_guard<std::mutex> lk(s_lobbyPollMutex);
+            current = std::move(s_latestLobbyState);
+        }
+        if (!current.sessionId.empty() && current.sessionId != st.lobbySessionId) {
+            st.lobbySessionId = current.sessionId;
+        }
+        if (current.ok) st.lobbyPollFailures = 0;
             if (!current.ok || current.isClosed) {
                 if (st.isLobbyHost) {
                     // The host owns the session; a failed fetch just means the master server blipped.
@@ -4428,7 +4595,6 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 }
             }
         }
-    }
 
     // If launch was signaled (via WebSocket or HTTP poll) and we are guest, launch!
     if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
@@ -5469,7 +5635,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                   player.nameplateId > 0 ? player.nameplateId : (local ? ownProf.nameplateIndex : 0),
                   player.team, player.serviceTag, player.username, player.isDev, false,
                   player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
-                  local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
+                  local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{}, player.isTester);
         y += slotH + 14.0f * ui.s;
         auto statLine = [&](const char* label, const std::string& value) {
             Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(cardX + 4.0f * ui.s, y), kDim, label);
@@ -5620,7 +5786,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                           teamForRow,
                           player.serviceTag, (local ? (Settings::Get().Snapshot().playerName.empty() ? std::string("Noble Six") : Settings::Get().Snapshot().playerName) : (player.username.empty() ? std::string(player.isHost ? "Host" : "Spartan") : player.username)), player.isDev, selected,
                           player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
-                          local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
+                          local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{}, player.isTester);
                 if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
                 {
                     uint64_t machine = 1000ULL + static_cast<uint64_t>(idx);   // demo rosters have no ids; only real ids ever talk
@@ -5781,13 +5947,16 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s invited you to join their game!", inv.senderUsername.c_str());
             ImGui::SameLine();
             if (padButton("JOIN GAME", ImVec2(100.0f * ui.s, 24.0f * ui.s))) {
-                choice.play = true;
-                choice.host = false;
-                choice.connectAddress = inv.hostIp + ":" + std::to_string(inv.hostPort);
-                choice.map = "20_sword_slayer";
-                choice.mode = "multiplayer";
+                ServerEntry s;
+                s.id = inv.sessionId;
+                s.name = inv.senderUsername + "'s Game";
+                s.hostAddress = inv.hostIp;
+                s.port = inv.hostPort;
+                s.mapName = inv.map.empty() ? "20_sword_slayer" : inv.map;
+                s.gameMode = inv.mode.empty() ? "multiplayer" : inv.mode;
+                s.maxPlayers = 16;
+                EnterLobby(GetOverlayCtx(), s);
                 SocialClient::Get().ClearInviteAsync(inv.senderUsername);
-                done = true;
                 MenuSounds::Click();
             }
             ImGui::SameLine();
@@ -5931,10 +6100,15 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::SameLine();
                 if (!f.endpoint.empty()) {
                     if (padButton("JOIN", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
-                        choice.play = true;
-                        choice.host = false;
-                        choice.connectAddress = f.endpoint;
-                        done = true;
+                        ServerEntry s;
+                        s.name = f.username + "'s Game";
+                        const size_t colon = f.endpoint.rfind(':');
+                        s.hostAddress = colon != std::string::npos ? f.endpoint.substr(0, colon) : f.endpoint;
+                        s.port = static_cast<uint16_t>(colon != std::string::npos ? std::atoi(f.endpoint.c_str() + colon + 1) : 11774);
+                        s.mapName = "20_sword_slayer";
+                        s.gameMode = "multiplayer";
+                        s.maxPlayers = 16;
+                        EnterLobby(GetOverlayCtx(), s);
                         MenuSounds::Click();
                     }
                     ImGui::SameLine();
@@ -6348,13 +6522,18 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
             s_answered = key;
             SocialClient::Get().ClearInviteAsync(newest->senderUsername);
             SocialClient::Get().RefreshFriendsAsync();
-            NOBLE_INFO("FrontEndMenu: accepting invite from {} ({}, mode='{}')",
+            NOBLE_INFO("FrontEndMenu: accepting invite into lobby from {} ({}, mode='{}')",
                        newest->senderUsername, newest->hostIp, newest->mode);
-            std::wstring args = L"-connect \"" + ToWide(newest->hostIp + ":" + std::to_string(newest->hostPort)) + L"\"";
-            if (!newest->sessionId.empty()) {
-                args += L" -session-id \"" + ToWide(newest->sessionId) + L"\"";
-            }
-            Relaunch::HandOff(args);
+            ServerEntry s;
+            s.id = newest->sessionId;
+            s.name = newest->senderUsername + "'s Game";
+            s.hostAddress = newest->hostIp;
+            s.port = newest->hostPort;
+            s.mapName = newest->map.empty() ? "20_sword_slayer" : newest->map;
+            s.gameMode = newest->mode.empty() ? "multiplayer" : newest->mode;
+            s.maxPlayers = 16;
+            EnterLobby(GetOverlayCtx(), s);
+            MenuSounds::Click();
         }
     }
     if (button("invite_dismiss", d0, "DISMISS", false)) {
@@ -6452,6 +6631,15 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
     // out on it: without this the launcher came back showing the engine's own mainmenu_all map (the
     // spaceship) instead of Noble's front end.
     ctx.closed = false;
+    if (isLobbyReturn) {
+        ctx.st.screen = Screen::PreGameLobby;
+        ctx.st.isLobbyHost = (successor.find(L"-lobby-return host") != std::wstring::npos);
+        ctx.st.lastLobbyPoll = 0.0;
+        NOBLE_INFO("FrontEndMenu: container returned to lobby as {}", ctx.st.isLobbyHost ? "host" : "guest");
+    } else {
+        ctx.st.screen = Screen::Main;
+        NOBLE_INFO("FrontEndMenu: container returned to main menu");
+    }
     if (const char* crash = CrashExitMeaning(exitCode)) {
         NOBLE_ERROR("FrontEndMenu: the match process CRASHED, exit code 0x{:08X}: {}. Check noble-dev.log / noble-client.log "
                     "and noble-*crash.dmp beside the exe, and Windows Event Viewer (Application).", exitCode, crash);
@@ -6526,7 +6714,7 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
             ctx.st.lobbySessionId.clear();
             ctx.st.lobbySessionToken.clear();
             ctx.st.lobbyRoster.clear();
-            ctx.st.screen = (successor == L"-main-menu") ? Screen::Main
+            ctx.st.screen = (successor == L"-main-menu" || isLeaveLobby) ? Screen::Main
                           : (ctx.st.lobbyMode == "campaign") ? Screen::Campaign
                           : (ctx.st.lobbyMode == "firefight") ? Screen::Firefight
                           : (ctx.st.lobbyMode == "forge") ? Screen::Forge
@@ -7988,7 +8176,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                  IM_COL32(143, 216, 255, 235), credits.c_str());
             PlayerRow(ui, cardPos, rowW, Career::RankIndex(Career::Get().credits),
                       prof.emblemIndex, prof.nameplateIndex, 0, PlayerServiceTag(settings), settings.playerName,
-                      AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow());
+                      AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow(),
+                      AuthClient::Get().IsTester());
         }
 
         // Thin horizontal rule with active "HALO: REACH" underline
@@ -8083,6 +8272,18 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     // Friend invites reach the player on any screen (Settings > Online services can turn this off).
     DrawInviteToast(ui, st);
+    if (st.pendingInviteJoin) {
+        st.pendingInviteJoin = false;
+        ServerEntry s;
+        s.id = st.pendingInviteSession;
+        const size_t colon = st.pendingInviteConnect.rfind(':');
+        s.hostAddress = colon != std::string::npos ? st.pendingInviteConnect.substr(0, colon) : st.pendingInviteConnect;
+        s.port = colon != std::string::npos ? static_cast<uint16_t>(std::atoi(st.pendingInviteConnect.c_str() + colon + 1)) : 11774;
+        s.mapName = st.pendingInviteMap.empty() ? "20_sword_slayer" : st.pendingInviteMap;
+        s.gameMode = st.pendingInviteMode.empty() ? "multiplayer" : st.pendingInviteMode;
+        s.maxPlayers = 16;
+        EnterLobby(ctx, s);
+    }
 
     // The Workshop-mod gate sits above every screen: the Server browser stays behind it until the
     // player downloads the lobby's mod or cancels.
@@ -8348,90 +8549,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     // whose map the guest could not load.)
     auto enterLobby = [&ctx](const ServerEntry& s, const std::string& modId, const std::string& modTitle,
                              const std::filesystem::path& modFolder) {
-        ctx.st.isLobbyHost = false;
-        ctx.st.lobbySessionId = s.id;
-        ctx.st.lobbyHostEndpoint = s.hostAddress + ":" + std::to_string(s.port);
-        ctx.st.lobbyMap = s.mapName.empty() ? "20_sword_slayer" : s.mapName;
-        ctx.st.lobbyMode = s.gameMode.empty() ? "multiplayer" : s.gameMode;
-        ctx.st.lobbyVariantName = s.variantName.empty() ? "Default" : s.variantName;
-        ctx.st.lobbyMaxPlayers = s.maxPlayers;
-        ctx.st.lobbyModId = modId;
-        ctx.st.lobbyModTitle = modTitle;
-        ctx.st.lobbyModFolder = modFolder;
-        // A map override, Forge map or launch payload left over from the previous lobby must not follow the player
-        // into this one: it made a guest launch a campaign mission with the previous lobby's mod map overlaid on it.
-        ctx.st.lobbyMapOverride.clear();
-        ctx.st.lobbyMapVariant.clear();
-        ctx.st.lobbyLaunchMapOverride.clear();
-        ctx.st.lobbyLaunchMapVariant.clear();
-        ctx.st.lobbyLaunchModFolder.clear();
-        ctx.st.lobbyLaunchModId.clear();
-        ctx.st.lobbyRoster.clear();
-        ctx.st.lobbyLaunchPending = false;
-        {   // a launch or roster left over from an earlier lobby doesn't apply to this one
-            std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
-            s_lobbyEvents = PendingLobbyEvents{};
-        }
-        ctx.st.lastLobbyPoll = ImGui::GetTime();
-        NOBLE_INFO("ServerBrowser join: lobby '{}' ({}:{}) mod='{}' folder='{}'", s.name, s.hostAddress, s.port,
-                   modId, modFolder.string());
-
-        std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
-        if (pName.empty()) pName = "Guest";
-        uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-        if (fallbackId < 2ULL) fallbackId = 2ULL;
-        uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
-        std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
-
-        LobbyState state = MasterServerClient::Get().JoinLobbySync(
-            s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
-            Career::RankIndex(Career::Get().credits),
-            UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
-            UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
-            UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
-            11774, s.hostAddress, s.port);
-        if (state.ok) {
-            if (!state.sessionId.empty()) ctx.st.lobbySessionId = state.sessionId;
-            ctx.st.lobbyRoster = state.roster;
-            ctx.st.lobbyMap = state.map;
-            ctx.st.lobbyMode = state.mode;
-            ctx.st.lobbyVariantName = state.variant;
-            ctx.st.lobbyDifficulty = state.difficulty;
-            ctx.st.lobbySkulls = state.skulls;
-            if (!state.modTitle.empty()) ctx.st.lobbyModTitle = state.modTitle;
-            if (state.isLan && !state.hostLanIp.empty()) {
-                ctx.st.lobbyHostEndpoint = state.hostLanIp + ":" + std::to_string(state.hostPort);
-            }
-            if (state.inProgress || state.launchTriggered) {
-                ctx.st.lobbyLaunchPending = true;
-                ctx.st.lobbyLaunchMap = state.launchMap.empty() ? state.map : state.launchMap;
-                ctx.st.lobbyLaunchMode = state.launchMode.empty() ? state.mode : state.launchMode;
-                ctx.st.lobbyLaunchVariant = state.launchVariant;
-                ctx.st.lobbyLaunchDiff = state.launchDifficulty;
-                ctx.st.lobbyLaunchSkulls = state.launchSkulls;
-                ctx.st.lobbyLaunchMapOverride = state.launchMapOverride;
-                ctx.st.lobbyLaunchModFolder = state.launchModFolder;
-                ctx.st.lobbyLaunchModId = state.launchModId.empty() ? state.modId : state.launchModId;
-            }
-        } else {
-            LobbyPlayer hostP;
-            hostP.peerId = 1;
-            hostP.username = s.name;
-            hostP.isHost = true;
-            hostP.ping = s.ping >= 0 ? s.ping : 25;
-            ctx.st.lobbyRoster.push_back(hostP);
-
-            LobbyPlayer me;
-            me.peerId = pId;
-            me.username = pName;
-            me.serviceTag = sTag;
-            me.isHost = false;
-            me.isDev = AuthClient::Get().IsDeveloper();
-            me.ping = s.ping >= 0 ? s.ping : 25;
-            ctx.st.lobbyRoster.push_back(me);
-        }
-
-        ctx.st.screen = Screen::PreGameLobby;
+        EnterLobby(ctx, s, modId, modTitle, modFolder);
     };
 
     RefreshPlaylists(ctx);
@@ -8619,6 +8737,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                     p.team = item.value("team", 0);
                     p.isHost = item.value("isHost", false);
                     p.isDev = item.value("isDev", false);
+                    p.isTester = item.value("isTester", false);
                     p.ping = item.value("ping", 0);
                     try {
                         const uint64_t machine = p.machineId.empty() ? 0 : std::stoull(p.machineId, nullptr, 0);
@@ -8666,8 +8785,8 @@ bool FrontEndMenu::HoldFrame() {
         std::lock_guard<std::mutex> lock(s_overlayMutex);
         RenderOverlayImpl(swapChain, true);
         FrameCapture::OnFrame(nullptr, 0);   // keeps -quit-after working in test runs
+        swapChain->Present(1, 0);
     }
-    swapChain->Present(1, 0);
     return true;
 }
 

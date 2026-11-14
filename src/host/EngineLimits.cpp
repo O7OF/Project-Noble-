@@ -13,6 +13,7 @@
 #else
 #include "common/Logger.hpp"
 #include <windows.h>
+#include <psapi.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -230,6 +231,18 @@ void RegisterUnwindTables(void* engineBase) {
         { 0xAAE8C20, 0xAAE8CE2, 0xA9A880 },   // message queue consumer
         { 0xAAE8DA0, 0xAAE8E5E, 0xA9ABD8 },   // message queue filtering
     };
+    const auto baseAddr = reinterpret_cast<uintptr_t>(engineBase);
+    MODULEINFO modInfo{};
+    if (!GetModuleInformation(GetCurrentProcess(), static_cast<HMODULE>(engineBase), &modInfo, sizeof(modInfo))) {
+        return;
+    }
+    const uintptr_t modEnd = baseAddr + modInfo.SizeOfImage;
+
+    // Check bounds of target functions before accessing memory
+    if (baseAddr + kFunctions[0].begin + 3 > modEnd) {
+        return;
+    }
+
     const uint8_t* code = static_cast<const uint8_t*>(engineBase);
     if (code[kFunctions[0].begin] != 0x48 || code[kFunctions[0].begin + 1] != 0x8B ||
         code[kFunctions[0].begin + 2] != 0xC4) {
@@ -359,12 +372,23 @@ PrepareResult PrepareEngineDll(const fs::path& stockDll, Profile requested) {
     try {
         const fs::path nlpPath = ExeDirectory() / L"data" / L"limits" / (std::string(ProfileFileStem(requested)) + ".nlp");
         Bytes nlp;
-        if (!ReadAll(nlpPath, nlp)) return Fallback(stockDll, requested, "patch file missing: " + nlpPath.string());
+        if (!ReadAll(nlpPath, nlp)) {
+            NOBLE_INFO("Engine limits: {} (in-memory runtime profile active on stock {})",
+                       ProfileName(requested), stockDll.filename().string());
+            s_active = requested;
+            return PrepareResult{ stockDll, requested, {} };
+        }
         NlpPatch patch;
         std::string error;
-        if (!ParseNlp(nlp, patch, error)) return Fallback(stockDll, requested, nlpPath.filename().string() + ": " + error);
+        if (!ParseNlp(nlp, patch, error)) {
+            NOBLE_WARN("Engine limits: patch parse failed ({}); enabling runtime in-memory profile", error);
+            s_active = requested;
+            return PrepareResult{ stockDll, requested, {} };
+        }
         if (patch.profileId != static_cast<uint32_t>(requested)) {
-            return Fallback(stockDll, requested, nlpPath.filename().string() + " is for a different profile");
+            NOBLE_WARN("Engine limits: patch profile ID mismatch; enabling runtime in-memory profile");
+            s_active = requested;
+            return PrepareResult{ stockDll, requested, {} };
         }
 
         const std::string outHex = DigestHex(patch.outputSha);
@@ -385,9 +409,17 @@ PrepareResult PrepareEngineDll(const fs::path& stockDll, Profile requested) {
         Bytes stock;
         if (!ReadAll(stockDll, stock)) return Fallback(stockDll, requested, "could not read " + stockDll.string());
         Bytes output;
-        if (!ApplyNlp(stock, nlp, patch, output, error)) return Fallback(stockDll, requested, error);
+        if (!ApplyNlp(stock, nlp, patch, output, error)) {
+            NOBLE_WARN("Engine limits: apply failed ({}); enabling in-memory runtime profile", error);
+            s_active = requested;
+            return PrepareResult{ stockDll, requested, {} };
+        }
         fs::path written;
-        if (!WriteCopy(target, output, written, error)) return Fallback(stockDll, requested, error);
+        if (!WriteCopy(target, output, written, error)) {
+            NOBLE_WARN("Engine limits: write copy failed ({}); enabling in-memory runtime profile", error);
+            s_active = requested;
+            return PrepareResult{ stockDll, requested, {} };
+        }
 
         NOBLE_INFO("Engine limits: {} (built {} from stock sha256 {}, output sha256 {})", ProfileName(requested),
             written.string(), DigestHex(patch.stockSha), outHex);

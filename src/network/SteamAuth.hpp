@@ -12,6 +12,7 @@ struct SteamAuthResult {
     std::string username;
     std::string token;
     bool isDeveloper = false;
+    bool isTester = false;
 };
 
 // Loads MCC's steam_api64.dll, requests a Steam auth session ticket, and exchanges it for an

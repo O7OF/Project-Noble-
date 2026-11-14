@@ -3,8 +3,6 @@
 #include <windows.h>
 #include <string>
 
-#if defined(NOBLE_DEV_BUILD)
-
 namespace noble {
 
 class DevMenu {
@@ -27,21 +25,3 @@ private:
 };
 
 } // namespace noble
-
-#else // !defined(NOBLE_DEV_BUILD) - Release build stubs (zero dev menu code compiled in)
-
-namespace noble {
-
-class DevMenu {
-public:
-    static constexpr bool IsOpen() { return false; }
-    static void Toggle() {}
-    static void Open() {}
-    static void Close() {}
-    static constexpr bool WantsPointer() { return false; }
-    static void Draw() {}
-};
-
-} // namespace noble
-
-#endif

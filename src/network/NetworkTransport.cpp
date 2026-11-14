@@ -1,8 +1,13 @@
 #include "NetworkTransport.hpp"
+#include "MasterServerClient.hpp"
+#include "common/BuildIdentity.hpp"
+#include "common/Settings.hpp"
 #include <nlohmann/json.hpp>
 #include "common/Logger.hpp"
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
+#include "career/Career.hpp"
+#include "ui/PauseMenu.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -288,6 +293,10 @@ void NetworkTransport::AddPeer(uint64_t machineId, const std::string& ip, uint16
         if (m_peerTable.find(machineId) == m_peerTable.end()) {
             m_peerTable[machineId] = addr;
             m_addrToPeer[key] = machineId;
+            auto& route = m_peerRouteStates[machineId];
+            route.addr = addr;
+            route.directConfirmed = true;
+            route.lastUdpRecvTick = GetTickCount64();
         }
     }
 
@@ -619,6 +628,18 @@ void NetworkTransport::StopRelay() {
     NOBLE_INFO("NetworkTransport: Stopped WebSocket packet relay.");
 }
 
+void NetworkTransport::EnsureGlobalRelay() {
+    if (m_relayConnected.load() || m_relayActive.load()) return;
+    const std::string masterUrl = MasterServerClient::Get().Url();
+    if (masterUrl.empty()) return;
+    std::string wss = masterUrl;
+    if (wss.rfind("https://", 0) == 0) wss = "wss://" + wss.substr(8);
+    else if (wss.rfind("http://", 0) == 0) wss = "ws://" + wss.substr(7);
+    const std::string uname = Settings::Get().Snapshot().playerName;
+    const std::string url = wss + "/ws/relay2?session=global_main&role=guest&username=" + uname + "&protocol=" + std::to_string(kClientProtocol);
+    StartRelay(url, "global_main", false, GetLocalMachineId());
+}
+
 void NetworkTransport::SetChatCallback(ChatCallback cb) {
     std::lock_guard<std::mutex> lock(m_chatCbMutex);
     m_chatCb = std::move(cb);
@@ -871,6 +892,10 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 if (cb) {
                                     cb(reason);
                                 }
+                            } else if (type == "match_over") {
+                                NOBLE_INFO("NetworkTransport: received match_over packet from host");
+                                Career::OnMatchOverJson(msgStr);
+                                PauseMenu::ShowGameOver();
                             } else if (type == "host_return_to_lobby") {
                                 LobbyReturnCallback cb;
                                 {
@@ -898,7 +923,6 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 }
                             } else if (type == "dev_spawn") {
                                 if (m_isHost) {
-#if defined(NOBLE_DEV_BUILD)
                                     std::string name = j.value("name", "");
                                     std::string cat = j.value("category", "");
                                     std::string tagPath = j.value("tagPath", "");
@@ -906,7 +930,6 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                     bool give = j.value("give", false);
                                     NOBLE_INFO("NetworkTransport: [HOST] Received guest dev_spawn for '{}' ({})", name, cat);
                                     DevCheats::QueueItemAction(name, cat, tagPath, tagIndex, give);
-#endif
                                 }
                             }
                         } catch (...) {}

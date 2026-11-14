@@ -3,6 +3,7 @@
 #include "PoolReport.hpp"
 #include "SpawnTest.hpp"
 #include "SchedulerGuard.hpp"
+#include "CollisionWalkGuard.hpp"
 #include "PoolResize.hpp"
 #include "MemberTrace.hpp"
 #include "SlotPatch.hpp"
@@ -153,6 +154,7 @@ bool Loader::LoadReachDll(const fs::path& dllPath, const fs::path& dependencyDll
     pools::StartReporter(m_baseAddress, m_moduleSize, limits::ProfileName(limits::ActiveProfile()));
     spawn::Install(m_hModule);   // development builds: F9 / -spawn-test object stress test
     scheduler::InstallGuard(m_hModule);   // V16 layout only: wait for free jobs instead of crashing past ~6,500 moving objects
+    guards::InstallCollisionWalkGuard(m_hModule);   // cyclic/stale collision hierarchy: bound the recursive walk
     pools::InstallResize(m_hModule, limits::ActiveProfile() != limits::Profile::Stock);   // opt-in: -ai-actors N
     limits::RegisterUnwindTables(m_hModule);   // profile Full only: unwind info for the relocated light-volume code
     membertrace::Install(m_hModule);   // dev only, opt-in -trace-members (C12 slot access map)

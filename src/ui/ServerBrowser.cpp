@@ -44,9 +44,7 @@ struct MasterRegion {
 };
 
 static const MasterRegion kMasterRegions[] = {
-    { "US East (Virginia)", "Virginia, USA", "https://projectnobleeast.onrender.com" },
-    { "US West (Oregon)", "Oregon, USA", "https://projectnoblewest.onrender.com" },
-    { "UK (London)", "London, UK", "https://projectnobleuk.onrender.com" },
+    { "Global Main Master Server", "Main Backend (Render)", "https://projectnoblebackend.onrender.com" },
     { "LAN / Offline Only", "Local Network Only", "" }
 };
 
@@ -443,20 +441,13 @@ void ServerBrowser::RenderFilterBar() {
         sessions.TriggerDiscoveryScan();
     }
     ImGui::SameLine();
-    const char* regionNames[] = { "US East (Virginia)", "US West (Oregon)", "UK (London)", "LAN / Offline Only" };
+    const char* regionNames[] = { "Global Main Master Server", "LAN / Offline Only" };
     int curRegion = 0;
     const std::string curUrl = MasterServerClient::Get().Url();
     if (curUrl.empty()) {
-        curRegion = 3;
+        curRegion = 1;
     } else {
-        // Match the exact registry URL (normalised, no trailing slash) instead of guessing from the
-        // hostname; the UK service is servertestdeploy-1 and contains neither "uk" nor "london".
-        for (int i = 0; i < 3; ++i) {
-            if (curUrl == kMasterRegions[i].url || curUrl.rfind(kMasterRegions[i].url, 0) == 0) {
-                curRegion = i;
-                break;
-            }
-        }
+        curRegion = 0;
     }
 
     ImGui::SetNextItemWidth(U(170));
@@ -517,16 +508,13 @@ void ServerBrowser::RenderFilterBar() {
 
     // NAT Type & UPnP Status Indicator
     const bool upnpActive = UPnP::Get().IsActive();
-    const std::string& intIp = UPnP::Get().GetInternalIP();
-    const std::string& extIp = UPnP::Get().GetExternalIP();
-    const bool isDirectPublic = (!intIp.empty() && intIp != "127.0.0.1" && UPnP::Get().IsPublicIP(intIp));
-    const bool isOpenNat = upnpActive || isDirectPublic;
-    const bool isModerateNat = !isOpenNat && (!extIp.empty() && extIp != "Unknown" && extIp != "127.0.0.1");
-    const char* natLabel = isOpenNat ? "OPEN" : (isModerateNat ? "MODERATE" : "STRICT");
-    const ImVec4 natColor = isOpenNat ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
-                                      : (isModerateNat ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f) : ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+    const UPnP::NatType natType = UPnP::Get().GetNatType();
+    const char* natLabel = UPnP::Get().GetNatTypeString();
+    const ImVec4 natColor = (natType == UPnP::NatType::Open) ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+                            : ((natType == UPnP::NatType::Moderate) ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f) : ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+    const bool isOpenNat = (natType == UPnP::NatType::Open);
 
-    std::string regionDisplay = (curRegion >= 0 && curRegion < 3) ? kMasterRegions[curRegion].label : "Offline / LAN Only";
+    std::string regionDisplay = (curRegion == 0) ? kMasterRegions[0].label : "Offline / LAN Only";
     const std::string masterStatus = MasterServerClient::Get().Enabled()
         ? "Region: " + regionDisplay + " (" + MasterServerClient::Get().Status() + ")"
         : std::string("Region: Offline / LAN Only");
@@ -753,6 +741,10 @@ void ServerBrowser::RenderServerList() {
         // Column 2: mode
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(s.gameMode.c_str());
+        if (s.inProgress) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.15f, 1.0f), "[IN PROGRESS]");
+        }
 
         // Column 3: map, by the name players know it by ("Forge World", not "forge_halo"). Modded maps keep
         // their own name and get the MOD badge; hovering shows the raw file name.
@@ -1130,22 +1122,12 @@ void ServerBrowser::RenderMasterServerModal() {
         ImGui::Spacing();
 
         const std::string curUrl = MasterServerClient::Get().Url();
-        int curRegion = 0;
-        if (curUrl.empty()) {
-            curRegion = 3;
-        } else {
-            for (int i = 0; i < 3; ++i) {
-                if (curUrl == kMasterRegions[i].url || curUrl.rfind(kMasterRegions[i].url, 0) == 0) {
-                    curRegion = i;
-                    break;
-                }
-            }
-        }
+        int curRegion = curUrl.empty() ? 1 : 0;
 
         static int chosenRegion = 0;
         if (ImGui::IsWindowAppearing()) chosenRegion = curRegion;
 
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 2; ++i) {
             if (ImGui::RadioButton(kMasterRegions[i].label, chosenRegion == i)) {
                 chosenRegion = i;
             }
