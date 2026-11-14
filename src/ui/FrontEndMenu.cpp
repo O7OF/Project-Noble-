@@ -1715,6 +1715,46 @@ bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount, int 
     return true;
 }
 
+// CAMPAIGN source tabs: VANILLA / TROOPER / MODDED. TROOPER lists the stock missions and starts them with the
+// player as a UNSC Marine (the menu equivalent of the -trooper launch flag); MODDED lists campaign mods.
+bool DrawCampaignTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount, float* tabsEnd = nullptr) {
+    const int tabs = 3;
+    if (active < 0 || active >= tabs) active = 0;
+    int next = active;
+    float x = pos.x;
+    for (int i = 0; i < tabs; ++i) {
+        char text[48];
+        if (i == 2) std::snprintf(text, sizeof(text), "MODDED (%d)", moddedCount);
+        else std::snprintf(text, sizeof(text), "%s", i == 0 ? "VANILLA" : "TROOPER");
+        const float w = TextWidth(NobleStyle::TitleFont(), 20.0f * ui.s, text) + 24.0f * ui.s;
+        const float h = 30.0f * ui.s;
+        ImGui::SetCursorScreenPos(ImVec2(x, pos.y));
+        ImGui::PushID("camptab");
+        ImGui::PushID(i);
+        if (ImGui::InvisibleButton("##t", ImVec2(w, h))) next = i;
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        ImGui::PopID();
+        const bool on = active == i;
+        if (on) {
+            ui.dl->AddRectFilled(ImVec2(x, pos.y), ImVec2(x + w, pos.y + h), IM_COL32(60, 120, 170, 90));
+            ui.dl->AddRectFilled(ImVec2(x, pos.y + h - 2.0f * ui.s), ImVec2(x + w, pos.y + h), kAccent);
+        } else if (hovered) {
+            ui.dl->AddRectFilled(ImVec2(x, pos.y), ImVec2(x + w, pos.y + h), IM_COL32(255, 255, 255, 18));
+        }
+        Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(x + 12.0f * ui.s, pos.y + 4.0f * ui.s), on ? kWhite : kDim, text);
+        x += w + 6.0f * ui.s;
+    }
+    if (tabsEnd) *tabsEnd = x;
+    const bool typing = ImGui::GetIO().WantTextInput;   // Q and E are letters in a search box
+    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_Q, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) next = std::max(0, active - 1);
+    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_E, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) next = std::min(tabs - 1, active + 1);
+    if (next == active) return false;
+    MenuSounds::Tab(next > active ? 1 : -1);
+    active = next;
+    return true;
+}
+
 using InputPrompts::Prompt;
 
 // A button hint at the bottom (ESC Back, ENTER Select, ...) clicked with the mouse. Set by DrawHints,
@@ -6969,11 +7009,15 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     }
 
     case Screen::Campaign: {
-        DrawTitle(ui, ImVec2(left, top), "CAMPAIGN", "SOLO");
-        if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
-                           static_cast<int>(ctx.campaignMods.size()))) st.focusRow = 0;
-        const bool modded = st.campaignSource == 1;
-        if (DrawSearchBox(ui, "##mission_search", ImVec2(left + 34.0f * ui.s + 240.0f * ui.s, top + 70.0f * ui.s), 160.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
+        const bool campaignTrooper = st.campaignSource == 1;
+        DrawTitle(ui, ImVec2(left, top), "CAMPAIGN", campaignTrooper ? "TROOPER" : "SOLO");
+        float campaignTabsEnd = 0.0f;
+        if (DrawCampaignTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
+                             static_cast<int>(ctx.campaignMods.size()), &campaignTabsEnd)) st.focusRow = 0;
+        const bool modded = st.campaignSource == 2;
+        // Keep the search box clear of the third tab (MODDED), which now sits where the box used to start.
+        const float searchX = std::max(left + 34.0f * ui.s + 240.0f * ui.s, campaignTabsEnd + 24.0f * ui.s);
+        if (DrawSearchBox(ui, "##mission_search", ImVec2(searchX, top + 70.0f * ui.s), 160.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
         if (ImGui::IsItemActive()) st.focusRow = 0;
         const bool searching = st.mapSearch[0] != 0;
         const std::vector<MapEntry> missions = ListedMaps(modded, ctx.campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods, "m10", st.mapSearch);
@@ -7077,7 +7121,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             if (st.focusRow > 0) st.focusRow = 0;
             else goBack(Screen::Main);
         }
-        DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
+        DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Trooper / Modded" } });
         break;
     }
 
@@ -8523,7 +8567,10 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     // -menu-tab also picks the VANILLA / MODDED source tab of the setup screens, so a test run can capture
     // the modded lists (long workshop names and descriptions) without clicking.
     switch (ctx.st.screen) {
-    case Screen::Campaign:   ctx.st.campaignSource = startTab ? 1 : 0; break;
+    case Screen::Campaign:
+        // -menu-tab 1 still opens the MODDED tab for captures; otherwise restore VANILLA / TROOPER.
+        ctx.st.campaignSource = startTab ? 2 : (Settings::Get().Snapshot().campaignTrooper ? 1 : 0);
+        break;
     case Screen::Firefight:  ctx.st.ffSource = startTab ? 1 : 0; break;
     case Screen::CustomGame: ctx.st.mpSource = startTab ? 1 : 0; break;
     case Screen::Forge:      ctx.st.forgeSource = startTab ? 1 : 0; break;
@@ -8949,9 +8996,14 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     d.lastPlayedDifficulty = choice.difficulty;
                     d.lastPlayedSkulls = choice.skulls;
                     d.lastPlayedMod = choice.modFolder.empty() ? std::string() : choice.modFolder.string();
+                    // Remember CAMPAIGN > TROOPER so CONTINUE and the next menu visit start in the same tab.
+                    d.campaignTrooper = (ctx.st.campaignSource == 1);
                     Settings::Get().Update(d);
                 }
                 std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
+                // CAMPAIGN > TROOPER: the menu equivalent of the -trooper launch flag (the match process swaps the
+                // local player's biped for the UNSC Marine and locks third person).
+                if (choice.mode == "campaign" && ctx.st.campaignSource == 1) args += L" -trooper";
                 // Forward the test-only capture hooks, so a harness that opened the menu can still photograph the
                 // match (the child is a fresh process with its own command line).
                 for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-scoreboard-demo", L"-scoreboard-demo-players", L"-postgame-role", L"-pad-script", L"-quit-after", L"-fake-pad", L"-fake-pad-amount", L"-capture-at" }) {
