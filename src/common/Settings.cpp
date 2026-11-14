@@ -145,6 +145,7 @@ void Settings::Load() {
     const auto path = FilePath();
     std::ifstream in(path);
     const bool existed = in.is_open();
+    bool forceSave = false;
     if (in) {
         try {
             const nlohmann::json j = nlohmann::json::parse(in);
@@ -244,6 +245,13 @@ void Settings::Load() {
             Read(j, "campaignSkulls", d.campaignSkulls);
             Read(j, "extendedLimits", d.extendedLimits);
             Read(j, "aiActors", d.aiActors);
+            // Non-stock engine limits cause blackscreens in Campaign and boots in Firefight.
+            // Reset to Stock (0) by default for everyone until limits can be stabilized.
+            if (d.extendedLimits != 0 || d.aiActors != 0) {
+                d.extendedLimits = 0;
+                d.aiActors = 0;
+                forceSave = true;
+            }
             Read(j, "menuBackground", d.menuBackground);
             Read(j, "playerName", d.playerName);
             Read(j, "lastPlayedMode", d.lastPlayedMode);
@@ -328,7 +336,7 @@ void Settings::Load() {
         m_loaded = true;
     }
     g_uiScale.store(d.uiScale);
-    if (!existed) {
+    if (!existed || forceSave) {
         Save();
     }
 }

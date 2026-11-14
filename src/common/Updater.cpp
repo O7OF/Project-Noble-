@@ -380,7 +380,8 @@ void Updater::CheckThread() {
             const bool exact = (name == expectedAsset);
             const bool fallback = name.rfind("Project-Noble-v", 0) == 0 &&
                                   name.compare(name.size() - 10, 10, "-win64.zip") == 0 &&
-                                  name.find("ForgeWorld") == std::string::npos;
+                                  name.find("ForgeWorld") == std::string::npos &&
+                                  name.find("Forge-World") == std::string::npos;
             if (!exact && !fallback) continue;
             assetName = name;
             // Prefer the API asset URL with application/octet-stream as it redirects directly to
@@ -525,6 +526,10 @@ bool Updater::ApplyAndRestart() {
             << "    goto :wait_loop\r\n"
             << ")\r\n"
             << "timeout /T 1 /NOBREAK >nul 2>&1\r\n"
+            << "taskkill /F /IM \"%EXE_NAME%\" >nul 2>&1\r\n"
+            << "taskkill /F /IM \"noble-client.exe\" >nul 2>&1\r\n"
+            << "taskkill /F /IM \"noble-dev.exe\" >nul 2>&1\r\n"
+            << "timeout /T 1 /NOBREAK >nul 2>&1\r\n"
             << "set \"STAGE=%LOG_DIR%\\stage_%RANDOM%_%RANDOM%\"\r\n"
             << "if exist \"%STAGE%\" rd /S /Q \"%STAGE%\" >nul 2>&1\r\n"
             << "mkdir \"%STAGE%\"\r\n"
@@ -532,6 +537,12 @@ bool Updater::ApplyAndRestart() {
             << "tar.exe -xf \"%ZIP_PATH%\" -C \"%STAGE%\" >> \"%LOG%\" 2>&1\r\n"
             << "set \"SRC=%STAGE%\"\r\n"
             << "if exist \"%STAGE%\\Project-Noble\" set \"SRC=%STAGE%\\Project-Noble\"\r\n"
+            << "if not exist \"%SRC%\\%EXE_NAME%\" (\r\n"
+            << "    if exist \"%STAGE%\\%EXE_NAME%\" set \"SRC=%STAGE%\"\r\n"
+            << ")\r\n"
+            << "if not exist \"%SRC%\\%EXE_NAME%\" (\r\n"
+            << "    echo [%DATE% %TIME%] ERROR: %EXE_NAME% not found in extracted update package %SRC% >> \"%LOG%\"\r\n"
+            << ")\r\n"
             << "echo [%DATE% %TIME%] copying %SRC% to %INSTALL_DIR% >> \"%LOG%\"\r\n"
             << "robocopy \"%SRC%\" \"%INSTALL_DIR%\" /E /R:3 /W:1 /XD userdata autosave cache /XF settings.json appearance.dat appearance.json career.dat career.json preferences.dat /NFL /NDL /NJH /NJS /NP >nul 2>&1\r\n"
             << "echo [%DATE% %TIME%] robocopy exit %ERRORLEVEL% >> \"%LOG%\"\r\n"
