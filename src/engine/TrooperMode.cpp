@@ -42,6 +42,9 @@ RebuildFn s_original = nullptr;
 // Test-only (NOBLE_TROOPER_JMAD=1): give the marine model the Spartan animation graph. Defined with the dump helpers
 // further down; declared here so the rebuild hook can call it once the tags are loaded.
 void MaybeSwapAnimationGraph();
+// Test-only (NOBLE_TROOPER_SHIELDS=1): copy the Spartan model's shield value onto the marine model, so the campaign
+// HUD shows a normal shield bar instead of the red WARNING bar.
+void MaybeApplyModelShields();
 
 uint8_t* TagAt(uint32_t packed) {
     const uint64_t* bases = reinterpret_cast<const uint64_t*>(s_base + kPointerBases);
@@ -127,6 +130,7 @@ void __fastcall RebuildHook(uint8_t* arg) {
         }
     }
     MaybeSwapAnimationGraph();   // test-only, env-gated, runs once
+    MaybeApplyModelShields();    // test-only, env-gated, runs once
 }
 
 } // namespace
@@ -217,6 +221,42 @@ void MaybeSwapAnimationGraph() {
     }
 }
 
+// Test-only (NOBLE_TROOPER_SHIELDS=1): the campaign HUD draws the red WARNING bar when the player's model has no
+// shield value. The model (hlmt) tag keeps the shield value at +0xD0 (the field ElitePack reads to tell the pack
+// Elite apart). Copy the Spartan model's value onto the marine model once the tags are loaded.
+void MaybeApplyModelShields() {
+    static int enabled = -1;
+    if (enabled < 0) {
+        wchar_t value[8] = {};
+        enabled = (GetEnvironmentVariableW(L"NOBLE_TROOPER_SHIELDS", value, 8) > 0) ? 1 : 0;
+    }
+    if (!enabled || !s_base || !s_entry) return;
+    static bool done = false;
+    if (done) return;
+    done = true;
+    __try {
+        const uint8_t* tagInstances = *reinterpret_cast<const uint8_t* const*>(s_base + 0xC1A600);
+        const uint8_t* marineBiped = TagDataAt(s_base, tagInstances, static_cast<uint32_t>(s_entry->marine));
+        const uint8_t* spartanBiped = TagDataAt(s_base, tagInstances, static_cast<uint32_t>(s_entry->spartan));
+        if (!marineBiped || !spartanBiped) { NOBLE_WARN("TrooperMode shields: biped tags missing"); return; }
+        uint8_t* marineHlmt = const_cast<uint8_t*>(
+            TagDataAt(s_base, tagInstances, *reinterpret_cast<const uint32_t*>(marineBiped + 0x70)));
+        const uint8_t* spartanHlmt =
+            TagDataAt(s_base, tagInstances, *reinterpret_cast<const uint32_t*>(spartanBiped + 0x70));
+        if (!marineHlmt || !spartanHlmt) { NOBLE_WARN("TrooperMode shields: hlmt tags missing"); return; }
+        const float marineShield = *reinterpret_cast<const float*>(marineHlmt + 0xD0);
+        const float spartanShield = *reinterpret_cast<const float*>(spartanHlmt + 0xD0);
+        const float marineNext = *reinterpret_cast<const float*>(marineHlmt + 0xD4);
+        const float spartanNext = *reinterpret_cast<const float*>(spartanHlmt + 0xD4);
+        NOBLE_INFO("TrooperMode shields: marine model {:.1f}/{:.1f}, spartan model {:.1f}/{:.1f}",
+                   marineShield, marineNext, spartanShield, spartanNext);
+        *reinterpret_cast<float*>(marineHlmt + 0xD0) = spartanShield;
+        NOBLE_INFO("TrooperMode shields: copied the Spartan shield value ({:.1f}) onto the marine model", spartanShield);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        NOBLE_WARN("TrooperMode shields: fault during copy");
+    }
+}
+
 uint32_t LocalUnitDatumForDump(uintptr_t base) {
     using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
     return static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
@@ -232,6 +272,8 @@ const uint8_t* ObjectEntryForDump(uintptr_t base, uint32_t unit) {
     if (!entries) return nullptr;
     return *reinterpret_cast<const uint8_t* const*>(entries + static_cast<size_t>(unit & 0xFFFFu) * 0x18 + 0x10);
 }
+
+int EnvInt(const wchar_t* name, int fallback);   // defined below the dump helpers
 
 void DumpRegionsSEH(uintptr_t base, uint32_t unit) {
     __try {
@@ -274,6 +316,28 @@ void DumpRegionsSEH(uintptr_t base, uint32_t unit) {
                 permSid = *reinterpret_cast<const uint32_t*>(perms + static_cast<size_t>(current) * 0x18);
             NOBLE_INFO("ModelDump: region {:02} name 0x{:08X} perms {:2} current {:3} perm 0x{:08X}", i, nameSid,
                        permCount, current, permSid);
+        }
+        // Test-only: the local unit's shield/health from its object data (the offsets DevCheats' godmode writes).
+        const float shield = *reinterpret_cast<const float*>(entry + 0xDC);
+        const float health = *reinterpret_cast<const float*>(entry + 0xE0);
+        NOBLE_INFO("ModelDump: object shield {:.3f} health {:.3f}", shield, health);
+        // Test-only (NOBLE_TROOPER_SHIELDS=2): read the unit's shields through the engine getter, restore them once,
+        // and log the result. Used to find out why the campaign HUD shows the red WARNING bar for the Marine.
+        if (EnvInt(L"NOBLE_TROOPER_SHIELDS", 0) >= 2) {
+            using GetShieldFn = uint64_t(__fastcall*)(uint32_t);
+            using RestoreShieldFn = void(__fastcall*)(uint32_t);
+            auto getShield = reinterpret_cast<GetShieldFn>(base + 0x49DCEC);
+            auto restoreShield = reinterpret_cast<RestoreShieldFn>(base + 0x49DD58);
+            const uint64_t beforeBits = getShield(unit);
+            float before = 0.0f;
+            const uint32_t beforeLow = static_cast<uint32_t>(beforeBits);
+            std::memcpy(&before, &beforeLow, 4);
+            restoreShield(unit);
+            const uint64_t afterBits = getShield(unit);
+            float after = 0.0f;
+            const uint32_t afterLow = static_cast<uint32_t>(afterBits);
+            std::memcpy(&after, &afterLow, 4);
+            NOBLE_INFO("ModelDump: shield restore unit 0x{:08X} {:.3f} -> {:.3f}", unit, before, after);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         NOBLE_WARN("ModelDump: fault while reading the model");
