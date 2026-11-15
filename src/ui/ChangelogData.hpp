@@ -124,11 +124,32 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Fixed Firefight & Custom Games option editing inside the lobby, cleared stale Workshop mod flags when switching back to stock maps, and hardened host-only WebSocket controls and leave cleanup on the master server."},
     };
 
+    const std::vector<ChangeItem> v0200Items = {
+        {"ARMORY", "Elite Armor Pieces & Full Customization",
+         "All Elite armor sets and pieces (Honor Guard, Counselor, H2A Ranger, H2A armor, Schism) now display in the Armory, render properly in-match for whoever equips them, and sync cleanly across multiplayer."},
+        {"ARMORY", "Armor Abilities on Elites",
+         "Equipped Armor Abilities (Jet Pack, Evade, Drop Shield, Armor Lock, Active Camo, Hologram, Sprint) now visibly display and mount correctly on Elites during matches."},
+        {"VISORS", "Custom Visor Colors In-Match & Over Network",
+         "All custom and preset visor colors render accurately in-match on both Spartans and Elites and replicate over the network across multiplayer clients."},
+        {"FORGE", "Forge AI Spawning Fix & Net Sync",
+         "Fixed non-host clients spawning duplicate or static invincible AI clones in Forge; AI spawning is now authoritatively handled with clean network synchronization."},
+        {"UI", "Loading Screen & Pause Menu Polish",
+         "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
+    };
+
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MINOR == 19 && noble::VERSION_PATCH >= 103) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR >= 20) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "ELITE ARMOR, CUSTOM VISORS, FORGE AI & UI OVERHAUL",
+                    "Elite Sets, Armor Abilities, Custom Visor Colors, Forge AI Sync, Pause Menu & Loading Polish",
+                    v0200Items,
+                });
+            }
+            if (noble::VERSION_MINOR == 19 && noble::VERSION_PATCH >= 103) {
+                notes.push_back(ReleaseNotes{
+                    "v0.19.103",
                     "LOBBY SHARE CODES, CLICK FIXES & INPUT TOGGLES",
                     "Shareable Lobby Codes, Variant Drawer Filters, Pinned Server Actions, Toggle Crouch/Zoom",
                     v019103Items,
