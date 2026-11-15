@@ -1130,10 +1130,11 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         const uintptr_t trampAddr = reinterpret_cast<uintptr_t>(trampoline);
         const uintptr_t resume = baseAddress + 0x41E3EB;
         const uintptr_t nullPath = baseAddress + 0x41E410;
+        // The jmp at +0x0D ends at +0x12; the jmp at +0x12 ends at +0x17.
         const int32_t relResume =
-            static_cast<int32_t>(resume - (trampAddr + 0x12 + 5));
+            static_cast<int32_t>(resume - (trampAddr + 0x12));
         const int32_t relNull =
-            static_cast<int32_t>(nullPath - (trampAddr + 0x17 + 5));
+            static_cast<int32_t>(nullPath - (trampAddr + 0x17));
         uint8_t code[0x17] = {
             0x4A, 0x8B, 0x8C, 0xF8, 0x10, 0x01, 0x00,
             0x00,                   // mov rcx, [rax + r15*8 + 0x110]
