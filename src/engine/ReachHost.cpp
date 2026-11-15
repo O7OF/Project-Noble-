@@ -30,6 +30,7 @@
 #include "vfs/VFS.hpp"
 #include "common/Settings.hpp"
 #include "common/Relaunch.hpp"
+#include "host/EngineLimits.hpp"
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
 #include "network/NetworkTransport.hpp"
@@ -2780,13 +2781,19 @@ static uint64_t __fastcall HostSlot47_UserDataFolder(void* thisPtr, uint64_t a1,
 
         auto& host = ReachHost::Get();
         const std::string devId = DeviceIdentityStore::Get().deviceId;
-        std::filesystem::path userPath = host.GetDataDir() / "userdata" / devId / "saves" / "HaloReach";
+        // Engine-limit profile pin (2026-11-15): the game-state layout depends on the engine-limit profile and the
+        // AI actor count, so a save written under one layout must never be read under another. Stock keeps the
+        // historical "HaloReach" folder (existing users' saves are untouched); the pinned profile uses e.g.
+        // "HaloReach_ext_full_a1024", and retuning the pin later moves to a new folder instead of mixing saves.
+        const std::string saveFolderName = "HaloReach" + noble::limits::ActiveSaveSuffix();
+        std::filesystem::path userPath = host.GetDataDir() / "userdata" / devId / "saves" / saveFolderName;
         std::error_code ec;
         std::filesystem::create_directories(userPath, ec);
 
-        // Migrate any legacy kind1/kind2 saves if they exist
+        // Migrate any legacy kind1/kind2 saves if they exist. Stock layout only: a legacy save must never be
+        // copied into a different engine-limit layout.
         std::filesystem::path legacyKind = host.GetDataDir() / "userdata" / ("kind" + std::to_string(kind)) / "HaloReach";
-        if (std::filesystem::exists(legacyKind, ec)) {
+        if (noble::limits::ActiveProfile() == noble::limits::Profile::Stock && std::filesystem::exists(legacyKind, ec)) {
             for (const auto& item : std::filesystem::directory_iterator(legacyKind, ec)) {
                 std::filesystem::path dest = userPath / item.path().filename();
                 if (!std::filesystem::exists(dest, ec)) {

@@ -70,12 +70,11 @@ void Clamp(SettingsData& d) {
     d.voiceVolume = std::clamp(d.voiceVolume, 0.0f, 2.0f);
     if (d.voiceBitrateKbps != 16 && d.voiceBitrateKbps != 24) d.voiceBitrateKbps = 20;
     d.voiceChannel = std::clamp(d.voiceChannel, 0, 2);
-    // Engine limits: only profiles EngineLimits knows about are valid; anything else falls back to Stock, so a
-    // settings file from a newer build can never make this one prepare a profile it has no patch for.
-    d.extendedLimits = std::clamp(d.extendedLimits, 0, static_cast<int>(limits::Profile::Full));
-    // AI actors: the engine profiles are built for these counts (see tools/limits/make_v16_particles.py); any
-    // other value means the stock pool, so a hand-edited file cannot ask for a size no build supports.
-    if (d.aiActors != 256 && d.aiActors != 512 && d.aiActors != 1024) d.aiActors = 0;
+    // Engine limits are PINNED since 2026-11-15 (Tyler): every install runs one profile and AI actor count
+    // (limits::kShippedProfile / kShippedAiActors) so no player can end up on a different game-state layout from
+    // the host. The fields stay in the file for compatibility and dev diagnostics; any saved value is overwritten.
+    d.extendedLimits = static_cast<int>(limits::kShippedProfile);
+    d.aiActors = limits::kShippedAiActors;
     auto trimName = [](std::string& s) {
         s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
         s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), s.end());
@@ -145,7 +144,6 @@ void Settings::Load() {
     const auto path = FilePath();
     std::ifstream in(path);
     const bool existed = in.is_open();
-    bool forceSave = false;
     if (in) {
         try {
             const nlohmann::json j = nlohmann::json::parse(in);
@@ -250,15 +248,8 @@ void Settings::Load() {
             }
             Read(j, "subtitles", d.subtitles);
             Read(j, "campaignSkulls", d.campaignSkulls);
-            Read(j, "extendedLimits", d.extendedLimits);
+            Read(j, "extendedLimits", d.extendedLimits);   // old files: Clamp() re-pins both
             Read(j, "aiActors", d.aiActors);
-            // Non-stock engine limits cause blackscreens in Campaign and boots in Firefight.
-            // Reset to Stock (0) by default for everyone until limits can be stabilized.
-            if (d.extendedLimits != 0 || d.aiActors != 0) {
-                d.extendedLimits = 0;
-                d.aiActors = 0;
-                forceSave = true;
-            }
             Read(j, "menuBackground", d.menuBackground);
             Read(j, "playerName", d.playerName);
             Read(j, "lastPlayedMode", d.lastPlayedMode);
@@ -343,7 +334,7 @@ void Settings::Load() {
         m_loaded = true;
     }
     g_uiScale.store(d.uiScale);
-    if (!existed || forceSave) {
+    if (!existed) {
         Save();
     }
 }

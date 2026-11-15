@@ -150,6 +150,13 @@ const Rule kRules[] = {
     { "object list header", [](int32_t stock) { return AtLeast256(stock); } },  // 48
     { "dynamic firing points", [](int32_t stock) { return (std::max)(stock, 64); } },  // 15
     { "swarm", [](int32_t stock) { return (std::max)(stock, 128); } },    // 32
+    // Cross-game pool raises (top-10 item #2, 2026-11-15). ODST is the strongest precedent for Reach's data-array
+    // family: squad 256 -> 512, objectives 64 -> 125 (Halo 3 uses 335 / 100; Halo 4 kept Reach's counts). With the
+    // actor pool pinned at 1,024 these are the next real AI ceilings: campaign m10 already reports squad 120/256 and
+    // objectives 28/64 in the live pool report. Costs 256x236 + 61x24 bytes of the AI bank's added room, not
+    // game-state determinism: every install runs this same pinned build, so peers stay identical.
+    { "squad", [](int32_t stock) { return (std::max)(stock, 512); } },      // 256 x 236 B -> 512
+    { "objectives", [](int32_t stock) { return (std::max)(stock, 125); } }, // 64 x 24 B -> 125
     // Script engine pools (LIMITS-TODO C6). Capacities seen in the live pool report; big custom maps and
     // horde scripts run out of script nodes and references first.
     { "det hs thread", [](int32_t stock) { return (std::max)(stock, 1024); } },        // 320 x 1,324 B
@@ -380,6 +387,8 @@ std::string Narrow(const wchar_t* w) {
 }
 
 void ReadPoolOptions() {
+#ifdef NOBLE_DEV_BUILD
+    // Development-only bisect/test overrides. Shipped builds must not let a player change pool sizes.
     wchar_t env[256] = {};
     if (GetEnvironmentVariableW(L"NOBLE_AI_POOLS", env, 256) > 0) s_only = Narrow(env);
     if (GetEnvironmentVariableW(L"NOBLE_POOL_TRACE", env, 256) > 0) s_trace = env[0] == L'1';
@@ -399,9 +408,13 @@ void ReadPoolOptions() {
         }
     }
     if (argv) LocalFree(argv);
+#endif
 }
 
 int ReadActorSetting() {
+#ifdef NOBLE_DEV_BUILD
+    // Development-only override so the stability tests can A/B a profile. Shipped builds are pinned: every player
+    // and server must run the same game-state layout, so no env var or flag may change the actor count there.
     int value = 0;
     wchar_t env[32] = {};
     if (GetEnvironmentVariableW(L"NOBLE_AI_ACTORS", env, 32) > 0) value = _wtoi(env);
@@ -414,9 +427,10 @@ int ReadActorSetting() {
         }
     }
     if (argv) LocalFree(argv);
-    // No fallback to the settings file here: the dedicated server target has no Settings. The client copies
-    // SETTINGS > ENGINE > AI ACTORS into NOBLE_AI_ACTORS before loading the engine (main.cpp, step 8).
     return value;
+#else
+    return noble::limits::kShippedAiActors;
+#endif
 }
 
 } // namespace

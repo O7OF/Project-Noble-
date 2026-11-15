@@ -1917,57 +1917,16 @@ void SettingsPanel::RenderGame() {
   // now: by the time this screen opens the engine is already loaded, hence Next
   // start.
   {
-    // Extended profiles are disabled in this build: Settings::Load force-resets them to Stock and
-    // non-Forge launches are forced to Stock (upstream commit 4407101) because non-stock profiles
-    // caused black-screen loads and network kicks; the max-illumination/particle setting was also
-    // reported as crashing. Do not offer a selection that cannot take effect and was reported
-    // unstable: show the active value only. Re-enable the picker only after the stability work and
-    // the networking profile matching are proven (see project-docs\NOTE-NETWORK-HANDOFF-TO-CLAUDE.md).
-    if (Row("ENGINE LIMITS",
-            "Extended engine-limit profiles are temporarily disabled in this build for stability. "
-            "The game always runs Stock limits. This option returns when the stability work is "
-            "proven.",
-            When::Info, kEngineLimitLabels[0], false)) {
-      InfoValue(kEngineLimitLabels[0]);
-    }
-  }
-  {
+    // Pinned for every install (2026-11-15, Tyler): one engine-limit profile + AI actor count keeps every player
+    // and server on the same game-state layout, so there is deliberately no picker here. The active values stay
+    // visible for support and diagnostics; the pin itself is limits::kShippedProfile / kShippedAiActors.
     const noble::limits::Profile active = noble::limits::ActiveProfile();
     const char *activeName = noble::limits::ProfileName(active);
-    if (Row("ACTIVE ENGINE LIMITS",
-            "The engine limit profile currently running in this session (Stock while the extended "
-            "profiles are disabled).",
+    if (Row("ENGINE LIMITS",
+            "Fixed by this build: every player and server runs the same engine-limit profile, so "
+            "sessions always match. Not adjustable.",
             When::Info, activeName, false)) {
       InfoValue(activeName);
-    }
-  }
-  // AI actor pool (LIMITS-TODO C7d). The engine build carries the extra AI
-  // memory and the bigger stack frames; this only sizes the pools. Like ENGINE
-  // LIMITS it is a network-visible value (ProfileNetworkId) and needs a
-  // restart. 1,024 is marked experimental: the last proved run was 512; 1,024
-  // needs the 0x76EBF8 buffer fix and the F6/-horde test.
-  {
-    static const char *const kAiActorLabels[] = {"96 (STOCK)", "256", "512",
-                                                 "1024 (EXPERIMENTAL)"};
-    static constexpr int kAiActorValues[] = {0, 256, 512, 1024};
-    constexpr int count = static_cast<int>(std::size(kAiActorLabels));
-    int current = 0;
-    for (int i = 0; i < count; ++i)
-      if (kAiActorValues[i] == m_edit.aiActors)
-        current = i;
-    const bool extended = m_edit.extendedLimits != 0;
-    const int displayIdx = extended ? current : 0;
-    if (Row("AI ACTORS",
-            "How many AI actors the engine can hold (stock 96). Disabled while "
-            "extended engine limits are disabled; the game runs the Stock 96 "
-            "actors. Every player and the server must match when it returns.",
-            When::Restart, kAiActorLabels[0],
-            m_edit.aiActors != m_saved.aiActors, !extended)) {
-      if (const int d = CycleValue(kAiActorLabels[displayIdx], displayIdx,
-                                   count, false)) {
-        const int next = std::clamp(displayIdx + d, 0, count - 1);
-        m_edit.aiActors = extended ? kAiActorValues[next] : 0;
-      }
     }
   }
   {

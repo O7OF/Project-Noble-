@@ -47,6 +47,12 @@ $excludeFiles = 'appearance*','career*','settings*','preferences*','*.pncsold','
 if ($LASTEXITCODE -gt 7) { throw "robocopy data failed ($LASTEXITCODE)" }
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\mods') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\limits') | Out-Null
+# Engine limits are PINNED to Full (src/host/EngineLimits.cpp, limits::kShippedProfile): every install must run the
+# patched layout, so the release has to carry the patch file. A missing .nlp would silently fall back to the stock DLL.
+$pinnedNlp = Join-Path $pkg 'data\limits\full.nlp'
+if (-not (Test-Path $pinnedNlp)) {
+    throw "data\limits\full.nlp is missing from the package - the pinned engine limits cannot run without it. Generate/copy data\limits from the build folder (tools\limits\make_v16_particles.py) before packaging."
+}
 
 # Copy the armour pack (elite_armor.map + its .noblereloc relocation sidecar) into data\armor\.
 # Noble's own naming/format: no Reach Renaissance file names ship in the package.
