@@ -76,6 +76,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Settled focus transitions cleanly when returning to the Pre-Game Lobby or Main Menu and added smooth fade transitions while clearing leftover pickers across screens."},
     };
 
+    const std::vector<ChangeItem> v019101Items = {
+        {"UI", "New In-Match Loading & Waiting Screen",
+         "Campaign, Custom Games, Forge and Firefight now get a WAITING FOR PLAYERS screen with the lobby roster, per-player status, progress and mode label; the map picture is shown complete (no more zoomed stretch) over Reach's moving diamond grid with the Noble and UNSC emblems. Hosts waiting for remote players keep this screen instead of a black frame."},
+        {"UI", "Server Browser Blue-Glass Layout & Mod Awareness",
+         "Larger blue-glass server cards are now the default. Modded sessions show MOD / MOD - NOT INSTALLED, the details pane names the required Workshop item, version differences are called out, and DOWNLOAD MOD & JOIN opens the Workshop download prompt. Warnings wrap inside the pane."},
+        {"UI", "Lobby-Sized Loading Roster",
+         "The loading roster scales from small lobbies to 16 / 32 / 64 / 128-player sessions with a compact multi-column grid and a joined/expected count."},
+        {"FIX", "Smooth Local Cameras & Match-End UI",
+         "Includes the v0.19.100 work: jitter-free third-person and vehicle first-person cameras, smooth QPC zoom blending, controller zoom, and stable post-match focus/cursor handling."},
+    };
+
     const std::vector<ChangeItem> v01999Items = {
         {"NETCODE", "All-Mode Netcode & Sync Hardening",
          "Verified bidirectional UDP routes before skipping relay, added Blam! membership handshake waits before host launch, SHA-256 verified preset JSON/binary game variants and .mvar map variants, and fixed join-in-progress kicks across Campaign, Firefight, Forge, and Custom Games."},
@@ -91,9 +102,9 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
         if (currentVer != "v0.19.99") {
             notes.push_back(ReleaseNotes{
                 currentVer,
-                "SMOOTH LOCAL CAMERAS, POST-MATCH UI CONTROL & TRANSITIONS",
-                "Jitter-Free 3rd-Person/Vehicle Cameras & Clean Match-End UI Focus",
-                v019100Items,
+                "LOADING SCREENS, SERVER BROWSER & ROSTERS",
+                "In-Match Waiting Screen, Blue-Glass Server Browser, Workshop Downloads & Smooth Cameras",
+                v019101Items,
             });
         }
         notes.push_back(ReleaseNotes{
