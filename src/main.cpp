@@ -1328,6 +1328,20 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         launchMode = "mainmenu";
     } else {
         noble::ReachArmory::SetMenuMode(false);
+        if (!savedFilmPath.empty()) {
+            std::string filmScenario, filmMode;
+            uint32_t filmMapId = 0;
+            if (noble::BlamEngine::InspectSavedFilm(savedFilmPath, filmScenario, filmMode, filmMapId)) {
+                if (launchMap.empty() || launchMap == "mainmenu" || launchMap == "menu") {
+                    launchMap = filmScenario;
+                }
+                if (launchMode.empty() || launchMode == "mainmenu" || launchMode == "menu") {
+                    launchMode = filmMode;
+                }
+                NOBLE_INFO("main: -film inspect resolved map '{}', mode '{}' from '{}'",
+                           launchMap, launchMode, savedFilmPath);
+            }
+        }
         if (launchMap.empty()) {
             launchMap = "20_sword_slayer";
             launchMode = "multiplayer";

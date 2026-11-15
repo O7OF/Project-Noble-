@@ -696,6 +696,132 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     return 0;
 }
 
+std::string BlamEngine::ScenarioFromReachMapId(int32_t mapId, int mode) {
+    switch (mapId) {
+        case 5005: return "m05";
+        case 5010: return "m10";
+        case 5020: return "m20";
+        case 5030: return "m30";
+        case 5035: return "m35";
+        case 5045: return "m45";
+        case 5050: return "m50";
+        case 5052: return "m52";
+        case 5060: return "m60";
+        case 5070: return "m70";
+        case 5075: return "m70_a";
+        case 5080: return "m70_bonus";
+        case 1000: return "20_sword_slayer";
+        case 1020: return "45_launch_station";
+        case 1035: return "50_panopticon";
+        case 1040: return "45_aftship";
+        case 1055: return "30_settlement";
+        case 1080: return "70_boneyard";
+        case 1150: return "52_ivory_tower";
+        case 1200: return "35_island";
+        case 1500: return "condemned";
+        case 1510: return "trainingpreserve";
+        case 2001: return "dlc_slayer";
+        case 2002: return "dlc_invasion";
+        case 2004: return "dlc_medium";
+        case 3006: return "forge_halo";
+        case 10010: return "cex_damnation";
+        case 10020: return "cex_beaver_creek";
+        case 10030: return "cex_timberland";
+        case 10050: return "cex_headlong";
+        case 10060: return "cex_hangemhigh";
+        case 10070: return "cex_prisoner";
+        case 7000: return "ff10_prototype";
+        case 7020: return "ff20_courtyard";
+        case 7030: return "ff30_waterfront";
+        case 7040: return "ff45_corvette";
+        case 7060: return "ff50_park";
+        case 7080: return "ff60_airview";
+        case 7100: return "ff60_icecave";
+        case 7110: return "ff70_holdout";
+        case 7130: return "ff_unearthed";
+        case 7500: return "cex_ff_halo";
+        default:
+            if (mode == 3 || mode == 1) return "m10";
+            if (mode == 4 || mode == 1035) return "ff20_courtyard";
+            return "20_sword_slayer";
+    }
+}
+
+bool BlamEngine::InspectSavedFilm(const std::filesystem::path& filmPath, std::string& outScenario, std::string& outMode, uint32_t& outMapId) {
+    std::ifstream in(filmPath, std::ios::binary);
+    if (!in.is_open()) return false;
+
+    uint8_t buf[0x0A40] = {};
+    in.read(reinterpret_cast<char*>(buf), sizeof(buf));
+    const std::streamsize got = in.gcount();
+    if (got < 0x340) return false;
+    if (std::memcmp(buf, "_blf", 4) != 0 || std::memcmp(buf + 0x30, "chdr", 4) != 0) return false;
+
+    const uint8_t chdrMode = buf[0x006A];
+    int32_t mapId = 0;
+    std::memcpy(&mapId, buf + 0x006C, sizeof(int32_t));
+    if (got >= 0x092C && std::memcmp(buf + 0x0340, "flmh", 4) == 0) {
+        int32_t flmhMapId = 0;
+        std::memcpy(&flmhMapId, buf + 0x0928, sizeof(int32_t));
+        if (flmhMapId != 0) mapId = flmhMapId;
+    }
+    outMapId = static_cast<uint32_t>(mapId);
+
+    std::string scenarioPath;
+    if (got >= 0x0930 && std::memcmp(buf + 0x0340, "flmh", 4) == 0) {
+        const char* pScen = reinterpret_cast<const char*>(buf + 0x092C);
+        size_t len = 0;
+        while (len < 255 && pScen[len] != '\0' && (static_cast<unsigned char>(pScen[len]) >= 32 && static_cast<unsigned char>(pScen[len]) < 127)) {
+            ++len;
+        }
+        if (len > 0) {
+            scenarioPath.assign(pScen, len);
+        } else {
+            for (size_t off = 0x0340; off + 16 < static_cast<size_t>(got); ++off) {
+                if (std::memcmp(buf + off, "haloreach\\maps\\", 15) == 0 ||
+                    std::memcmp(buf + off, "maps\\", 5) == 0 ||
+                    std::memcmp(buf + off, "levels\\", 7) == 0) {
+                    size_t slen = 0;
+                    while (slen < 255 && buf[off + slen] != '\0' &&
+                           (static_cast<unsigned char>(buf[off + slen]) >= 32 && static_cast<unsigned char>(buf[off + slen]) < 127)) {
+                        ++slen;
+                    }
+                    if (slen > 0) {
+                        scenarioPath.assign(reinterpret_cast<const char*>(buf + off), slen);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (!scenarioPath.empty()) {
+        const size_t slash = scenarioPath.find_last_of("\\/");
+        outScenario = (slash != std::string::npos) ? scenarioPath.substr(slash + 1) : scenarioPath;
+    }
+    if (outScenario.size() > 4 && outScenario.substr(outScenario.size() - 4) == ".map") {
+        outScenario.resize(outScenario.size() - 4);
+    }
+    bool validScen = !outScenario.empty();
+    for (char c : outScenario) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') { validScen = false; break; }
+    }
+    if (!validScen) {
+        outScenario = ScenarioFromReachMapId(mapId, chdrMode);
+    }
+
+    if (chdrMode == 3) {
+        outMode = "campaign";
+    } else if (chdrMode == 4) {
+        outMode = "firefight";
+    } else if (outScenario == "forge_halo") {
+        outMode = "forge";
+    } else {
+        outMode = "multiplayer";
+    }
+
+    return true;
+}
+
 int BlamEngine::s_engineModeOverride = 0;
 BlamEngine* BlamEngine::s_active = nullptr;
 bool BlamEngine::s_guestPostStart = false;
@@ -761,7 +887,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     int clampedDiff = (difficulty >= 0 && difficulty <= 3) ? difficulty : 1;
 
-    bool isMainMenu = (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
+    bool isMainMenu = !s_savedFilmPath.empty() ? false : (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
     const bool isGuest = !connectAddress.empty();
     if (!isMainMenu && !NetworkTransport::Get().IsActive()) {
         if (isGuest) {
@@ -1410,7 +1536,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // Theater Mode saved film playback: launch_block + 0x2BF20 holds a const char* pointer to the .film path.
     // When non-null, haloreach.dll (RVA 0x100C4 -> 0x5A1BC) opens the .film file, loads the embedded flmh
     // game_options (map, game variant, map variant, players, seed) and activates c_saved_film_director.
-    if (!isMainMenu && !s_savedFilmPath.empty()) {
+    if (!s_savedFilmPath.empty()) {
         static std::string s_activeFilmPathBuf;
         std::error_code ec;
         const std::filesystem::path srcPath(s_savedFilmPath);
@@ -1436,23 +1562,31 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 if (filmEngineMode != 0) {
                     *reinterpret_cast<uint32_t*>(&block[0x0C]) = filmEngineMode;
                     *reinterpret_cast<uint32_t*>(&block[0x28]) = filmEngineMode;
+                    if (filmEngineMode == 1) {
+                        block[0x2A] = 0x11;
+                        block[0x2B] = 0x11;
+                    }
                 }
             }
 
-            // Stage the .film into data\sandbox\theater\<filename> because main.cpp sets the working directory
-            // to data\sandbox, and haloreach.dll (RVA 0x5A1BC / 0x5AB98) copies the path into a 256-byte char
-            // buffer and requires a backslash ('\\') to open it directly via CreateFileW.
-            std::string stagedRelative;
-            const std::filesystem::path sandboxTheaterDir = ReachHost::Get().GetDataDir() / "sandbox" / "theater";
+            // Stage the .film into data\sandbox\theater\<filename> and data\sandbox\<filename>
+            // because main.cpp sets the working directory to data\sandbox.
+            const std::filesystem::path sandboxDir = ReachHost::Get().GetDataDir() / "sandbox";
+            const std::filesystem::path sandboxTheaterDir = sandboxDir / "theater";
             std::filesystem::create_directories(sandboxTheaterDir, ec);
             std::string safeName = srcPath.filename().string();
             if (safeName.empty() || safeName.size() > 120) safeName = "playback.film";
-            const std::filesystem::path stagedPath = sandboxTheaterDir / safeName;
-            std::filesystem::copy_file(srcPath, stagedPath, std::filesystem::copy_options::overwrite_existing, ec);
-            if (!ec && std::filesystem::is_regular_file(stagedPath, ec)) {
-                s_activeFilmPathBuf = "theater\\" + safeName;
+            const std::filesystem::path stagedTheaterPath = sandboxTheaterDir / safeName;
+            const std::filesystem::path stagedRootPath = sandboxDir / safeName;
+            std::filesystem::copy_file(srcPath, stagedTheaterPath, std::filesystem::copy_options::overwrite_existing, ec);
+            std::filesystem::copy_file(srcPath, stagedRootPath, std::filesystem::copy_options::overwrite_existing, ec);
+
+            const std::string relPath = "theater\\" + safeName;
+            DWORD attr = GetFileAttributesA(relPath.c_str());
+            if (attr != INVALID_FILE_ATTRIBUTES) {
+                s_activeFilmPathBuf = relPath;
             } else {
-                s_activeFilmPathBuf = std::filesystem::absolute(srcPath, ec).make_preferred().string();
+                s_activeFilmPathBuf = stagedTheaterPath.string();
             }
 
             *reinterpret_cast<const char**>(&block[0x2BF20]) = s_activeFilmPathBuf.c_str();
@@ -1500,19 +1634,38 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     s_lastCopyVariantSource.store(nullptr, std::memory_order_release);
     if (!m_isInitialized || !m_engineInstance) return false;
 
-    m_currentMap = mapName;
-    m_currentMode = gameMode;
+    std::string effectiveMapName = mapName;
+    std::string effectiveGameMode = gameMode;
+
+    if (!s_savedFilmPath.empty()) {
+        std::string filmScenario, filmMode;
+        uint32_t filmMapId = 0;
+        if (InspectSavedFilm(s_savedFilmPath, filmScenario, filmMode, filmMapId)) {
+            if (effectiveMapName.empty() || effectiveMapName == "mainmenu" || effectiveMapName == "menu" || ResolveMapId(effectiveMapName) == 0) {
+                effectiveMapName = filmScenario;
+            }
+            if (effectiveGameMode.empty() || effectiveGameMode == "mainmenu" || effectiveGameMode == "menu") {
+                effectiveGameMode = filmMode;
+            }
+            NOBLE_INFO("BlamEngine: Theater film inspect resolved map '{}', mode '{}' (from film '{}')",
+                       effectiveMapName, effectiveGameMode, s_savedFilmPath);
+        }
+    }
+
+    m_currentMap = effectiveMapName;
+    m_currentMode = effectiveGameMode;
     m_isGameRunning = true;
-    PauseMenu::SetLoadingMap(mapName);
+    PauseMenu::SetLoadingMap(effectiveMapName);
 
     NOBLE_INFO("=================================================");
-    NOBLE_INFO(" LAUNCHING HALO: REACH MISSION / MAP: {}", mapName);
-    NOBLE_INFO(" Mode: {} | Difficulty: {} | Skulls: 0x{:X}", gameMode, difficulty, skulls);
+    NOBLE_INFO(" LAUNCHING HALO: REACH MISSION / MAP: {}", effectiveMapName);
+    NOBLE_INFO(" Mode: {} | Difficulty: {} | Skulls: 0x{:X}", effectiveGameMode, difficulty, skulls);
     if (!customMvarPath.empty()) NOBLE_INFO(" Custom MVAR: {}", customMvarPath);
     if (!customVariantPath.empty()) NOBLE_INFO(" Custom Variant: {}", customVariantPath);
+    if (!s_savedFilmPath.empty()) NOBLE_INFO(" Theater Film: {}", s_savedFilmPath);
     NOBLE_INFO("=================================================");
 
-    uint32_t mapId = ResolveMapId(mapName);
+    uint32_t mapId = ResolveMapId(effectiveMapName);
 
     // DIAGNOSTIC (temporary): NOBLE_MAP_NAME_OVERRIDE=<name> rewrites the engine's own map-name
     // string for the launch index, so the engine builds maps\<name>.map and maps\info\<name>.mapinfo
@@ -1538,24 +1691,31 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     }
 
     uint32_t gameModeTag = 2; // Default multiplayer (Slayer, CTF, Invasion, all Megalo variants)
-    const bool forgeMode = _stricmp(gameMode.c_str(), "forge") == 0 ||
-                           _stricmp(gameMode.c_str(), "sandbox") == 0;
+    const bool forgeMode = _stricmp(effectiveGameMode.c_str(), "forge") == 0 ||
+                           _stricmp(effectiveGameMode.c_str(), "sandbox") == 0;
     // An explicitly requested Forge wins over the map's own mode. Firefight scenarios (Installation 04 =
     // cex_ff_halo, Glacier = ff60_icecave) are the bases of several Forge AI mods, and testing the map range
     // first forced them into Firefight no matter what was asked for.
     if (forgeMode) {
         // Forge is a multiplayer Megalo mode, not the special map-editor engine (0x04).
         gameModeTag = 3;
-    } else if (_stricmp(gameMode.c_str(), "campaign") == 0) {
+    } else if (_stricmp(effectiveGameMode.c_str(), "campaign") == 0) {
         gameModeTag = 1;    // Explicit Campaign mode (including Firefight-canvas campaign mods)
-    } else if (_stricmp(gameMode.c_str(), "firefight") == 0 ||
-               (_stricmp(gameMode.c_str(), "multiplayer") != 0 && mapId >= 210 && mapId <= 219)) {
+    } else if (_stricmp(effectiveGameMode.c_str(), "firefight") == 0 ||
+               (_stricmp(effectiveGameMode.c_str(), "multiplayer") != 0 && mapId >= 210 && mapId <= 219)) {
         gameModeTag = 1035; // 0x40B Firefight
     } else if (mapId >= 178 && mapId <= 189) {
         gameModeTag = 1;    // Campaign
     } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 ||
-               _stricmp(gameMode.c_str(), "mainmenu") == 0 || _stricmp(gameMode.c_str(), "menu") == 0) {
+               _stricmp(effectiveGameMode.c_str(), "mainmenu") == 0 || _stricmp(effectiveGameMode.c_str(), "menu") == 0) {
         gameModeTag = 0;    // Main Menu
+    }
+
+    if (!s_savedFilmPath.empty() && gameModeTag == 0) {
+        if (_stricmp(effectiveGameMode.c_str(), "campaign") == 0) gameModeTag = 1;
+        else if (_stricmp(effectiveGameMode.c_str(), "firefight") == 0) gameModeTag = 1035;
+        else if (_stricmp(effectiveGameMode.c_str(), "forge") == 0) gameModeTag = 3;
+        else gameModeTag = 2;
     }
 
     // A multiplayer mod map built on a Firefight canvas is a Forge map in Reach terms: its world is only loaded by the
@@ -1563,13 +1723,13 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     // engine mode.
     const std::string overrideCanvas = noble::VFS::MapOverrideCanvas();
     const bool firefightCanvas =
-        noble::VFS::IsFirefightCanvas(mapName) ||
+        noble::VFS::IsFirefightCanvas(effectiveMapName) ||
         (!overrideCanvas.empty() &&
          (noble::VFS::IsFirefightCanvas(overrideCanvas) || overrideCanvas.rfind("ff_", 0) == 0 ||
           overrideCanvas.rfind("ff60", 0) == 0 || overrideCanvas.rfind("cex_ff", 0) == 0));
     if (noble::VFS::HasActiveMod() && gameModeTag == 2 && firefightCanvas) {
         NOBLE_WARN("BlamEngine: '{}' is a multiplayer mod map on a Firefight canvas ({}); launching it through the Forge engine",
-                   mapName, overrideCanvas.empty() ? mapName : overrideCanvas);
+                   effectiveMapName, overrideCanvas.empty() ? effectiveMapName : overrideCanvas);
         gameModeTag = 3;
     }
 
@@ -1583,7 +1743,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     // launch came in (command line or the pre-game lobby): the engine reads the type from
     // mapsinfo<scenario>.mapinfo before the map loads and refuses a Firefight entry for a multiplayer launch.
     if (noble::VFS::HasActiveMod() && (gameModeTag == 3 || gameModeTag == 2)) {
-        noble::VFS::EnsureMultiplayerMapInfo(mapName);
+        noble::VFS::EnsureMultiplayerMapInfo(effectiveMapName);
     }
 
     // Campaign & Firefight co-op: keep joining peers even when the engine decides their progress is incompatible
@@ -1591,7 +1751,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     noble::LobbyPatches::SetCampaignCoop(gameModeTag == 1 || gameModeTag == 1035);
 
     // Career pays by base type, so modded maps/variants earn exactly what their stock type earns.
-    if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), mapName, difficulty, skulls);
+    if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), effectiveMapName, difficulty, skulls);
 
     auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath, connectAddress);
     // Campaign/Firefight co-op: the launch block declares how many players this session has (0xE8).
@@ -1609,7 +1769,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     }
 
     // Request corresponding wireframe loading screen .dots
-    LoadScreen::Get().RequestMapDots(mapName, ReachHost::Get().GetDataDir());
+    LoadScreen::Get().RequestMapDots(effectiveMapName, ReachHost::Get().GetDataDir());
 
     if (m_fnStart) {
         void* hostPtr = ReachHost::Get().GetInterface();

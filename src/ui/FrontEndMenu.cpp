@@ -25,6 +25,7 @@
 #include "audio/ReachAudio.hpp"
 #include "audio/ProcessAudio.hpp"
 #include "engine/ReachHost.hpp"
+#include "engine/BlamEngine.hpp"
 #include "UiArt.hpp"
 #include "hooks/HookManager.hpp"
 #include "ServerBrowser.hpp"
@@ -3565,52 +3566,8 @@ struct TheaterEntry {
     bool isSaved = false;      // true if stored in data\theater\saved
 };
 
-std::string ScenarioFromReachMapId(int32_t mapId) {
-    switch (mapId) {
-        case 5005: return "m05";
-        case 5010: return "m10";
-        case 5020: return "m20";
-        case 5030: return "m30";
-        case 5035: return "m35";
-        case 5045: return "m45";
-        case 5050: return "m50";
-        case 5052: return "m52";
-        case 5060: return "m60";
-        case 5070: return "m70";
-        case 5075: return "m70_a";
-        case 5080: return "m70_bonus";
-        case 1000: return "20_sword_slayer";
-        case 1020: return "45_launch_station";
-        case 1035: return "50_panopticon";
-        case 1040: return "45_aftship";
-        case 1055: return "30_settlement";
-        case 1080: return "70_boneyard";
-        case 1150: return "52_ivory_tower";
-        case 1200: return "35_island";
-        case 1500: return "condemned";
-        case 1510: return "trainingpreserve";
-        case 2001: return "dlc_slayer";
-        case 2002: return "dlc_invasion";
-        case 2004: return "dlc_medium";
-        case 3006: return "forge_halo";
-        case 10010: return "cex_damnation";
-        case 10020: return "cex_beaver_creek";
-        case 10030: return "cex_timberland";
-        case 10050: return "cex_headlong";
-        case 10060: return "cex_hangemhigh";
-        case 10070: return "cex_prisoner";
-        case 7000: return "ff10_prototype";
-        case 7020: return "ff20_courtyard";
-        case 7030: return "ff30_waterfront";
-        case 7040: return "ff45_corvette";
-        case 7060: return "ff50_park";
-        case 7080: return "ff60_airview";
-        case 7100: return "ff60_icecave";
-        case 7110: return "ff70_holdout";
-        case 7130: return "ff_unearthed";
-        case 7500: return "cex_ff_halo";
-        default: return "20_sword_slayer";
-    }
+std::string ScenarioFromReachMapId(int32_t mapId, int mode = 0) {
+    return noble::BlamEngine::ScenarioFromReachMapId(mapId, mode);
 }
 
 std::string ReadUtf16LeToUtf8(const uint8_t* bytes, size_t maxChars) {
@@ -3677,8 +3634,18 @@ void SyncAutosaveFilmsToTheater() {
     std::filesystem::create_directories(savedDir, ec);
     std::filesystem::create_directories(videosDir, ec);
 
+    std::vector<std::filesystem::path> scanDirs;
     const std::filesystem::path userdataRoot = VFS::GetUserStoragePath() / "userdata";
-    if (!std::filesystem::exists(userdataRoot, ec)) return;
+    if (std::filesystem::exists(userdataRoot, ec)) scanDirs.push_back(userdataRoot);
+
+    char* userProfile = nullptr;
+    size_t upLen = 0;
+    if (_dupenv_s(&userProfile, &upLen, "USERPROFILE") == 0 && userProfile) {
+        const std::filesystem::path mccAutosave = std::filesystem::path(userProfile) / "AppData" / "LocalLow" / "MCC" / "Temporary" / "HaloReach" / "autosave";
+        if (std::filesystem::exists(mccAutosave, ec)) scanDirs.push_back(mccAutosave);
+        std::free(userProfile);
+    }
+    if (scanDirs.empty()) return;
 
     auto readFilmTimestamp = [](const std::filesystem::path& p) -> uint64_t {
         std::ifstream f(p, std::ios::binary);
@@ -3691,44 +3658,46 @@ void SyncAutosaveFilmsToTheater() {
         return ts;
     };
 
-    for (std::filesystem::recursive_directory_iterator it(userdataRoot, std::filesystem::directory_options::skip_permission_denied, ec), end;
-         it != end && !ec; it.increment(ec)) {
-        if (!it->is_regular_file(ec)) continue;
-        const std::filesystem::path src = it->path();
-        std::string ext = src.extension().string();
-        for (char& c : ext) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-        if (ext != ".film") continue;
+    for (const auto& scanRoot : scanDirs) {
+        for (std::filesystem::recursive_directory_iterator it(scanRoot, std::filesystem::directory_options::skip_permission_denied, ec), end;
+             it != end && !ec; it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            const std::filesystem::path src = it->path();
+            std::string ext = src.extension().string();
+            for (char& c : ext) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+            if (ext != ".film") continue;
 
-        const uint64_t srcSize = std::filesystem::file_size(src, ec);
-        if (srcSize < 0x340) continue;
-        const uint64_t srcTs = readFilmTimestamp(src);
+            const uint64_t srcSize = std::filesystem::file_size(src, ec);
+            if (srcSize < 0x340) continue;
+            const uint64_t srcTs = readFilmTimestamp(src);
 
-        std::filesystem::path dst = filmsDir / src.filename();
-        if (std::filesystem::exists(dst, ec)) {
-            const uint64_t dstSize = std::filesystem::file_size(dst, ec);
-            const uint64_t dstTs = readFilmTimestamp(dst);
-            if (dstTs == srcTs && srcTs != 0) {
-                // Same film session: update if the autosave grew as the match finished
-                if (srcSize > dstSize) {
-                    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
-                }
-                continue;
-            }
-            if (dstSize == srcSize && dstTs == srcTs) continue;
-            // Different match with the same gametype filename: suffix with its timestamp so older films are never lost
-            const std::string stem = src.stem().string();
-            const uint64_t tag = srcTs != 0 ? srcTs : static_cast<uint64_t>(srcSize);
-            dst = filmsDir / (stem + "_" + std::to_string(tag) + ".film");
+            std::filesystem::path dst = filmsDir / src.filename();
             if (std::filesystem::exists(dst, ec)) {
-                if (srcSize > std::filesystem::file_size(dst, ec)) {
-                    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+                const uint64_t dstSize = std::filesystem::file_size(dst, ec);
+                const uint64_t dstTs = readFilmTimestamp(dst);
+                if (dstTs == srcTs && srcTs != 0) {
+                    // Same film session: update if the autosave grew as the match finished
+                    if (srcSize > dstSize) {
+                        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+                    }
+                    continue;
                 }
-                continue;
+                if (dstSize == srcSize && dstTs == srcTs) continue;
+                // Different match with the same gametype filename: suffix with its timestamp so older films are never lost
+                const std::string stem = src.stem().string();
+                const uint64_t tag = srcTs != 0 ? srcTs : static_cast<uint64_t>(srcSize);
+                dst = filmsDir / (stem + "_" + std::to_string(tag) + ".film");
+                if (std::filesystem::exists(dst, ec)) {
+                    if (srcSize > std::filesystem::file_size(dst, ec)) {
+                        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+                    }
+                    continue;
+                }
             }
-        }
-        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
-        if (!ec) {
-            NOBLE_INFO("Theater: Synced saved film '{}' -> '{}'", src.filename().string(), dst.string());
+            std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+            if (!ec) {
+                NOBLE_INFO("Theater: Synced saved film '{}' -> '{}'", src.filename().string(), dst.string());
+            }
         }
     }
 }
@@ -3771,20 +3740,51 @@ bool ParseSavedFilmFile(const std::filesystem::path& filePath, bool isSavedFolde
     out.description = ReadUtf16LeToUtf8(buf + 0x01C0, 128);
     if (out.title.empty()) out.title = filePath.stem().string();
 
-    // Extract scenario stem from flmh + 0x0914 (e.g. "levels\multi\20_sword_slayer\20_sword_slayer")
+    // Extract scenario stem from flmh.
+    // In Reach .film files, flmh begins at offset 0x340. The scenario path string is stored at
+    // flmh + 0x5EC (file offset 0x92C), typically prefixed with "haloreach\maps\" or "levels\multi\".
+    // Preceding it at flmh + 0x5E8 (file offset 0x928) is the 32-bit map ID.
     std::string scenarioPath;
-    if (got >= 0x0A18 && std::memcmp(buf + 0x0340, "flmh", 4) == 0) {
-        const char* rawScen = reinterpret_cast<const char*>(buf + 0x0914);
+    if (got >= 0x0930 && std::memcmp(buf + 0x0340, "flmh", 4) == 0) {
+        const char* pScen = reinterpret_cast<const char*>(buf + 0x092C);
         size_t len = 0;
-        while (len < 259 && rawScen[len] != '\0') ++len;
-        scenarioPath.assign(rawScen, len);
+        while (len < 255 && pScen[len] != '\0' && (static_cast<unsigned char>(pScen[len]) >= 32 && static_cast<unsigned char>(pScen[len]) < 127)) {
+            ++len;
+        }
+        if (len > 0) {
+            scenarioPath.assign(pScen, len);
+        } else {
+            // Scan buffer within flmh for "maps\" or "levels\" if header offsets vary
+            for (size_t off = 0x0340; off + 16 < static_cast<size_t>(got); ++off) {
+                if (std::memcmp(buf + off, "haloreach\\maps\\", 15) == 0 ||
+                    std::memcmp(buf + off, "maps\\", 5) == 0 ||
+                    std::memcmp(buf + off, "levels\\", 7) == 0) {
+                    size_t slen = 0;
+                    while (slen < 255 && buf[off + slen] != '\0' &&
+                           (static_cast<unsigned char>(buf[off + slen]) >= 32 && static_cast<unsigned char>(buf[off + slen]) < 127)) {
+                        ++slen;
+                    }
+                    if (slen > 0) {
+                        scenarioPath.assign(reinterpret_cast<const char*>(buf + off), slen);
+                        break;
+                    }
+                }
+            }
+        }
     }
     if (!scenarioPath.empty()) {
         const size_t slash = scenarioPath.find_last_of("\\/");
         out.scenario = (slash != std::string::npos) ? scenarioPath.substr(slash + 1) : scenarioPath;
     }
-    if (out.scenario.empty()) {
-        out.scenario = ScenarioFromReachMapId(mapId);
+    if (out.scenario.size() > 4 && out.scenario.substr(out.scenario.size() - 4) == ".map") {
+        out.scenario.resize(out.scenario.size() - 4);
+    }
+    bool validScen = !out.scenario.empty();
+    for (char c : out.scenario) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') { validScen = false; break; }
+    }
+    if (!validScen) {
+        out.scenario = ScenarioFromReachMapId(mapId, chdrMode);
     }
     out.mapDisplay = MapNames::Display(out.scenario);
 
@@ -9114,21 +9114,25 @@ void FrontEndMenu::CheckMatchStatus() {
 bool FrontEndMenu::ShouldShow() {
     bool hasMap = false;
     bool menuRequested = false;
+    bool hasFilm = false;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv) {
-        for (int i = 1; i + 1 < argc; ++i) {
+        for (int i = 1; i < argc; ++i) {
             const std::wstring arg = argv[i];
-            const std::wstring value = Lower(argv[i + 1]);
-            if (arg == L"-map") {
+            const std::wstring value = (i + 1 < argc) ? Lower(argv[i + 1]) : L"";
+            if (arg == L"-map" && i + 1 < argc) {
                 hasMap = true;
                 if (value == L"mainmenu" || value == L"menu") menuRequested = true;
-            } else if (arg == L"-mode" && (value == L"mainmenu" || value == L"menu")) {
+            } else if (arg == L"-mode" && i + 1 < argc && (value == L"mainmenu" || value == L"menu")) {
                 menuRequested = true;
+            } else if (arg == L"-film") {
+                hasFilm = true;
             }
         }
         LocalFree(argv);
     }
+    if (hasFilm) return false;
     return !hasMap || menuRequested;
 }
 

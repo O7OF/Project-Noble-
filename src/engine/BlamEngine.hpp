@@ -108,6 +108,12 @@ public:
 
     static void SetEngineModeOverride(int mode) { s_engineModeOverride = mode; }
 
+    // Maps Reach 32-bit map ID (e.g. 1000, 5010, 7020) to scenario stem (e.g. "20_sword_slayer", "m10", "ff20_courtyard")
+    static std::string ScenarioFromReachMapId(int32_t mapId, int mode = 0);
+
+    // Inspects a saved film file (.film) to extract its scenario name, launch mode, and map ID.
+    static bool InspectSavedFilm(const std::filesystem::path& filmPath, std::string& outScenario, std::string& outMode, uint32_t& outMapId);
+
     // Saved film (.film) path for Theater playback (written to launch_block + 0x2BF20).
     static void SetSavedFilmPath(std::string path) { s_savedFilmPath = std::move(path); }
     static const std::string& SavedFilmPath() { return s_savedFilmPath; }
