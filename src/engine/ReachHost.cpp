@@ -680,6 +680,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     }
     // SETTINGS > VIDEO field of view: keep the engine's camera FOV in step with the saved setting
     // (cheap: it only reads the settings and writes haloreach+0xB42C10 when the value changed).
+    CameraThirdPerson::TickFrame();   // one camera-tuning application per render frame
     CameraFov::Tick();
 
     // Synchronize live biped change colors and visor shaders in all match modes (Campaign, Firefight, Forge, Custom Games)

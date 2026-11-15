@@ -16,6 +16,10 @@ public:
     // Installs the detours on the engine module. Safe to call once after haloreach.dll is loaded.
     static bool Install(HMODULE haloreach);
 
+    // Marks one render frame. The two third-person update hooks can both run for the same observer command
+    // in a frame; tuning must be applied once, or offsets/FOV/zoom compound.
+    static void TickFrame();
+
     static void SetEnabled(bool enabled);
     // Trooper mode: third person on and kept on (the marine has no first-person arms). While locked, nothing turns
     // third person off (hotkey, settings) and the vehicle first-person camera stays off.

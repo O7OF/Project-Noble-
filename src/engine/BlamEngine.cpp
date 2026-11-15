@@ -11,6 +11,7 @@
 #include "vfs/VFS.hpp"
 #include "hooks/HookManager.hpp"
 #include "hooks/LobbyPatches.hpp"
+#include "hooks/EnginePatches.hpp"
 #include "common/Logger.hpp"
 #include <optional>
 #include <algorithm>

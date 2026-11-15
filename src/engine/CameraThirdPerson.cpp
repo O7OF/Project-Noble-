@@ -76,6 +76,7 @@ std::atomic<int> s_mode{0};   // experiment: 0 = answer true, 1 = answer false, 
 std::atomic<bool> s_f5WasDown{false};
 std::atomic<int> s_logCount{0};
 std::atomic<bool> s_engineThirdPerson{false};
+std::atomic<uint64_t> s_frameCounter{0};
 
 // Camera hooks run every frame. Settings::Get().Snapshot() copies the whole SettingsData (strings, maps) under a
 // mutex, so reading it per frame allocated several times per camera update and caused hitching in a match. Cache
@@ -161,6 +162,10 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
     }
     const CameraTuning tuning = CurrentTuning();
     const bool inVehicle = s_localInVehicle.load();
+    // Vehicle first person off: the engine's third-person vehicle camera owns this update. Running the
+    // cockpit-marker/offset work anyway burned a marker lookup (and, solo, a node recompute) every frame.
+    if (inVehicle && !s_vehicleFirstPerson.load())
+        return;
 
     // When in a vehicle in 1st person, unit_get_camera_position (haloreach+0x48A1C0) places the camera at the
     // vehicle's 3rd-person seat pivot marker instead of the character's head marker (string_id 0xC2).
@@ -302,6 +307,18 @@ bool NobleShapesCamera() {
 
 void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
     if (!observerCommand) return;
+    // Vehicle 1st person owns +0x04..+0x38 and +0x28 this frame; applying 3rd-person offsets/FOV on top
+    // shifted the cockpit view twice and doubled the FOV multiplication.
+    if (s_vehicleFirstPerson.load() && s_localInVehicle.load())
+        return;
+    // Both third-person hooks can fire for the same observer command in one frame; only tune it once.
+    static void* s_lastCommand = nullptr;
+    static uint64_t s_lastFrame = 0;
+    const uint64_t frame = s_frameCounter.load();
+    if (observerCommand == s_lastCommand && frame == s_lastFrame)
+        return;
+    s_lastCommand = observerCommand;
+    s_lastFrame = frame;
     const bool active = NobleShapesCamera();
     const bool wantZoom = active && s_zoomHeld.load();
     const float step = std::clamp(dt > 0.0f && dt < 0.25f ? dt : (1.0f / 60.0f), 0.001f, 0.1f) * 10.0f;
@@ -351,7 +368,8 @@ void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
 
 void __fastcall Hook_CameraFollow(void* camera, int32_t userIndex, float dt, void* observerCommand) {
     if (s_originalFollow) s_originalFollow(camera, userIndex, dt, observerCommand);
-    if (userIndex == 0 && observerCommand && DevCheats::IsFreecamActive()) {
+    if (userIndex != 0) return; // never write the local player's tuning onto another observer
+    if (observerCommand && DevCheats::IsFreecamActive()) {
         auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
         const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
         DevCheats::ApplyFreecam(pos, fwd);
@@ -362,7 +380,8 @@ void __fastcall Hook_CameraFollow(void* camera, int32_t userIndex, float dt, voi
 
 void __fastcall Hook_CameraFollowingUpdate(void* camera, int32_t userIndex, float dt, void* observerCommand) {
     if (s_originalFollowingUpdate) s_originalFollowingUpdate(camera, userIndex, dt, observerCommand);
-    if (userIndex == 0 && observerCommand && DevCheats::IsFreecamActive()) {
+    if (userIndex != 0) return;
+    if (observerCommand && DevCheats::IsFreecamActive()) {
         auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
         const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
         DevCheats::ApplyFreecam(pos, fwd);
@@ -395,6 +414,8 @@ int32_t __fastcall Hook_CameraModeCheck(int32_t unitDatumIndex) {
 }
 
 } // namespace
+
+void CameraThirdPerson::TickFrame() { s_frameCounter.fetch_add(1); }
 
 bool CameraThirdPerson::Install(HMODULE haloreach) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(haloreach);
