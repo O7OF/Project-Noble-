@@ -16,6 +16,50 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## Settings save fixes (2026-11-15)
+
+**What was broken.**
+
+1. **One value could never be saved: music volume.** `Settings::Load` migrated the old "50 %" default to 15 % on
+   *every* load, so a player who set music volume to 50 % got 15 % back the next time. Any value equal to 50 % was
+   rewritten (`volumeMusic`). The same unconditional pattern was in the paddle-key default migration.
+2. **A failed save was invisible.** `Settings::Save` wrote `settings.json.tmp` and renamed it, and any failure only
+   produced a warning nobody saw; a successful save logged nothing at all, so "did it save?" could only be answered by
+   opening the file.
+3. **Both Noble processes shared one temp file.** The launcher and the match process are two processes and both save
+   settings (last-played record, identity auto-save, L3 virtual-cursor toggle, APPLY); they used the same
+   `settings.json.tmp`, so one could truncate the other's temp file and the rename then failed.
+4. **APPLY could not be pressed with a controller's A button.** The APPLY/DISCARD rows at the bottom of SETTINGS are not
+   settings rows, so nothing consumed the pad's A press while they had the focus: a controller player saw nothing happen
+   (the rows above worked). Keyboard Enter also read a focus flag cached *before* the navigation ran, so the first frame
+   after moving onto the box did not apply.
+5. **A stale edit copy could be written over newer settings.** The panel loaded `Settings` once per process; if anything
+   else changed settings while it was closed (identity auto-save, the L3 cursor toggle, last-played), the next APPLY
+   wrote the panel's old copy back.
+
+**What changed.**
+
+- `src/common/Settings.cpp`: a `settingsVersion` field (2). The legacy music and paddle-key migrations only run for
+  files older than that, so a real 50 % stays 50 %. `Save()` writes `settings.json.<pid>.tmp`, replaces the live file
+  with `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` and, if that fails, writes `settings.json` in place as a last resort;
+  it logs `Settings: saved <path> (<n> values, file version 2)` on success and an `ERROR` line on failure.
+  `Settings::Update` now returns whether the file was written.
+- `src/common/DeviceIdentity.cpp`: a mirror copy that fails is logged instead of silently skipped.
+- `src/ui/SettingsPanel.cpp/.hpp`: APPLY answers the pad's A as well as Y/Enter (and shows the focus ring); Enter's
+  apply check reads the current focus; the panel reloads from disk whenever it is opened after being off-screen, so it
+  can never write a stale copy; APPLY logs how many changes it wrote and the on-screen line says
+  "Could not write settings.json - check the log file." when the save failed.
+
+**How to verify.** Change a value in SETTINGS and press APPLY. The log then shows
+
+    SettingsPanel: apply - 1 change(s), settings.json written
+    Settings: saved ...\data\userdata\settings.json (N values, file version 2)
+
+and `data\userdata\settings.json` carries the new value (and `"settingsVersion": 2`). With a controller, press A on
+APPLY; it saves like Y. Music volume 50 % now survives a restart. `scratch\run_settings_probe.bat` builds and runs a
+standalone round-trip test that sets every field to a distinctive value, saves, reloads and reports mismatches (0
+expected).
+
 ## Post-game / after-action report fixes (2026-11-15)
 
 **What was broken.** Finishing a match or campaign mission did not reliably open the after-action report, and what

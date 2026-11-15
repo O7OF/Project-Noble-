@@ -77,6 +77,8 @@ private:
 
     Cat m_cat = Cat::Graphics;
     bool m_loaded = false;
+    int m_lastRenderFrame = 0;   // ImGui frame the panel was last drawn on (0 = never)
+
     SettingsData m_edit;
     SettingsData m_saved;
     int m_rebindAction = -1;      // action waiting for a key press

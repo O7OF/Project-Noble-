@@ -373,6 +373,14 @@ void SettingsPanel::SyncBuffers() {
 }
 
 void SettingsPanel::Render() {
+  // A fresh open (the panel was not drawn last frame) reloads from the file. Another part of Noble
+  // may have written settings in the meantime (the identity auto-save, the L3 virtual-cursor toggle,
+  // the launcher's last-played record), and applying a copy captured minutes ago would write those
+  // newer values back to their old ones.
+  const int frame = ImGui::GetFrameCount();
+  if (m_lastRenderFrame == 0 || frame - m_lastRenderFrame > 1)
+    m_loaded = false;
+  m_lastRenderFrame = frame;
   if (!m_loaded) {
     m_saved = Settings::Get().Snapshot();
     // Old saved menu-music values ("shuffle", piece names) play Reach's menu
@@ -573,7 +581,9 @@ void SettingsPanel::Render() {
       MenuSounds::Tab(right ? 1 : -1);
     }
   }
-  if (m_navAllowed && m_enterAppliesHere && TotalChanges() > 0 &&
+  // Enter applies when the focus is off the rows (the APPLY/DISCARD box at the bottom). Read the
+  // focus here rather than from the value cached before the navigation above ran.
+  if (m_navAllowed && m_focus < 0 && TotalChanges() > 0 &&
       (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
        ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
     Apply();
@@ -688,7 +698,11 @@ void SettingsPanel::RenderCategories(float width, float height) {
     Text(dl, NobleStyle::SmallFont(), 14.0f * s,
          ImVec2(b0.x + 24.0f * s, b0.y + 30.0f * s), kTextDim, where.c_str(),
          width - 30.0f * s);
-    // Controller button and key side by side, both rows clickable.
+    // Controller button and key side by side, both rows clickable. These are not settings rows, so
+    // the controller's own A/Y has to be handled here: with the focus on the box (m_focus < 0) the
+    // gamepad A press had no consumer, which made APPLY work with the mouse and Enter but not with
+    // a controller.
+    const bool footerFocused = m_navAllowed && m_focus < 0;
     auto action = [&](const char *id, float y, InputPrompts::Button button,
                       const char *key, const char *label) {
       const ImVec2 r0(b0.x + 10.0f * s, y),
@@ -701,6 +715,10 @@ void SettingsPanel::RenderCategories(float width, float height) {
                         over ? IM_COL32(70, 110, 150, 220)
                              : IM_COL32(30, 44, 58, 220),
                         2.0f * s);
+      if (over)
+        MenuSounds::Hover(ImGui::GetItemID());
+      if (footerFocused)
+        NobleUi::DrawFocusHighlight(dl, r0, r1, s, true);
       ImFont *font = ImGui::GetFont();
       const float glyph = 22.0f * s;
       float x = r0.x + 6.0f * s;
@@ -714,8 +732,13 @@ void SettingsPanel::RenderCategories(float width, float height) {
            kText, label);
       return clicked;
     };
-    if (action("##apply", b1.y - 72.0f * s, InputPrompts::Button::Y, "ENTER",
-               "APPLY"))
+    bool apply = action("##apply", b1.y - 72.0f * s, InputPrompts::Button::Y,
+                        "ENTER", "APPLY");
+    if (!apply && footerFocused && m_keyAccept) {
+      apply = true;
+      m_keyAccept = false;   // consumed: the navigation rows must not see this press too
+    }
+    if (apply)
       Apply();
     if (action("##discard", b1.y - 37.0f * s, InputPrompts::Button::X, "ESC",
                "DISCARD"))
@@ -2999,7 +3022,9 @@ void SettingsPanel::Apply() {
       m_saved.borderless != m_edit.borderless ||
       m_saved.exclusiveFullscreen != m_edit.exclusiveFullscreen ||
       m_saved.monitor != m_edit.monitor;
-  Settings::Get().Update(m_edit);
+  const bool saved = Settings::Get().Update(m_edit);
+  NOBLE_INFO("SettingsPanel: apply - {} change(s), settings.json {}",
+             TotalChanges(), saved ? "written" : "NOT written (see the log)");
   UiPad::SetVirtualCursorEnabled(m_edit.padVirtualCursor);
   Window::SetMonitorSetting(m_edit.monitor);
   if (displayChanged) {
@@ -3040,9 +3065,15 @@ void SettingsPanel::Apply() {
       UIManager::GetArmorCustomizer().SetServiceTag(m_saved.serviceTag);
     }
   }
-  m_message = displayChanged ? "Display updated." : "Saved.";
+  if (saved) {
+    m_message = displayChanged ? "Display updated." : "Saved.";
+    MenuSounds::Click();
+  } else {
+    m_message = "Could not write settings.json - check the log file.";
+    MenuSounds::Error();
+    NOBLE_ERROR("SettingsPanel: the settings could not be saved to disk");
+  }
   m_messageTime = ImGui::GetTime();
-  MenuSounds::Click();
 }
 
 void SettingsPanel::Discard() {

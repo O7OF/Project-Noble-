@@ -144,7 +144,7 @@ public:
     bool Save();
 
     SettingsData Snapshot() const;
-    void Update(const SettingsData& data);   // replace and save
+    bool Update(const SettingsData& data);   // replace and save; false when the file could not be written
     // The saved UI size (SettingsData::uiScale), cheap enough to read every frame: no lock, no copy of the settings.
     static float UiScale();
     // FRAME-RATE LIMIT default: the primary display's refresh rate, rounded down to the nearest offered limit

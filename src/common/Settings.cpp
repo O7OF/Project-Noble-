@@ -21,6 +21,12 @@ namespace {
 
 std::atomic<float> g_uiScale{ 1.0f };   // copy of SettingsData::uiScale for the UI's per-frame reads
 
+// Bumped when a load-time migration changes a value the player can also set by hand. Migrations for
+// such a value only run on files older than the version that introduced them, so a player's choice
+// is never rewritten on every load (the music-volume migration used to do exactly that: 50 % always
+// came back as 15 %).
+constexpr int kSettingsVersion = 2;
+
 std::filesystem::path ExeDir() {
     wchar_t path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
@@ -144,9 +150,11 @@ void Settings::Load() {
     const auto path = FilePath();
     std::ifstream in(path);
     const bool existed = in.is_open();
+    int fileVersion = 0;   // 0 = a file from before this field existed
     if (in) {
         try {
             const nlohmann::json j = nlohmann::json::parse(in);
+            fileVersion = j.value("settingsVersion", 0);
             d.firstStartDone = j.value("firstStartDone", true);
             Read(j, "lastSeenVersion", d.lastSeenVersion);
             Read(j, "width", d.width);
@@ -211,7 +219,7 @@ void Settings::Load() {
                     if (j["padPaddleKeys"][i].is_number_integer()) d.padPaddleKeys[i] = j["padPaddleKeys"][i].get<int>();
                 }
                 // The first default was F13-F18; move anyone still on it to F1-F6. A set the player chose stays.
-                if (d.padPaddleKeys == std::array<int, 6>{ 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81 }) d.padPaddleKeys = SettingsData{}.padPaddleKeys;
+                if (fileVersion < 2 && d.padPaddleKeys == std::array<int, 6>{ 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81 }) d.padPaddleKeys = SettingsData{}.padPaddleKeys;
             }
             if (j.contains("padBindings") && j["padBindings"].is_object()) {
                 for (const auto& [key, value] : j["padBindings"].items()) {
@@ -223,8 +231,9 @@ void Settings::Load() {
             Read(j, "padVirtualCursor", d.padVirtualCursor);
             Read(j, "volumeGame", d.volumeGame);
             Read(j, "volumeMusic", d.volumeMusic);
-            // Migrate legacy 50% default to 15% so menu music is not uncomfortably loud.
-            if (std::fabs(d.volumeMusic - 0.50f) < 1e-4f) {
+            // Legacy 50 % default -> 15 % so menu music is not uncomfortably loud. Only for files from
+            // before settingsVersion 2: after that, 50 % is a value the player picked and it must stick.
+            if (fileVersion < 2 && std::fabs(d.volumeMusic - 0.50f) < 1e-4f) {
                 d.volumeMusic = 0.15f;
             }
             Read(j, "volumeOther", d.volumeOther);
@@ -434,25 +443,58 @@ bool Settings::Save() {
         nlohmann::json keys = nlohmann::json::object();
         for (const auto& [action, vk] : d.keyOverrides) keys[std::to_string(action)] = vk;
         j["keyOverrides"] = keys;
+        j["settingsVersion"] = kSettingsVersion;
     }
     const auto path = FilePath();
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
-    const auto tmp = path.string() + ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::trunc);
-        if (!out) {
-            NOBLE_WARN("Settings: could not write {}", tmp);
-            return false;
-        }
-        out << j.dump(2);
-    }
-    std::filesystem::rename(tmp, path, ec);
     if (ec) {
-        NOBLE_WARN("Settings: could not replace {}: {}", path.string(), ec.message());
+        NOBLE_ERROR("Settings: could not create {}: {}", path.parent_path().string(), ec.message());
+    }
+    // The temp name carries the process id: the launcher and the match process are both running and
+    // both save settings, and a shared "settings.json.tmp" lets one of them truncate the file the
+    // other is writing, which loses the save.
+    const auto tmp = path.parent_path() /
+                     (path.filename().string() + "." + std::to_string(GetCurrentProcessId()) + ".tmp");
+    const std::string text = j.dump(2);
+    bool wrote = false;
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out.write(text.data(), static_cast<std::streamsize>(text.size()));
+            out.flush();
+            wrote = out.good();
+        }
+        if (!wrote)
+            NOBLE_WARN("Settings: could not write {} (the folder may be read-only)", tmp.string());
+    }
+    if (wrote) {
+        // Replace the live file. MoveFileExW replaces an existing file even when another Noble
+        // process still has it open for reading; std::filesystem::rename can fail with a sharing
+        // violation in that case, which used to make a save silently do nothing.
+        if (!MoveFileExW(tmp.wstring().c_str(), path.wstring().c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+            const DWORD winError = GetLastError();
+            std::filesystem::remove(tmp, ec);
+            // Last resort: write settings.json in place, so the player's change is not lost.
+            std::ofstream direct(path, std::ios::binary | std::ios::trunc);
+            if (direct) {
+                direct.write(text.data(), static_cast<std::streamsize>(text.size()));
+                direct.flush();
+                wrote = direct.good();
+            } else {
+                wrote = false;
+            }
+            NOBLE_WARN("Settings: could not replace {} (Win32 error {}); wrote it in place: {}",
+                       path.string(), winError, wrote ? "ok" : "FAILED");
+        }
+    }
+    if (!wrote) {
+        NOBLE_ERROR("Settings: SAVE FAILED for {} - the settings on disk were not changed", path.string());
         return false;
     }
     DeviceIdentityStore::MirrorSaveFile("userdata/settings.json");
+    NOBLE_INFO("Settings: saved {} ({} values, file version {})", path.string(), j.size(), kSettingsVersion);
     return true;
 }
 
@@ -511,14 +553,14 @@ bool Settings::ImportFrom(const std::filesystem::path& file) {
     }
 }
 
-void Settings::Update(const SettingsData& data) {
+bool Settings::Update(const SettingsData& data) {
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_data = data;
         Clamp(m_data);
         g_uiScale.store(m_data.uiScale);
     }
-    Save();
+    return Save();
 }
 
 float Settings::UiScale() { return g_uiScale.load(std::memory_order_relaxed); }

@@ -137,11 +137,32 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
     };
 
+    const std::vector<ChangeItem> v0202Items = {
+        {"SETTINGS", "Settings Menu Save Fix & Diagnostics",
+         "Added settingsVersion 2 gating so music volume (50%) and custom paddle keys never revert to defaults on load; hardened save pipeline with per-process temp files (settings.json.<pid>.tmp), MoveFileExW replace, in-place fallbacks, on-screen failure warnings, and full save diagnostics."},
+        {"CONTROLLER", "Controller Apply in Settings Panel",
+         "Gamepad 'A' button now directly activates APPLY when focused on the bottom action box with full focus-ring highlighting, and the panel automatically reloads from disk on re-open to prevent overwriting settings with stale cached edits."},
+        {"UI", "End-Match UI & Transition Polish",
+         "Fixed end-of-match UI focus losing control, eliminated erratic option highlights and pointer fighting upon game over, ensured smooth transitions back to the main menu with full keyboard, mouse, and controller control."},
+        {"CRASH FIX", "Non-Host After-Action Report Crash Fix",
+         "Unified post-game match settlement for hosts and guests, eliminated double-payouts and scoreboard misidentifications, fixed guest challenge/commendation calculations, and eliminated non-host post-match report crashes and black screens upon mission completion."},
+        {"ENGINE", "Match-Over Lifecycle & Watchdog",
+         "Hardened engine cutscene transitions so campaign post-mission cinematics no longer swallow game-over reports, and added watchdog detection for unreported match ends to reliably surface the post-match summary."},
+    };
+
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR >= 20) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 2) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "SETTINGS SAVE FIXES, END-MATCH UI & POST-GAME CRASH FIXES",
+                    "Settings File Versioning, Controller Apply, Post-Match Report Stability & Non-Host Crash Fixes",
+                    v0202Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR >= 20) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.0",
                     "ELITE ARMOR, CUSTOM VISORS, FORGE AI & UI OVERHAUL",
                     "Elite Sets, Armor Abilities, Custom Visor Colors, Forge AI Sync, Pause Menu & Loading Polish",
                     v0200Items,

@@ -859,3 +859,27 @@ a data_array_new pool; see `docs\limits-ai.md`).
   host's `match_over` even when its own panel is already up, and the reveal replays with the host's numbers.
 - **Build:** all three targets built Release with MSVC on 2026-11-15. **Not run in game** (no MCC on this machine); the
   test list is in `HANDOFF.md` under "Post-game / after-action report fixes".
+
+### 2026-11-15 (lead agent): SETTINGS save fixes - music volume, controller APPLY, save diagnostics
+- **Files:** `src/common/Settings.cpp/.hpp`, `src/common/DeviceIdentity.cpp`, `src/ui/SettingsPanel.cpp/.hpp`,
+  `HANDOFF.md`; test harness `scratch/settings_probe.cpp` + `scratch/run_settings_probe.bat`.
+- **Proven bug:** `Settings::Load` rewrote `volumeMusic` 50 % -> 15 % on *every* load (legacy migration without a
+  version gate), so that setting could never be saved. Files now carry `"settingsVersion": 2` and the legacy music
+  and paddle-key migrations only run on older files.
+- **Save is now verifiable:** `Settings::Save` logs `Settings: saved <path> (N values, file version 2)` or an ERROR line;
+  `SettingsPanel::Apply` logs `SettingsPanel: apply - N change(s), settings.json written/NOT written`; the panel shows
+  "Could not write settings.json - check the log file." when a save fails. Mirror copies that fail are logged too
+  (`DeviceIdentity: could not mirror ...`).
+- **Save is now robust:** per-process temp file (`settings.json.<pid>.tmp`, the launcher and the match process both
+  save), `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` instead of `std::filesystem::rename`, and an in-place write as a
+  last resort, so a save cannot end up silently doing nothing.
+- **Controller APPLY:** the APPLY/DISCARD box is not a settings row, so nothing consumed the pad's A press while it had
+  the focus (Y/Enter/mouse worked). A now applies, the box shows the focus ring, and Enter's apply check reads the
+  current focus instead of the flag cached before navigation ran.
+- **No stale applies:** the panel reloads from disk whenever it is opened after being off-screen, so it cannot write a
+  copy captured before another part of Noble changed settings (identity auto-save, L3 cursor toggle, last-played).
+- **Verified:** `scratch\run_settings_probe.bat` sets every settings field to a distinctive value, saves, reloads and
+  reports mismatches (0), plus the two migration cases. Ran `noble-dev.exe -menu-screen settings` with
+  `-pad-script down,down,right,up,up,up,y` and `...,a`: both apply and write settings.json
+  ("SettingsPanel: apply - 1 change(s), settings.json written"). All three targets build Release. The test runs'
+  settings/identity files were backed up and restored (hashes verified).
