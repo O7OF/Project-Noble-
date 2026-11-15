@@ -465,7 +465,9 @@ void ServerBrowser::Render() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(U(10.0f), U(10.0f)));
 
     ImGui::BeginChild("##serverlist", ImVec2(listWidth, bodyH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-    UiPad::ScrollWindow(false, true);
+    if (UiPad::IsVirtualCursorActive() ? ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) : (s_browserPane == 0)) {
+        UiPad::ScrollWindow(false, true);
+    }
     RenderServerList();
     ImGui::EndChild();
     NobleUi::DrawTacticalFrame(parentDl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale,
@@ -474,7 +476,9 @@ void ServerBrowser::Render() {
     ImGui::SameLine(0.0f, paneGap);
 
     ImGui::BeginChild("##serverdetails", ImVec2(detailsWidth, bodyH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-    UiPad::ScrollWindow(false, true);
+    if (UiPad::IsVirtualCursorActive() ? ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) : (s_browserPane == 1)) {
+        UiPad::ScrollWindow(false, true);
+    }
     RenderServerDetails();
     ImGui::EndChild();
     NobleUi::DrawTacticalFrame(parentDl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale,

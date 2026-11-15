@@ -53,6 +53,11 @@ void DrawTacticalFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, float scale, bool
 bool DrawTile(ImDrawList* dl, const char* id, ImVec2 min, ImVec2 max, const char* title, const char* subtitle,
               bool focused, bool selected, bool enabled = true, const char* badge = nullptr);
 
+// Rounded interactive scrollbar supporting mouse hover, thumb drag, and track click-to-jump.
+void DrawInteractiveScrollbar(ImDrawList* dl, const char* id, ImVec2 trackMin, ImVec2 trackMax,
+                              float& scrollY, float maxScroll, float visibleExtent, float totalExtent,
+                              float scale = 0.0f);
+
 // Text helpers (font may be nullptr = current font).
 float TextWidth(ImFont* font, float px, const char* text);
 void Text(ImDrawList* dl, ImFont* font, float px, ImVec2 pos, ImU32 col, const char* text, float wrapWidth = 0.0f);

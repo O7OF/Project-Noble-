@@ -10,6 +10,7 @@ public:
     void Render();
     void SetTab(int tab) { m_tab = tab % 4; }   // test option -menu-tab
     void SetCommendationTab(int mode) { m_commendTab = mode % 3; }
+    bool IsCommendationsTab() const { return m_tab == 2; }
 
 private:
     void RenderRecord();
@@ -19,6 +20,10 @@ private:
 
     int m_tab = 0;
     int m_commendTab = 0;   // COMMENDATIONS: 0 campaign, 1 Firefight, 2 multiplayer
+    int m_recordFocus = 0;
+    int m_challengeFocus = 0;
+    int m_commendFocus = 0;
+    int m_rankFocus = -1;
 };
 
 } // namespace noble

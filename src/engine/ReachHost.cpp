@@ -849,7 +849,22 @@ static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint
     NOBLE_WARN("ReachHost [Slot 4 - EngineEvent]: reason={} message='{}' from haloreach+0x{:X}", a1, buf, callerRva);
     if (a1 == 4 && NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost() && !s_sessionStarted.load()) {
         if (std::strstr(buf, "timeout") != nullptr) {
-            NOBLE_ERROR("ReachHost [Slot 4 - EngineEvent]: Remote session join timed out ('{}'); returning to main menu.", buf);
+            static std::atomic<ULONGLONG> s_firstTimeoutMs{0};
+            const ULONGLONG now = GetTickCount64();
+            ULONGLONG expectedZero = 0;
+            s_firstTimeoutMs.compare_exchange_strong(expectedZero, now);
+            const ULONGLONG firstMs = s_firstTimeoutMs.load();
+            const ULONGLONG elapsedMs = (now >= firstMs) ? (now - firstMs) : 0ULL;
+            const bool activeTraffic = (NetworkTransport::Get().GetGamePeerCount() > 0) ||
+                                       NetworkTransport::Get().HostSimulationRunning();
+            const ULONGLONG graceMs = activeTraffic ? 75000ULL : 45000ULL;
+            if (elapsedMs < graceMs) {
+                NOBLE_WARN("ReachHost [Slot 4 - EngineEvent]: Ignoring transient join timeout '{}' while JIP/session handshake continues ({} ms / {} ms grace)",
+                           buf, elapsedMs, graceMs);
+                return 0;
+            }
+            NOBLE_ERROR("ReachHost [Slot 4 - EngineEvent]: Remote session join timed out ('{}' after {} ms); returning to main menu.",
+                        buf, elapsedMs);
             if (Relaunch::HandOff(L"")) {  // ends this process; true is never returned
                 if (HWND hwnd = FindWindowW(L"HaloReachCE_WindowClass", nullptr)) {
                     PostMessageW(hwnd, WM_CLOSE, 0, 0);
@@ -1910,9 +1925,6 @@ static void InputRelease(HWND hwnd, const char* reason) {
     if (hwnd) {
         HCURSOR arrow = s_savedClassCursor ? s_savedClassCursor : LoadCursorW(nullptr, IDC_ARROW);
         SetClassLongPtrW(hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
-        if (HWND parent = GetParent(hwnd)) {
-            SetClassLongPtrW(parent, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
-        }
     }
     s_inputCaptured = false;
     NOBLE_INFO("ReachHost [Slot 36 - Input]: {}, mouse released", reason);
@@ -2214,10 +2226,7 @@ static void FillLocalInput(uint8_t* st) {
         if (!s_inputCaptured) {
             HCURSOR cls = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
             if (cls) s_savedClassCursor = cls;
-            SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our window
-            if (HWND parent = GetParent(hwnd)) {
-                SetClassLongPtrW(parent, GCLP_HCURSOR, 0);
-            }
+            SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our child window only (never alter the launcher's class cursor)
             s_inputCaptured = true;
             firstCapturedFrame = true;
             {

@@ -9,7 +9,7 @@ if(WIN32)
     set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
     set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
 endif()
-project(ProjectNoble VERSION 0.19.87 LANGUAGES C CXX)
+project(ProjectNoble VERSION 0.19.94 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -199,6 +199,9 @@ set(SOURCES
     src/ui/SocialOverlay.cpp
     src/ui/DevMenu.cpp
     src/ui/FrontEndMenu.cpp
+    src/ui/FrontEndPickers.cpp
+    src/ui/FrontEndLobby.cpp
+    src/ui/FrontEndSocial.cpp
     src/ui/NobleStyle.cpp
     src/ui/MenuSounds.cpp
     src/ui/SettingsPanel.cpp
@@ -272,6 +275,8 @@ set(HEADERS
     src/ui/SocialOverlay.hpp
     src/ui/DevMenu.hpp
     src/ui/FrontEndMenu.hpp
+    src/ui/FrontEndInternal.hpp
+    src/ui/ChangelogData.hpp
     src/network/UPnP.hpp
     src/network/SessionManager.hpp
     src/audio/VgmAudioHook.hpp

@@ -2483,6 +2483,15 @@ void SettingsPanel::RenderController() {
     SliderValue(m_edit.padVibrationStrength, 0.0f, 1.0f, 0.05f, 1.0f,
                 Percent(m_edit.padVibrationStrength).c_str());
   }
+  Section("MENU NAVIGATION");
+  if (Row("CONTROLLER UI CURSOR",
+          "Use the Left Stick as a smooth virtual mouse cursor across all "
+          "menus (A = Click/Drag, Right Stick = Scroll). You can also press "
+          "L3 anytime in a menu to toggle it.",
+          When::Apply, def.padVirtualCursor ? "On" : "Off",
+          m_edit.padVirtualCursor != m_saved.padVirtualCursor)) {
+    ToggleValue(m_edit.padVirtualCursor);
+  }
   (void)s;
 }
 
@@ -2835,7 +2844,8 @@ int SettingsPanel::CountDiff(const SettingsData &a, const SettingsData &b,
            f(a.padLeftDeadZone, b.padLeftDeadZone) +
            f(a.padRightDeadZone, b.padRightDeadZone) +
            (a.padVibration != b.padVibration) +
-           f(a.padVibrationStrength, b.padVibrationStrength);
+           f(a.padVibrationStrength, b.padVibrationStrength) +
+           (a.padVirtualCursor != b.padVirtualCursor);
   case Cat::Online:
     return (a.masterServerUrl != b.masterServerUrl) +
            (a.inviteNotifications != b.inviteNotifications);
@@ -2948,6 +2958,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     e.padRightDeadZone = d.padRightDeadZone;
     e.padVibration = d.padVibration;
     e.padVibrationStrength = d.padVibrationStrength;
+    e.padVirtualCursor = d.padVirtualCursor;
     break;
   case Cat::Online:
     e.masterServerUrl = d.masterServerUrl;
@@ -2982,6 +2993,7 @@ void SettingsPanel::Apply() {
       m_saved.exclusiveFullscreen != m_edit.exclusiveFullscreen ||
       m_saved.monitor != m_edit.monitor;
   Settings::Get().Update(m_edit);
+  UiPad::SetVirtualCursorEnabled(m_edit.padVirtualCursor);
   Window::SetMonitorSetting(m_edit.monitor);
   if (displayChanged) {
     if (auto *win = Window::Active())

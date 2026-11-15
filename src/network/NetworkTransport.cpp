@@ -230,6 +230,11 @@ bool NetworkTransport::Initialize(bool isHost, const std::string &remoteIp,
     m_peerTable.clear();
     m_addrToPeer.clear();
     m_gamePeers.clear();
+    m_relayPeers.clear();
+    m_peerRouteStates.clear();
+    m_heldPackets.clear();
+    std::memset(m_dedupeEntries, 0, sizeof(m_dedupeEntries));
+    m_dedupeIndex = 0;
   }
 
   m_packetsSent.store(0);
@@ -309,6 +314,9 @@ void NetworkTransport::Shutdown() {
   m_peerTable.clear();
   m_addrToPeer.clear();
   m_gamePeers.clear();
+  m_relayPeers.clear();
+  m_peerRouteStates.clear();
+  m_heldPackets.clear();
 
   NOBLE_INFO("NetworkTransport: Shutdown complete.");
 }
@@ -340,8 +348,11 @@ void NetworkTransport::AddPeer(uint64_t machineId, const std::string &ip,
       m_addrToPeer[key] = machineId;
       auto &route = m_peerRouteStates[machineId];
       route.addr = addr;
-      route.directConfirmed = true;
-      route.lastUdpRecvTick = GetTickCount64();
+      // Do NOT mark directConfirmed/lastUdpRecvTick from a signaling hint;
+      // wait until OnNetRecv observes an actual UDP packet or PONG from this peer
+      // so WS relay fallback stays active during NAT punching / CGNAT JIP.
+      route.directConfirmed = false;
+      route.lastUdpRecvTick = 0;
     }
   }
 
@@ -602,13 +613,15 @@ uint64_t NetworkTransport::ComputePacketHash(const uint8_t *data,
 bool NetworkTransport::IsDuplicatePacket(uint64_t hash) {
   if (hash == 0)
     return false;
+  const uint64_t now = GetTickCount64();
   for (size_t i = 0; i < kDedupeBufferSize; ++i) {
-    if (m_dedupeHashes[i] == hash) {
+    const auto &entry = m_dedupeEntries[i];
+    if (entry.hash == hash && entry.tickMs != 0 && (now - entry.tickMs) < 350ULL) {
       m_duplicatesDropped++;
       return true;
     }
   }
-  m_dedupeHashes[m_dedupeIndex] = hash;
+  m_dedupeEntries[m_dedupeIndex] = {hash, now};
   m_dedupeIndex = (m_dedupeIndex + 1) % kDedupeBufferSize;
   return false;
 }
@@ -685,14 +698,22 @@ bool NetworkTransport::IsDirectUdpActive() const {
   std::lock_guard<std::mutex> lock(m_mutex);
   if (m_peerTable.empty())
     return false;
-  for (const auto &kv : m_peerTable) {
-    const auto it = m_peerRouteStates.find(kv.first);
+  auto isRouteAlive = [&](uint64_t peerId) -> bool {
+    const auto it = m_peerRouteStates.find(peerId);
     if (it == m_peerRouteStates.end())
       return false;
-    const bool routeAlive = it->second.directConfirmed ||
-                            (it->second.lastUdpRecvTick != 0 &&
-                             (nowTick - it->second.lastUdpRecvTick) < 5000);
-    if (!routeAlive)
+    const uint64_t lastRecv = it->second.lastUdpRecvTick;
+    if (lastRecv == 0)
+      return false;
+    const uint64_t age = nowTick - lastRecv;
+    return (it->second.directConfirmed && age < 15000ULL) || age < 5000ULL;
+  };
+  for (uint64_t rp : m_relayPeers) {
+    if (m_peerTable.find(rp) == m_peerTable.end() || !isRouteAlive(rp))
+      return false;
+  }
+  for (const auto &kv : m_peerTable) {
+    if (!isRouteAlive(kv.first))
       return false;
   }
   return true;
@@ -824,13 +845,19 @@ void NetworkTransport::StopRelay() {
   }
   if (!wasActive)
     return;
-  std::lock_guard<std::mutex> lock(m_relayMutex);
-  m_relayUrl.clear();
-  m_relaySessionId.clear();
-  m_relaySendQueue.clear();
-  m_relayRecvQueue.clear();
-  m_relayTextSendQueue.clear();
-  m_relayVoiceSendQueue.clear();
+  {
+    std::lock_guard<std::mutex> lock(m_relayMutex);
+    m_relayUrl.clear();
+    m_relaySessionId.clear();
+    m_relaySendQueue.clear();
+    m_relayRecvQueue.clear();
+    m_relayTextSendQueue.clear();
+    m_relayVoiceSendQueue.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_relayPeers.clear();
+  }
   NOBLE_INFO("NetworkTransport: Stopped WebSocket packet relay.");
 }
 
@@ -1482,11 +1509,33 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
         targets.push_back(kv.second);
         auto &route = m_peerRouteStates[kv.first];
         route.lastUdpSendTick = nowTick;
+        const uint64_t age = (route.lastUdpRecvTick != 0)
+                                 ? (nowTick - route.lastUdpRecvTick)
+                                 : UINT64_MAX;
         const bool routeAlive =
-            route.directConfirmed || (route.lastUdpRecvTick != 0 &&
-                                      (nowTick - route.lastUdpRecvTick) < 3000);
+            (route.directConfirmed && age < 15000ULL) || age < 3000ULL;
         if (!routeAlive) {
           allDirectConfirmed = false;
+        }
+      }
+      if (allDirectConfirmed) {
+        for (uint64_t rp : m_relayPeers) {
+          if (m_peerTable.find(rp) == m_peerTable.end()) {
+            allDirectConfirmed = false;
+            break;
+          }
+          const auto rit = m_peerRouteStates.find(rp);
+          const uint64_t age =
+              (rit != m_peerRouteStates.end() && rit->second.lastUdpRecvTick != 0)
+                  ? (nowTick - rit->second.lastUdpRecvTick)
+                  : UINT64_MAX;
+          const bool routeAlive =
+              rit != m_peerRouteStates.end() &&
+              ((rit->second.directConfirmed && age < 15000ULL) || age < 3000ULL);
+          if (!routeAlive) {
+            allDirectConfirmed = false;
+            break;
+          }
         }
       }
     }
@@ -1519,12 +1568,15 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
       foundInUdp = true;
       auto &route = m_peerRouteStates[targetPeerId];
       route.lastUdpSendTick = nowTick;
+      const uint64_t age = (route.lastUdpRecvTick != 0)
+                               ? (nowTick - route.lastUdpRecvTick)
+                               : UINT64_MAX;
       directConfirmed =
-          route.directConfirmed || (route.lastUdpRecvTick != 0 &&
-                                    (nowTick - route.lastUdpRecvTick) < 3000);
-    } else {
-      // Target route unknown yet: hold packet (Star-routing) instead of
-      // broadcasting (Finding #9, #10)
+          (route.directConfirmed && age < 15000ULL) || age < 3000ULL;
+    } else if (!m_relayActive.load()) {
+      // Target route unknown yet and relay is inactive: hold packet (Star-routing)
+      // instead of broadcasting (Finding #9, #10). When relay IS active, it
+      // delivers the packet immediately below without stalling stale duplicates.
       auto &q = m_heldPackets[targetPeerId];
       if (q.size() < 128) {
         q.push_back(
@@ -1588,12 +1640,17 @@ bool NetworkTransport::QueueWirePacket(const uint8_t *wire, size_t wireLen,
   pkt.sender = sender;
   uint16_t port = 0;
   std::memcpy(&port, wire + sizeof(uint64_t), sizeof(uint16_t));
-  if (port == 1000) {
-    // Port 1000 is the engine's channel endpoint. Seeing a peer here proves
-    // that its haloreach.dll session has progressed past the out-of-band join
-    // handshake.
+  if (port == 1000 || (fromRelay && m_isHost)) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_gamePeers.insert(sender);
+    if (port == 1000) {
+      // Port 1000 is the engine's channel endpoint. Seeing a peer here proves
+      // that its haloreach.dll session has progressed past the out-of-band join
+      // handshake.
+      m_gamePeers.insert(sender);
+    }
+    if (fromRelay && m_isHost) {
+      m_relayPeers.insert(sender);
+    }
   }
   pkt.fromRelay = fromRelay;
   pkt.data.assign(wire + kWireHeaderBytes, wire + wireLen);
@@ -1670,6 +1727,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t *outBuffer, size_t bufferCapacity,
         std::lock_guard<std::mutex> lock(m_mutex);
         m_peerTable.erase(wireSender);
         m_gamePeers.erase(wireSender);
+        m_relayPeers.erase(wireSender);
         m_peerRouteStates.erase(wireSender);
         m_heldPackets.erase(wireSender);
         for (auto it = m_addrToPeer.begin(); it != m_addrToPeer.end();) {
@@ -1904,10 +1962,16 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t *outBuffer, size_t bufferCapacity,
 
   // 2. WebSocket relay packets
   if (m_relayActive.load()) {
-    std::lock_guard<std::mutex> lock(m_relayMutex);
-    while (!m_relayRecvQueue.empty()) {
-      auto wire = std::move(m_relayRecvQueue.front());
-      m_relayRecvQueue.pop_front();
+    std::deque<std::vector<uint8_t>> relayBatch;
+    {
+      std::lock_guard<std::mutex> lock(m_relayMutex);
+      if (!m_relayRecvQueue.empty()) {
+        relayBatch.swap(m_relayRecvQueue);
+      }
+    }
+    while (!relayBatch.empty()) {
+      auto wire = std::move(relayBatch.front());
+      relayBatch.pop_front();
       if (wire.size() == sizeof(uint64_t) + 4 && wire[8] == 'P' &&
           (wire[9] == 'I' || wire[9] == 'O') && wire[10] == 'N' &&
           wire[11] == 'G') {

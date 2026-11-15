@@ -67,6 +67,7 @@ struct SettingsData {
     float padLeftDeadZone = 0.0f;  // extra radial dead zone Noble applies (0..0.5), on top of the engine's own
     float padRightDeadZone = 0.0f;
     float padVibrationStrength = 1.0f; // 0..1
+    bool padVirtualCursor = false; // Left-stick UI virtual cursor (also L3 quick-toggle in menus)
 
     // Audio (engine volumes, 0..1, profile +0xA5C/+0xA60/+0xA64)
     float volumeGame = 0.50f;
@@ -82,6 +83,7 @@ struct SettingsData {
 
     // Voice chat and Social. Device ids are Windows endpoint ids; empty means the system default.
     bool firstStartDone = false;    // the first-start question was answered; a settings file from before it counts as answered
+    std::string lastSeenVersion;    // last major.minor.patch key acknowledged in the "What's New" update popup
     bool voiceEnabled = true;
     std::string voiceInputDevice;
     std::string voiceOutputDevice;

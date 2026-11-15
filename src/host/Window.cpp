@@ -486,14 +486,32 @@ namespace {
 std::atomic<int> s_wheelDelta{0};
 std::atomic<bool> s_sizeMove{false};
 std::atomic<int> s_leftClicks{0};
+std::atomic<bool> s_charCapture{ false };
+std::mutex s_typedMutex;
+std::wstring s_typedChars;
 } // namespace
 
 int Window::TakeLeftClicks() { return s_leftClicks.exchange(0); }
 
-namespace {
-std::atomic<bool> s_charCapture{ false };
-std::mutex s_typedMutex;
-std::wstring s_typedChars;
+void Window::FlushInputEvents() {
+    s_leftClicks.store(0);
+    s_wheelDelta.store(0);
+    {
+        std::lock_guard<std::mutex> lock(s_typedMutex);
+        s_typedChars.clear();
+    }
+    ClipCursor(nullptr);
+    if (!s_containerMode.load()) {
+        if (HWND hwnd = s_activeHwnd.load()) {
+            HCURSOR arrow = LoadCursorW(nullptr, IDC_ARROW);
+            if (GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
+                SetClassLongPtrW(hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
+            }
+            if (GetWindowThreadProcessId(hwnd, nullptr) == GetCurrentThreadId()) {
+                SetCursor(arrow);
+            }
+        }
+    }
 }
 
 void Window::SetCharCapture(bool on) {
@@ -570,8 +588,13 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
             if (m_containerParentHwnd) {
                 EnsureContainerFocus();
             } else {
+                HCURSOR arrow = LoadCursorW(nullptr, IDC_ARROW);
+                if (GetClassLongPtrW(m_hwnd, GCLP_HCURSOR) == 0) {
+                    SetClassLongPtrW(m_hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
+                }
                 SetForegroundWindow(m_hwnd);
                 SetFocus(m_hwnd);
+                SetCursor(arrow);
             }
             return 0;
         case WM_DESTROY:

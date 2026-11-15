@@ -31,6 +31,14 @@ static bool IsNobleHost() {
 #endif
 }
 
+static bool IsTransportActive() {
+#ifdef NOBLE_DEDICATED
+    return false;
+#else
+    return NetworkTransport::Get().IsActive();
+#endif
+}
+
 static bool ShouldBlockPrematureEnd() {
 #ifdef NOBLE_DEDICATED
     return false;
@@ -194,7 +202,7 @@ static void __fastcall Hook_SessionAbort(void* session, uint32_t reason) {
     NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::abort called: session=0x{:p}, reason={} (0x{:X}), caller hr+0x{:X}",
         RefuseRole(), GetCurrentProcessId(), session, reason, reason, caller);
     const bool isHost = IsNobleHost();
-    if (isHost || s_campaignCoop.load() || (reason >= 0x05 && reason <= 0x28)) {
+    if (isHost || s_campaignCoop.load() || IsTransportActive() || (reason >= 0x05 && reason <= 0x28)) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED session abort reason 0x{:X} from hr+0x{:X} to keep host / match running!", reason, caller);
         return;
     }
@@ -417,8 +425,9 @@ static uint64_t __fastcall Hook_BootPeer(void* session, int32_t peerIndex, int32
     }();
 
     const bool isHost = IsNobleHost();
-    // Suppress automatic engine peer boots during matches so peers are never dropped.
-    if (keepPeers && (isHost || s_campaignCoop.load())) {
+    // Suppress automatic engine peer boots during active sessions/matches across all modes so
+    // connecting/JIP and in-match peers are never dropped (returns 0 = false / not booted).
+    if (keepPeers && (isHost || s_campaignCoop.load() || IsTransportActive())) {
         static std::atomic<int> logged{0};
         if (logged.fetch_add(1) < 20) {
             NOBLE_WARN("LobbyPatches: keeping peer {} in the session (engine boot reason {}); match stays alive", peerIndex, reason);

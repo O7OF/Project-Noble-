@@ -5,6 +5,7 @@
 #include "common/DeviceIdentity.hpp"
 #include "common/Settings.hpp"
 #include "NobleStyle.hpp"
+#include "NobleUi.hpp"
 #include "UiArt.hpp"
 #include "UiPad.hpp"
 #include "career/Career.hpp"
@@ -2060,6 +2061,24 @@ float TextW(ImFont* f, float px, const char* t) {
 
 } // namespace
 
+bool ArmorCustomizer::HandleBackInput() {
+    if (m_showColorModal) {
+        m_showColorModal = false;
+        m_openColorPopup = false;
+        UiPad::ConsumeBack();
+        MenuSounds::Back();
+        return true;
+    }
+    if (m_pane == 1) {
+        m_pane = 0;
+        m_pendingTryReset = true;
+        UiPad::ConsumeBack();
+        MenuSounds::Back();
+        return true;
+    }
+    return false;
+}
+
 void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context) {
     MigrateEmblemIfNeeded();
     // Test-only: "-armory-species spartan|elite" shows the other species without saving the profile,
@@ -2331,7 +2350,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     const ImU32 kWhiteCol = IM_COL32(240, 246, 252, 255);
 
     // Q / E or the right stick turn the model.
-    if (!ImGui::GetIO().WantTextInput) {
+    if (!ImGui::GetIO().WantTextInput && !m_showColorModal) {
         if (ImGui::IsKeyDown(ImGuiKey_Q) || ImGui::IsKeyDown(ImGuiKey_GamepadRStickLeft)) {
             ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 1.8f);
             m_objYaw += ImGui::GetIO().DeltaTime * 1.8f;
@@ -2718,6 +2737,13 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     // An item clicked that can't be equipped yet (rank not reached, or not bought): it is tried on in the 3D
     // preview, and the info panel shows its rank or offers BUY.
     static int s_buyRow = -1, s_buyValue = -1;
+    static bool s_scrollSlotToFocus = false;
+    static bool s_focusServiceTag = false;
+    if (m_pendingTryReset) {
+        s_buyRow = -1;
+        s_buyValue = -1;
+        m_pendingTryReset = false;
+    }
 
     // Picks an option for a row: saves, updates the model, keeps dependent fields right.
     // bought = true right after a purchase (the option was built as "for sale" this frame).
@@ -2761,6 +2787,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 m_previewSpecies = m_profile.species;
             }
             m_focusedRow = 0;
+            m_lastGridRow = -1;
         } else if (r.index == &bodyInt) {
             m_profile.bodyType = static_cast<BodyType>(std::clamp(bodyInt, 0, 1));
         } else if (r.index == &m_profile.helmetIndex) {
@@ -2776,33 +2803,91 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     auto focus = [&](int rowIndex) {
         if (rowIndex < 0 || rowIndex >= rowCount) return;
         m_focusedRow = rowIndex;
+        m_lastGridRow = -1;
         s_buyRow = -1;
         m_pickerScrollToEquipped = true;
+        s_scrollSlotToFocus = true;
         m_focusScene = (m_previewSpecies == PlayerSpecies::Spartan) ? rows[rowIndex].scene : "armory_elite";
         if (m_previewSpecies == PlayerSpecies::Spartan && m_focusScene == "c_full_spartan") m_focusScene = FullBodyScene();
         UpdateArmoryCamera();
     };
+    auto switchSpeciesTab = [&](int tabIdx) {
+        tabIdx = (tabIdx % 3 + 3) % 3;
+        if (tabIdx == 0) {
+            m_marineTab = false;
+            SetPreferredSpecies(PlayerSpecies::Spartan);
+        } else if (tabIdx == 1) {
+            m_marineTab = false;
+            SetPreferredSpecies(PlayerSpecies::Elite);
+        } else {
+            m_marineTab = true;
+            m_previewSpecies = PlayerSpecies::Spartan;
+            SyncToReachArmory();
+            m_focusedRow = 0;
+            m_pickerScrollToEquipped = true;
+        }
+        m_pane = 0;
+        m_lastGridRow = -1;
+        s_buyRow = -1;
+        s_scrollSlotToFocus = true;
+    };
 
-    // Keys / d-pad: up/down picks the slot, left/right steps through its options.
-    if (!ImGui::GetIO().WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) focus((m_focusedRow + 1) % rowCount);
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) focus((m_focusedRow - 1 + rowCount) % rowCount);
+    const bool modalOrTyping = ImGui::GetIO().WantTextInput || m_showColorModal;
+
+    // LB / RB switches Spartan / Elite / Marine tabs (keeps Q/E free for 3D character rotation).
+    if (!modalOrTyping) {
+        const int curSpTab = m_marineTab ? 2 : (m_profile.species == PlayerSpecies::Elite ? 1 : 0);
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+            switchSpeciesTab(curSpTab - 1);
+            MenuSounds::Tab(-1);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+            switchSpeciesTab(curSpTab + 1);
+            MenuSounds::Tab(1);
+        }
+    }
+
+    // Left-pane (Slot List) keyboard/controller controls when m_pane == 0.
+    if (!modalOrTyping && m_pane == 0) {
+        if (UiPad::Down()) {
+            focus((m_focusedRow + 1) % rowCount);
+            MenuSounds::Scroll();
+        } else if (UiPad::Up()) {
+            focus((m_focusedRow - 1 + rowCount) % rowCount);
+            MenuSounds::Scroll();
+        }
         SlotRow& fr = rows[m_focusedRow];
         if (fr.index && !fr.options.empty()) {
             const int n = static_cast<int>(fr.options.size());
-            // Steps to the next option that isn't locked.
             auto step = [&](int dir) {
                 int v = optionPos(fr, *fr.index);
                 for (int k = 0; k < n; ++k) {
                     v = (v + dir + n) % n;
-                    if (!fr.options[v].locked && !fr.options[v].forSale) { choose(m_focusedRow, v); break; }
+                    if (!fr.options[v].locked && !fr.options[v].forSale) {
+                        choose(m_focusedRow, v);
+                        MenuSounds::Click();
+                        break;
+                    }
                 }
                 m_pickerScrollToEquipped = true;
             };
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) || UiPad::Left()) step(-1);
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) || UiPad::Right()) step(1);
+            if (UiPad::Left()) step(-1);
+            if (UiPad::Right()) step(1);
+        }
+        if (UiPad::AcceptPressed()) {
+            UiPad::ConsumeAccept();
+            if (fr.kind == RowKind::Tag) {
+                s_focusServiceTag = true;
+                MenuSounds::Click();
+            } else if (!fr.options.empty()) {
+                m_pane = 1;
+                m_gridCursor = optionPos(fr, *fr.index);
+                m_lastGridRow = m_focusedRow;
+                m_gridScrollToCursor = true;
+                MenuSounds::Click();
+            }
         }
     }
+
     // "-armory-focus <label>" (test only): start on a named slot so the per-slot camera can be captured.
     {
         static bool s_applied = false;
@@ -2826,87 +2911,111 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     m_focusScene = m_previewSpecies == PlayerSpecies::Spartan ? rows[m_focusedRow].scene : "armory_elite";
     if (m_previewSpecies == PlayerSpecies::Spartan && m_focusScene == "c_full_spartan") m_focusScene = FullBodyScene();
 
-
     // ---- Left: grouped slot list.
     {
         ImGui::SetCursorScreenPos(origin);
-        ImGui::BeginChild("##armory_slots", ImVec2(listW, avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+        const ImVec2 rail0(origin.x, origin.y), rail1(origin.x + listW, origin.y + avail.y);
+        dl->AddRectFilled(rail0, rail1, IM_COL32(8, 14, 22, 165), 3.0f * s);
+        NobleUi::DrawTacticalFrame(dl, rail0, rail1, s, m_pane == 0, false, false, false);
 
-        // Preferred Species Switcher
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + 6.0f * s, origin.y + 6.0f * s));
+        ImGui::BeginChild("##armory_slots", ImVec2(listW - 12.0f * s, avail.y - 12.0f * s),
+                          ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+        UiPad::ScrollWindow(false, false);
+
+        // Tactical Species Switcher (SPARTAN / ELITE / MARINE + LB/RB cues)
         {
-            const float btnW = (listW - 18.0f * s) / 3.0f;
-            const float btnH = 28.0f * s;
-            const bool isSpartan = !m_marineTab && (m_profile.species == PlayerSpecies::Spartan);
-            const bool isElite = !m_marineTab && (m_profile.species == PlayerSpecies::Elite);
-
-            ImGui::PushStyleColor(ImGuiCol_Button, isSpartan ? ImVec4(0.20f, 0.45f, 0.70f, 0.85f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
-            ImGui::PushStyleColor(ImGuiCol_Border, isSpartan ? ImVec4(0.55f, 0.85f, 1.0f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
-            if (ImGui::Button("SPARTAN", ImVec2(btnW, btnH))) {
-                m_marineTab = false;
-                SetPreferredSpecies(PlayerSpecies::Spartan);
+            const float availListW = ImGui::GetContentRegionAvail().x;
+            const float spGap = 5.0f * s;
+            const float btnW = (availListW - spGap * 2.0f) / 3.0f;
+            const float btnH = 30.0f * s;
+            const int curSp = m_marineTab ? 2 : (m_profile.species == PlayerSpecies::Elite ? 1 : 0);
+            static const char* const kSpeciesNames[3] = { "SPARTAN", "ELITE", "MARINE" };
+            const ImVec2 spOrigin = ImGui::GetCursorScreenPos();
+            ImDrawList* ldl = ImGui::GetWindowDrawList();
+            for (int sp = 0; sp < 3; ++sp) {
+                ImGui::PushID(800 + sp);
+                const ImVec2 b0(spOrigin.x + static_cast<float>(sp) * (btnW + spGap), spOrigin.y);
+                const ImVec2 b1(b0.x + btnW, b0.y + btnH);
+                const bool active = (curSp == sp);
+                ImGui::SetCursorScreenPos(b0);
+                if (NobleUi::DrawTile(ldl, "##sp_tab", b0, b1, kSpeciesNames[sp], nullptr, active, active, true, nullptr)) {
+                    if (!active) {
+                        switchSpeciesTab(sp);
+                        MenuSounds::Tab(sp > curSp ? 1 : -1);
+                    }
+                }
+                ImGui::PopID();
             }
-            ImGui::PopStyleColor(2);
-
-            ImGui::SameLine();
-
-            ImGui::PushStyleColor(ImGuiCol_Button, isElite ? ImVec4(0.18f, 0.40f, 0.68f, 0.90f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
-            ImGui::PushStyleColor(ImGuiCol_Border, isElite ? ImVec4(0.56f, 0.85f, 1.0f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
-            if (ImGui::Button("ELITE", ImVec2(btnW, btnH))) {
-                m_marineTab = false;
-                SetPreferredSpecies(PlayerSpecies::Elite);
+            if (InputPrompts::Current() == InputPrompts::Device::Gamepad) {
+                const ImVec2 hintPos(spOrigin.x, spOrigin.y + btnH + 3.0f * s);
+                float hx = hintPos.x + 2.0f * s;
+                const float gh = 14.0f * s;
+                hx += InputPrompts::DrawButton(ldl, smallFont, ImVec2(hx, hintPos.y), gh, InputPrompts::Button::LB) + 4.0f * s;
+                TextAt(ldl, smallFont, 11.5f * s, ImVec2(hx, hintPos.y + 1.0f * s), IM_COL32(150, 180, 205, 200), "SPECIES");
+                const float rbw = InputPrompts::ButtonWidth(smallFont, gh, InputPrompts::Button::RB);
+                InputPrompts::DrawButton(ldl, smallFont, ImVec2(spOrigin.x + availListW - rbw - 2.0f * s, hintPos.y),
+                                         gh, InputPrompts::Button::RB);
+                ImGui::Dummy(ImVec2(availListW, btnH + 22.0f * s));
+            } else {
+                ImGui::Dummy(ImVec2(availListW, btnH + 8.0f * s));
             }
-            ImGui::PopStyleColor(2);
-
-            ImGui::SameLine();
-
-            // MARINE edits the Marine / ODST picks for Marine mods; it doesn't change the species you play.
-            ImGui::PushStyleColor(ImGuiCol_Button, m_marineTab ? ImVec4(0.18f, 0.40f, 0.68f, 0.90f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
-            ImGui::PushStyleColor(ImGuiCol_Border, m_marineTab ? ImVec4(0.56f, 0.85f, 1.0f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
-            if (ImGui::Button("MARINE", ImVec2(btnW, btnH)) && !m_marineTab) {
-                m_marineTab = true;
-                // Spartan pedestal + cameras: from the Elite the camera otherwise stayed on the Elite pedestal until
-                // the next piece click (Tyler 05:51).
-                m_previewSpecies = PlayerSpecies::Spartan;
-                SyncToReachArmory();
-                m_focusedRow = 0;
-                m_pickerScrollToEquipped = true;
-            }
-            ImGui::PopStyleColor(2);
-
-            ImGui::Dummy(ImVec2(0, 4.0f * s));
         }
 
         ImDrawList* ldl = ImGui::GetWindowDrawList();
-        const float rowH = 30.0f * s;
+        const float slotAvailW = ImGui::GetContentRegionAvail().x;
+        const float rowH = 31.0f * s;
         const char* lastGroup = nullptr;
         for (int i = 0; i < rowCount; ++i) {
             SlotRow& r = rows[i];
             if (!lastGroup || std::strcmp(lastGroup, r.group) != 0) {
                 lastGroup = r.group;
-                ImGui::Dummy(ImVec2(0, lastGroup == rows[0].group && i == 0 ? 0.0f : 6.0f * s));
+                ImGui::Dummy(ImVec2(0, i == 0 ? 2.0f * s : 7.0f * s));
                 const ImVec2 hp = ImGui::GetCursorScreenPos();
-                TextAt(ldl, smallFont, 13.0f * s, hp, IM_COL32(150, 190, 220, 255), r.group);
-                const float tw = TextW(smallFont, 13.0f * s, r.group);
-                ldl->AddLine(ImVec2(hp.x + tw + 8.0f * s, hp.y + 7.0f * s), ImVec2(hp.x + listW - 6.0f * s, hp.y + 7.0f * s), IM_COL32(255, 255, 255, 40));
-                ImGui::Dummy(ImVec2(listW, 20.0f * s));
+                ldl->AddRectFilled(hp, ImVec2(hp.x + 3.0f * s, hp.y + 14.0f * s), kAccentCol);
+                TextAt(ldl, smallFont, 12.5f * s, ImVec2(hp.x + 8.0f * s, hp.y), IM_COL32(150, 195, 228, 255), r.group);
+                const float tw = TextW(smallFont, 12.5f * s, r.group);
+                ldl->AddLine(ImVec2(hp.x + tw + 16.0f * s, hp.y + 7.0f * s),
+                             ImVec2(hp.x + slotAvailW - 2.0f * s, hp.y + 7.0f * s), IM_COL32(143, 216, 255, 45));
+                ImGui::Dummy(ImVec2(slotAvailW, 18.0f * s));
             }
             const ImVec2 p0 = ImGui::GetCursorScreenPos();
-            const ImVec2 p1(p0.x + listW - 6.0f * s, p0.y + rowH);
+            const ImVec2 p1(p0.x + slotAvailW, p0.y + rowH);
             ImGui::PushID(i);
-            const bool clicked = ImGui::InvisibleButton("##slot", ImVec2(listW - 6.0f * s, rowH));
-            const bool hovered = ImGui::IsItemHovered();
+            const bool clicked = ImGui::InvisibleButton("##slot", ImVec2(slotAvailW, rowH));
+            const bool hovered = !m_showColorModal && ImGui::IsItemHovered();
             ImGui::PopID();
-            if (clicked) focus(i);
-            const bool selected = m_focusedRow == i;
-            if (selected) {
-                ldl->AddRectFilledMultiColor(p0, p1, IM_COL32(60, 120, 170, 150), IM_COL32(60, 120, 170, 30),
-                                             IM_COL32(60, 120, 170, 30), IM_COL32(60, 120, 170, 150));
-                ldl->AddRectFilled(p0, ImVec2(p0.x + 3.0f * s, p1.y), kAccentCol);
-            } else if (hovered) {
-                ldl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, 14));
+            if (clicked) {
+                focus(i);
+                if (r.kind != RowKind::Tag && !r.options.empty()) {
+                    m_pane = 0;
+                    m_gridCursor = optionPos(r, *r.index);
+                    m_lastGridRow = i;
+                }
+                MenuSounds::Click();
             }
-            const float ty = p0.y + rowH * 0.5f - 9.0f * s;
-            TextAt(ldl, bodyFont, 17.0f * s, ImVec2(p0.x + 12.0f * s, ty), selected ? kWhiteCol : kDimCol, r.label);
+            const bool selected = (m_focusedRow == i);
+            const bool slotFocused = selected && m_pane == 0 && !m_showColorModal;
+            if (selected) {
+                ldl->AddRectFilledMultiColor(p0, p1,
+                                             slotFocused ? IM_COL32(62, 118, 168, 175) : IM_COL32(36, 74, 112, 130),
+                                             IM_COL32(28, 56, 86, 40), IM_COL32(28, 56, 86, 40),
+                                             slotFocused ? IM_COL32(62, 118, 168, 175) : IM_COL32(36, 74, 112, 130));
+                ldl->AddRectFilled(p0, ImVec2(p0.x + 3.5f * s, p1.y),
+                                   slotFocused ? NobleUi::kAmber : kAccentCol);
+                if (slotFocused) {
+                    NobleUi::DrawTacticalFrame(ldl, p0, p1, s, true, false, hovered, true);
+                }
+            } else if (hovered) {
+                ldl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, 16), 2.0f * s);
+            }
+            if (selected && s_scrollSlotToFocus) {
+                ImGui::SetScrollHereY(0.45f);
+                s_scrollSlotToFocus = false;
+            }
+            const float ty = p0.y + rowH * 0.5f - 8.5f * s;
+            TextAt(ldl, bodyFont, 16.5f * s, ImVec2(p0.x + 12.0f * s, ty),
+                   selected ? kWhiteCol : kDimCol, r.label);
             // Current value on the right (a swatch for colours).
             const float vr = p1.x - 8.0f * s;
             if (r.kind == RowKind::Colour && r.index) {
@@ -2927,14 +3036,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     c = ColourU32(m_profile.eliteAccentCustomRgb[0], m_profile.eliteAccentCustomRgb[1], m_profile.eliteAccentCustomRgb[2]);
                 else if (r.index == &m_profile.eliteLightsColor && m_profile.eliteLightsCustom)
                     c = ColourU32(m_profile.eliteLightsCustomRgb[0], m_profile.eliteLightsCustomRgb[1], m_profile.eliteLightsCustomRgb[2]);
-                ldl->AddRectFilled(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), c);
-                ldl->AddRect(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), IM_COL32(230, 240, 255, 160));
+                ldl->AddRectFilled(ImVec2(vr - 22.0f * s, p0.y + 6.0f * s), ImVec2(vr, p1.y - 6.0f * s), c, 2.0f * s);
+                ldl->AddRect(ImVec2(vr - 22.0f * s, p0.y + 6.0f * s), ImVec2(vr, p1.y - 6.0f * s),
+                             IM_COL32(230, 240, 255, 175), 2.0f * s);
             } else {
                 std::string value = r.kind == RowKind::Tag ? m_profile.serviceTag
                                   : (r.index && !r.options.empty()) ? r.options[optionPos(r, *r.index)].name : "";
-                const float maxW = listW * 0.48f;
-                while (value.size() > 3 && TextW(smallFont, 14.0f * s, value.c_str()) > maxW) value = value.substr(0, value.size() - 4) + "...";
-                TextAt(ldl, smallFont, 14.0f * s, ImVec2(vr - TextW(smallFont, 14.0f * s, value.c_str()), ty + 2.0f * s),
+                const float maxW = listW * 0.45f;
+                while (value.size() > 3 && TextW(smallFont, 13.5f * s, value.c_str()) > maxW) value = value.substr(0, value.size() - 4) + "...";
+                TextAt(ldl, smallFont, 13.5f * s, ImVec2(vr - TextW(smallFont, 13.5f * s, value.c_str()), ty + 2.0f * s),
                        selected ? kAccentCol : IM_COL32(130, 150, 170, 255), value.c_str());
             }
         }
@@ -2944,22 +3054,35 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     // ---- Middle: picker for the focused slot.
     SlotRow& row = rows[m_focusedRow];
     const ImVec2 k0(pickX, origin.y), k1(pickX + pickW, origin.y + avail.y);
-    dl->AddRectFilled(k0, k1, IM_COL32(8, 14, 22, 190), 3.0f * s);
-    dl->AddRect(k0, k1, IM_COL32(170, 220, 255, 45), 3.0f * s);
-    const float pad = 14.0f * s;
+    dl->AddRectFilled(k0, k1, IM_COL32(8, 14, 22, 200), 3.0f * s);
+    NobleUi::DrawTacticalFrame(dl, k0, k1, s, m_pane == 1 && !m_showColorModal, m_pane == 1, false, false);
+    const float pad = 16.0f * s;
     float y = origin.y + pad;
     std::string heading = row.label;
     for (char& c : heading) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     TextAt(dl, titleFont, 26.0f * s, ImVec2(pickX + pad, y), kWhiteCol, heading.c_str());
+
+    // Pane status chip top-right of picker header
+    {
+        const char* paneLbl = row.kind == RowKind::Tag ? "IDENTITY" : (m_pane == 1 ? "PICKING OPTION  [B: SLOTS]" : "QUICK STEP  [A: BROWSE GRID]");
+        const float pw = TextW(smallFont, 12.5f * s, paneLbl);
+        TextAt(dl, smallFont, 12.5f * s, ImVec2(k1.x - pad - pw, y + 6.0f * s),
+               m_pane == 1 ? NobleUi::kAmber : IM_COL32(143, 216, 255, 190), paneLbl);
+    }
     y += 34.0f * s;
     int hoveredOption = -1;
 
     if (row.kind == RowKind::Tag) {
+        m_pane = 0;   // Service Tag edits directly inline
         TextAt(dl, bodyFont, 16.0f * s, ImVec2(pickX + pad, y), kDimCol,
-               "Your service tag, up to 4 letters or numbers. Shown above your head in game.", pickW - pad * 2.0f);
-        y += 48.0f * s;
+               "Your service tag, up to 4 letters or numbers. Shown above your Spartan in-game.", pickW - pad * 2.0f);
+        y += 52.0f * s;
         ImGui::SetCursorScreenPos(ImVec2(pickX + pad, y));
-        ImGui::SetNextItemWidth(160.0f * s);
+        ImGui::SetNextItemWidth(180.0f * s);
+        if (s_focusServiceTag) {
+            ImGui::SetKeyboardFocusHere();
+            s_focusServiceTag = false;
+        }
         char tagBuf[8] = {};
         std::snprintf(tagBuf, sizeof(tagBuf), "%s", m_profile.serviceTag.c_str());
         if (ImGui::InputText("##service_tag_in", tagBuf, 5, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank)) {
@@ -2989,7 +3112,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     } else if (row.index && !row.options.empty()) {
         const int n = static_cast<int>(row.options.size());
         const int equipped = optionPos(row, *row.index);
-        // Colour slots -> the custom-wheel fields of the profile (0 primary, 1 secondary, 2 accent, 3 lights).
+        if (m_lastGridRow != m_focusedRow) {
+            m_lastGridRow = m_focusedRow;
+            m_gridCursor = equipped;
+        }
+        m_gridCursor = std::clamp(m_gridCursor, 0, n - 1);
+
         auto colourSlot = [&](int* idx) -> int {
             if (idx == &m_profile.primaryColor || idx == &m_profile.elitePrimaryColor) return 0;
             if (idx == &m_profile.secondaryColor || idx == &m_profile.eliteSecondaryColor) return 1;
@@ -2998,118 +3126,224 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             return -1;
         };
         const bool isColourRow = row.kind == RowKind::Colour;
-        // "Equipped: X" and RANDOM / CUSTOM COLOUR buttons.
+        const int customColourSlot = isColourRow ? colourSlot(row.index) : -1;
+
+        // "Equipped: X" + RANDOM [Y] + CUSTOM COLOR [X]
         const std::string eq = "EQUIPPED: " + row.options[equipped].name;
         TextAt(dl, smallFont, 15.0f * s, ImVec2(pickX + pad, y + 6.0f * s), kAccentCol, eq.c_str());
         {
-            const float bw = 96.0f * s, bh = 28.0f * s;
+            const float bw = 104.0f * s, bh = 28.0f * s;
             const ImVec2 b0(k1.x - pad - bw, y), b1(b0.x + bw, y + bh);
             ImGui::SetCursorScreenPos(b0);
             const bool clicked = ImGui::InvisibleButton("##random", ImVec2(bw, bh));
-            const bool hov = ImGui::IsItemHovered();
-            dl->AddRectFilled(b0, b1, hov ? IM_COL32(60, 74, 88, 240) : IM_COL32(26, 34, 44, 230), 2.0f * s);
-            dl->AddRect(b0, b1, IM_COL32(170, 220, 255, hov ? 160 : 70), 2.0f * s);
-            TextAt(dl, smallFont, 14.0f * s, ImVec2(b0.x + (bw - TextW(smallFont, 14.0f * s, "RANDOM")) * 0.5f, b0.y + 6.0f * s), kWhiteCol, "RANDOM");
-            if (clicked && n > 1) {
+            const bool hov = !m_showColorModal && ImGui::IsItemHovered();
+            dl->AddRectFilled(b0, b1, hov ? IM_COL32(50, 74, 98, 240) : IM_COL32(20, 30, 42, 230), 2.0f * s);
+            NobleUi::DrawTacticalFrame(dl, b0, b1, s, false, false, hov, false);
+            const bool padY = !modalOrTyping && UiPad::ActionY();
+            if (InputPrompts::Current() == InputPrompts::Device::Gamepad) {
+                const float gh = 16.0f * s;
+                float cx = b0.x + 8.0f * s;
+                cx += InputPrompts::DrawButton(dl, smallFont, ImVec2(cx, b0.y + (bh - gh) * 0.5f), gh, InputPrompts::Button::Y) + 5.0f * s;
+                TextAt(dl, smallFont, 13.5f * s, ImVec2(cx, b0.y + 6.0f * s), kWhiteCol, "RANDOM");
+            } else {
+                TextAt(dl, smallFont, 13.5f * s, ImVec2(b0.x + (bw - TextW(smallFont, 13.5f * s, "RANDOM")) * 0.5f, b0.y + 6.0f * s), kWhiteCol, "RANDOM");
+            }
+            if ((clicked || padY) && n > 1) {
                 static std::mt19937 rng{ std::random_device{}() };
-                std::vector<int> open;   // unlocked options other than the equipped one
+                std::vector<int> open;
                 for (int i = 0; i < n; ++i) if (i != equipped && !row.options[i].locked && !row.options[i].forSale) open.push_back(i);
-                if (!open.empty())
-                    choose(m_focusedRow, open[std::uniform_int_distribution<size_t>(0, open.size() - 1)(rng)]);
+                if (!open.empty()) {
+                    const int pick = open[std::uniform_int_distribution<size_t>(0, open.size() - 1)(rng)];
+                    choose(m_focusedRow, pick);
+                    m_gridCursor = pick;
+                    MenuSounds::Click();
+                }
                 m_pickerScrollToEquipped = true;
             }
-            if (isColourRow && colourSlot(row.index) >= 0) {
-                const float cw = 160.0f * s;
+            if (customColourSlot >= 0) {
+                const float cw = 158.0f * s;
                 const ImVec2 c0(b0.x - cw - 8.0f * s, y), c1(c0.x + cw, y + bh);
                 ImGui::SetCursorScreenPos(c0);
                 const bool custom = ImGui::InvisibleButton("##custom_colour", ImVec2(cw, bh));
-                const bool chov = ImGui::IsItemHovered();
-                dl->AddRectFilled(c0, c1, chov ? IM_COL32(48, 84, 110, 240) : IM_COL32(22, 38, 52, 235), 2.0f * s);
-                dl->AddRect(c0, c1, IM_COL32(143, 216, 255, chov ? 200 : 90), 2.0f * s);
-                TextAt(dl, smallFont, 13.0f * s,
-                       ImVec2(c0.x + (cw - TextW(smallFont, 13.0f * s, "CUSTOM COLOR")) * 0.5f, c0.y + 7.0f * s), kWhiteCol,
-                       "CUSTOM COLOR");
-                if (custom) ImGui::OpenPopup("##custom_colour_popup");
+                const bool chov = !m_showColorModal && ImGui::IsItemHovered();
+                dl->AddRectFilled(c0, c1, chov ? IM_COL32(48, 84, 114, 240) : IM_COL32(20, 36, 52, 235), 2.0f * s);
+                NobleUi::DrawTacticalFrame(dl, c0, c1, s, false, false, chov, false);
+                if (InputPrompts::Current() == InputPrompts::Device::Gamepad) {
+                    const float gh = 16.0f * s;
+                    float cx = c0.x + 8.0f * s;
+                    cx += InputPrompts::DrawButton(dl, smallFont, ImVec2(cx, c0.y + (bh - gh) * 0.5f), gh, InputPrompts::Button::X) + 5.0f * s;
+                    TextAt(dl, smallFont, 13.0f * s, ImVec2(cx, c0.y + 7.0f * s), kWhiteCol, "CUSTOM COLOR");
+                } else {
+                    TextAt(dl, smallFont, 13.0f * s,
+                           ImVec2(c0.x + (cw - TextW(smallFont, 13.0f * s, "CUSTOM COLOR")) * 0.5f, c0.y + 7.0f * s), kWhiteCol,
+                           "CUSTOM COLOR");
+                }
+                if (custom || (!modalOrTyping && UiPad::ActionX())) {
+                    m_showColorModal = true;
+                    m_openColorPopup = true;
+                    m_colorModalFocus = 0;
+                    MenuSounds::Click();
+                }
             }
         }
-        // Colour wheel for the focused colour slot (Armory preview; the profile keeps the nearest
-        // Reach palette index so the in-game colours remain valid).
-        if (isColourRow && ImGui::BeginPopup("##custom_colour_popup")) {
-            const int slot = colourSlot(row.index);
+        if (m_openColorPopup) {
+            ImGui::OpenPopup("##custom_colour_popup");
+            m_openColorPopup = false;
+        }
+        // Custom Color Modal: supports both mouse Color Wheel drag AND full controller D-pad RGB sliders!
+        if (customColourSlot >= 0 &&
+            ImGui::BeginPopupModal("##custom_colour_popup", &m_showColorModal,
+                                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus)) {
             const bool isElite = (m_previewSpecies == PlayerSpecies::Elite);
-            bool* custom = slot == 0 ? (isElite ? &m_profile.elitePrimaryCustom : &m_profile.primaryCustom)
-                         : slot == 1 ? (isElite ? &m_profile.eliteSecondaryCustom : &m_profile.secondaryCustom)
-                         : slot == 2 ? (isElite ? &m_profile.eliteAccentCustom : &m_profile.accentCustom)
+            bool* custom = customColourSlot == 0 ? (isElite ? &m_profile.elitePrimaryCustom : &m_profile.primaryCustom)
+                         : customColourSlot == 1 ? (isElite ? &m_profile.eliteSecondaryCustom : &m_profile.secondaryCustom)
+                         : customColourSlot == 2 ? (isElite ? &m_profile.eliteAccentCustom : &m_profile.accentCustom)
                          : (isElite ? &m_profile.eliteLightsCustom : &m_profile.lightsCustom);
-            std::array<float, 3>* rgb = slot == 0 ? (isElite ? &m_profile.elitePrimaryCustomRgb : &m_profile.primaryCustomRgb)
-                                      : slot == 1 ? (isElite ? &m_profile.eliteSecondaryCustomRgb : &m_profile.secondaryCustomRgb)
-                                      : slot == 2 ? (isElite ? &m_profile.eliteAccentCustomRgb : &m_profile.accentCustomRgb)
+            std::array<float, 3>* rgb = customColourSlot == 0 ? (isElite ? &m_profile.elitePrimaryCustomRgb : &m_profile.primaryCustomRgb)
+                                      : customColourSlot == 1 ? (isElite ? &m_profile.eliteSecondaryCustomRgb : &m_profile.secondaryCustomRgb)
+                                      : customColourSlot == 2 ? (isElite ? &m_profile.eliteAccentCustomRgb : &m_profile.accentCustomRgb)
                                       : (isElite ? &m_profile.eliteLightsCustomRgb : &m_profile.lightsCustomRgb);
             float col[3] = { (*rgb)[0], (*rgb)[1], (*rgb)[2] };
             if (!*custom) {
                 const auto& pal = kReachColors[std::clamp(*row.index, 0, 29)];
                 col[0] = pal.r; col[1] = pal.g; col[2] = pal.b;
             }
-            ImGui::TextUnformatted("CUSTOM COLOR");
-            ImGui::Dummy(ImVec2(0, 8.0f * s));
-            ImGui::SetNextItemWidth(230.0f * s);
+
+            if (UiPad::Up()) {
+                m_colorModalFocus = (m_colorModalFocus + 4) % 5;
+                MenuSounds::Scroll();
+            } else if (UiPad::Down()) {
+                m_colorModalFocus = (m_colorModalFocus + 1) % 5;
+                MenuSounds::Scroll();
+            }
+
+            bool changed = false;
+            if (m_colorModalFocus >= 0 && m_colorModalFocus <= 2) {
+                if (UiPad::Left()) {
+                    col[m_colorModalFocus] = std::max(0.0f, col[m_colorModalFocus] - 0.04f);
+                    changed = true;
+                } else if (UiPad::Right()) {
+                    col[m_colorModalFocus] = std::min(1.0f, col[m_colorModalFocus] + 0.04f);
+                    changed = true;
+                }
+            }
+
+            ImGui::PushFont(titleFont);
+            ImGui::TextUnformatted("CUSTOM ARMOR COLOR");
+            ImGui::PopFont();
+            ImGui::SameLine();
+            {
+                const ImVec2 sw0 = ImGui::GetCursorScreenPos();
+                const ImVec2 sw1(sw0.x + 56.0f * s, sw0.y + 20.0f * s);
+                ImGui::GetWindowDrawList()->AddRectFilled(sw0, sw1, ColourU32(col[0], col[1], col[2]), 3.0f * s);
+                ImGui::GetWindowDrawList()->AddRect(sw0, sw1, IM_COL32(220, 236, 255, 190), 3.0f * s);
+                ImGui::Dummy(ImVec2(58.0f * s, 20.0f * s));
+            }
+            ImGui::Dummy(ImVec2(0, 6.0f * s));
+            ImGui::SetNextItemWidth(250.0f * s);
             if (ImGui::ColorPicker3("##custom_wheel", col,
                                     ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_NoSidePreview |
                                     ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_DisplayRGB)) {
+                changed = true;
+            }
+            ImGui::Dummy(ImVec2(0, 8.0f * s));
+
+            // Controller-adjustable Red / Green / Blue tactical sliders
+            static const char* const kChNames[3] = { "RED", "GREEN", "BLUE" };
+            ImDrawList* mdl = ImGui::GetWindowDrawList();
+            for (int ch = 0; ch < 3; ++ch) {
+                ImGui::PushID(900 + ch);
+                const float slW = 260.0f * s, slH = 26.0f * s;
+                const ImVec2 r0 = ImGui::GetCursorScreenPos(), r1(r0.x + slW, r0.y + slH);
+                ImGui::InvisibleButton("##rgb_sl", ImVec2(slW, slH));
+                const bool hov = ImGui::IsItemHovered();
+                if (ImGui::IsItemActive()) {
+                    const float barX0 = r0.x + 62.0f * s, barX1 = r1.x - 46.0f * s;
+                    col[ch] = std::clamp((ImGui::GetIO().MousePos.x - barX0) / std::max(1.0f, barX1 - barX0), 0.0f, 1.0f);
+                    changed = true;
+                    m_colorModalFocus = ch;
+                }
+                const bool foc = (m_colorModalFocus == ch);
+                if (foc || hov) {
+                    mdl->AddRectFilled(r0, r1, IM_COL32(28, 46, 66, 175), 2.0f * s);
+                    NobleUi::DrawFocusHighlight(mdl, r0, r1, s, true);
+                }
+                char valBuf[16];
+                std::snprintf(valBuf, sizeof(valBuf), "%d", static_cast<int>(col[ch] * 255.0f + 0.5f));
+                TextAt(mdl, smallFont, 14.0f * s, ImVec2(r0.x + 8.0f * s, r0.y + 5.0f * s), kWhiteCol, kChNames[ch]);
+                NobleUi::DrawSlider(mdl, ImVec2(r0.x + 62.0f * s, r0.y + 4.0f * s), ImVec2(r1.x - 6.0f * s, r1.y - 4.0f * s),
+                                    col[ch], 0.5f, valBuf, foc || hov, false, 38.0f * s);
+                ImGui::PopID();
+            }
+
+            if (changed) {
                 *custom = true;
                 (*rgb) = { col[0], col[1], col[2] };
                 if (row.index) *row.index = NearestPaletteIndex(col[0], col[1], col[2]);
                 SyncToReachArmory();
                 static uint64_t s_lastSave = 0;
-                if (GetTickCount64() - s_lastSave > 600) {
+                if (GetTickCount64() - s_lastSave > 400) {
                     s_lastSave = GetTickCount64();
                     SaveProfile(m_profilePath);
                 }
             }
-            if (ImGui::Button("USE PALETTE COLOR")) {
-                *custom = false;
-                SyncToReachArmory();
+
+            ImGui::Dummy(ImVec2(0, 8.0f * s));
+            const bool pressA = UiPad::AcceptPressed();
+            const float btnW = 136.0f * s, btnH = 28.0f * s;
+            {
+                const ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + btnW + 24.0f * s, p0.y + btnH);
+                const bool clickPal = ImGui::InvisibleButton("##use_pal", ImVec2(btnW + 24.0f * s, btnH));
+                const bool foc = (m_colorModalFocus == 3), hov = ImGui::IsItemHovered();
+                mdl->AddRectFilled(p0, p1, (foc || hov) ? IM_COL32(42, 74, 108, 235) : IM_COL32(20, 32, 46, 225), 2.0f * s);
+                NobleUi::DrawTacticalFrame(mdl, p0, p1, s, foc, false, hov, true);
+                TextAt(mdl, smallFont, 13.5f * s, ImVec2(p0.x + 12.0f * s, p0.y + 6.0f * s), kWhiteCol, "USE PALETTE COLOR");
+                if (clickPal || (pressA && foc)) {
+                    *custom = false;
+                    SyncToReachArmory();
+                    SaveProfile(m_profilePath);
+                    UiPad::ConsumeAccept();
+                    MenuSounds::Click();
+                }
+            }
+            ImGui::SameLine(0, 8.0f * s);
+            {
+                const ImVec2 d0 = ImGui::GetCursorScreenPos(), d1(d0.x + 90.0f * s, d0.y + btnH);
+                const bool clickDone = ImGui::InvisibleButton("##col_done", ImVec2(90.0f * s, btnH));
+                const bool foc = (m_colorModalFocus == 4), hov = ImGui::IsItemHovered();
+                mdl->AddRectFilled(d0, d1, (foc || hov) ? IM_COL32(42, 74, 108, 235) : IM_COL32(20, 32, 46, 225), 2.0f * s);
+                NobleUi::DrawTacticalFrame(mdl, d0, d1, s, foc, false, hov, true);
+                TextAt(mdl, smallFont, 13.5f * s, ImVec2(d0.x + 26.0f * s, d0.y + 6.0f * s), kWhiteCol, "DONE");
+                if (clickDone || (pressA && foc)) {
+                    m_showColorModal = false;
+                    ImGui::CloseCurrentPopup();
+                    SaveProfile(m_profilePath);
+                    UiPad::ConsumeAccept();
+                    MenuSounds::Click();
+                }
+            }
+            if (UiPad::BackPressed() || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                m_showColorModal = false;
+                ImGui::CloseCurrentPopup();
                 SaveProfile(m_profilePath);
+                UiPad::ConsumeBack();
+                MenuSounds::Back();
             }
             ImGui::EndPopup();
         }
-        y += 40.0f * s;
+        y += 38.0f * s;
 
-        // Grid of options (colours as swatches, 10 hues x 3 shades like Reach).
-        const float infoH = 120.0f * s;
-        const float gridH = std::max(80.0f * s, k1.y - y - infoH - pad);
-        ImGui::SetCursorScreenPos(ImVec2(pickX + pad, y));
-        ImGui::BeginChild("##armory_picker", ImVec2(pickW - pad * 2.0f, gridH), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
-        ImDrawList* gdl = ImGui::GetWindowDrawList();
-        const float gw = ImGui::GetContentRegionAvail().x;
+        // Grid geometry + visual cell sorting (Unlocked -> For Sale -> Locked)
         const bool colourGrid = row.kind == RowKind::Colour;
         const bool isNameplate = std::strcmp(row.label, "Nameplate") == 0;
         const bool isEmblemSymbol = std::strcmp(row.label, "Emblem") == 0;
         const bool isEmblemBackground = std::strcmp(row.label, "Emblem Background") == 0;
         const bool isEmblem = isEmblemSymbol || isEmblemBackground;
         const int cols = colourGrid ? 10 : isEmblem ? 4 : isNameplate ? 1 : 2;
-        const float cg = 6.0f * s;
-        const float tileW = (gw - cg * (cols - 1)) / cols;
-        // Picture tiles (Elite armour sets) when at least the equipped option's picture is there.
-        const char* eqArt = row.options[equipped].art;
-        auto artDir = [](const PickOption& o) { return o.artDir ? o.artDir : "elite_sets"; };
-        // Picture tiles when ANY option has a picture (not only the equipped one): deciding by the equipped option made
-        // the grid flip between pictures and a text list as you picked (visor colours, Elite armour sets - 06:37 videos).
-        // Options without a picture get a placeholder tile (their colour swatch, or just the name).
-        (void)eqArt;
-        bool anyArt = false;
-        if (!colourGrid && !isNameplate && !isEmblem) {
-            for (int k = 0; k < n && !anyArt; ++k) {
-                if (row.options[k].art && UiArt::ReachArt(artDir(row.options[k]), row.options[k].art)) anyArt = true;
-            }
-        }
-        const bool artGrid = anyArt;
-        const float tileH = colourGrid ? tileW : isEmblem ? tileW : isNameplate ? 56.0f * s : artGrid ? tileW * 1.15f : 46.0f * s;
-        // Grid origin in screen space, taken once (it already includes the scroll offset).
-        const ImVec2 base = ImGui::GetCursorScreenPos();
-        // Tiles you can use come first, then ones for sale, then locked ones (each group keeps the list order).
+
         std::vector<int> tileOf(static_cast<size_t>(n));
-        {
+        if (!colourGrid) {
             int next = 0;
             for (int group = 0; group < 3; ++group)
                 for (int i = 0; i < n; ++i) {
@@ -3117,94 +3351,185 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     const int g = o.locked ? 2 : o.forSale ? 1 : 0;
                     if (g == group) tileOf[static_cast<size_t>(i)] = next++;
                 }
+        } else {
+            for (int i = 0; i < n; ++i) tileOf[static_cast<size_t>(i)] = (i % 3) * 10 + i / 3;
         }
+        const int gridCells = colourGrid ? 30 : n;
+        std::vector<int> optAtSlot(static_cast<size_t>(gridCells), -1);
         for (int i = 0; i < n; ++i) {
-            // Colours: column = hue, row = shade (the palette is stored hue by hue, 3 shades each).
-            const int slot = colourGrid ? (i % 3) * 10 + i / 3 : tileOf[static_cast<size_t>(i)];
+            const int sl = tileOf[static_cast<size_t>(i)];
+            if (sl >= 0 && sl < gridCells) optAtSlot[static_cast<size_t>(sl)] = i;
+        }
+
+        // Right-pane (Option Grid) directional cursor + A equip/preview/buy when m_pane == 1
+        bool gridNavMoved = false;
+        if (m_pane == 1 && !modalOrTyping) {
+            const int curSlot = std::clamp(tileOf[static_cast<size_t>(m_gridCursor)], 0, gridCells - 1);
+            auto moveToSlot = [&](int targetSlot) {
+                if (targetSlot >= 0 && targetSlot < gridCells && optAtSlot[static_cast<size_t>(targetSlot)] >= 0) {
+                    m_gridCursor = optAtSlot[static_cast<size_t>(targetSlot)];
+                    m_gridScrollToCursor = true;
+                    gridNavMoved = true;
+                    MenuSounds::Scroll();
+                    return true;
+                }
+                return false;
+            };
+            if (UiPad::Left()) {
+                for (int sl = curSlot - 1; sl >= 0; --sl) {
+                    if (moveToSlot(sl)) break;
+                }
+            } else if (UiPad::Right()) {
+                for (int sl = curSlot + 1; sl < gridCells; ++sl) {
+                    if (moveToSlot(sl)) break;
+                }
+            } else if (UiPad::Up()) {
+                const int upSlot = curSlot - cols;
+                if (!moveToSlot(upSlot) && upSlot >= 0) {
+                    for (int sl = upSlot - 1; sl >= 0; --sl) {
+                        if (moveToSlot(sl)) break;
+                    }
+                }
+            } else if (UiPad::Down()) {
+                const int dnSlot = curSlot + cols;
+                if (!moveToSlot(dnSlot)) {
+                    const int curR = curSlot / cols, lastR = (gridCells - 1) / cols;
+                    if (curR < lastR) {
+                        for (int sl = gridCells - 1; sl >= (curR + 1) * cols; --sl) {
+                            if (moveToSlot(sl)) break;
+                        }
+                    }
+                }
+            }
+            if (UiPad::AcceptPressed()) {
+                UiPad::ConsumeAccept();
+                const PickOption& opt = row.options[m_gridCursor];
+                if (!opt.locked && !opt.forSale) {
+                    choose(m_focusedRow, m_gridCursor);
+                    MenuSounds::Click();
+                } else if (opt.forSale && s_buyRow == m_focusedRow && s_buyValue == m_gridCursor) {
+                    if (Career::Balance() >= opt.price && Career::BuyArmoryItem(opt.buyKey, opt.price)) {
+                        choose(m_focusedRow, m_gridCursor, true);
+                        MenuSounds::Click();
+                    } else {
+                        MenuSounds::Back();
+                    }
+                } else {
+                    choose(m_focusedRow, m_gridCursor);   // tries locked/forSale item on in 3D view
+                    MenuSounds::Click();
+                }
+            }
+        }
+
+        // Grid of options
+        const float infoH = 124.0f * s;
+        const float gridH = std::max(80.0f * s, k1.y - y - infoH - pad);
+        ImGui::SetCursorScreenPos(ImVec2(pickX + pad, y));
+        ImGui::BeginChild("##armory_picker", ImVec2(pickW - pad * 2.0f, gridH), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+        if (!modalOrTyping) UiPad::ScrollWindow(false, true);
+        ImDrawList* gdl = ImGui::GetWindowDrawList();
+        const float gw = ImGui::GetContentRegionAvail().x;
+        const float cg = 6.0f * s;
+        const float tileW = (gw - cg * static_cast<float>(cols - 1)) / static_cast<float>(cols);
+        auto artDir = [](const PickOption& o) { return o.artDir ? o.artDir : "elite_sets"; };
+        bool anyArt = false;
+        if (!colourGrid && !isNameplate && !isEmblem) {
+            for (int k = 0; k < n && !anyArt; ++k) {
+                if (row.options[k].art && UiArt::ReachArt(artDir(row.options[k]), row.options[k].art)) anyArt = true;
+            }
+        }
+        const bool artGrid = anyArt;
+        const float tileH = colourGrid ? tileW : isEmblem ? tileW : isNameplate ? 56.0f * s : artGrid ? tileW * 1.15f : 48.0f * s;
+        const ImVec2 base = ImGui::GetCursorScreenPos();
+
+        for (int i = 0; i < n; ++i) {
+            const int slot = tileOf[static_cast<size_t>(i)];
             const int c = slot % cols, r = slot / cols;
             ImGui::SetCursorScreenPos(ImVec2(base.x + c * (tileW + cg), base.y + r * (tileH + cg)));
             const ImVec2 t0 = ImGui::GetCursorScreenPos(), t1(t0.x + tileW, t0.y + tileH);
             ImGui::PushID(i);
             const bool clicked = ImGui::InvisibleButton("##opt", ImVec2(tileW, tileH));
-            const bool hov = ImGui::IsItemHovered();
+            const bool hov = !m_showColorModal && ImGui::IsItemHovered();
             ImGui::PopID();
             if (hov) hoveredOption = i;
-            if (clicked) choose(m_focusedRow, i);
+            if (clicked) {
+                m_pane = 1;
+                m_gridCursor = i;
+                choose(m_focusedRow, i);
+                MenuSounds::Click();
+            }
             const bool isEq = i == equipped;
-            const bool isTry = s_buyRow == m_focusedRow && s_buyValue == i;   // tried on, not equipped
-            if (isEq && m_pickerScrollToEquipped) {
-                ImGui::SetScrollHereY(0.4f);
+            const bool isTry = s_buyRow == m_focusedRow && s_buyValue == i;
+            const bool isCur = (m_pane == 1 && !m_showColorModal && i == m_gridCursor);
+            if ((isEq && m_pickerScrollToEquipped) || (isCur && (m_gridScrollToCursor || gridNavMoved))) {
+                ImGui::SetScrollHereY(0.45f);
                 m_pickerScrollToEquipped = false;
+                m_gridScrollToCursor = false;
             }
             if (colourGrid) {
                 gdl->AddRectFilled(t0, t1, row.options[i].swatch, 2.0f * s);
-                gdl->AddRect(t0, t1, isEq ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, hov ? 160 : 40), 2.0f * s, 0, isEq ? 2.5f * s : 1.0f);
+                gdl->AddRect(t0, t1, isCur ? NobleUi::kAmber : (isEq ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, hov ? 180 : 45)),
+                             2.0f * s, 0, (isCur || isEq) ? 2.5f * s : 1.0f);
+                if (isCur) NobleUi::DrawTacticalFrame(gdl, t0, t1, s, true, false, hov, true);
             } else if (isNameplate) {
-                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
+                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(28, 60, 92, 235) : (hov || isCur ? IM_COL32(34, 48, 66, 235) : IM_COL32(16, 24, 34, 220)), 2.0f * s);
                 const int plateIndex = row.options[i].value;
                 if (plateIndex >= 0) {
                     const UiTexture npTex = UiArt::Nameplate(plateIndex);
                     if (npTex) {
                         UiArt::DrawContain(gdl, npTex, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s),
-                                           (isEq || hov) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));
+                                           (isEq || hov || isCur) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));
                     }
                 }
-                gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
-                             2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
+                NobleUi::DrawTacticalFrame(gdl, t0, t1, s, isCur, isEq || isTry, hov, true);
             } else if (isEmblem) {
-                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
-                // Each tile shows the whole emblem as it would look: the other half of the pair stays as equipped.
+                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(28, 60, 92, 235) : (hov || isCur ? IM_COL32(34, 48, 66, 235) : IM_COL32(16, 24, 34, 220)), 2.0f * s);
                 const int symbol = isEmblemSymbol ? i : m_profile.emblemIndex;
                 const int background = isEmblemBackground ? i : m_profile.emblemBackgroundIndex;
                 UiArt::DrawEmblem(gdl, symbol, background, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s), EmblemColorsNow());
-                gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
-                             2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
+                NobleUi::DrawTacticalFrame(gdl, t0, t1, s, isCur, isEq || isTry, hov, true);
             } else if (artGrid) {
-                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
+                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(28, 60, 92, 235) : (hov || isCur ? IM_COL32(34, 48, 66, 235) : IM_COL32(16, 24, 34, 220)), 2.0f * s);
                 const float nameH = 30.0f * s;
                 const UiTexture pic = row.options[i].art ? UiArt::ReachArt(artDir(row.options[i]), row.options[i].art) : UiTexture{};
                 if (pic) {
                     UiArt::DrawContain(gdl, pic, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - nameH),
                                        row.options[i].locked ? IM_COL32(70, 70, 70, 255)
-                                       : (isEq || hov) ? IM_COL32_WHITE : IM_COL32(205, 205, 205, 255));
+                                       : (isEq || hov || isCur) ? IM_COL32_WHITE : IM_COL32(205, 205, 205, 255));
                 } else if (row.options[i].swatch) {
-                    // No picture: the option's colour as a large chip (visor colours), so the tile still says what it is.
                     const float cw = std::min(tileW, tileH - nameH) * 0.45f;
-                    const ImVec2 c((t0.x + t1.x) * 0.5f, t0.y + (tileH - nameH) * 0.5f);
-                    gdl->AddRectFilled(ImVec2(c.x - cw * 0.5f, c.y - cw * 0.5f), ImVec2(c.x + cw * 0.5f, c.y + cw * 0.5f),
+                    const ImVec2 cpos((t0.x + t1.x) * 0.5f, t0.y + (tileH - nameH) * 0.5f);
+                    gdl->AddRectFilled(ImVec2(cpos.x - cw * 0.5f, cpos.y - cw * 0.5f), ImVec2(cpos.x + cw * 0.5f, cpos.y + cw * 0.5f),
                                        row.options[i].swatch, 4.0f * s);
-                    gdl->AddRect(ImVec2(c.x - cw * 0.5f, c.y - cw * 0.5f), ImVec2(c.x + cw * 0.5f, c.y + cw * 0.5f),
+                    gdl->AddRect(ImVec2(cpos.x - cw * 0.5f, cpos.y - cw * 0.5f), ImVec2(cpos.x + cw * 0.5f, cpos.y + cw * 0.5f),
                                  IM_COL32(255, 255, 255, 60), 4.0f * s);
                 } else {
-                    // No picture and no colour: a quiet "no preview" mark, the name stays below as on every tile.
                     const char* np = "NO PREVIEW";
                     TextAt(gdl, smallFont, 13.0f * s, ImVec2(t0.x + (tileW - TextW(smallFont, 13.0f * s, np)) * 0.5f, t0.y + (tileH - nameH) * 0.5f - 7.0f * s),
                            IM_COL32(110, 130, 150, 200), np);
                 }
-                gdl->AddRectFilled(ImVec2(t0.x, t1.y - nameH), t1, IM_COL32(8, 12, 18, 200), 2.0f * s);
+                gdl->AddRectFilled(ImVec2(t0.x, t1.y - nameH), t1, IM_COL32(8, 12, 18, 210), 2.0f * s);
                 const std::string& name = row.options[i].name;
-                TextAt(gdl, bodyFont, 16.0f * s, ImVec2(t0.x + (tileW - TextW(bodyFont, 16.0f * s, name.c_str())) * 0.5f, t1.y - nameH + 6.0f * s),
-                       row.options[i].locked ? IM_COL32(120, 130, 140, 255) : isEq ? kWhiteCol : IM_COL32(200, 214, 228, 255), name.c_str());
-                if (row.options[i].forSale) {   // price in the picture's corner
+                TextAt(gdl, bodyFont, 15.5f * s, ImVec2(t0.x + (tileW - TextW(bodyFont, 15.5f * s, name.c_str())) * 0.5f, t1.y - nameH + 6.0f * s),
+                       row.options[i].locked ? IM_COL32(120, 130, 140, 255) : isEq ? kWhiteCol : IM_COL32(205, 218, 232, 255), name.c_str());
+                if (row.options[i].forSale) {
                     const std::string price = WithCommas(row.options[i].price) + " cR";
-                    const float pw = TextW(smallFont, 13.0f * s, price.c_str()) + 10.0f * s;
-                    gdl->AddRectFilled(ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t0.x + 4.0f * s + pw, t0.y + 22.0f * s), IM_COL32(8, 12, 18, 210), 2.0f * s);
-                    TextAt(gdl, smallFont, 13.0f * s, ImVec2(t0.x + 9.0f * s, t0.y + 6.0f * s), IM_COL32(255, 196, 92, 255), price.c_str());
+                    const float pw = TextW(smallFont, 12.5f * s, price.c_str()) + 12.0f * s;
+                    gdl->AddRectFilled(ImVec2(t0.x + 5.0f * s, t0.y + 5.0f * s), ImVec2(t0.x + 5.0f * s + pw, t0.y + 23.0f * s), IM_COL32(10, 14, 20, 225), 2.0f * s);
+                    TextAt(gdl, smallFont, 12.5f * s, ImVec2(t0.x + 11.0f * s, t0.y + 7.0f * s), NobleUi::kAmber, price.c_str());
                 }
-                if (row.options[i].locked) {   // "LOCKED / <rank>" over the darkened picture
-                    const std::string rank = row.options[i].lockRank ? row.options[i].lockRank : "";
+                if (row.options[i].locked) {
+                    const std::string lockR = row.options[i].lockRank ? row.options[i].lockRank : "";
                     const float my = t0.y + (tileH - nameH) * 0.5f;
                     TextAt(gdl, smallFont, 14.0f * s, ImVec2(t0.x + (tileW - TextW(smallFont, 14.0f * s, "LOCKED")) * 0.5f, my - 16.0f * s),
-                           IM_COL32(255, 196, 92, 255), "LOCKED");
-                    TextAt(gdl, smallFont, 13.0f * s, ImVec2(t0.x + (tileW - TextW(smallFont, 13.0f * s, rank.c_str())) * 0.5f, my + 2.0f * s),
-                           IM_COL32(230, 230, 230, 255), rank.c_str());
+                           NobleUi::kAmber, "LOCKED");
+                    TextAt(gdl, smallFont, 12.5f * s, ImVec2(t0.x + (tileW - TextW(smallFont, 12.5f * s, lockR.c_str())) * 0.5f, my + 2.0f * s),
+                           IM_COL32(230, 235, 240, 255), lockR.c_str());
                 }
-                gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
-                             2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
+                NobleUi::DrawTacticalFrame(gdl, t0, t1, s, isCur, isEq || isTry, hov, true);
             } else {
-                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
-                gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
-                             2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
+                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(28, 60, 92, 235) : (hov || isCur ? IM_COL32(34, 48, 66, 235) : IM_COL32(16, 24, 34, 220)), 2.0f * s);
+                NobleUi::DrawTacticalFrame(gdl, t0, t1, s, isCur, isEq || isTry, hov, true);
                 float tx = t0.x + 10.0f * s;
                 if (row.options[i].swatch) {
                     gdl->AddRectFilled(ImVec2(tx, t0.y + 12.0f * s), ImVec2(tx + 18.0f * s, t1.y - 12.0f * s), row.options[i].swatch, 2.0f * s);
@@ -3213,65 +3538,68 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 std::string name = row.options[i].name;
                 const bool locked = row.options[i].locked || row.options[i].forSale;
                 const float maxW = t1.x - tx - 26.0f * s;
-                if (locked) {   // name on top, "LOCKED - <rank>" or "<price> cR" under it
+                if (locked) {
                     while (name.size() > 3 && TextW(bodyFont, 15.0f * s, name.c_str()) > maxW) name = name.substr(0, name.size() - 4) + "...";
-                    TextAt(gdl, bodyFont, 15.0f * s, ImVec2(tx, t0.y + 5.0f * s), IM_COL32(120, 130, 140, 255), name.c_str());
+                    TextAt(gdl, bodyFont, 15.0f * s, ImVec2(tx, t0.y + 5.0f * s), IM_COL32(130, 142, 154, 255), name.c_str());
                     const std::string lock = row.options[i].forSale ? WithCommas(row.options[i].price) + " cR"
                         : std::string("LOCKED - ") + (row.options[i].lockRank ? row.options[i].lockRank : "");
-                    TextAt(gdl, smallFont, 12.0f * s, ImVec2(tx, t1.y - 18.0f * s), IM_COL32(255, 196, 92, 230), lock.c_str());
+                    TextAt(gdl, smallFont, 12.0f * s, ImVec2(tx, t1.y - 18.0f * s), NobleUi::kAmber, lock.c_str());
                 } else {
                     while (name.size() > 3 && TextW(bodyFont, 16.0f * s, name.c_str()) > maxW) name = name.substr(0, name.size() - 4) + "...";
-                    TextAt(gdl, bodyFont, 16.0f * s, ImVec2(tx, t0.y + tileH * 0.5f - 9.0f * s), isEq ? kWhiteCol : IM_COL32(200, 214, 228, 255), name.c_str());
+                    TextAt(gdl, bodyFont, 16.0f * s, ImVec2(tx, t0.y + tileH * 0.5f - 9.0f * s), isEq ? kWhiteCol : IM_COL32(205, 218, 232, 255), name.c_str());
                 }
             }
-            if (isEq) {   // equipped check in the corner
+            if (isEq) {
                 const ImVec2 cc(t1.x - 11.0f * s, t0.y + 11.0f * s);
                 gdl->AddCircleFilled(cc, 8.0f * s, kAccentCol);
                 gdl->AddLine(ImVec2(cc.x - 4.0f * s, cc.y), ImVec2(cc.x - 1.0f * s, cc.y + 3.0f * s), IM_COL32(10, 20, 30, 255), 2.0f * s);
                 gdl->AddLine(ImVec2(cc.x - 1.0f * s, cc.y + 3.0f * s), ImVec2(cc.x + 4.0f * s, cc.y - 3.0f * s), IM_COL32(10, 20, 30, 255), 2.0f * s);
             }
         }
-        const int lastSlot = colourGrid ? 29 : n - 1;   // tileOf covers 0..n-1
+        const int lastSlot = colourGrid ? 29 : n - 1;
         ImGui::SetCursorScreenPos(ImVec2(base.x, base.y + (lastSlot / cols + 1) * (tileH + cg)));
         ImGui::Dummy(ImVec2(1, 1));
         ImGui::EndChild();
         m_pickerScrollToEquipped = false;
+        m_gridScrollToCursor = false;
 
-        // Name and description of the hovered (or equipped, or about-to-be-bought) option.
+        // Footer: hovered option (mouse), or focused cursor (pane 1), or tried-on piece, or equipped.
         const bool pending = s_buyRow == m_focusedRow && s_buyValue >= 0 && s_buyValue < n;
-        const int shown = hoveredOption >= 0 ? hoveredOption : pending ? s_buyValue : equipped;
+        const int shown = hoveredOption >= 0 ? hoveredOption
+                        : (m_pane == 1 ? m_gridCursor : (pending ? s_buyValue : equipped));
         const float iy = k1.y - infoH;
-        dl->AddLine(ImVec2(pickX + pad, iy), ImVec2(k1.x - pad, iy), IM_COL32(255, 255, 255, 40));
+        dl->AddRectFilled(ImVec2(k0.x + 2.0f * s, iy), ImVec2(k1.x - 2.0f * s, k1.y - 2.0f * s), IM_COL32(10, 18, 28, 215));
+        dl->AddLine(ImVec2(pickX + pad, iy), ImVec2(k1.x - pad, iy), IM_COL32(143, 216, 255, 70));
         TextAt(dl, titleFont, 20.0f * s, ImVec2(pickX + pad, iy + 10.0f * s), kWhiteCol, row.options[shown].name.c_str());
         const char* desc = row.options[shown].description.empty() ? (colourGrid ? "One of Reach's 30 armor colors." : "")
                                                                   : row.options[shown].description.c_str();
-        const bool emblemColourRow = row.index == &m_profile.emblemPrimaryColor || row.index == &m_profile.emblemSecondaryColor ||
+        const bool isEmbPreviewRow = row.index == &m_profile.emblemPrimaryColor || row.index == &m_profile.emblemSecondaryColor ||
                                      row.index == &m_profile.emblemBackgroundColor;
         const float previewSize = 96.0f * s;
-        TextAt(dl, bodyFont, 15.0f * s, ImVec2(pickX + pad, iy + 38.0f * s), kDimCol, desc, pickW - pad * 2.0f - (emblemColourRow ? previewSize + 10.0f * s : 0.0f));
-        if (emblemColourRow) {
-            // The whole emblem with the hovered swatch tried on, so a colour can be judged before it is picked.
+        TextAt(dl, bodyFont, 15.0f * s, ImVec2(pickX + pad, iy + 36.0f * s), kDimCol, desc,
+               pickW - pad * 2.0f - (isEmbPreviewRow ? previewSize + 10.0f * s : 0.0f));
+        if (isEmbPreviewRow) {
             const int saved = *row.index;
             *row.index = shown;
             const ImVec2 p0(k1.x - pad - previewSize, iy + 12.0f * s), p1(p0.x + previewSize, p0.y + previewSize);
             dl->AddRectFilled(p0, p1, IM_COL32(20, 14, 18, 250));
             UiArt::DrawEmblem(dl, m_profile.emblemIndex, m_profile.emblemBackgroundIndex, p0, p1, EmblemColorsNow());
-            dl->AddRect(p0, p1, IM_COL32(170, 220, 255, 90));
+            dl->AddRect(p0, p1, IM_COL32(170, 220, 255, 110));
             *row.index = saved;
         }
-        // Firefight voices: X (pad or key) plays a sample line for the highlighted character, cycling through its lines.
+
+        // Firefight Voice preview button [X]
         if (std::strcmp(row.label, "Firefight Voice") == 0) {
-            // The prompt: the X key on keyboard/mouse, the X button on a pad; the whole prompt is also a mouse button.
             const float glyph = 20.0f * s;
-            const float py = k1.y - 30.0f * s;
-            const ImVec2 r0(k1.x - pad - 100.0f * s, py - 4.0f * s), r1(k1.x - pad + 4.0f * s, py + glyph + 4.0f * s);
-            const bool hovered = ImGui::IsMouseHoveringRect(r0, r1);
+            const float py = k1.y - 31.0f * s;
+            const ImVec2 r0(k1.x - pad - 108.0f * s, py - 4.0f * s), r1(k1.x - pad + 4.0f * s, py + glyph + 4.0f * s);
+            const bool hovered = !m_showColorModal && ImGui::IsMouseHoveringRect(r0, r1);
             if (hovered) {
-                dl->AddRectFilled(r0, r1, IM_COL32(40, 90, 130, 140), 4.0f * s);
+                dl->AddRectFilled(r0, r1, IM_COL32(40, 90, 130, 160), 4.0f * s);
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             }
-            const bool press = !ImGui::GetIO().WantTextInput &&
-                               (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_X, false) ||
+            const bool press = !modalOrTyping &&
+                               (UiPad::ActionX() || ImGui::IsKeyPressed(ImGuiKey_X, false) ||
                                 (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)));
             if (press && shown >= 0 && static_cast<size_t>(shown) < kFirefightVoices.size()) {
                 const SettingsData sound = Settings::Get().Snapshot();
@@ -3284,39 +3612,49 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             } else {
                 px += InputPrompts::DrawKey(dl, bodyFont, ImVec2(px, py), glyph, "X") + 5.0f * s;
             }
-            TextAt(dl, smallFont, 14.0f * s, ImVec2(px, py + 3.0f * s), hovered ? IM_COL32(236, 244, 250, 255) : IM_COL32(190, 214, 232, 255), "Preview");
+            TextAt(dl, smallFont, 14.0f * s, ImVec2(px, py + 3.0f * s),
+                   hovered ? IM_COL32(236, 244, 250, 255) : IM_COL32(190, 214, 232, 255), "Preview");
         }
-        const std::string count = std::to_string(shown + 1) + " / " + std::to_string(n) +
-            (shown == equipped ? "   EQUIPPED"
-             : row.options[shown].locked ? std::string("   PREVIEW - unlocks at ") + (row.options[shown].lockRank ? row.options[shown].lockRank : "a higher rank")
-             : row.options[shown].forSale ? std::string(pending && shown == s_buyValue ? "   PREVIEW - buy to equip" : "   Click to preview")
-             : std::string("   Click to equip"));
-        TextAt(dl, smallFont, 14.0f * s, ImVec2(pickX + pad, k1.y - 26.0f * s), IM_COL32(130, 150, 170, 255), count.c_str());
 
-        // BUY for an item that was clicked but isn't bought yet. cR balance = earned - spent (rank follows earned).
+        const bool showingPad = (InputPrompts::Current() == InputPrompts::Device::Gamepad);
+        const std::string actionHint =
+            shown == equipped ? "   EQUIPPED"
+            : row.options[shown].locked ? std::string("   LOCKED - unlocks at ") + (row.options[shown].lockRank ? row.options[shown].lockRank : "a higher rank")
+            : row.options[shown].forSale ? ((pending && shown == s_buyValue) ? (showingPad ? "   Press A to BUY" : "   Click BUY to purchase")
+                                                                              : (showingPad ? "   Press A to preview" : "   Click to preview"))
+            : (m_pane == 1 ? (showingPad ? "   Press A to equip" : "   Click to equip")
+                           : (showingPad ? "   Press A to browse grid" : "   Click to equip"));
+        const std::string count = std::to_string(shown + 1) + " / " + std::to_string(n) + actionHint;
+        TextAt(dl, smallFont, 13.5f * s, ImVec2(pickX + pad, k1.y - 25.0f * s),
+               (pending && shown == s_buyValue && row.options[shown].forSale) ? NobleUi::kAmber : IM_COL32(138, 162, 186, 255),
+               count.c_str());
+
+        // BUY button (also works with 2nd A press in m_pane == 1)
         if (pending && row.options[s_buyValue].forSale) {
             const PickOption& o = row.options[s_buyValue];
             const int64_t balance = Career::Balance();
             const bool afford = balance >= o.price;
-            const std::string label = afford ? "BUY  " + WithCommas(o.price) + " cR" : "NEED " + WithCommas(o.price) + " cR";
-            const float bw = std::max(170.0f * s, TextW(smallFont, 15.0f * s, label.c_str()) + 30.0f * s), bh = 30.0f * s;
+            const std::string label = afford ? (showingPad ? "BUY  " + WithCommas(o.price) + " cR  [A]" : "BUY  " + WithCommas(o.price) + " cR")
+                                             : "NEED " + WithCommas(o.price) + " cR";
+            const float bw = std::max(180.0f * s, TextW(smallFont, 15.0f * s, label.c_str()) + 28.0f * s), bh = 30.0f * s;
             const ImVec2 b0(k1.x - pad - bw, k1.y - 36.0f * s), b1(b0.x + bw, b0.y + bh);
             ImGui::SetCursorScreenPos(b0);
             const bool clicked = ImGui::InvisibleButton("##buy", ImVec2(bw, bh));
-            const bool hov = ImGui::IsItemHovered();
+            const bool hov = !m_showColorModal && ImGui::IsItemHovered();
             dl->AddRectFilled(b0, b1, !afford ? IM_COL32(40, 40, 44, 230) : hov ? IM_COL32(150, 110, 40, 245) : IM_COL32(110, 80, 30, 235), 2.0f * s);
-            dl->AddRect(b0, b1, afford ? IM_COL32(255, 196, 92, hov ? 255 : 170) : IM_COL32(120, 120, 120, 120), 2.0f * s);
-            TextAt(dl, smallFont, 15.0f * s, ImVec2(b0.x + (bw - TextW(smallFont, 15.0f * s, label.c_str())) * 0.5f, b0.y + 6.0f * s),
+            NobleUi::DrawTacticalFrame(dl, b0, b1, s, afford && m_pane == 1, afford, hov, true);
+            TextAt(dl, smallFont, 14.5f * s, ImVec2(b0.x + (bw - TextW(smallFont, 14.5f * s, label.c_str())) * 0.5f, b0.y + 7.0f * s),
                    afford ? kWhiteCol : IM_COL32(150, 150, 150, 255), label.c_str());
             const std::string bal = "Balance: " + WithCommas(balance) + " cR";
-            TextAt(dl, smallFont, 13.0f * s, ImVec2(b0.x, b0.y - 18.0f * s), IM_COL32(200, 214, 228, 220), bal.c_str());
+            TextAt(dl, smallFont, 13.0f * s, ImVec2(b0.x, b0.y - 18.0f * s), IM_COL32(200, 214, 228, 225), bal.c_str());
             if (clicked && afford && Career::BuyArmoryItem(o.buyKey, o.price)) {
                 choose(m_focusedRow, s_buyValue, true);
+                MenuSounds::Click();
             }
         }
     }
 
-    // ---- Try-on: the 3D scene shows the clicked piece that can't be equipped yet; the saved look is unchanged.
+    // ---- Try-on: the 3D scene shows the piece that can't be equipped yet; the saved look is unchanged.
     {
         static int s_shownRow = -1, s_shownValue = -1;
         static ULONGLONG s_lastRefresh = 0;
@@ -3326,10 +3664,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             wantRow = s_buyRow;
             wantValue = s_buyValue;
         }
-        // Keep the tried-on piece applied. Any other sync (a save, entering another slot, the coalesced push
-        // flush) can put the equipped look back, which is what made a preview look like it unequipped itself
-        // a moment after the click. Re-asserting it is cheap: SyncToReachArmory() does nothing when the
-        // selection it would push is already the pushed one.
         const bool refresh = wantRow >= 0 && GetTickCount64() - s_lastRefresh >= 400;
         if (wantRow != s_shownRow || wantValue != s_shownValue || refresh) {
             s_shownRow = wantRow;
@@ -3341,25 +3675,28 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 const int savedVisorSelection = m_visorSelection;
                 *field = wantValue;
                 if (field == &m_profile.visorColorIndex) m_visorSelection = wantValue;
-                if (field == &m_profile.helmetIndex) m_profile.helmetVariantIndex = 0;   // a helmet is tried on with its base
-                if (field == &m_profile.eliteArmorSet) ApplyEliteSetPieces(m_profile, wantValue);   // try the whole preset
+                if (field == &m_profile.helmetIndex) m_profile.helmetVariantIndex = 0;
+                if (field == &m_profile.eliteArmorSet) ApplyEliteSetPieces(m_profile, wantValue);
                 SyncToReachArmory();
                 m_visorSelection = savedVisorSelection;
                 m_profile = saved;
             } else {
-                SyncToReachArmory();   // back to the equipped look
+                SyncToReachArmory();
             }
         }
     }
 
-    // ---- Over the model: how to turn the character around (every camera, close-ups included).
+    // ---- Over the model: clean tactical rotation badge
     {
-        const std::string hint = "Drag or Q / E to rotate";
-        const ImVec2 badgePos(previewX + 16.0f * s, origin.y + avail.y - 30.0f * s);
-        const ImVec2 badgeSize(TextW(smallFont, 14.0f * s, hint.c_str()) + 20.0f * s, 24.0f * s);
-        dl->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), IM_COL32(18, 30, 48, 180), 4.0f * s);
-        TextAt(dl, smallFont, 14.0f * s, ImVec2(badgePos.x + 10.0f * s, badgePos.y + 4.0f * s),
-               IM_COL32(200, 220, 240, 220), hint.c_str());
+        const bool isPad = InputPrompts::Current() == InputPrompts::Device::Gamepad;
+        const std::string hint = isPad ? "Right Stick to Rotate   |   LB / RB Species" : "Drag or Q / E to Rotate";
+        const ImVec2 badgeSize(TextW(smallFont, 13.5f * s, hint.c_str()) + 22.0f * s, 26.0f * s);
+        const ImVec2 badgePos(previewX + 16.0f * s, origin.y + avail.y - 32.0f * s);
+        const ImVec2 badgeEnd(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y);
+        dl->AddRectFilled(badgePos, badgeEnd, IM_COL32(12, 22, 34, 200), 3.0f * s);
+        NobleUi::DrawTacticalFrame(dl, badgePos, badgeEnd, s, false, false, false, false);
+        TextAt(dl, smallFont, 13.5f * s, ImVec2(badgePos.x + 11.0f * s, badgePos.y + 6.0f * s),
+               IM_COL32(205, 224, 244, 235), hint.c_str());
     }
 }
 

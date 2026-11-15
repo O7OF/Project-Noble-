@@ -72,13 +72,13 @@ void UIManager::Shutdown() {
 
 void UIManager::ApplyReachTheme() {
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0f;
-    style.ChildRounding = 3.0f;
-    style.FrameRounding = 3.0f;
-    style.PopupRounding = 3.0f;
-    style.ScrollbarRounding = 4.0f;
-    style.GrabRounding = 3.0f;
-    style.TabRounding = 3.0f;
+    style.WindowRounding = 8.0f;
+    style.ChildRounding = 6.0f;
+    style.FrameRounding = 5.0f;
+    style.PopupRounding = 7.0f;
+    style.ScrollbarRounding = 8.0f;
+    style.GrabRounding = 5.0f;
+    style.TabRounding = 5.0f;
 
     style.WindowBorderSize = 1.0f;
     style.FrameBorderSize = 1.0f;
@@ -244,6 +244,7 @@ void UIManager::Render(BlamEngine* engine) {
 void UIManager::EndFrame() {
     if (!s_isInitialized) return;
 
+    UiPad::DrawVirtualCursor(ImGui::GetForegroundDrawList());
     ImGui::Render();
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }

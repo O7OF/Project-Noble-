@@ -1,213 +1,8 @@
-#include "FrontEndMenu.hpp"
-#include "ArmorCustomizer.hpp"
-#include "CareerPanel.hpp"
-#include "InputPrompts.hpp"
-#include "MenuSounds.hpp"
-#include "ModCatalog.hpp"
-#include "ModDownloadPrompt.hpp"
-#include "NobleStyle.hpp"
-#include "NobleUi.hpp"
-#include "ServerBrowser.hpp"
-#include "SettingsPanel.hpp"
-#include "SocialOverlay.hpp"
-#include "TeamColors.hpp"
-#include "UIManager.hpp"
-#include "UiArt.hpp"
-#include "UiPad.hpp"
-#include "WorkshopManager.hpp"
-#include "audio/ProcessAudio.hpp"
-#include "audio/ReachAudio.hpp"
-#include "audio/VoiceChat.hpp"
-#include "career/Career.hpp"
-#include "common/BuildIdentity.hpp"
-#include "common/DeviceIdentity.hpp"
-#include "common/Logger.hpp"
-#include "common/MapNames.hpp"
-#include "common/RecommendedMaps.hpp"
-#include "common/Relaunch.hpp"
-#include "common/Settings.hpp"
-#include "common/Updater.hpp"
-#include "common/Version.hpp"
-#include "engine/BlamEngine.hpp"
-#include "engine/FrameCapture.hpp"
-#include "engine/MapGameTypes.hpp"
-#include "engine/Playlists.hpp"
-#include "engine/ReachArmory.hpp"
-#include "engine/ReachHost.hpp"
-#include "engine/SessionVariant.hpp"
-#include "engine/VariantRules.hpp"
-#include "hooks/HookManager.hpp"
-#include "host/D3D11Renderer.hpp"
-#include "host/EngineLimits.hpp"
-#include "host/Window.hpp"
-#include "network/AuthClient.hpp"
-#include "network/MasterServerClient.hpp"
-#include "network/NetworkTransport.hpp"
-#include "network/SessionManager.hpp"
-#include "network/SocialClient.hpp"
-#include "network/UPnP.hpp"
-#include "vfs/VFS.hpp"
-#include <format>
-#include <functional>
-#include <map>
-#include <nlohmann/json.hpp>
-#include <random>
-
-#include <algorithm>
-#include <atomic>
-#include <cfloat>
-#include <cmath>
-#include <cstdio>
-#include <cstring>
-#include <cwctype>
-#include <d3d11.h>
-#include <d3dcompiler.h>
-#include <dxgi.h>
-#include <fstream>
-#include <imgui.h>
-#include <imgui_impl_dx11.h>
-#include <imgui_impl_win32.h>
-#include <mutex>
-#include <set>
-#include <shellapi.h>
-#include <string>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-#include <windows.h>
+#include "FrontEndInternal.hpp"
 
 namespace noble {
+namespace fe {
 
-namespace {
-
-// ---------------------------------------------------------------------------------------------
-// Content
-// ---------------------------------------------------------------------------------------------
-struct MenuMap {
-  const char *scenario; // passed to BlamEngine::LaunchMap
-  const char *name;     // shown in the list
-  const char *blurb;    // one line under the preview
-};
-
-// Same maps as BlamEngine's multiplayer table (launch indices 190-209).
-const MenuMap kMaps[] = {
-    {"50_panopticon", "Boardwalk", "New Alexandria waterfront."},
-    {"70_boneyard", "Boneyard", "A ship-breaking yard on the coast."},
-    {"45_launch_station", "Countdown", "Inside a Sabre launch facility."},
-    {"30_settlement", "Powerhouse", "A hydroelectric plant in the hills."},
-    {"52_ivory_tower", "Reflection", "A penthouse high above the city."},
-    {"35_island", "Spire", "A Covenant spire on a rocky island."},
-    {"20_sword_slayer", "Sword Base", "The atrium of ONI's Sword Base."},
-    {"45_aftship", "Zealot", "Aboard a Covenant corvette."},
-    {"dlc_slayer", "Anchor 9", "A space station in orbit over Reach."},
-    {"dlc_invasion", "Breakpoint", "An ONI research site under attack."},
-    {"dlc_medium", "Tempest", "A Forerunner coastline."},
-    {"condemned", "Condemned", "An orbital station breaking apart."},
-    {"trainingpreserve", "Highlands", "A training preserve in the hills."},
-    {"cex_beaver_creek", "Battle Canyon", "A remake of a canyon classic."},
-    {"cex_damnation", "Penance", "A remake of a Covenant classic."},
-    {"cex_timberland", "Ridgeline", "A remake of a forest classic."},
-    {"cex_prisoner", "Solitary", "A remake of a prison classic."},
-    {"cex_hangemhigh", "High Noon", "A remake of a tomb classic."},
-    {"cex_headlong", "Breakneck", "A remake of a city classic."},
-    {"forge_halo", "Forge World", "The largest canvas Reach has."},
-};
-constexpr int kDefaultMap = 6; // Sword Base: the map tested most
-
-// Campaign missions (launch index 178-189).
-const MenuMap kMissions[] = {
-    {"m05", "Noble Actual", "Arrive on Reach and meet Noble Team. (Cinematic)"},
-    {"m10", "Winter Contingency",
-     "A relay station on the frontier has gone silent."},
-    {"m20", "ONI: Sword Base", "The Covenant are attacking a vital ONI base."},
-    {"m30", "Nightfall", "Scout behind enemy lines under cover of dark."},
-    {"m35", "Tip of the Spear", "Two armies collide. Take out the spire."},
-    {"m45", "Long Night of Solace", "Take the fight into orbit."},
-    {"m50", "Exodus", "Get civilians out of an occupied city."},
-    {"m52", "New Alexandria", "Air support over a city under siege."},
-    {"m60", "The Package", "Back to Sword Base for one last job."},
-    {"m70", "The Pillar of Autumn", "Deliver the package to the ship."},
-    {"m70_bonus", "Lone Wolf", "Hold out for as long as you can."},
-};
-const char *const kDifficulties[] = {"EASY", "NORMAL", "HEROIC", "LEGENDARY"};
-const float kDifficultyMultiplier[] = {0.75f, 1.0f, 1.25f, 1.5f};
-static bool s_menuMusicMuted = false;
-
-// Firefight maps (launch index 210-219, as BlamEngine::ResolveMapId maps them).
-const MenuMap kFirefightMaps[] = {
-    {"ff50_park", "Beachhead", ""},      {"ff45_corvette", "Corvette", ""},
-    {"ff20_courtyard", "Courtyard", ""}, {"ff60_icecave", "Glacier", ""},
-    {"ff70_holdout", "Holdout", ""},     {"ff60_airview", "Outpost", ""},
-    {"ff10_prototype", "Overlook", ""},  {"ff30_waterfront", "Waterfront", ""},
-    {"ff_unearthed", "Unearthed", ""},   {"cex_ff_halo", "Installation 04", ""},
-};
-
-// Reach's campaign skulls. `bit` is MCC's skull number (launch block +0x48),
-// `icon` the name in MCC's skulls texture pack, `multiplier` the
-// campaign-scoring bonus.
-struct Skull {
-  const char *name;
-  int bit;
-  const char *icon;
-  const char *description;
-  float multiplier;
-  bool primary;
-};
-const Skull kSkulls[] = {
-    {"Iron", 18, "IRON",
-     "Co-op: dying sends everyone back to the last checkpoint. Solo: death "
-     "restarts the mission.",
-     1.2f, true},
-    {"Black Eye", 3, "BLACKEYE",
-     "Your shields only recharge when you melee enemies.", 1.1f, true},
-    {"Tough Luck", 36, "TOUGHLUCK",
-     "Enemies dodge grenades and dive out of danger far more often.", 1.1f,
-     true},
-    {"Catch", 7, "CATCH", "Enemies throw many more grenades.", 1.1f, true},
-    {"Cloud", 13, "CLOUD", "Your motion tracker is turned off.", 1.1f, true},
-    {"Famine", 11, "FAMINE",
-     "Weapons dropped by enemies carry half the usual ammunition.", 1.2f, true},
-    {"Thunderstorm", 34, "THUNDERSTORM",
-     "Enemies are promoted to their higher ranks.", 1.2f, true},
-    {"Tilt", 35, "TILT", "Enemy strengths and weaknesses are exaggerated.",
-     1.2f, true},
-    {"Mythic", 23, "MYTHIC", "Enemies have much more health.", 1.2f, true},
-    {"Blind", 4, "BLIND", "Your HUD and first-person weapon are hidden.", 1.0f,
-     false},
-    {"Cowbell", 8, "COWBELL", "Explosions throw things much farther.", 1.0f,
-     false},
-    {"Grunt Birthday Party", 16, "GRUNTBIRTHDAYPARTY",
-     "Headshots on Grunts end in a burst of confetti.", 1.0f, false},
-    {"IWHBYD", 19, "IWHBYD", "Rare combat dialogue becomes much more common.",
-     1.0f, false},
-};
-constexpr int kSkullCount =
-    static_cast<int>(sizeof(kSkulls) / sizeof(kSkulls[0]));
-const char *const kDifficultyNames[] = {"Easy", "Normal", "Heroic",
-                                        "Legendary"};
-
-template <typename T, size_t N> constexpr int Count(const T (&)[N]) {
-  return static_cast<int>(N);
-}
-
-// ---------------------------------------------------------------------------------------------
-// Game variants (MCC's game_variants folder)
-// ---------------------------------------------------------------------------------------------
-struct MenuVariant {
-  std::string label;
-  std::filesystem::path path;
-  std::string description; // the file's own text; empty when it only holds a
-                           // key for a string table Noble can't read
-  bool custom = false; // a player-made game mode (a .json preset), listed under
-                       // its own heading
-  std::string
-      type; // MapGameTypes key from the file name; empty when it can't be told
-};
-
-struct VariantName {
-  const char *stem; // lower-case file stem
-  const char *label;
-};
 const VariantName kVariantNames[] = {
     {"slayer_054", "Slayer"},
     {"slayer_pro_054", "Slayer Pro"},
@@ -264,7 +59,6 @@ const VariantName kVariantNames[] = {
     {"hr_ff_standard_1set", "Firefight"},
     {"hr_ff_versus_2turns", "Firefight Versus"},
 };
-constexpr const wchar_t *kForgeVariant = L"00_basic_editing_054.bin";
 
 std::wstring Lower(std::wstring s) {
   std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c) {
@@ -346,9 +140,8 @@ std::string VariantLabel(const std::wstring &stem,
 // The stock MCC folder and Noble's own writable game_variants folder. The
 // engine resolves both (BlamEngine::ResolveVariantFile), so the menu must scan
 // both too.
-static std::filesystem::path
-VariantBasePath(const std::filesystem::path &reachDir,
-                const std::string &base) {
+std::filesystem::path VariantBasePath(const std::filesystem::path &reachDir,
+                                      const std::string &base) {
   std::error_code ec;
   const std::filesystem::path name = std::filesystem::path(base).filename();
   for (const std::filesystem::path &folder :
@@ -475,14 +268,6 @@ int FindVariant(const std::vector<MenuVariant> &list, const wchar_t *file) {
 // map is a layout laid over a stock map; the engine reads it from the launch
 // block (BlamEngine, "-mvar").
 // ---------------------------------------------------------------------------------------------
-struct ForgeMap {
-  std::string title, description, creator;
-  std::string scenario; // the stock map it is built on
-  std::string group; // list heading, from the pack's file name prefixes ("INF
-                     // ", "BTB ", ...)
-  std::filesystem::path path;
-};
-
 // A map variant's base map id -> scenario. The ids are BlamEngine's
 // kMultiplayerMaps ones.
 const char *ScenarioForMapId(int32_t id) {
@@ -759,18 +544,6 @@ std::vector<ForgeMap> ScanForgeMaps() {
 // ---------------------------------------------------------------------------------------------
 // Drawing helpers
 // ---------------------------------------------------------------------------------------------
-struct Ui {
-  ImDrawList *dl = nullptr;
-  ImVec2 origin = ImVec2(0.0f, 0.0f);
-  ImVec2 size;
-  float s = 1.0f;
-};
-
-const ImU32 kWhite = IM_COL32(236, 240, 244, 255);
-const ImU32 kDim = IM_COL32(160, 170, 180, 255);
-const ImU32 kDisabled = IM_COL32(110, 118, 126, 200);
-const ImU32 kAccent = IM_COL32(143, 216, 255, 255);
-
 ImFont *Font(ImFont *f) { return f ? f : ImGui::GetFont(); }
 
 float TextWidth(ImFont *font, float px, const char *text) {
@@ -791,7 +564,7 @@ std::string NumberWithCommas(int64_t v) {
 }
 
 void Text(const Ui &ui, ImFont *font, float px, ImVec2 pos, ImU32 col,
-          const char *text, float wrapRight = 0.0f) {
+          const char *text, float wrapRight) {
   ui.dl->AddText(Font(font), px * ui.s, pos, col, text, nullptr,
                  wrapRight > pos.x ? wrapRight - pos.x : 0.0f);
 }
@@ -909,23 +682,6 @@ float BlurbBlockHeight(const Ui &ui, float width, const char *blurb) {
       Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, blurb).y;
   return std::min(textH, lineH * 2.0f) + 16.0f * ui.s;
 }
-
-enum class Screen {
-  Main,
-  Campaign,
-  Skulls,
-  Firefight,
-  CustomGame,
-  Forge,
-  Theater,
-  Servers,
-  Settings,
-  Armory,
-  Mods,
-  Career,
-  PreGameLobby,
-  Social
-};
 
 std::string s_lobbyBackdropMap; // set each frame from the lobby state
 std::filesystem::path
@@ -2035,7 +1791,7 @@ void DrawBackdrop(const Ui &ui, Screen screen) {
 }
 
 void DrawTitle(const Ui &ui, ImVec2 pos, const char *title,
-               const char *sideLabel = nullptr) {
+               const char *sideLabel) {
   const float d = 15.0f * ui.s;
   const ImVec2 c(pos.x + d, pos.y + 28.0f * ui.s);
   ui.dl->AddQuad(ImVec2(c.x, c.y - d), ImVec2(c.x + d, c.y),
@@ -2074,24 +1830,11 @@ void DrawTitle(const Ui &ui, ImVec2 pos, const char *title,
   }
 }
 
-struct ListItem {
-  std::string label;
-  bool enabled = true;
-  bool header = false;
-  bool expanded = false;
-  std::string thumb; // scenario whose small preview is drawn before the label
-                     // (empty = none)
-  std::filesystem::path
-      image;      // a mod map's own thumbnail file (wins over thumb)
-  int number = 0; // shown before the thumbnail when > 0
-};
-
 bool AcceptPressed();
 
 int DrawList(const Ui &ui, const char *id, ImVec2 pos, float width,
              const std::vector<ListItem> &items, int &selected, bool keyboard,
-             float rowHeight = 30.0f, int maxRows = 0,
-             bool hoverSelects = true) {
+             float rowHeight, int maxRows, bool hoverSelects) {
   const float rh = rowHeight * ui.s;
   int activated = -1;
   const int n = static_cast<int>(items.size());
@@ -2134,29 +1877,31 @@ int DrawList(const Ui &ui, const char *id, ImVec2 pos, float width,
     const float wheel = ImGui::GetIO().MouseWheel;
     if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false))
       first -= static_cast<int>(wheel);
-    static float s_stickAccum = 0.0f;
+    static std::unordered_map<ImGuiID, float> s_stickAccumMap;
+    float &stickAccum = s_stickAccumMap[key];
     const float rStick = UiPad::AnalogScrollY(false);
     if (rStick != 0.0f) {
-      s_stickAccum += rStick / std::max(1.0f, rh);
-      const int stepRows = static_cast<int>(s_stickAccum);
+      stickAccum += rStick / std::max(1.0f, rh);
+      const int stepRows = static_cast<int>(stickAccum);
       if (stepRows != 0) {
         first += stepRows;
-        s_stickAccum -= static_cast<float>(stepRows);
+        stickAccum -= static_cast<float>(stepRows);
       }
     } else {
-      s_stickAccum = 0.0f;
+      stickAccum = 0.0f;
     }
     first = std::clamp(first, 0, n - maxRows);
     const float trackX = pos.x + width + 6.0f * ui.s, trackH = maxRows * rh;
-    ui.dl->AddRectFilled(ImVec2(trackX, pos.y),
-                         ImVec2(trackX + 3.0f * ui.s, pos.y + trackH),
-                         IM_COL32(255, 255, 255, 25));
-    const float thumbH = std::max(18.0f * ui.s, trackH * maxRows / n);
-    const float thumbY =
-        pos.y + (trackH - thumbH) * first / static_cast<float>(n - maxRows);
-    ui.dl->AddRectFilled(ImVec2(trackX, thumbY),
-                         ImVec2(trackX + 3.0f * ui.s, thumbY + thumbH),
-                         IM_COL32(143, 216, 255, 170));
+    float scrollRows = static_cast<float>(first);
+    char sbId[96];
+    std::snprintf(sbId, sizeof(sbId), "%s_sb", id ? id : "list");
+    NobleUi::DrawInteractiveScrollbar(
+        ui.dl, sbId, ImVec2(trackX, pos.y),
+        ImVec2(trackX + 6.0f * ui.s, pos.y + trackH), scrollRows,
+        static_cast<float>(n - maxRows), static_cast<float>(maxRows),
+        static_cast<float>(n), ui.s);
+    first =
+        std::clamp(static_cast<int>(std::lround(scrollRows)), 0, n - maxRows);
   } else {
     first = 0;
   }
@@ -2183,7 +1928,7 @@ int DrawList(const Ui &ui, const char *id, ImVec2 pos, float width,
       MenuSounds::Hover(ImGui::GetID(id) + i);
     }
     if (hovered && !hoverSelects && i != selected && items[i].enabled) {
-      ui.dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 16));
+      ui.dl->AddRectFilled(a, b, IM_COL32(143, 216, 255, 20), 5.0f * ui.s);
     }
     if (clicked) {
       selected = i;
@@ -2279,7 +2024,7 @@ int DrawList(const Ui &ui, const char *id, ImVec2 pos, float width,
 // `tabsEnd` gets the x just past the last tab, so a search box can sit after
 // them.
 bool DrawSourceTabs(const Ui &ui, ImVec2 pos, int &active, int moddedCount,
-                    int forgeCount = -1, float *tabsEnd = nullptr) {
+                    int forgeCount, float *tabsEnd) {
   const char *labels[3] = {"VANILLA", "MODDED", "FORGE MAPS"};
   const int tabs = forgeCount >= 0 ? 3 : 2;
   if (active >= tabs)
@@ -2358,15 +2103,9 @@ bool AcceptPressed() {
 
 // A prompt for a button with no Prompt of its own: Xbox glyph on a controller,
 // key box on keyboard and mouse.
-struct HintExtra {
-  InputPrompts::Button button;
-  const char *key;
-  const char *label;
-};
-
 void DrawHints(const Ui &ui,
                const std::vector<std::pair<Prompt, const char *>> &hints,
-               const std::vector<HintExtra> &extras = {}, float left = 0.075f) {
+               const std::vector<HintExtra> &extras, float left) {
   float x = ui.origin.x + ui.size.x * left;
   const float y = ui.origin.y + ui.size.y - 46.0f * ui.s;
   ui.dl->AddLine(ImVec2(x, y - 12.0f * ui.s),
@@ -2411,19 +2150,17 @@ void DrawHints(const Ui &ui,
   }
 }
 
-static bool s_showAccountModal = false;
 static bool s_openAccountPopup = false;
 static int s_accountTab = 0;
 static char s_accountUser[32] = "";
 static char s_accountPass[32] = "";
 static std::string s_accountStatusMsg = "";
 static bool s_accountStatusError = false;
-static bool s_showDevMenu = false;
 static bool s_openDevMenuPopup = false;
 static std::string s_devStatusMsg = "";
 
-static void OpenAccountModal() {
-  s_showAccountModal = true;
+void OpenAccountModal() {
+  g_showAccountModal = true;
   s_openAccountPopup = true;
   s_accountStatusMsg.clear();
   if (AuthClient::Get().IsLoggedIn()) {
@@ -2437,18 +2174,18 @@ static void OpenAccountModal() {
 }
 
 static void OpenDevMenuModal() {
-  s_showDevMenu = true;
+  g_showDevMenu = true;
   s_openDevMenuPopup = true;
   s_devStatusMsg.clear();
 }
 
 void DrawDevMenuModal(const Ui &ui) {
-  if (!s_showDevMenu)
+  if (!g_showDevMenu)
     return;
 
   // Strict security check: only developers can access this menu!
   if (!AuthClient::Get().IsDeveloper()) {
-    s_showDevMenu = false;
+    g_showDevMenu = false;
     return;
   }
 
@@ -2460,7 +2197,7 @@ void DrawDevMenuModal(const Ui &ui) {
                           ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   ImGui::SetNextWindowSize(ImVec2(480.0f * ui.s, 0));
 
-  if (ImGui::BeginPopupModal("NOBLE DEVELOPER CONSOLE", &s_showDevMenu,
+  if (ImGui::BeginPopupModal("NOBLE DEVELOPER CONSOLE", &g_showDevMenu,
                              ImGuiWindowFlags_NoResize |
                                  ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f),
@@ -2533,18 +2270,18 @@ void DrawDevMenuModal(const Ui &ui) {
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, 4));
     if (ImGui::Button("CLOSE", ImVec2(100, 30))) {
-      s_showDevMenu = false;
+      g_showDevMenu = false;
       ImGui::CloseCurrentPopup();
     }
 
     ImGui::EndPopup();
   } else {
-    s_showDevMenu = false;
+    g_showDevMenu = false;
   }
 }
 
 void DrawAccountModal(const Ui &ui) {
-  if (!s_showAccountModal)
+  if (!g_showAccountModal)
     return;
 
   if (s_openAccountPopup) {
@@ -2555,7 +2292,7 @@ void DrawAccountModal(const Ui &ui) {
                           ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   ImGui::SetNextWindowSize(ImVec2(440.0f * ui.s, 0));
 
-  if (ImGui::BeginPopupModal("ACCOUNT LOGIN / REGISTER", &s_showAccountModal,
+  if (ImGui::BeginPopupModal("ACCOUNT LOGIN / REGISTER", &g_showAccountModal,
                              ImGuiWindowFlags_NoResize |
                                  ImGuiWindowFlags_AlwaysAutoResize)) {
     bool isLoggedIn = AuthClient::Get().IsLoggedIn();
@@ -2643,7 +2380,7 @@ void DrawAccountModal(const Ui &ui) {
       }
       ImGui::Dummy(ImVec2(0, 4));
       if (ImGui::Button("CLOSE", ImVec2(-1, 32.0f * ui.s))) {
-        s_showAccountModal = false;
+        g_showAccountModal = false;
         ImGui::CloseCurrentPopup();
       }
     } else {
@@ -2708,7 +2445,7 @@ void DrawAccountModal(const Ui &ui) {
             s_accountStatusMsg = "Login successful!";
             s_accountStatusError = false;
             s_accountPass[0] = 0;
-            s_showAccountModal = false;
+            g_showAccountModal = false;
             ImGui::CloseCurrentPopup();
           } else {
             s_accountStatusMsg = res.error;
@@ -2724,7 +2461,7 @@ void DrawAccountModal(const Ui &ui) {
             s_accountStatusMsg = "Registration successful! Logged in.";
             s_accountStatusError = false;
             s_accountPass[0] = 0;
-            s_showAccountModal = false;
+            g_showAccountModal = false;
             ImGui::CloseCurrentPopup();
           } else {
             s_accountStatusMsg = res.error;
@@ -2734,13 +2471,13 @@ void DrawAccountModal(const Ui &ui) {
       }
       ImGui::SameLine();
       if (ImGui::Button("CANCEL", ImVec2(subW, 32.0f * ui.s))) {
-        s_showAccountModal = false;
+        g_showAccountModal = false;
         ImGui::CloseCurrentPopup();
       }
     }
     ImGui::EndPopup();
   } else {
-    s_showAccountModal = false;
+    g_showAccountModal = false;
   }
 }
 
@@ -2753,9 +2490,8 @@ void DrawAccountModal(const Ui &ui) {
 float PlayerRow(const Ui &ui, ImVec2 pos, float width, int rankIndex,
                 int emblemIndex, int nameplateIndex, int team,
                 const std::string &serviceTag, const std::string &name,
-                bool dev, bool selected, int emblemBackground = 0,
-                const UiArt::EmblemColors &emblemColors = {},
-                bool tester = false) {
+                bool dev, bool selected, int emblemBackground,
+                const UiArt::EmblemColors &emblemColors, bool tester) {
   const float h = 40.0f * ui.s;
   const float rankW = 29.0f * ui.s; // square, centred on the row
   const float embW = 30.0f * ui.s;
@@ -3097,11 +2833,9 @@ float DifficultyTiles(const Ui &ui, const char *id, ImVec2 pos, float width,
   ImGui::PopID();
   if (focused) {
     int change = 0;
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft))
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left())
       change = -1;
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight))
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Right())
       change = 1;
     if (change) {
       difficulty = std::clamp(difficulty + change, 0, 3);
@@ -3116,7 +2850,7 @@ float DifficultyTiles(const Ui &ui, const char *id, ImVec2 pos, float width,
 // arrows, the value is centred in the whole value area.
 int OptionRow(const Ui &ui, const char *id, ImVec2 pos, float width,
               const char *label, const char *value, bool focused,
-              const char *note = nullptr, bool arrows = true) {
+              const char *note, bool arrows) {
   const float h = 32.0f * ui.s;
   int change = 0;
   const ImVec2 b(pos.x + width, pos.y + h);
@@ -3167,13 +2901,9 @@ int OptionRow(const Ui &ui, const char *id, ImVec2 pos, float width,
     Text(ui, NobleStyle::SmallFont(), 15.0f,
          ImVec2(tx + vtw + gap, pos.y + 9.0f * ui.s), kDim, note);
   if (focused) {
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft))
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left())
       change = -1;
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight))
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Right())
       change = 1;
   }
   if (change)
@@ -3184,8 +2914,6 @@ int OptionRow(const Ui &ui, const char *id, ImVec2 pos, float width,
 // A choice list (PickerRow) is open: set while one is drawn, read at the start
 // of the next frame so Back and the up/down keys act on the list instead of the
 // screen under it.
-bool s_pickerOpenNow = false;
-bool s_pickerBlocksNav = false;
 
 // The mark of a row whose middle can be clicked: a plate and underline when the
 // mouse is over it (or its list is open) and a hand cursor. No caret or
@@ -3218,7 +2946,7 @@ void DrawMiddleHint(const Ui &ui, ImVec2 pos, float width, const char *value,
 // middle was clicked.
 int ClickRow(const Ui &ui, const char *id, ImVec2 pos, float width,
              const char *label, const char *value, bool focused, bool *clicked,
-             bool down = false) {
+             bool down) {
   const int change =
       OptionRow(ui, id, pos, width, label, value, focused, nullptr, false);
   ImGui::PushID(id);
@@ -3246,8 +2974,7 @@ int PickerRow(
     const Ui &ui, const char *id, ImVec2 pos, float width, const char *label,
     const char *value, bool focused,
     const std::function<void(std::vector<std::string> &, int &)> &fill,
-    int *picked, bool openNow = false, const char *note = nullptr,
-    bool labelOpens = true) {
+    int *picked, bool openNow, const char *note, bool labelOpens) {
   if (picked)
     *picked = -1;
   ImGui::PushID(id);
@@ -3282,7 +3009,7 @@ int PickerRow(
   }
   const bool open = ImGui::IsPopupOpen("##pickpopup");
   if (open)
-    s_pickerOpenNow = true;
+    g_pickerOpenNow = true;
   const bool inSection = ImGui::IsMouseHoveringRect(
       pos, ImVec2(pos.x + width, pos.y + h)); // the whole row, label included
   if (inSection || hovered || open) {
@@ -3332,22 +3059,18 @@ int PickerRow(
       bool cursorMoved = false;
       bool acceptKey = false;
       if (wasOpen && count > 0) {
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
           s_cursor = (s_cursor + 1) % count;
           cursorMoved = true;
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
           s_cursor = (s_cursor + count - 1) % count;
           cursorMoved = true;
         }
         acceptKey = ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                    ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+                    (!UiPad::IsVirtualCursorActive() && UiPad::AcceptPressed());
+        if (UiPad::BackPressed()) {
+          UiPad::ConsumeBack();
           ImGui::CloseCurrentPopup();
           MenuSounds::Back();
         }
@@ -3402,26 +3125,26 @@ int PickerRow(
 }
 
 bool ActionButton(const Ui &ui, const char *id, ImVec2 pos, float width,
-                  const char *label, bool primary = true,
-                  bool focused = false) {
+                  const char *label, bool primary, bool focused) {
   const float h = 40.0f * ui.s;
   ImGui::SetCursorScreenPos(pos);
   ImGui::PushID(id);
   const bool pressed = ImGui::InvisibleButton("##b", ImVec2(width, h));
   const bool hovered = ImGui::IsItemHovered();
   ImGui::PopID();
+  const float r = 6.0f * ui.s;
   const ImVec2 p1(pos.x + width, pos.y + h);
   const ImU32 bg = primary
-                       ? ((hovered || focused) ? IM_COL32(76, 150, 200, 255)
-                                               : IM_COL32(52, 112, 156, 240))
-                       : ((hovered || focused) ? IM_COL32(60, 74, 88, 240)
-                                               : IM_COL32(30, 38, 46, 230));
-  ui.dl->AddRectFilled(pos, p1, bg, 2.0f * ui.s);
+                       ? ((hovered || focused) ? IM_COL32(70, 152, 206, 255)
+                                               : IM_COL32(44, 108, 154, 242))
+                       : ((hovered || focused) ? IM_COL32(52, 72, 92, 242)
+                                               : IM_COL32(22, 32, 44, 232));
+  ui.dl->AddRectFilled(pos, p1, bg, r);
   if (focused) {
     NobleUi::DrawFocusHighlight(ui.dl, pos, p1, ui.s, true);
   } else {
-    ui.dl->AddRect(pos, p1, IM_COL32(170, 220, 255, hovered ? 220 : 90),
-                   2.0f * ui.s, 0, 1.0f);
+    ui.dl->AddRect(pos, p1, IM_COL32(143, 216, 255, hovered ? 225 : 95), r, 0,
+                   hovered ? 1.4f * ui.s : 1.0f);
   }
   const float tw = TextWidth(NobleStyle::TitleFont(), 20.0f * ui.s, label);
   Text(ui, NobleStyle::TitleFont(), 20.0f,
@@ -3437,12 +3160,13 @@ float DrawPreview(const Ui &ui, ImVec2 pos, float width,
                   const std::string &scenario, const char *name,
                   const char *blurb) {
   const float h = width * 292.0f / 668.0f;
+  const float r = 6.0f * ui.s;
   const ImVec2 b(pos.x + width, pos.y + h);
-  ui.dl->AddRectFilled(pos, b, IM_COL32(14, 20, 26, 230));
+  ui.dl->AddRectFilled(pos, b, IM_COL32(14, 20, 28, 230), r);
   UiTexture tex = UiArt::MapPreview(scenario, true);
   if (tex)
     UiArt::DrawCover(ui.dl, tex, pos, b);
-  ui.dl->AddRect(pos, b, IM_COL32(170, 200, 220, 120), 0.0f, 0, 1.0f);
+  ui.dl->AddRect(pos, b, IM_COL32(143, 216, 255, 130), r, 0, 1.0f);
   float y = b.y + 10.0f * ui.s;
   Text(ui, NobleStyle::TitleFont(), 26.0f, ImVec2(pos.x, y), kWhite, name);
   y += 32.0f * ui.s;
@@ -3462,7 +3186,7 @@ float DrawPreview(const Ui &ui, ImVec2 pos, float width,
 float HeroBanner(const Ui &ui, ImVec2 pos, float width, float height,
                  const std::string &scenario, const std::string &kicker,
                  const char *title, const char *blurb,
-                 const std::filesystem::path &image = {}) {
+                 const std::filesystem::path &image) {
   const ImVec2 b(pos.x + width, pos.y + height);
   ui.dl->AddRectFilled(pos, b, IM_COL32(14, 20, 26, 230));
   const UiTexture art = image.empty() ? UiArt::MapPreview(scenario, true)
@@ -3536,7 +3260,7 @@ float HeroBanner(const Ui &ui, ImVec2 pos, float width, float height,
 // buttons are greyed and show their subtitle as the reason.
 bool BigAction(const Ui &ui, const char *id, ImVec2 pos, float width,
                const char *label, const char *sub, bool primary, bool enabled,
-               bool focused = false) {
+               bool focused) {
   const float h = 50.0f * ui.s;
   ImGui::SetCursorScreenPos(pos);
   ImGui::PushID(id);
@@ -3544,19 +3268,23 @@ bool BigAction(const Ui &ui, const char *id, ImVec2 pos, float width,
       ImGui::InvisibleButton("##b", ImVec2(width, h)) && enabled;
   const bool hovered = ImGui::IsItemHovered() && enabled;
   ImGui::PopID();
+  const float r = 6.0f * ui.s;
   const ImVec2 b(pos.x + width, pos.y + h);
-  const ImU32 bg = !enabled ? IM_COL32(24, 30, 36, 200)
+  const ImU32 bg = !enabled ? IM_COL32(20, 26, 34, 205)
                    : primary
-                       ? (hovered || focused ? IM_COL32(76, 150, 200, 255)
-                                             : IM_COL32(52, 112, 156, 240))
-                       : (hovered || focused ? IM_COL32(60, 74, 88, 240)
-                                             : IM_COL32(30, 38, 46, 230));
-  ui.dl->AddRectFilled(pos, b, bg);
-  ui.dl->AddRect(pos, b,
-                 enabled
-                     ? IM_COL32(170, 220, 255, hovered || focused ? 220 : 90)
-                     : IM_COL32(255, 255, 255, 30),
-                 0.0f, 0, 1.0f);
+                       ? (hovered || focused ? IM_COL32(68, 152, 208, 255)
+                                             : IM_COL32(44, 108, 154, 242))
+                       : (hovered || focused ? IM_COL32(52, 72, 92, 242)
+                                             : IM_COL32(22, 32, 44, 232));
+  ui.dl->AddRectFilled(pos, b, bg, r);
+  if (focused && enabled) {
+    NobleUi::DrawFocusHighlight(ui.dl, pos, b, ui.s, true);
+  } else {
+    ui.dl->AddRect(pos, b,
+                   enabled ? IM_COL32(143, 216, 255, hovered ? 220 : 100)
+                           : IM_COL32(255, 255, 255, 34),
+                   r, 0, hovered ? 1.4f * ui.s : 1.0f);
+  }
   const std::string actionLabel = Ellipsize(
       NobleStyle::TitleFont(), 20.0f * ui.s, label, width - 28.0f * ui.s);
   Text(ui, NobleStyle::TitleFont(), 20.0f,
@@ -3627,440 +3355,6 @@ float ScoreMultiplier(int difficulty, uint64_t mask) {
   return m;
 }
 
-struct MainEntry {
-  const char *label;
-  const char *description;
-  Screen target;
-  bool enabled;
-  bool quit;
-};
-const MainEntry kMainEntries[] = {
-    {"Campaign",
-     "Play the story of Noble Team, from Winter Contingency to Lone Wolf.",
-     Screen::Campaign, true, false},
-    {"Server Browser",
-     "Browse and join online multiplayer, co-op and custom games.",
-     Screen::Servers, true, false},
-    {"Firefight",
-     "Hold out against waves of Covenant on the map and game type you choose.",
-     Screen::Firefight, true, false},
-    {"Custom Game",
-     "Play any multiplayer map and game type, host a game or join one.",
-     Screen::CustomGame, true, false},
-    {"Forge", "Edit multiplayer maps with Forge. Experimental in Noble.",
-     Screen::Forge, true, false},
-    {"Theater",
-     "Watch saved films and local video clips from Campaign, Firefight, Custom "
-     "Games, and Forge.",
-     Screen::Theater, true, false},
-    {"Social", "Manage your friends list, find players, and view game invites.",
-     Screen::Social, true, false},
-    {"Service Record",
-     "Your rank, credits, challenges, commendations and recent games.",
-     Screen::Career, true, false},
-    {"Armory",
-     "Customize your Spartan and Sangheili armor in Reach's 3D Armory.",
-     Screen::Armory, true, false},
-    {"Account",
-     "Log in or register your account to sync data and unlock developer "
-     "access.",
-     Screen::Main, true, false},
-    {"Mods", "Workshop maps and mods.", Screen::Mods, true, false},
-    {"Settings", "Controls, key bindings, audio, video and gameplay options.",
-     Screen::Settings, true, false},
-    {"Quit", "Close Noble.", Screen::Main, true, true},
-};
-
-// "Continue: <mode> on <map>" (spec 4.1), built into the main-menu list per
-// frame, above Campaign, only when a match has been started before. Activating
-// it relaunches that match with the same settings.
-const MainEntry kContinueEntry = {
-    "Continue",
-    "Start the campaign mission you last played, on the same difficulty and "
-    "with the same skulls.",
-    Screen::Main, true, false};
-
-// Developer-only row, built into the main-menu list per frame so it sits
-// directly above Quit. The gold DEV badge next to the player name is the only
-// other place developer status is shown.
-const MainEntry kDeveloperEntry = {"Developer Menu",
-                                   "Unlock armors, grant credits, set rank or "
-                                   "reset a career. Developer accounts only.",
-                                   Screen::Main, true, false};
-
-struct MenuState {
-  Screen screen = Screen::Main;
-  int mainIndex = 0;
-  int mission = 1;
-  int difficulty = 1;
-  int focusRow = 0;
-  int map = kDefaultMap;
-  int variant = 0;
-  int ffMap = 0;
-  int ffVariant = 0;
-  int forgeMap = 19;
-  std::filesystem::path forgeCustomVariant;
-  int skull = 0;
-  uint64_t skulls = 0;
-  int campaignSource = 0;
-  int ffSource = 0;
-  int mpSource = 0;
-  int forgeSource = 0;
-  std::set<std::string> openMods;
-  int campaignModded = 0;
-  int ffModded = 0;
-  int mpModded = 0;
-  int forgeModded = 0;
-  int mpForgeMap = 0; // row in the FORGE MAPS tab
-  int forgeForgeMap = 0;
-  int lobbyNetMode = 1; // 0 = Local (LAN), 1 = Online (P2P)
-  int lobbyPrivacy =
-      0; // 0 = Public (Master Server), 1 = Private (Direct Connect)
-  bool confirmQuit =
-      false; // "Quit Project Noble?" box on the main menu (Esc or QUIT)
-  int quitChoice = 1; // 0 = Yes, 1 = No (No is preselected)
-  bool showAccountModal = false;
-  int accountTab = 0; // 0 = Login, 1 = Register
-  char accountUser[32] = "";
-  char accountPass[32] = "";
-  std::string accountStatusMsg = "";
-  bool accountStatusError = false;
-
-  // Pre-game lobby state
-  bool isLobbyHost = false;
-  std::string lobbySessionId;
-  std::string lobbySessionToken;
-  std::string lobbyMap = "20_sword_slayer";
-  std::filesystem::path
-      lobbyMapOverride; // modded .map served in place of the stock lobbyMap
-  std::filesystem::path lobbyMapVariant; // Forge map (.mvar) laid over
-                                         // lobbyMap; empty for the plain map
-  std::string lobbyMapTitle;
-  std::filesystem::path lobbyMapImage, lobbyMapThumb;
-  std::string lobbyMode = "multiplayer";
-  std::string lobbyVariantPath;
-  std::string lobbyVariantName = "Slayer";
-  // Workshop mod this lobby runs. A guest without it sees the Download & Join
-  // prompt before joining.
-  std::string lobbyModId;
-  std::string lobbyModTitle;
-  std::filesystem::path lobbyModFolder;
-  int lobbyDifficulty = 1;
-  uint64_t lobbySkulls = 0;
-  int lobbyMaxPlayers = 16;
-  int sessionMaxPlayers =
-      16; // players the Custom Game / Forge lobby will allow (4..128)
-  int ffMaxPlayers = 16; // players the Firefight lobby will allow (4..16)
-  std::string lobbyHostEndpoint;
-  std::vector<LobbyPlayer> lobbyRoster;
-  bool lobbyLaunchPending = false;
-  std::string lobbyLaunchMap;
-  std::string lobbyLaunchMapVariant; // host's Forge map file name
-  std::string lobbyLaunchMode;
-  std::string lobbyLaunchVariant;
-  int lobbyLaunchDiff = 1;
-  uint64_t lobbyLaunchSkulls = 0;
-  std::string lobbyLaunchMapOverride;
-  std::string lobbyLaunchModFolder;
-  std::string lobbyLaunchModId;
-  double lastLobbyPoll = 0.0;
-  int lobbyPollFailures =
-      0; // consecutive failed lobby-state fetches; a guest only leaves after 3
-  int lobbyMenuRow = 0;   // Focused row in pre-game options list
-  int lobbyFocusZone = 0; // 0 = left options list, 1 = right session roster
-  // Playlists. -1 = none chosen.
-  std::vector<Playlists::Playlist> playlists;
-  int playlistChoice = -1;
-  int playlistPosition = 0;
-  bool playlistEditOpen = false;
-  Playlists::Playlist playlistEdit;
-  char playlistName[48] = {};
-  int playlistEditRow = 0, playlistEditMap = 0, playlistEditVariant = 0,
-      playlistEditEntry = 0;
-  std::string playlistMessage;
-  // Voting in the lobby.
-  std::string voteId;
-  std::vector<std::string> voteOptions;
-  std::vector<int> voteCounts;
-  int voteMsLeft = 0;
-  int voteRow = 0;
-  int voteCast = -1;
-  int voteRerolls = 0;
-  bool voteWasUp = false;
-  std::vector<Playlists::Entry>
-      voteEntries; // host only: what each option plays
-  std::string voteMessage;
-  // What the lobby's variant is, worked out once per variant: teams on or off,
-  // and a player-made mode's changed rules.
-  std::string lobbyModeKey;
-  bool lobbyTeamsOn = false;
-  int lobbyTeamCount =
-      2; // teams this lobby deals (2..8, Halo: Reach's multi-team modes)
-  bool lobbyTeamsManual = false; // the host has assigned teams by hand; don't
-                                 // re-deal them automatically
-  int lobbyModeChanges = 0;
-  std::string lobbyModeSummary;
-  bool teamsPushFailed = false;
-  double autoStartAt =
-      0.0; // ImGui time the next rotation match starts; 0 = not counting
-  std::filesystem::path
-      optionsFile; // the saved mode being edited; empty for a new one
-  std::string
-      confirmAction; // a save-over or delete waiting for its second press
-  bool optionsOpen =
-      false; // Custom Game: the game options editor replaces the setup screen
-  bool pendingInviteJoin = false;
-  std::string pendingInviteConnect;
-  std::string pendingInviteSession;
-  std::string pendingInviteMap;
-  std::string pendingInviteMode;
-  int optionsRow = 0;
-  char optionsName[48] = {};
-  std::string optionsBase;             // base variant file name
-  std::filesystem::path optionsSource; // the .bin the editor decoded (may be
-                                       // the writable game_variants folder)
-  std::vector<uint8_t> optionsDecoded; // the base variant's real values
-  std::map<std::string, int> optionsValues; // only what differs from the base
-  std::string optionsMessage;
-  char optionsSearch[48] =
-      {}; // filters the list by option name, description or category
-  bool optionsChangedOnly =
-      false; // list only the options that differ from the base
-  std::set<std::string> optionsOpenGroups; // folded-open category headers
-  int optionsFirst =
-      0; // first list row drawn (the list scrolls with the focus)
-  int optionsLastFocus = -1; // focus seen last frame: the view only follows the
-                             // focus when it moves
-  int optionsPresetPick = 0; // focused preset button
-  char mapSearch[64] = {};   // the map, mission and mod lists' search text
-  int mapSearchRow = 0;
-  char variantSearch[64] = {};    // the game type lists' search text
-  std::string variantOpenMode;    // the one game type category dropped down
-  bool variantPickerOpen = false; // Custom Game / Firefight: the full game type
-                                  // list replaces the setup screen
-  int variantPickerRow = 0;
-  bool variantPickerModded = false;
-  std::string variantPickerMap; // the map it filters for and its display name
-  std::string variantPickerMapName;
-  bool lobbyPickerOpen =
-      false; // The game type list is showing in place of the option rows
-  int lobbyPickerRow = 0;
-  bool lobbyTeamPickerOpen = false; // the CHANGE TEAM dropdown is showing
-  int lobbyTeamPickerRow = 0;
-  double lobbyTeamPickerOpenedAt =
-      0.0; // ImGui time it opened: its first frames ignore clicks
-  bool lobbyProfileOpen =
-      false; // The selected player's card is showing in place of the roster
-  bool lobbyReady = true;       // Player ready toggle
-  int lobbyRosterSelection = 0; // Selected player index in party roster
-  int lobbyRosterScroll[2] =
-      {}; // First row shown in each roster column (red or all, blue)
-  // Social screen state
-  int socialTab = 0; // 0 = Friends, 1 = Requests, 2 = Find Players
-  char socialSearchBuf[64] = "";
-  std::vector<UserSearchResult> socialSearchResults;
-  bool socialSearching = false;
-  double lastSocialPoll = 0.0;
-  Screen socialPreviousScreen = Screen::Main;
-  // Theater screen state
-  int theaterSource =
-      0; // 0 = All, 1 = Recent Films, 2 = Saved Films, 3 = Local Videos
-  int theaterIndex = 0; // Selected row in Theater list
-  char theaterSearch[64] = "";
-  int theaterSearchRow = 0;
-  std::string theaterStatusMsg;
-  std::string theaterConfirmDelete;
-
-  // Unified tile map picker & drawer state (Campaign / Firefight / CustomGame /
-  // Forge / Lobby)
-  std::string mapDrawerKey; // key of map tile currently expanded to show [BASE
-                            // MAP] + variants
-  int mapDrawerFocus =
-      -1; // -1 = map grid tile focused, 0 = [BASE MAP], 1..N = variant index
-  float mapGridScrollY =
-      0.0f; // vertical scroll offset of 2-column map tile grid
-  std::filesystem::path mpSelectedMvar; // Custom Game active .mvar on current
-                                        // vanilla/mod map (empty = base map)
-  std::filesystem::path forgeSelectedMvar; // Forge active .mvar on current
-                                           // vanilla/mod map (empty = base map)
-  std::filesystem::path
-      modSelectedMvar;             // active .mvar when browsing modded maps
-  bool lobbyMapPickerOpen = false; // Pre-Game Lobby modal tile map picker
-  int optionsCategoryIdx =
-      0; // Active category tab index in tiled Game Options editor
-  int optionsRuleFocus =
-      0; // Focused rule index within active Game Options category
-  bool optionsRuleDropdownOpen =
-      false; // Optional quick dropdown for level/multi-value rules
-};
-
-static void ClearPendingLobbyEvents();
-
-static void SetupHostLobby(MenuState &st, const std::string &mapScenario,
-                           const std::string &mode, const std::string &varPath,
-                           const std::string &varName, int diff,
-                           uint64_t skulls, int maxPlayers,
-                           const ModEntry *mod = nullptr,
-                           const std::filesystem::path &mapOverride = {},
-                           const std::string &mapTitle = {},
-                           const std::filesystem::path &mapImage = {},
-                           const std::filesystem::path &mapThumb = {},
-                           const std::string &existingSessionId = {},
-                           const std::string &existingSessionToken = {}) {
-  st.isLobbyHost = true;
-  st.lobbyMap = mapScenario;
-  st.lobbyMapOverride = mapOverride;
-  st.lobbyMapVariant.clear(); // the Custom Game / Forge screen sets it after
-                              // this for a Forge map
-  st.lobbyMapTitle = mapTitle;
-  st.lobbyMapImage = mapImage;
-  st.lobbyMapThumb = mapThumb;
-  st.lobbyMode = mode;
-  st.lobbyVariantPath = varPath;
-  st.lobbyVariantName = varName;
-  st.lobbyModId = mod ? mod->workshopId : std::string();
-  st.lobbyModTitle = mod ? mod->title : std::string();
-  st.lobbyModFolder = mod ? mod->folder : std::filesystem::path();
-  st.lobbyDifficulty = diff;
-  st.lobbySkulls = skulls;
-  st.lobbyMaxPlayers = maxPlayers;
-  st.lobbyLaunchPending = false;
-  st.lobbyMenuRow = 0;
-  NOBLE_INFO("FrontEndMenu: host lobby set up: map '{}' mode '{}' game type "
-             "'{}' file '{}'",
-             mapScenario, mode, varName,
-             std::filesystem::path(varPath).filename().string());
-  ClearPendingLobbyEvents();
-  st.lastLobbyPoll = ImGui::GetTime();
-
-  HostConfig cfg;
-  std::string pName = AuthClient::Get().IsLoggedIn()
-                          ? AuthClient::Get().GetUsername()
-                          : Settings::Get().Snapshot().playerName;
-  if (pName.empty())
-    pName = "Host";
-  cfg.sessionName = pName + "'s Lobby";
-  cfg.gameMode = st.lobbyMode;
-  cfg.mapName = st.lobbyMap;
-  cfg.gametypeName = st.lobbyVariantName;
-  cfg.modId = st.lobbyModId;
-  cfg.modTitle = st.lobbyModTitle;
-  cfg.maxPlayers = st.lobbyMaxPlayers;
-  cfg.port = 11774;
-  cfg.mode =
-      (st.lobbyNetMode == 1) ? NetworkMode::Online_P2P : NetworkMode::Local_LAN;
-  SessionManager::Get().StartHosting(cfg);
-
-  if (st.lobbyNetMode == 1 && MasterServerClient::Get().Enabled()) {
-    MasterAdvert adv;
-    if (!existingSessionId.empty()) {
-      adv.id = existingSessionId;
-      adv.token = existingSessionToken;
-      NOBLE_INFO("FrontEndMenu: Reusing existing session id '{}' for lobby",
-                 existingSessionId);
-    }
-    adv.name = cfg.sessionName;
-    adv.port = cfg.port;
-    adv.maxPlayers = cfg.maxPlayers;
-    adv.map = cfg.mapName;
-    adv.mode = cfg.gameMode;
-    adv.variant = st.lobbyVariantName;
-    adv.difficulty = st.lobbyDifficulty;
-    adv.skulls = st.lobbySkulls;
-    adv.isMod = mod != nullptr || !st.lobbyModTitle.empty();
-    adv.modId = st.lobbyModId;
-    adv.modTitle = st.lobbyModTitle;
-    adv.inProgress = false;
-    adv.isPrivate = (st.lobbyPrivacy != 0);
-    adv.hostPeerId = AuthClient::Get().IsLoggedIn()
-                         ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
-                         : 1ULL;
-    adv.hostMachineId = "0x484F535400000001";
-    adv.hostUsername = pName;
-    adv.hostIsDev = AuthClient::Get().IsDeveloper();
-    adv.hostIsTester = AuthClient::Get().IsTester();
-    adv.hostServiceTag = PlayerServiceTag(Settings::Get().Snapshot());
-    // The host's own row identity, so guests can draw it (rank / emblem /
-    // nameplate / team).
-    {
-      const auto &prof = UIManager::GetArmorCustomizer().GetProfile();
-      adv.hostRankIndex = Career::RankIndex(Career::Get().credits);
-      adv.hostEmblemId = prof.emblemIndex;
-      adv.hostEmblemBackgroundId = prof.emblemBackgroundIndex;
-      adv.hostNameplateId = prof.nameplateIndex;
-      const auto rec = Career::GetRecord();
-      int cd = 0;
-      for (const auto &c : Career::Challenges())
-        if (c.done)
-          ++cd;
-      int ct = 0, ctm = 0;
-      for (const auto &c : Career::Commendations()) {
-        if (c.tracked) {
-          ct += c.tier;
-          ctm += 6;
-        }
-      }
-      const int commPct = ctm > 0 ? (ct * 100 / ctm) : 0;
-      adv.hostGamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
-      adv.hostKills = static_cast<int>(rec.totals.kills);
-      adv.hostDeaths = static_cast<int>(rec.totals.deaths);
-      adv.hostChallengesDone = cd;
-      adv.hostCommendations = commPct;
-      adv.hostArmoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
-    }
-    MasterServerClient::Get().StartAdvertising(adv);
-    st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
-    st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
-  }
-
-  st.lobbyRoster.clear();
-  LobbyPlayer me;
-  me.peerId = AuthClient::Get().IsLoggedIn()
-                  ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
-                  : 1ULL;
-  me.machineId = DeviceIdentityStore::Get().deviceId;
-  me.username = pName;
-  me.serviceTag = PlayerServiceTag(Settings::Get().Snapshot());
-  me.isHost = true;
-  me.isDev = AuthClient::Get().IsDeveloper();
-  me.isTester = AuthClient::Get().IsTester();
-  me.ping = 0;
-  {
-    const auto &prof = UIManager::GetArmorCustomizer().GetProfile();
-    me.rankIndex = Career::RankIndex(Career::Get().credits);
-    me.emblemId = prof.emblemIndex;
-    me.emblemBackgroundId = prof.emblemBackgroundIndex;
-    me.nameplateId = prof.nameplateIndex;
-    const auto rec = Career::GetRecord();
-    int cd = 0;
-    for (const auto &c : Career::Challenges())
-      if (c.done)
-        ++cd;
-    int ct = 0, ctm = 0;
-    for (const auto &c : Career::Commendations()) {
-      if (c.tracked) {
-        ct += c.tier;
-        ctm += 6;
-      }
-    }
-    const int commPct = ctm > 0 ? (ct * 100 / ctm) : 0;
-    me.gamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
-    me.kills = static_cast<int>(rec.totals.kills);
-    me.deaths = static_cast<int>(rec.totals.deaths);
-    me.challengesDone = cd;
-    me.commendations = commPct;
-    me.armoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
-  }
-  st.lobbyRoster.push_back(me);
-
-  st.screen = Screen::PreGameLobby;
-}
-
-// The setup screens (Campaign, Firefight, Custom Game, Forge) all end their
-// right column the same way: the two action buttons at the bottom, a strip of
-// network/lobby chips above them, and the banner and option rows above that.
-// These three heights come from one place so a screen cannot draw the strip on
-// top of the rows above it (the overlap on the 2026-10-30 screenshots).
 constexpr float kLobbyStripHeight = 34.0f; // multiplied by ui.s
 
 float LobbyStripHeight(const Ui &ui) { return kLobbyStripHeight * ui.s; }
@@ -4198,24 +3492,6 @@ void DrawLobbyControls(const Ui &ui, ImVec2 pos, float width, MenuState &st) {
     break;
   }
 }
-
-struct MapEntry {
-  std::string scenario, name, blurb;
-  // A modded map with a new scenario name is loaded through a stock map the
-  // engine already knows: launchScenario is that stock scenario (its launch
-  // index / map id select the match), and mapOverride is the mod's .map file
-  // served in place of the stock maps<launchScenario>.map.
-  std::string launchScenario;
-  std::filesystem::path mapOverride;
-  std::filesystem::path imageThumbnail, imageLarge, imageLoading;
-  bool enabled = true;
-  const ModEntry *mod = nullptr;
-  bool header = false;
-  bool custom = false;
-  std::filesystem::path mvar; // Forge map laid over `scenario`
-  std::string forgeGroup; // Forge map heading this row is under (also set on
-                          // the heading)
-};
 
 bool KnownScenario(const std::string &scenario, const MenuMap *maps,
                    int count) {
@@ -4405,7 +3681,6 @@ std::vector<MapEntry> BaseMaps(const MenuMap *maps, int count) {
   return out;
 }
 
-enum class ModMode { Campaign, Firefight, Multiplayer };
 std::string OpenKey(ModMode mode, const ModEntry &mod) {
   return std::to_string(static_cast<int>(mode)) + ":" + mod.id;
 }
@@ -4702,23 +3977,6 @@ std::wstring ToWide(const std::string &s) {
 // Theater Mode: Local Saved Film (.film) BLF parser, autosave sync, and local
 // video manager
 // ---------------------------------------------------------------------------------------------
-struct TheaterEntry {
-  std::filesystem::path path;
-  std::string title;
-  std::string description;
-  std::string author;
-  std::string scenario;   // e.g. "20_sword_slayer", "m10", "ff60_icecave"
-  std::string mapDisplay; // e.g. "Sword Base", "Winter Contingency"
-  std::string launchMode; // "campaign", "multiplayer", "forge", "firefight"
-  std::string modeLabel;  // "CAMPAIGN", "CUSTOM GAME", "FORGE", "FIREFIGHT",
-                          // "LOCAL VIDEO"
-  uint32_t durationSec = 0;
-  uint64_t timestamp = 0; // Unix epoch seconds
-  uint64_t fileSize = 0;
-  bool isVideo = false; // true for .mp4/.mkv/.webm/.avi/.mov/.wmv
-  bool isSaved = false; // true if stored in data\theater\saved
-};
-
 std::string ScenarioFromReachMapId(int32_t mapId, int mode = 0) {
   return noble::BlamEngine::ScenarioFromReachMapId(mapId, mode);
 }
@@ -5132,36 +4390,6 @@ std::vector<TheaterEntry> ScanTheaterEntries() {
 }
 
 // Persistent state for in-engine overlay mode
-struct OverlayContext {
-  bool initialized = false;
-  std::filesystem::path reachDir;
-  std::vector<MenuVariant> variants;
-  std::vector<MenuVariant> ffVariants;
-  std::vector<ForgeMap> forgeMaps;
-  bool forgeMapsScanned = false; // the scan is lazy: the maps menu needs it
-                                 // before the Forge tab is opened
-  std::filesystem::path forgeVariant;
-  std::vector<TheaterEntry> theaterEntries;
-  bool theaterScanned = false;
-  bool launchedFromTheater = false;
-  std::vector<ModEntry> mods;
-  std::vector<const ModEntry *> campaignMods;
-  std::vector<const ModEntry *> ffMods;
-  std::vector<const ModEntry *> mpMods;
-  MenuState st;
-  SettingsPanel settingsPanel;
-  CareerPanel careerPanel;
-  bool modsScanned = false;
-  unsigned long long captureFrame = 0;
-  unsigned long long totalFrames = 0;
-  unsigned long long sceneReadyFrames = 0;
-  bool closed = false;
-  void *hMatchProcess = nullptr;
-  bool matchRunning = false;
-  bool hasPendingJoin = false;
-  FrontEndChoice pendingJoinChoice;
-};
-
 // The engine draws the menu scene and calls RenderOverlay from slot 1. MCC
 // ships no Reach menu map, so about a minute after start the engine gives up on
 // it ("_map_state_none") and stops calling slot 1; HoldFrame then draws the
@@ -5172,9 +4400,13 @@ std::atomic<ULONGLONG> s_lastEngineOverlayFrame{0};
 static std::atomic<bool> s_isMatchRunning{false};
 static std::atomic<bool> s_launchInFlight{false};
 static std::atomic<ULONGLONG> s_lastLaunchTick{0};
+static std::atomic<bool> s_holdFrameOwned{false};
+static std::atomic<bool> s_resetInputEdges{false};
+static std::atomic<bool> s_resetFrameTimer{false};
+static std::atomic<ULONGLONG> s_postMatchInputSettleUntil{0};
 
-static bool RequestMatchLaunch(FrontEndChoice &outChoice, bool &done,
-                               const FrontEndChoice &req) {
+bool RequestMatchLaunch(FrontEndChoice &outChoice, bool &done,
+                        const FrontEndChoice &req) {
   if (FrontEndMenu::IsMatchRunning() || s_launchInFlight.load()) {
     NOBLE_WARN("FrontEndMenu: ignoring duplicate launch request while a match "
                "or launch is active");
@@ -5336,6 +4568,20 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
   GetClientRect(hwnd, &client);
   POINT cursor{};
   const bool focused = Window::IsForeground(hwnd);
+  const bool resetEdges = s_resetInputEdges.exchange(false);
+  const ULONGLONG settleUntil = s_postMatchInputSettleUntil.load();
+  const bool settling = settleUntil != 0 && GetTickCount64() < settleUntil;
+  if (!settling && settleUntil != 0) {
+    s_postMatchInputSettleUntil.store(0);
+  }
+  static bool s_waitMouseRelease = false;
+  if (resetEdges) {
+    (void)Window::TakeLeftClicks();
+    (void)Window::TakeWheelNotches();
+    (void)Window::TakeTypedChars();
+    s_waitMouseRelease = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+  }
+
   if (focused && GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) &&
       client.right > 0 && client.bottom > 0) {
     const float sx = io.DisplaySize.x / static_cast<float>(client.right);
@@ -5344,19 +4590,28 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
                         static_cast<float>(cursor.y) * sy);
 
     const bool lDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    if (Window::TakeLeftClicks() > 0 && !lDown) {
-      io.AddMouseButtonEvent(0, true);
+    if (!lDown)
+      s_waitMouseRelease = false;
+    if (resetEdges || settling || s_waitMouseRelease) {
+      (void)Window::TakeLeftClicks();
+      (void)Window::TakeWheelNotches();
       io.AddMouseButtonEvent(0, false);
+      io.AddMouseButtonEvent(1, false);
     } else {
-      io.AddMouseButtonEvent(0, lDown);
-    }
-    const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
-    io.AddMouseButtonEvent(1, rDown);
+      if (Window::TakeLeftClicks() > 0 && !lDown) {
+        io.AddMouseButtonEvent(0, true);
+        io.AddMouseButtonEvent(0, false);
+      } else {
+        io.AddMouseButtonEvent(0, lDown);
+      }
+      const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+      io.AddMouseButtonEvent(1, rDown);
 
-    const int wheel = Window::TakeWheelNotches();
-    if (wheel != 0) {
-      const float dampened = static_cast<float>(std::clamp(wheel, -1, 1));
-      io.AddMouseWheelEvent(0.0f, dampened);
+      const int wheel = Window::TakeWheelNotches();
+      if (wheel != 0) {
+        const float dampened = static_cast<float>(std::clamp(wheel, -1, 1));
+        io.AddMouseWheelEvent(0.0f, dampened);
+      }
     }
   } else {
     io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
@@ -5398,12 +4653,22 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
   for (size_t i = 0; i < sizeof(kKeys) / sizeof(kKeys[0]); ++i) {
     const bool down =
         focused && ((GetAsyncKeyState(kKeys[i].vk) & 0x8000) != 0);
-    if (down != s_prevDown[i]) {
-      io.AddKeyEvent(kKeys[i].key, down);
+    if (resetEdges) {
+      if (s_prevDown[i]) {
+        io.AddKeyEvent(kKeys[i].key, false);
+      }
+      // Adopt currently held keys as already-down so releasing Match Exit keys
+      // cannot fire menu edges.
       s_prevDown[i] = down;
+    } else if (down != s_prevDown[i]) {
+      if (settling && down) {
+        s_prevDown[i] = true;
+      } else {
+        io.AddKeyEvent(kKeys[i].key, down);
+        s_prevDown[i] = down;
+      }
     }
   }
-  InputPrompts::Update();
 }
 
 // Lobby events from the WebSocket relay thread. The callbacks used to write
@@ -5412,870 +4677,8 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
 // menu without a crash log (heap corruption ends the process before the crash
 // handler runs). The relay thread now only fills this, and the menu takes it
 // over at the top of the lobby screen.
-struct PendingLobbyEvents {
-  bool launch = false;
-  std::string map, mode, variant, hostEndpoint, sessionId, sessionToken;
-  std::string mapOverride, modFolder, modId;
-  int difficulty = 1;
-  uint64_t skulls = 0;
-  bool roster = false;
-  std::vector<LobbyPlayer> rosterPlayers;
-  bool closed = false;
-  std::string closeReason;
-};
-static std::mutex s_lobbyEventMutex;
-static PendingLobbyEvents s_lobbyEvents;
 
-// The master server keeps a roster per session and the host re-registers it
-// every few seconds, so a guest who leaves can linger as a nameless row - which
-// the UI then labels "Host" for want of a name. Drop nameless rows that are not
-// the host, keep exactly one host row, and give it a name.
-static void SanitizeLobbyRoster(std::vector<LobbyPlayer> &roster) {
-  roster.erase(std::remove_if(roster.begin(), roster.end(),
-                              [](const LobbyPlayer &p) {
-                                return p.username.empty() && !p.isHost;
-                              }),
-               roster.end());
-  bool hostSeen = false;
-  for (LobbyPlayer &p : roster) {
-    if (p.isHost && !hostSeen) {
-      hostSeen = true;
-      if (p.username.empty())
-        p.username = "Host";
-    } else if (p.isHost) {
-      p.isHost = false;
-    }
-  }
-  if (!hostSeen && !roster.empty()) {
-    roster.front().isHost = true;
-    if (roster.front().username.empty())
-      roster.front().username = "Host";
-  }
-}
-
-static void ClearPendingLobbyEvents() {
-  std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
-  s_lobbyEvents = PendingLobbyEvents{};
-}
-
-static void TakePendingLobbyEvents(MenuState &st) {
-  PendingLobbyEvents ev;
-  {
-    std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
-    if (!s_lobbyEvents.launch && !s_lobbyEvents.roster && !s_lobbyEvents.closed)
-      return;
-    ev = std::move(s_lobbyEvents);
-    s_lobbyEvents = PendingLobbyEvents{};
-  }
-  if (ev.closed && !st.isLobbyHost) {
-    st.screen = Screen::Main;
-    st.lobbySessionId.clear();
-    st.lobbySessionToken.clear();
-    st.lobbyRoster.clear();
-    st.isLobbyHost = false;
-    NetworkTransport::Get().StopRelay();
-    return;
-  }
-  if (ev.roster) {
-    st.lobbyRoster = std::move(ev.rosterPlayers);
-    if (st.isLobbyHost) {
-      std::string pName = AuthClient::Get().IsLoggedIn()
-                              ? AuthClient::Get().GetUsername()
-                              : Settings::Get().Snapshot().playerName;
-      if (pName.empty())
-        pName = "Host";
-      const uint64_t hostPId =
-          AuthClient::Get().IsLoggedIn()
-              ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
-              : 1ULL;
-      const std::string hostTag = PlayerServiceTag(Settings::Get().Snapshot());
-      const bool hostDev = AuthClient::Get().IsDeveloper();
-      bool hostFound = false;
-      for (auto &p : st.lobbyRoster) {
-        if (p.isHost) {
-          p.peerId = hostPId;
-          p.machineId = DeviceIdentityStore::Get().deviceId;
-          p.username = pName;
-          p.serviceTag = hostTag;
-          p.isDev = hostDev;
-          hostFound = true;
-        }
-      }
-      if (!hostFound) {
-        LobbyPlayer hp;
-        hp.peerId = hostPId;
-        hp.machineId = DeviceIdentityStore::Get().deviceId;
-        hp.username = pName;
-        hp.serviceTag = hostTag;
-        hp.isHost = true;
-        hp.isDev = hostDev;
-        const auto &prof = UIManager::GetArmorCustomizer().GetProfile();
-        hp.rankIndex = Career::RankIndex(Career::Get().credits);
-        hp.emblemId = prof.emblemIndex;
-        hp.nameplateId = prof.nameplateIndex;
-        hp.emblemBackgroundId = prof.emblemBackgroundIndex;
-        st.lobbyRoster.insert(st.lobbyRoster.begin(), hp);
-      }
-    }
-  }
-  if (ev.launch && !st.lobbyLaunchPending && !st.isLobbyHost) {
-    NOBLE_INFO("Lobby launch received: map='{}' mode='{}' variant='{}' "
-               "endpoint='{}' session='{}'",
-               ev.map, ev.mode, ev.variant, ev.hostEndpoint, ev.sessionId);
-    st.lobbyLaunchPending = true;
-    st.lobbyLaunchMap = ev.map;
-    st.lobbyLaunchMode = ev.mode;
-    st.lobbyLaunchVariant = ev.variant;
-    st.lobbyLaunchDiff = ev.difficulty;
-    st.lobbyLaunchSkulls = ev.skulls;
-    st.lobbyLaunchMapOverride = ev.mapOverride;
-    st.lobbyLaunchModFolder = ev.modFolder;
-    st.lobbyLaunchModId = ev.modId;
-    if (st.lobbyHostEndpoint.empty() && !ev.hostEndpoint.empty())
-      st.lobbyHostEndpoint = ev.hostEndpoint;
-    if (!ev.sessionId.empty())
-      st.lobbySessionId = ev.sessionId;
-    if (!ev.sessionToken.empty())
-      st.lobbySessionToken = ev.sessionToken;
-    else if (st.lobbySessionToken.empty())
-      st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
-  }
-}
-
-static void EnterLobby(OverlayContext &ctx, const ServerEntry &s,
-                       const std::string &modId = {},
-                       const std::string &modTitle = {},
-                       const std::filesystem::path &modFolder = {}) {
-  ctx.st.isLobbyHost = false;
-  ctx.st.lobbySessionId = s.id;
-  ctx.st.lobbyHostEndpoint = s.hostAddress + ":" + std::to_string(s.port);
-  ctx.st.lobbyMap = s.mapName.empty() ? "20_sword_slayer" : s.mapName;
-  ctx.st.lobbyMode = s.gameMode.empty() ? "multiplayer" : s.gameMode;
-  ctx.st.lobbyVariantName = s.variantName.empty() ? "Default" : s.variantName;
-  ctx.st.lobbyMaxPlayers = s.maxPlayers > 0 ? s.maxPlayers : 16;
-  ctx.st.lobbyModId = modId;
-  ctx.st.lobbyModTitle = modTitle;
-  ctx.st.lobbyModFolder = modFolder;
-  ctx.st.lobbyMapOverride.clear();
-  ctx.st.lobbyMapVariant.clear();
-  ctx.st.lobbyLaunchMapOverride.clear();
-  ctx.st.lobbyLaunchMapVariant.clear();
-  ctx.st.lobbyLaunchModFolder.clear();
-  ctx.st.lobbyLaunchModId.clear();
-  ctx.st.lobbyRoster.clear();
-  ctx.st.lobbyLaunchPending = false;
-  {
-    std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
-    s_lobbyEvents = PendingLobbyEvents{};
-  }
-  ctx.st.lastLobbyPoll = ImGui::GetTime();
-  NOBLE_INFO("EnterLobby: joining lobby '{}' ({}:{}) mod='{}' folder='{}'",
-             s.name, s.hostAddress, s.port, modId, modFolder.string());
-
-  std::string pName = AuthClient::Get().IsLoggedIn()
-                          ? AuthClient::Get().GetUsername()
-                          : Settings::Get().Snapshot().playerName;
-  if (pName.empty())
-    pName = "Guest";
-  uint64_t fallbackId =
-      (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-  if (fallbackId < 2ULL)
-    fallbackId = 2ULL;
-  uint64_t pId = AuthClient::Get().IsLoggedIn()
-                     ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
-                     : fallbackId;
-  std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
-
-  LobbyState state = MasterServerClient::Get().JoinLobbySync(
-      s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
-      Career::RankIndex(Career::Get().credits),
-      UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
-      UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
-      UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0, 11774,
-      s.hostAddress, s.port, AuthClient::Get().IsTester());
-  if (state.ok) {
-    if (!state.sessionId.empty())
-      ctx.st.lobbySessionId = state.sessionId;
-    ctx.st.lobbyRoster = state.roster;
-    ctx.st.lobbyMap = state.map;
-    ctx.st.lobbyMode = state.mode;
-    ctx.st.lobbyVariantName = state.variant;
-    ctx.st.lobbyDifficulty = state.difficulty;
-    ctx.st.lobbySkulls = state.skulls;
-    if (!state.modTitle.empty())
-      ctx.st.lobbyModTitle = state.modTitle;
-    if (state.isLan && !state.hostLanIp.empty()) {
-      ctx.st.lobbyHostEndpoint =
-          state.hostLanIp + ":" + std::to_string(state.hostPort);
-    }
-    if (state.inProgress || state.launchTriggered) {
-      ctx.st.lobbyLaunchPending = true;
-      ctx.st.lobbyLaunchMap =
-          state.launchMap.empty() ? state.map : state.launchMap;
-      ctx.st.lobbyLaunchMode =
-          state.launchMode.empty() ? state.mode : state.launchMode;
-      ctx.st.lobbyLaunchVariant = state.launchVariant;
-      ctx.st.lobbyLaunchMapVariant = state.launchMapVariant;
-      ctx.st.lobbyLaunchDiff = state.launchDifficulty;
-      ctx.st.lobbyLaunchSkulls = state.launchSkulls;
-      ctx.st.lobbyLaunchMapOverride = state.launchMapOverride;
-      ctx.st.lobbyLaunchModFolder = state.launchModFolder;
-      ctx.st.lobbyLaunchModId =
-          state.launchModId.empty() ? state.modId : state.launchModId;
-    }
-  } else {
-    LobbyPlayer hostP;
-    hostP.peerId = 1;
-    hostP.username = s.name.empty() ? "Host" : s.name;
-    hostP.isHost = true;
-    hostP.ping = s.ping >= 0 ? s.ping : 25;
-    ctx.st.lobbyRoster.push_back(hostP);
-
-    LobbyPlayer me;
-    me.peerId = pId;
-    me.username = pName;
-    me.serviceTag = sTag;
-    me.isHost = false;
-    me.isDev = AuthClient::Get().IsDeveloper();
-    me.isTester = AuthClient::Get().IsTester();
-    me.ping = s.ping >= 0 ? s.ping : 25;
-    ctx.st.lobbyRoster.push_back(me);
-  }
-
-  ctx.st.screen = Screen::PreGameLobby;
-}
-
-// A line about each game type for the lobby's list. Only what the type itself
-// is: a variant's own settings can't be read yet.
-static const char *GameTypeBlurb(const std::string &type) {
-  if (type == "slayer")
-    return "Score points by killing the other players.";
-  if (type == "ctf")
-    return "Take the enemy flag back to your own base.";
-  if (type == "assault")
-    return "Carry the bomb into the enemy base and arm it.";
-  if (type == "territories")
-    return "Capture and hold the areas of the map.";
-  if (type == "koth")
-    return "Hold the hill to score.";
-  if (type == "oddball")
-    return "Hold the skull for as long as you can.";
-  if (type == "juggernaut")
-    return "Kill the Juggernaut to become the Juggernaut.";
-  if (type == "infection")
-    return "The infected hunt the survivors, and every kill turns another.";
-  if (type == "headhunter")
-    return "Collect skulls from kills and bank them at the drop points.";
-  if (type == "stockpile")
-    return "Gather flags and hold them at your base when the timer runs out.";
-  if (type == "invasion")
-    return "Spartans against Elites, fought in phases across the map.";
-  if (type == "race")
-    return "Drive through the checkpoints.";
-  if (type == "rally")
-    return "Reach the rally points before the others.";
-  if (type == "firefight")
-    return "Fight wave after wave of Covenant together.";
-  return "A variant with its own rules.";
-}
-
-// The game types a map can host, grouped by mode. A heading drops down its
-// variants, one mode at a time. Searching shows every match as a plain list,
-// and a single mode (Firefight) needs no headings.
-struct VariantRow {
-  const MenuVariant *variant = nullptr; // nullptr on a heading
-  std::string mode;
-  std::string type;
-};
-struct VariantChoices {
-  std::vector<VariantRow> rows;
-  std::vector<ListItem> items;
-};
-static std::string VariantMode(const MenuVariant &v) {
-  // Put a player-made mode under the game type it starts from, not in one
-  // "custom" heap. VIP and Action Sack variants therefore get their own
-  // headings like the shipped types.
-  if (!v.type.empty())
-    return MapGameTypes::Name(v.type);
-  return v.custom ? std::string("Custom Game Modes") : std::string("Other");
-}
-
-static VariantChoices BuildVariantChoices(const std::vector<MenuVariant> &list,
-                                          const std::string &scenario,
-                                          bool unrestricted,
-                                          const std::string &openMode,
-                                          const char *query) {
-  std::vector<const MenuVariant *> offered;
-  for (const MenuVariant &v : list) {
-    if (unrestricted || v.type.empty() ||
-        MapGameTypes::Supports(scenario, v.type))
-      offered.push_back(&v);
-  }
-  std::stable_sort(offered.begin(), offered.end(),
-                   [](const MenuVariant *a, const MenuVariant *b) {
-                     const std::string ma = VariantMode(*a),
-                                       mb = VariantMode(*b);
-                     return ma != mb ? ma < mb : a->label < b->label;
-                   });
-  VariantChoices out;
-  const bool searching = query[0] != 0;
-  const bool oneMode = !offered.empty() && VariantMode(*offered.front()) ==
-                                               VariantMode(*offered.back());
-  std::string heading;
-  for (const MenuVariant *v : offered) {
-    const std::string mode = VariantMode(*v);
-    if (searching) {
-      if (!ContainsNoCase(v->label, query) && !ContainsNoCase(mode, query))
-        continue;
-    } else if (!oneMode && mode != heading) {
-      heading = mode;
-      const auto count = std::count_if(
-          offered.begin(), offered.end(),
-          [&](const MenuVariant *o) { return VariantMode(*o) == mode; });
-      out.rows.push_back({nullptr, mode, v->type});
-      out.items.push_back({mode + "  (" + std::to_string(count) + ")", true,
-                           true, mode == openMode});
-    }
-    if (searching || oneMode || mode == openMode) {
-      out.rows.push_back({v, mode, v->type});
-      out.items.push_back({v->label});
-    }
-  }
-  return out;
-}
-
-// Opens a game type list on the current variant: its mode dropped down and its
-// row selected.
-static void BeginVariantList(MenuState &st,
-                             const std::vector<MenuVariant> &list,
-                             const std::string &scenario, bool unrestricted,
-                             const MenuVariant *current) {
-  st.variantSearch[0] = 0;
-  st.variantOpenMode = current ? VariantMode(*current) : std::string();
-  st.variantPickerRow = 0;
-  const VariantChoices choices = BuildVariantChoices(
-      list, scenario, unrestricted, st.variantOpenMode, st.variantSearch);
-  for (size_t i = 0; i < choices.rows.size(); ++i) {
-    if (choices.rows[i].variant == current)
-      st.variantPickerRow = static_cast<int>(i);
-  }
-}
-
-// Search box and list. A heading toggles; returns the variant chosen, if any.
-// `shown` gets the selected row.
-static const MenuVariant *DrawVariantList(
-    const Ui &ui, MenuState &st, const std::vector<MenuVariant> &list,
-    const std::string &scenario, bool unrestricted, ImVec2 pos, float width,
-    float rowHeight, int rowCount, bool keyboard, VariantRow &shown) {
-  if (DrawSearchBox(ui, "##variant_search", pos, width, st.variantSearch,
-                    sizeof(st.variantSearch), "Search game types"))
-    st.variantPickerRow = 0;
-  const ImVec2 listPos(pos.x, pos.y + 40.0f * ui.s);
-  VariantChoices choices = BuildVariantChoices(
-      list, scenario, unrestricted, st.variantOpenMode, st.variantSearch);
-  if (choices.items.empty())
-    choices.items.push_back({"No game type matches", false, false});
-  const int hit = DrawList(
-      ui, "variant_list", listPos, width, choices.items, st.variantPickerRow,
-      keyboard && !ImGui::GetIO().WantTextInput, rowHeight, rowCount, true);
-  const MenuVariant *picked = nullptr;
-  if (hit >= 0 && hit < static_cast<int>(choices.rows.size())) {
-    if (choices.rows[hit].variant) {
-      picked = choices.rows[hit].variant;
-    } else {
-      // Rows shift when another mode closes, so the selection follows the
-      // heading that was pressed.
-      const std::string mode = choices.rows[hit].mode;
-      st.variantOpenMode = st.variantOpenMode == mode ? std::string() : mode;
-      choices = BuildVariantChoices(list, scenario, unrestricted,
-                                    st.variantOpenMode, st.variantSearch);
-      for (size_t i = 0; i < choices.rows.size(); ++i) {
-        if (!choices.rows[i].variant && choices.rows[i].mode == mode)
-          st.variantPickerRow = static_cast<int>(i);
-      }
-      MenuSounds::Click();
-    }
-  }
-  shown =
-      choices.rows.empty()
-          ? VariantRow{}
-          : choices.rows[std::clamp(st.variantPickerRow, 0,
-                                    static_cast<int>(choices.rows.size()) - 1)];
-  return picked;
-}
-
-// Name and description of a list row; the file name and a note about rules too,
-// unless `compact` (the lobby's tight column).
-static void DrawVariantInfo(const Ui &ui, ImVec2 pos, float width,
-                            const VariantRow &row, bool compact = false) {
-  if (row.mode.empty())
-    return;
-  const float right = pos.x + width;
-  const MenuVariant *variant = row.variant;
-  Text(ui, NobleStyle::TitleFont(), 24.0f, pos, kWhite,
-       Upper(variant ? variant->label : row.mode).c_str());
-  const char *description = variant && !variant->description.empty()
-                                ? variant->description.c_str()
-                                : GameTypeBlurb(row.type);
-  Text(ui, nullptr, 16.0f, ImVec2(pos.x, pos.y + 34.0f * ui.s),
-       IM_COL32(205, 218, 230, 255), description, right);
-  if (compact || !variant)
-    return;
-  const MenuVariant &v = *variant;
-  const float textH =
-      Font(nullptr)->CalcTextSizeA(16.0f * ui.s, FLT_MAX, width, description).y;
-  const float y = pos.y + 34.0f * ui.s + textH + 10.0f * ui.s;
-  Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x, y), kDim,
-       v.path.filename().string().c_str(), right);
-  Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x, y + 20.0f * ui.s),
-       kDim, "Uses this variant's default rules.", right);
-}
-
-static std::string RuleValueText(const VariantRules::Rule &rule, int value) {
-  const int nameIndex = value - rule.minValue;
-  if (rule.names && nameIndex >= 0 &&
-      nameIndex < static_cast<int>(rule.names->size()))
-    return (*rule.names)[nameIndex];
-  if (rule.bit >= 0)
-    return value ? "On" : "Off";
-  return std::to_string(value) + rule.unit;
-}
-
-// GAME OPTIONS: options that are fixed levels rather than numbers. In Reach's
-// trait lists the first choice ("Default", value = the rule's minimum) means
-// "unchanged": the player keeps the game's normal level. `normal` names that
-// level, so the row reads "OFF" or "ALLIES" instead of "DEFAULT"; nullptr keeps
-// the list's own word where the normal level isn't certain. `levels` explains
-// what each level does and is shown with the option's description.
-struct RuleLevels {
-  const char *key;
-  const char *normal;
-  const char *levels;
-};
-
-static const RuleLevels *FindRuleLevels(const char *key) {
-  static const RuleLevels s_levels[] = {
-      {"headshot_immune", "Off",
-       "Off: headshots do their usual extra damage. On: they do no extra "
-       "damage."},
-      {"assassin_immune", "Off",
-       "Off: players can be assassinated from behind. On: they can't."},
-      {"primary_weapon", "Loadout",
-       "Loadout: the game type's own spawn weapon. None: spawn without one."},
-      {"secondary_weapon", "Loadout",
-       "Loadout: the game type's own second weapon. None: spawn without one."},
-      {"ability", "Loadout",
-       "Loadout: the game type's own armor ability. None: spawn without one."},
-      {"grenade_count", "Loadout",
-       "Loadout: whatever the game type gives. Map Default: the map's own "
-       "grenades. "
-       "Otherwise None, or that many frag and/or plasma grenades at spawn."},
-      {"weapon_pickup", "On",
-       "On: players can pick up and swap weapons. Off: they keep what they "
-       "spawned with."},
-      {"infinite_ammo", "Off",
-       "Off: normal ammo. On: reserve ammo never runs out, but you still "
-       "reload. "
-       "Bottomless: the magazine never empties, so there are no reloads."},
-      {"ability_usage", nullptr,
-       "Off: armor abilities can't be used. Unlimited: they never run out of "
-       "energy. "
-       "Normal and On both allow them; the game's exact difference between the "
-       "two isn't confirmed yet."},
-      {"active_camo", "Off",
-       "Off: fully visible. Worst: barely see-through. Poor: partly "
-       "see-through, still easy to spot. "
-       "Good: very hard to see. Best: almost invisible."},
-      {"shield_vampirism", "Off",
-       "Off: the usual. On: shield damage you deal is added to your own "
-       "shields."},
-      {"grenade_regen", "Off",
-       "Off: the usual. On: players get new grenades over time. Works in "
-       "custom games; "
-       "Firefight doesn't apply it yet."},
-      {"aura", "None",
-       "None: no glow. Team Color: a glow in the team's main color. Darkened "
-       "and Pastel: the player's own "
-       "armor colors, darker or lighter."},
-      {"waypoint", "Allies",
-       "None: nobody sees a marker over the player. Allies: teammates see it. "
-       "All: everyone sees it, enemies too."},
-      {"visible_name", "Allies",
-       "None: nobody sees the player's name. Allies: teammates see it. All: "
-       "everyone sees it, enemies too."},
-      {"tracker_mode", "Normal",
-       "Off: no motion tracker. Friends: it only shows allies. Normal: it "
-       "shows enemies who move "
-       "quickly or fire. All: it shows every enemy, even one standing still."},
-      {"tracker_range", "25 m", nullptr},
-  };
-  for (const RuleLevels &l : s_levels)
-    if (std::strcmp(l.key, key) == 0)
-      return &l;
-  return nullptr;
-}
-
-// The value as the GAME OPTIONS row shows it: numbers for numeric rules
-// (RuleValueText), the level's own name for level rules (with "unchanged"
-// spelled as the game's normal level).
-static std::string OptionValueText(const VariantRules::Rule &rule, int value) {
-  const RuleLevels *levels = FindRuleLevels(rule.key);
-  if (levels && levels->normal && value == rule.minValue && rule.names &&
-      !rule.names->empty() && (*rule.names)[0] == "Default")
-    return levels->normal;
-  return RuleValueText(rule, value);
-}
-
-// The option's description plus, for level options, what the levels mean.
-static std::string OptionHelpText(const VariantRules::Rule &rule) {
-  std::string help = rule.help;
-  if (const RuleLevels *levels = FindRuleLevels(rule.key);
-      levels && levels->levels)
-    help += std::string(" ") + levels->levels;
-  return help;
-}
-
-// GAME OPTIONS quick presets: each one replaces the current changes with its
-// own list, which the player can then tweak and SAVE. Values are raw rule
-// values (see the rule tables in VariantRules.cpp: weapons -1 None, 0 DMR, 4
-// Energy Sword, 5 Magnum, 8 Rocket Launcher, 10 Sniper Rifle; shield_mult 1 =
-// 0%; tracker_mode 1 = Off; grenade_count 2 = None; weapon_pickup 2 = Off;
-// infinite_ammo 2 = On). Only the base traits every player shares can be set,
-// so there is no Infection-style preset: it needs separate zombie traits.
-struct OptionsPreset {
-  const char *name;
-  const char *help;
-  std::vector<std::pair<const char *, int>> values;
-};
-
-static const std::vector<OptionsPreset> &OptionsPresets() {
-  static const std::vector<OptionsPreset> s_presets = {
-      {"CLASSIC", "The base game type's own rules, with nothing changed.", {}},
-      {"SWAT",
-       "No shields, no motion tracker, no grenades. Spawn with a DMR and a "
-       "Magnum.",
-       {{"shield_mult", 1},
-        {"tracker_mode", 1},
-        {"grenade_count", 2},
-        {"primary_weapon", 0},
-        {"secondary_weapon", 5}}},
-      {"SNIPERS",
-       "Spawn with a Sniper Rifle and a Magnum, infinite ammo, no motion "
-       "tracker, no grenades.",
-       {{"primary_weapon", 10},
-        {"secondary_weapon", 5},
-        {"infinite_ammo", 2},
-        {"tracker_mode", 1},
-        {"grenade_count", 2}}},
-      {"ROCKETS",
-       "Spawn with a Rocket Launcher and a Magnum, infinite ammo, no grenades.",
-       {{"primary_weapon", 8},
-        {"secondary_weapon", 5},
-        {"infinite_ammo", 2},
-        {"grenade_count", 2}}},
-      {"SWORDS",
-       "Energy Sword only: no second weapon, no grenades, no weapon pickups.",
-       {{"primary_weapon", 4},
-        {"secondary_weapon", -1},
-        {"grenade_count", 2},
-        {"weapon_pickup", 2}}},
-  };
-  return s_presets;
-}
-
-// Reads the lobby's variant when it changes. The Teams flag is in the decoded
-// record, or in a player-made mode's rules.
-static void RefreshLobbyMode(OverlayContext &ctx) {
-  MenuState &st = ctx.st;
-  // Key on the mode too: with no variant file chosen the old check re-ran every
-  // frame and cleared lobbyTeamsManual, so the host's chosen team was
-  // immediately re-dealt (always back to red or blue).
-  const std::string key = st.lobbyMode + "|" + st.lobbyVariantPath;
-  if (st.lobbyModeKey == key)
-    return;
-  st.lobbyModeKey = key;
-  st.lobbyTeamsOn = (st.lobbyMode == "forge");
-  // Forge sessions only honour red and blue (the engine ignores the side
-  // override there), so the lobby's team count is pinned to 2 and anyone on a
-  // higher team is dealt back onto red/blue.
-  if (st.lobbyMode == "forge")
-    st.lobbyTeamCount = 2; // Forge lobbies support team dividers by default
-  st.lobbyTeamsManual = false;
-  st.lobbyModeChanges = 0;
-  st.lobbyModeSummary.clear();
-  if (st.lobbyVariantPath.empty())
-    return;
-  const std::filesystem::path path(st.lobbyVariantPath);
-  VariantRules::Preset preset;
-  const bool isMode =
-      VariantRules::IsPresetFile(path) && VariantRules::Load(path, preset);
-  const std::filesystem::path base =
-      isMode ? VariantBasePath(ctx.reachDir, preset.base) : path;
-  std::vector<uint8_t> decoded;
-  if (!VariantRules::Decode(base, decoded))
-    return;
-  if (isMode)
-    VariantRules::Apply(preset, decoded.data());
-  for (const VariantRules::Rule &rule : VariantRules::Rules()) {
-    if (std::strcmp(rule.key, "teams") == 0) {
-      st.lobbyTeamsOn = (VariantRules::Read(rule, decoded.data()) != 0) ||
-                        (st.lobbyMode == "forge");
-    }
-    const auto it = preset.values.find(rule.key);
-    if (isMode && it != preset.values.end()) {
-      ++st.lobbyModeChanges;
-      if (st.lobbyModeChanges <= 5)
-        st.lobbyModeSummary +=
-            std::string(st.lobbyModeSummary.empty() ? "" : ", ") + rule.label +
-            " " + RuleValueText(rule, it->second);
-    }
-  }
-  if (st.lobbyModeChanges > 5)
-    st.lobbyModeSummary +=
-        " and " + std::to_string(st.lobbyModeChanges - 5) + " more";
-  // Firefight and Campaign are cooperative modes: teams are strictly disabled.
-  if (st.lobbyMode == "firefight" || st.lobbyMode == "campaign") {
-    st.lobbyTeamsOn = false;
-    st.lobbyTeamCount = 1;
-  }
-  NOBLE_INFO("FrontEndMenu: lobby game type: teams {}, {} rule(s) changed",
-             st.lobbyTeamsOn ? "on" : "off", st.lobbyModeChanges);
-}
-
-// Host only: everyone on a team while the variant has teams, nobody when it
-// doesn't. Players are dealt in roster order, so a joining player doesn't
-// reshuffle anyone. Empty when the roster already matches.
-static void AssignLobbyTeams(MenuState &st) {
-  if (st.lobbyTeamsManual)
-    return; // the host chose teams deliberately; don't overwrite them
-  if (st.lobbyMode == "firefight" || st.lobbyMode == "campaign") {
-    st.lobbyTeamsOn = false;
-    st.lobbyTeamCount = 1;
-  }
-  std::vector<std::pair<uint64_t, int>> changes;
-  const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
-  for (size_t i = 0; i < st.lobbyRoster.size(); ++i) {
-    const int want = st.lobbyTeamsOn
-                         ? static_cast<int>(i % static_cast<size_t>(teams)) + 1
-                         : 0;
-    if (st.lobbyRoster[i].team != want) {
-      st.lobbyRoster[i].team = want;
-      changes.emplace_back(st.lobbyRoster[i].peerId, want);
-      if (st.lobbyRoster[i].isHost)
-        MasterServerClient::Get().SetAdvertHostTeam(want);
-    }
-  }
-  if (changes.empty() || st.teamsPushFailed)
-    return;
-  if (MasterServerClient::Get().SetTeamsSync(st.lobbySessionId, changes)) {
-    NOBLE_INFO("FrontEndMenu: teams updated for {} player(s), teams {}",
-               changes.size(), st.lobbyTeamsOn ? "on" : "off");
-  } else {
-    // An older server: the host still sees teams, and this stops asking every
-    // poll.
-    st.teamsPushFailed = true;
-    NOBLE_WARN("FrontEndMenu: the server didn't accept the team list");
-  }
-}
-
-// Opens the game options editor on a variant; Custom Game and Firefight share
-// it.
-static void OpenGameOptions(OverlayContext &ctx, const MenuVariant &current) {
-  MenuState &st = ctx.st;
-  VariantRules::Preset preset;
-  const bool isMode =
-      current.custom && VariantRules::Load(current.path, preset);
-  st.optionsBase = isMode ? preset.base : current.path.filename().string();
-  st.optionsSource =
-      isMode ? VariantBasePath(ctx.reachDir, preset.base) : current.path;
-  st.optionsValues = isMode ? preset.values : std::map<std::string, int>{};
-  std::snprintf(st.optionsName, sizeof(st.optionsName), "%s",
-                (isMode ? current.label : current.label + " Custom").c_str());
-  st.optionsFile = isMode ? current.path : std::filesystem::path();
-  st.optionsRow = 2; // the first option (row 0 is the presets, row 1 the first
-                     // category heading)
-  st.optionsMessage.clear();
-  st.optionsSearch[0] = 0;
-  st.optionsChangedOnly = false;
-  st.optionsOpenGroups.clear();
-  if (!VariantRules::Rules().empty())
-    st.optionsOpenGroups.insert(
-        VariantRules::Rules().front().group); // only the first opens
-  st.optionsFirst = 0;
-  st.optionsLastFocus = -1;
-  st.optionsPresetPick = 0;
-  st.confirmAction.clear();
-  if (VariantRules::Decode(st.optionsSource, st.optionsDecoded)) {
-    NOBLE_INFO("FrontEndMenu: game options opened on '{}'", st.optionsBase);
-    st.optionsOpen = true;
-    MenuSounds::Click();
-  } else {
-    NOBLE_WARN("FrontEndMenu: could not read variant '{}' for its game options",
-               st.optionsBase);
-    MenuSounds::Error();
-  }
-}
-
-// ---- Playlists ----
-static void RefreshPlaylists(OverlayContext &ctx) {
-  std::vector<std::filesystem::path> folders;
-  for (const ModEntry &mod : ctx.mods)
-    folders.push_back(mod.folder);
-  ctx.st.playlists = Playlists::Scan(folders);
-}
-
-// Every multiplayer map a playlist can name: the stock ones, then each mod's.
-static std::vector<MapEntry> AllMultiplayerMaps(OverlayContext &ctx) {
-  std::vector<MapEntry> maps = BaseMaps(kMaps, Count(kMaps));
-  std::set<std::string> everyMod;
-  for (const ModEntry *mod : ctx.mpMods)
-    everyMod.insert(OpenKey(ModMode::Multiplayer, *mod));
-  for (MapEntry &m : ModdedMaps(ctx.mpMods, ModMode::Multiplayer, kMaps,
-                                Count(kMaps), everyMod, "70_boneyard")) {
-    if (!m.header && m.enabled)
-      maps.push_back(std::move(m));
-  }
-  return maps;
-}
-
-// A playlist entry turned into what the lobby needs. False when this PC lacks
-// the map.
-struct ResolvedEntry {
-  MapEntry map;
-  const MenuVariant *variant = nullptr;
-};
-static bool ResolveEntry(OverlayContext &ctx, const Playlists::Entry &entry,
-                         bool randomType, ResolvedEntry &out) {
-  bool found = false;
-  for (MapEntry &m : AllMultiplayerMaps(ctx)) {
-    const std::string mod =
-        m.mod ? m.mod->folder.filename().string() : std::string();
-    if (m.scenario == entry.map && mod == entry.mod) {
-      out.map = std::move(m);
-      found = true;
-      break;
-    }
-  }
-  if (!found)
-    return false;
-  std::vector<const MenuVariant *> allowed;
-  out.variant = nullptr;
-  for (const MenuVariant &v : ctx.variants) {
-    if (!entry.mod.empty() || v.type.empty() ||
-        MapGameTypes::Supports(entry.map, v.type))
-      allowed.push_back(&v);
-    if (v.path.filename().string() == entry.variant)
-      out.variant = &v;
-  }
-  static std::mt19937 s_random{std::random_device{}()};
-  if ((randomType || !out.variant) && !allowed.empty())
-    out.variant = allowed[s_random() % allowed.size()];
-  return out.variant != nullptr;
-}
-
-static void ApplyEntryToLobby(MenuState &st, const ResolvedEntry &e) {
-  st.lobbyMap =
-      e.map.launchScenario.empty() ? e.map.scenario : e.map.launchScenario;
-  st.lobbyMapOverride = e.map.mapOverride;
-  st.lobbyMapVariant = e.map.mvar;
-  st.lobbyMapTitle = e.map.name;
-  st.lobbyMapImage = e.map.imageLoading;
-  st.lobbyMapThumb = e.map.imageThumbnail;
-  st.lobbyModId = e.map.mod ? e.map.mod->workshopId : std::string();
-  st.lobbyModTitle = e.map.mod ? e.map.mod->title : std::string();
-  st.lobbyModFolder = e.map.mod ? e.map.mod->folder : std::filesystem::path();
-  st.lobbyVariantPath = e.variant->path.string();
-  st.lobbyVariantName = e.variant->label;
-  MasterServerClient::Get().UpdateLobbyAdvert(
-      st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
-      st.lobbySkulls);
-  NOBLE_INFO("FrontEndMenu: lobby now {} on {}", st.lobbyVariantName,
-             st.lobbyMapTitle);
-}
-
-// Opens a vote with up to three different entries from the active playlist.
-static void StartLobbyVote(OverlayContext &ctx) {
-  MenuState &st = ctx.st;
-  st.voteMessage.clear();
-  if (st.playlistChoice < 0 ||
-      st.playlistChoice >= static_cast<int>(st.playlists.size()))
-    return;
-  const Playlists::Playlist &playlist = st.playlists[st.playlistChoice];
-  std::vector<Playlists::Entry> pool = playlist.entries;
-  static std::mt19937 s_random{std::random_device{}()};
-  std::shuffle(pool.begin(), pool.end(), s_random);
-  st.voteEntries.clear();
-  std::vector<std::string> labels;
-  for (const Playlists::Entry &entry : pool) {
-    if (labels.size() >= 3)
-      break;
-    ResolvedEntry resolved;
-    if (!ResolveEntry(ctx, entry, playlist.randomType, resolved))
-      continue;
-    Playlists::Entry fixed = entry;
-    fixed.variant =
-        resolved.variant->path.filename()
-            .string(); // a random type is settled before anyone votes
-    st.voteEntries.push_back(fixed);
-    labels.push_back(resolved.map.name + " - " + resolved.variant->label);
-  }
-  if (labels.size() < 2) {
-    st.voteMessage =
-        "A vote needs at least 2 playable entries in the playlist.";
-  } else if (!MasterServerClient::Get().StartVoteSync(st.lobbySessionId, labels,
-                                                      20)) {
-    st.voteMessage = "The server didn't accept the vote. It may need updating.";
-    MenuSounds::Error();
-  } else {
-    NOBLE_INFO("FrontEndMenu: vote opened with {} options", labels.size());
-    st.voteCast = -1;
-    MenuSounds::Click();
-  }
-}
-
-// Host only, when time is up. "None of these" on top draws three new options
-// once; a second time the lobby stays as it is.
-static void FinishLobbyVote(OverlayContext &ctx) {
-  MenuState &st = ctx.st;
-  MasterServerClient::Get().EndVoteSync(st.lobbySessionId);
-  std::vector<int> counts = st.voteCounts;
-  counts.resize(st.voteEntries.size() + 1, 0);
-  const int none = counts.back();
-  const int best = *std::max_element(counts.begin(), counts.end() - 1);
-  st.voteId.clear();
-  if (none > best || best == 0) {
-    NOBLE_INFO("FrontEndMenu: vote closed, none of these ({} votes, reroll {})",
-               none, st.voteRerolls);
-    if (none > best && st.voteRerolls < 1) {
-      ++st.voteRerolls;
-      StartLobbyVote(ctx);
-    } else {
-      st.voteRerolls = 0;
-      st.voteMessage = "No choice won, so the lobby stays as it is.";
-    }
-    return;
-  }
-  std::vector<int> leaders;
-  for (int i = 0; i + 1 < static_cast<int>(counts.size()); ++i)
-    if (counts[i] == best)
-      leaders.push_back(i);
-  static std::mt19937 s_random{std::random_device{}()};
-  const int winner = leaders[s_random() % leaders.size()];
-  st.voteRerolls = 0;
-  ResolvedEntry resolved;
-  if (ResolveEntry(ctx, st.voteEntries[winner], false, resolved)) {
-    NOBLE_INFO("FrontEndMenu: vote closed, option {} won with {} votes", winner,
-               best);
-    ApplyEntryToLobby(st, resolved);
-  }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Reference-Matched Tactical UI Components (Tile Map Pickers, Variants Drawer,
-// Top Telemetry, Game Options)
-// ---------------------------------------------------------------------------------------------
-
-static void DrawTopTelemetryBar(const Ui &ui, const char *centerTag) {
+void DrawTopTelemetryBar(const Ui &ui, const char *centerTag) {
   const float minX = ui.origin.x + ui.size.x * 0.34f;
   const float maxX = ui.origin.x + ui.size.x * 0.65f;
   if (maxX - minX < 210.0f * ui.s)
@@ -6332,4939 +4735,8 @@ static void DrawTopTelemetryBar(const Ui &ui, const char *centerTag) {
        centerTag);
 }
 
-struct MapCardMeta {
-  std::string players;
-  std::string modes;
-  std::string terrain;
-};
-
-static MapCardMeta GetMapCardMeta(const MapEntry *entry,
-                                  const char *fallbackModeLabel) {
-  if (!entry)
-    return {"1-16 Players",
-            fallbackModeLabel ? fallbackModeLabel : "CUSTOM GAME",
-            "REACH / COMBAT ZONE"};
-  if (entry->mod) {
-    const std::string carrier =
-        entry->launchScenario.empty() ? entry->scenario : entry->launchScenario;
-    return {entry->custom ? "Custom Map" : "Modded Map",
-            "MOD: " + Upper(entry->mod->title),
-            carrier.empty()
-                ? "CUSTOM ENVIRONMENT"
-                : ("CARRIER: " + Upper(MapNames::Display(carrier)))};
-  }
-  struct StockMeta {
-    const char *scenario;
-    const char *players;
-    const char *modes;
-    const char *terrain;
-  };
-  static const StockMeta kMeta[] = {
-      {"20_sword_slayer", "8-16 Players", "SLAYER, CTF, SWAT, ODDBALL",
-       "INDUSTRIAL / VERTICAL"},
-      {"45_launch_station", "8-16 Players", "SLAYER, CTF, ASSAULT, TERRITORIES",
-       "ORBITAL LAUNCH / SYMMETRICAL"},
-      {"50_panopticon", "8-16 Players", "SLAYER, CTF, KOTH, ASSAULT",
-       "URBAN WATERFRONT / ASYMMETRICAL"},
-      {"70_boneyard", "12-16 Players", "INVASION, BTB SLAYER, CTF",
-       "SHIPYARD COAST / VEHICLE BTB"},
-      {"30_settlement", "6-12 Players", "SLAYER, KOTH, TERRITORIES, STOCKPILE",
-       "HYDROELECTRIC / MIXED COMBAT"},
-      {"52_ivory_tower", "6-12 Players", "SLAYER, SWAT, INFECTION, JUGGERNAUT",
-       "HIGH-RISE ATRIUM / VERTICAL"},
-      {"35_island", "12-16 Players", "INVASION, BTB SLAYER, HEADHUNTER",
-       "COVENANT SPIRE / AERIAL BTB"},
-      {"45_aftship", "4-8 Players", "SLAYER, SWAT, ARENA, GRIFBALL",
-       "CORVETTE INTERIOR / ZERO-G"},
-      {"dlc_slayer", "4-10 Players", "SLAYER, CTF, TEAM OBJECTIVE",
-       "ORBITAL DRYDOCK / LOW-G"},
-      {"dlc_invasion", "12-16 Players", "INVASION, BTB SLAYER, STOCKPILE",
-       "ARCTIC EXCAVATION / LARGE BTB"},
-      {"dlc_medium", "8-16 Players", "BTB SLAYER, CTF, TERRITORIES",
-       "FORERUNNER COAST / VEHICLES"},
-      {"condemned", "6-12 Players", "SLAYER, CTF, KOTH, INFECTION",
-       "ORBITAL STATION / CORRIDORS"},
-      {"trainingpreserve", "12-16 Players", "BTB SLAYER, CTF, STOCKPILE",
-       "MILITARY PRESERVE / VEHICLE BTB"},
-      {"cex_beaver_creek", "4-8 Players", "SLAYER, CTF, ODDBALL",
-       "CANYON BASIN / SYMMETRICAL"},
-      {"cex_damnation", "4-8 Players", "SLAYER, KOTH, TEAM OBJECTIVE",
-       "FORERUNNER TEMPLE / MULTI-LEVEL"},
-      {"cex_timberland", "12-16 Players", "BTB SLAYER, CTF, ASSAULT",
-       "FOREST HIGHLANDS / CLASSIC BTB"},
-      {"cex_prisoner", "2-8 Players", "SLAYER, SWAT, TEAM ARENA",
-       "CELLBLOCK ATRIUM / VERTICAL"},
-      {"cex_hangemhigh", "4-10 Players", "SLAYER, CTF, TEAM SNIPERS",
-       "TOMB COURTYARD / SIGHTLINES"},
-      {"cex_headlong", "12-16 Players", "BTB SLAYER, CTF, 1-BOMB, INFECTION",
-       "CITY SECTOR / URBAN BTB"},
-      {"forge_halo", "2-16+ Players", "CUSTOM, FORGE, RACE, INFECTION",
-       "HALO RING / SANDBOX CANVAS"},
-      // Campaign missions
-      {"m05", "1-4 Co-op", "CAMPAIGN / CINEMATIC",
-       "VIERY TERRITORY / PROLOGUE"},
-      {"m10", "1-4 Co-op", "CAMPAIGN, SCORING, LASO",
-       "FRONTIER / RECONNAISSANCE"},
-      {"m20", "1-4 Co-op", "CAMPAIGN, SCORING, LASO",
-       "ONI SWORD BASE / DEFENSE"},
-      {"m30", "1-4 Co-op", "CAMPAIGN, SCORING, LASO",
-       "VIERY HIGHLANDS / STEALTH"},
-      {"m35", "1-4 Co-op", "CAMPAIGN, SCORING, LASO",
-       "COVENANT FRONT / ASSAULT"},
-      {"m45", "1-4 Co-op", "CAMPAIGN, SCORING, LASO",
-       "ORBITAL / SABRE & CORVETTE"},
-      {"m50", "1-4 Co-op", "CAMPAIGN, SCORING, LASO",
-       "NEW ALEXANDRIA / EVACUATION"},
-      {"m52", "1-4 Co-op", "CAMPAIGN, SCORING, LASO",
-       "OCCUPIED CITY / FALCON OPS"},
-      {"m60", "1-4 Co-op", "CAMPAIGN, SCORING, LASO",
-       "GLACIER COMPLEX / SIEGE"},
-      {"m70", "1-4 Co-op", "CAMPAIGN, SCORING, LASO",
-       "ASZOD SHIPYARDS / FINALE"},
-      {"m70_bonus", "1-4 Co-op", "CAMPAIGN / SURVIVAL FINALE",
-       "SHIPYARD SURFACE / LAST STAND"},
-      // Firefight maps
-      {"ff50_park", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "BEACHHEAD COAST / VEHICLES"},
-      {"ff45_corvette", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "CORVETTE HANGAR / CLOSE QUARTERS"},
-      {"ff20_courtyard", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "SWORD BASE COURTYARD / VERTICAL"},
-      {"ff60_icecave", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "FROZEN GLACIER / MIXED COMBAT"},
-      {"ff70_holdout", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "BUNKER COMPLEX / FORTIFIED"},
-      {"ff60_airview", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "HIGHLAND OUTPOST / WIDE SIGHTLINES"},
-      {"ff10_prototype", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "VIERY FARMLAND / ELEVATED RIDGE"},
-      {"ff30_waterfront", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "INDUSTRIAL DOCKS / MULTI-LEVEL"},
-      {"ff_unearthed", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "MINING FACILITY / VEHICLE YARD"},
-      {"cex_ff_halo", "1-4+ Co-op", "FIREFIGHT, GENERATOR, SCORE ATTACK",
-       "ALPHA HALO / FORERUNNER RUINS"},
-  };
-  for (const StockMeta &m : kMeta) {
-    if (entry->scenario == m.scenario)
-      return {m.players, m.modes, m.terrain};
-  }
-  return {"2-16 Players", fallbackModeLabel ? fallbackModeLabel : "CUSTOM GAME",
-          "REACH / COMBAT ZONE"};
-}
-
-struct MapTileGroup {
-  MapEntry base;
-  std::string key;
-  std::vector<MapEntry> variants;
-  std::string groupHeading;
-};
-
-static UiTexture ResolveMapTileTexture(const MapEntry &m, bool highRes) {
-  UiTexture tex;
-  if (m.mod) {
-    if (highRes && !m.imageLarge.empty())
-      tex = UiArt::ImageFile(m.imageLarge);
-    if (!tex && !m.imageThumbnail.empty())
-      tex = UiArt::ImageFile(m.imageThumbnail);
-    if (!tex && !m.imageLoading.empty())
-      tex = UiArt::ImageFile(m.imageLoading);
-    if (!tex && !m.scenario.empty())
-      tex = UiArt::MapPreview(m.scenario, true);
-    if (!tex && !m.scenario.empty())
-      tex = UiArt::MapPhoto(m.scenario);
-    if (!tex && !m.launchScenario.empty())
-      tex = UiArt::MapPreview(m.launchScenario, true);
-  } else {
-    tex = UiArt::MapPreview(m.scenario, true);
-    if (!tex)
-      tex = UiArt::MapPhoto(m.scenario);
-    if (!tex && highRes)
-      tex = UiArt::LoadingBackground(m.scenario);
-  }
-  return tex;
-}
-
-static std::vector<MapTileGroup> BuildMapTileGroups(
-    OverlayContext &ctx, bool modded, bool forgeTab, ModMode modMode,
-    const std::vector<const ModEntry *> &modList, const MenuMap *baseMaps,
-    int baseCount, const std::string &carrier, bool includeForgeVariants,
-    const char *searchQuery) {
-  if (includeForgeVariants && !ctx.forgeMapsScanned) {
-    ctx.forgeMaps = ScanForgeMaps();
-    ctx.forgeMapsScanned = true;
-  }
-  const std::string query = searchQuery ? searchQuery : "";
-  auto makeVariantEntry = [](const MapEntry &parent, const ForgeMap &fm) {
-    MapEntry v = parent;
-    v.name = fm.title;
-    if (!fm.description.empty())
-      v.blurb = fm.description;
-    else if (!fm.creator.empty())
-      v.blurb = "Map variant by " + fm.creator + " (on " + parent.name + ").";
-    else
-      v.blurb = "Map variant on " + parent.name + ".";
-    v.mvar = fm.path;
-    v.forgeGroup = fm.group;
-    return v;
-  };
-
-  std::vector<MapTileGroup> groups;
-  if (modded) {
-    for (const ModEntry *mod : modList) {
-      if (!mod)
-        continue;
-      const std::vector<ModMap> &listed =
-          (modMode == ModMode::Campaign)    ? mod->campaign
-          : (modMode == ModMode::Firefight) ? mod->firefight
-                                            : mod->multiplayer;
-      std::vector<MapEntry> maps =
-          ModMaps(*mod, listed, baseMaps, baseCount, carrier);
-      bool firstInMod = true;
-      for (MapEntry &m : maps) {
-        if (m.header)
-          continue;
-        std::vector<MapEntry> vars;
-        if (includeForgeVariants) {
-          const std::string matchScen =
-              m.launchScenario.empty() ? m.scenario : m.launchScenario;
-          for (const ForgeMap &fm : ctx.forgeMaps) {
-            if (fm.scenario == matchScen)
-              vars.push_back(makeVariantEntry(m, fm));
-          }
-          std::sort(vars.begin(), vars.end(),
-                    [](const MapEntry &a, const MapEntry &b) {
-                      return a.name < b.name;
-                    });
-        }
-        const bool baseMatch = query.empty() || ContainsNoCase(m.name, query) ||
-                               ContainsNoCase(mod->title, query) ||
-                               ContainsNoCase(m.scenario, query);
-        std::vector<MapEntry> filteredVars;
-        if (!query.empty() && !baseMatch) {
-          for (const MapEntry &v : vars) {
-            if (ContainsNoCase(v.name, query) ||
-                ContainsNoCase(v.forgeGroup, query))
-              filteredVars.push_back(v);
-          }
-          if (filteredVars.empty())
-            continue;
-        } else {
-          filteredVars = std::move(vars);
-        }
-        MapTileGroup g;
-        g.key = "mod:" + mod->id + ":" + m.scenario + ":" +
-                m.mapOverride.filename().string();
-        g.base = std::move(m);
-        g.variants = std::move(filteredVars);
-        if (firstInMod) {
-          g.groupHeading = mod->title;
-          firstInMod = false;
-        }
-        groups.push_back(std::move(g));
-      }
-    }
-    return groups;
-  }
-
-  if (forgeTab) {
-    // Group all saved .mvar Forge variants under their actual canvas/base map
-    // tiles!
-    for (int i = 0; i < baseCount; ++i) {
-      MapEntry base{baseMaps[i].scenario,
-                    baseMaps[i].name,
-                    baseMaps[i].blurb,
-                    {},
-                    {},
-                    {},
-                    {},
-                    {},
-                    true};
-      std::vector<MapEntry> vars;
-      for (const ForgeMap &fm : ctx.forgeMaps) {
-        if (fm.scenario == base.scenario)
-          vars.push_back(makeVariantEntry(base, fm));
-      }
-      if (vars.empty())
-        continue;
-      std::sort(vars.begin(), vars.end(),
-                [](const MapEntry &a, const MapEntry &b) {
-                  if (a.forgeGroup != b.forgeGroup)
-                    return a.forgeGroup < b.forgeGroup;
-                  return a.name < b.name;
-                });
-      const bool baseMatch = query.empty() || ContainsNoCase(base.name, query);
-      if (!baseMatch) {
-        std::vector<MapEntry> kept;
-        for (const MapEntry &v : vars) {
-          if (ContainsNoCase(v.name, query) ||
-              ContainsNoCase(v.forgeGroup, query))
-            kept.push_back(v);
-        }
-        if (kept.empty())
-          continue;
-        vars = std::move(kept);
-      }
-      MapTileGroup g;
-      g.key = "forge:" + base.scenario;
-      g.base = std::move(base);
-      g.variants = std::move(vars);
-      groups.push_back(std::move(g));
-    }
-    // Put Forge World first in Forge Maps tab so it is immediately
-    // front-and-center.
-    std::stable_sort(groups.begin(), groups.end(),
-                     [](const MapTileGroup &a, const MapTileGroup &b) {
-                       const bool aw = a.base.scenario == "forge_halo";
-                       const bool bw = b.base.scenario == "forge_halo";
-                       if (aw != bw)
-                         return aw;
-                       return a.variants.size() > b.variants.size();
-                     });
-    return groups;
-  }
-
-  for (int i = 0; i < baseCount; ++i) {
-    MapEntry base{baseMaps[i].scenario,
-                  baseMaps[i].name,
-                  baseMaps[i].blurb,
-                  {},
-                  {},
-                  {},
-                  {},
-                  {},
-                  true};
-    std::vector<MapEntry> vars;
-    if (includeForgeVariants) {
-      for (const ForgeMap &fm : ctx.forgeMaps) {
-        if (fm.scenario == base.scenario)
-          vars.push_back(makeVariantEntry(base, fm));
-      }
-      std::sort(
-          vars.begin(), vars.end(),
-          [](const MapEntry &a, const MapEntry &b) { return a.name < b.name; });
-    }
-    const bool baseMatch = query.empty() || ContainsNoCase(base.name, query) ||
-                           ContainsNoCase(base.scenario, query);
-    if (!baseMatch) {
-      std::vector<MapEntry> kept;
-      for (const MapEntry &v : vars) {
-        if (ContainsNoCase(v.name, query) ||
-            ContainsNoCase(v.forgeGroup, query))
-          kept.push_back(v);
-      }
-      if (kept.empty())
-        continue;
-      vars = std::move(kept);
-    }
-    MapTileGroup g;
-    g.key = "stock:" + base.scenario;
-    g.base = std::move(base);
-    g.variants = std::move(vars);
-    groups.push_back(std::move(g));
-  }
-  return groups;
-}
-
-struct TacticalGridResult {
-  bool pickedBaseOrVariant = false;
-  bool moveFocusRight = false;
-};
-
-static TacticalGridResult
-DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
-                    ImVec2 gridSize, const std::vector<MapTileGroup> &groups,
-                    int &selectedGroupIdx, std::filesystem::path &selectedMvar,
-                    bool hasFocus, const char *emptyText,
-                    const char *baseItemTag, bool autoScrollSelection = false) {
-  TacticalGridResult res;
-  const ImVec2 gridEnd(gridPos.x + gridSize.x, gridPos.y + gridSize.y);
-
-  // Outer tactical framed container matching the reference image
-  ui.dl->AddRectFilled(gridPos, gridEnd, IM_COL32(8, 13, 20, 170), 2.0f * ui.s);
-  NobleUi::DrawTacticalFrame(ui.dl, gridPos, gridEnd, ui.s, false, false, false,
-                             false);
-
-  if (groups.empty()) {
-    selectedGroupIdx = 0;
-    st.mapDrawerKey.clear();
-    st.mapDrawerFocus = -1;
-    const float tw =
-        TextWidth(NobleStyle::TitleFont(), 19.0f * ui.s, emptyText);
-    Text(ui, NobleStyle::TitleFont(), 19.0f,
-         ImVec2(gridPos.x + (gridSize.x - tw) * 0.5f,
-                gridPos.y + gridSize.y * 0.44f),
-         kDim, emptyText);
-    return res;
-  }
-
-  selectedGroupIdx =
-      std::clamp(selectedGroupIdx, 0, static_cast<int>(groups.size()) - 1);
-  const float crispMax = std::max(1.0f, ImGui::GetIO().DisplaySize.y / 1080.0f);
-  const bool typing = ImGui::GetIO().WantTextInput;
-  const bool mouseMoved = ImGui::GetIO().MouseDelta.x != 0.0f ||
-                          ImGui::GetIO().MouseDelta.y != 0.0f;
-
-  // Build visual 2-column row plan (mod headings start a fresh row cleanly,
-  // expanded drawers attach right under their row)
-  struct VisualRow {
-    std::string heading;
-    int col[2] = {-1, -1};
-    int expandedCol =
-        -1; // 0 or 1 if one of the 2 tiles in this row has its drawer open
-    float y = 0.0f;
-    float tilesH = 0.0f;
-    float drawerH = 0.0f;
-    int drawerVisibleRows = 0;
-  };
-
-  const float pad = 14.0f * ui.s;
-  const float colGap = 14.0f * ui.s;
-  const float rowGap = 14.0f * ui.s;
-  const float scrollTrackW = 10.0f * ui.s;
-  const float innerW = gridSize.x - pad * 2.0f - scrollTrackW;
-  const float tileW = std::max(120.0f * ui.s, (innerW - colGap) * 0.5f);
-  const float tileH = std::round(tileW * 0.48f);
-  const float headingH = 28.0f * ui.s;
-  const float drawerHeadH = 30.0f * ui.s;
-  const float drawerRowH = 34.0f * ui.s;
-
-  std::vector<VisualRow> vrows;
-  std::vector<std::pair<int, int>> groupToRowCol(groups.size(), {0, 0});
-  for (int i = 0; i < static_cast<int>(groups.size()); ++i) {
-    const std::string &hdr = groups[i].groupHeading;
-    const bool needNewRow =
-        vrows.empty() || !hdr.empty() || vrows.back().col[1] >= 0;
-    if (needNewRow) {
-      VisualRow vr;
-      vr.heading = hdr;
-      vr.col[0] = i;
-      vr.tilesH = tileH;
-      vrows.push_back(std::move(vr));
-    } else {
-      vrows.back().col[1] = i;
-    }
-    const int rIdx = static_cast<int>(vrows.size()) - 1;
-    const int cIdx = (vrows.back().col[0] == i) ? 0 : 1;
-    groupToRowCol[i] = {rIdx, cIdx};
-    if (st.mapDrawerKey == groups[i].key) {
-      vrows[rIdx].expandedCol = cIdx;
-      const int totalDrawerItems =
-          1 + static_cast<int>(groups[i].variants.size());
-      const int vis = std::clamp(totalDrawerItems, 1, 6);
-      vrows[rIdx].drawerVisibleRows = vis;
-      vrows[rIdx].drawerH =
-          12.0f * ui.s + drawerHeadH + vis * drawerRowH + 10.0f * ui.s;
-    }
-  }
-
-  // Clamp drawer focus if active
-  int expandedGroupIdx = -1;
-  for (const VisualRow &vr : vrows) {
-    if (vr.expandedCol >= 0)
-      expandedGroupIdx = vr.col[vr.expandedCol];
-  }
-  if (expandedGroupIdx < 0) {
-    st.mapDrawerFocus = -1;
-  } else if (st.mapDrawerFocus >= 0) {
-    const int maxD = static_cast<int>(groups[expandedGroupIdx].variants.size());
-    st.mapDrawerFocus = std::clamp(st.mapDrawerFocus, 0, maxD);
-  }
-
-  float totalContentH = pad;
-  for (size_t r = 0; r < vrows.size(); ++r) {
-    if (!vrows[r].heading.empty())
-      totalContentH += headingH + 6.0f * ui.s;
-    vrows[r].y = totalContentH;
-    totalContentH += vrows[r].tilesH + vrows[r].drawerH + rowGap;
-  }
-  const float maxScroll = std::max(0.0f, totalContentH - gridSize.y + pad);
-
-  // Handle keyboard & controller navigation inside the grid / expanded drawer
-  bool movedByInput = autoScrollSelection;
-  if (hasFocus && !typing) {
-    const auto [curR, curC] = groupToRowCol[selectedGroupIdx];
-    const bool inDrawer = expandedGroupIdx >= 0 && st.mapDrawerFocus >= 0;
-    if (!inDrawer) {
-      if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left()) {
-        if (curC == 1 && vrows[curR].col[0] >= 0) {
-          selectedGroupIdx = vrows[curR].col[0];
-          movedByInput = true;
-          MenuSounds::Scroll();
-        }
-      } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Right()) {
-        if (curC == 0 && vrows[curR].col[1] >= 0) {
-          selectedGroupIdx = vrows[curR].col[1];
-          movedByInput = true;
-          MenuSounds::Scroll();
-        } else {
-          res.moveFocusRight = true;
-          MenuSounds::Scroll();
-        }
-      } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
-        if (vrows[curR].expandedCol == curC) {
-          st.mapDrawerFocus = 0;
-          movedByInput = true;
-          MenuSounds::Scroll();
-        } else if (curR + 1 < static_cast<int>(vrows.size())) {
-          const VisualRow &nxt = vrows[curR + 1];
-          selectedGroupIdx =
-              (curC == 1 && nxt.col[1] >= 0) ? nxt.col[1] : nxt.col[0];
-          movedByInput = true;
-          MenuSounds::Scroll();
-        }
-      } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
-        if (curR > 0) {
-          const VisualRow &prv = vrows[curR - 1];
-          if (prv.expandedCol >= 0) {
-            selectedGroupIdx = prv.col[prv.expandedCol];
-            st.mapDrawerFocus =
-                static_cast<int>(groups[selectedGroupIdx].variants.size());
-          } else {
-            selectedGroupIdx =
-                (curC == 1 && prv.col[1] >= 0) ? prv.col[1] : prv.col[0];
-          }
-          movedByInput = true;
-          MenuSounds::Scroll();
-        }
-      }
-      if (AcceptPressed() || UiPad::ActionY()) {
-        const bool wasY = UiPad::ActionY();
-        if (!wasY)
-          UiPad::ConsumeAccept();
-        const MapTileGroup &grp = groups[selectedGroupIdx];
-        if (st.mapDrawerKey == grp.key && wasY) {
-          st.mapDrawerKey.clear();
-          st.mapDrawerFocus = -1;
-          MenuSounds::Back();
-        } else {
-          st.mapDrawerKey = grp.key;
-          // Focus currently active mvar inside drawer (0 = Base Map)
-          int initFocus = 0;
-          if (!selectedMvar.empty()) {
-            for (size_t vi = 0; vi < grp.variants.size(); ++vi) {
-              if (grp.variants[vi].mvar == selectedMvar) {
-                initFocus = static_cast<int>(vi) + 1;
-                break;
-              }
-            }
-          }
-          st.mapDrawerFocus = initFocus;
-          movedByInput = true;
-          MenuSounds::Click();
-        }
-      }
-    } else {
-      // Navigating inside open [BASE MAP] + Variants Drawer
-      const MapTileGroup &grp = groups[expandedGroupIdx];
-      const int itemCount = 1 + static_cast<int>(grp.variants.size());
-      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
-        if (st.mapDrawerFocus > 0) {
-          --st.mapDrawerFocus;
-          movedByInput = true;
-        } else {
-          st.mapDrawerFocus = -1;
-          movedByInput = true;
-        }
-        MenuSounds::Scroll();
-      } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
-        if (st.mapDrawerFocus + 1 < itemCount) {
-          ++st.mapDrawerFocus;
-          movedByInput = true;
-          MenuSounds::Scroll();
-        } else {
-          const int drR = groupToRowCol[expandedGroupIdx].first;
-          if (drR + 1 < static_cast<int>(vrows.size())) {
-            st.mapDrawerFocus = -1;
-            const int c = groupToRowCol[expandedGroupIdx].second;
-            selectedGroupIdx = (c == 1 && vrows[drR + 1].col[1] >= 0)
-                                   ? vrows[drR + 1].col[1]
-                                   : vrows[drR + 1].col[0];
-            movedByInput = true;
-            MenuSounds::Scroll();
-          }
-        }
-      } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Right()) {
-        res.moveFocusRight = true;
-        MenuSounds::Scroll();
-      } else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left()) {
-        st.mapDrawerFocus = -1;
-        movedByInput = true;
-        MenuSounds::Scroll();
-      }
-      if (AcceptPressed()) {
-        UiPad::ConsumeAccept();
-        if (st.mapDrawerFocus == 0)
-          selectedMvar.clear();
-        else if (st.mapDrawerFocus - 1 <
-                 static_cast<int>(grp.variants.size())) {
-          selectedMvar = grp.variants[st.mapDrawerFocus - 1].mvar;
-        }
-        selectedGroupIdx = expandedGroupIdx;
-        res.pickedBaseOrVariant = true;
-        MenuSounds::Click();
-      }
-      if (UiPad::ActionY()) {
-        st.mapDrawerKey.clear();
-        st.mapDrawerFocus = -1;
-        MenuSounds::Back();
-      }
-    }
-  }
-
-  // Smooth scrolling (mouse wheel + right analog stick + focus-follow)
-  const bool hoveringGrid = ImGui::IsMouseHoveringRect(gridPos, gridEnd, false);
-  if (hoveringGrid && ImGui::GetIO().MouseWheel != 0.0f) {
-    st.mapGridScrollY -= ImGui::GetIO().MouseWheel * 72.0f * ui.s;
-  }
-  const float rStickScroll = UiPad::AnalogScrollY(true);
-  if (rStickScroll != 0.0f) {
-    st.mapGridScrollY +=
-        rStickScroll * 420.0f * ui.s * ImGui::GetIO().DeltaTime;
-  }
-  if (movedByInput && selectedGroupIdx >= 0 &&
-      selectedGroupIdx < static_cast<int>(groups.size())) {
-    const int rIdx = groupToRowCol[selectedGroupIdx].first;
-    const float itemTop = vrows[rIdx].y -
-                          (!vrows[rIdx].heading.empty() ? headingH : 0.0f) -
-                          8.0f * ui.s;
-    const float itemBottom =
-        vrows[rIdx].y + vrows[rIdx].tilesH + vrows[rIdx].drawerH + 10.0f * ui.s;
-    if (itemTop < st.mapGridScrollY)
-      st.mapGridScrollY = itemTop;
-    if (itemBottom > st.mapGridScrollY + gridSize.y)
-      st.mapGridScrollY = itemBottom - gridSize.y;
-  }
-  st.mapGridScrollY = std::clamp(st.mapGridScrollY, 0.0f, maxScroll);
-
-  static std::unordered_map<std::string, int> s_drawerScroll;
-
-  // Render grid inside crisp clip rect
-  ui.dl->PushClipRect(gridPos, gridEnd, true);
-  for (int r = 0; r < static_cast<int>(vrows.size()); ++r) {
-    const VisualRow &vr = vrows[r];
-    const float rowDrawY = gridPos.y + vr.y - st.mapGridScrollY;
-    const float rowFullBottom = rowDrawY + vr.tilesH + vr.drawerH;
-    if (rowFullBottom < gridPos.y - headingH - 10.0f * ui.s ||
-        rowDrawY - headingH > gridEnd.y + 10.0f * ui.s)
-      continue;
-
-    if (!vr.heading.empty()) {
-      const float hy = rowDrawY - headingH - 4.0f * ui.s;
-      const ImVec2 h0(gridPos.x + pad, hy),
-          h1(gridPos.x + pad + innerW, hy + headingH - 4.0f * ui.s);
-      ui.dl->AddRectFilledMultiColor(
-          h0, h1, IM_COL32(28, 54, 80, 185), IM_COL32(14, 24, 38, 95),
-          IM_COL32(14, 24, 38, 95), IM_COL32(28, 54, 80, 185));
-      ui.dl->AddRectFilled(h0, ImVec2(h0.x + 3.0f * ui.s, h1.y), kAccent);
-      Text(ui, NobleStyle::TitleFont(), 16.0f,
-           ImVec2(h0.x + 10.0f * ui.s, h0.y + 3.0f * ui.s), kWhite,
-           Upper(vr.heading).c_str());
-    }
-
-    // Draw up to 2 tiles in this row
-    for (int c = 0; c < 2; ++c) {
-      const int gIdx = vr.col[c];
-      if (gIdx < 0)
-        continue;
-      const MapTileGroup &grp = groups[gIdx];
-      const ImVec2 t0(gridPos.x + pad + c * (tileW + colGap), rowDrawY);
-      const ImVec2 t1(t0.x + tileW, t0.y + tileH);
-      const bool isSelected = (gIdx == selectedGroupIdx);
-      const bool isFocused = hasFocus && isSelected && st.mapDrawerFocus < 0;
-      const bool isExpanded = (st.mapDrawerKey == grp.key);
-
-      ImGui::SetCursorScreenPos(t0);
-      ImGui::PushID("mtile");
-      ImGui::PushID(gIdx);
-      const bool clicked = ImGui::InvisibleButton("##t", ImVec2(tileW, tileH));
-      const bool hovered = ImGui::IsItemHovered();
-      ImGui::PopID();
-      ImGui::PopID();
-
-      if (hovered && mouseMoved && selectedGroupIdx != gIdx) {
-        MenuSounds::Hover(ImGui::GetID(grp.key.c_str()));
-      }
-      if (clicked) {
-        const bool same = (selectedGroupIdx == gIdx);
-        selectedGroupIdx = gIdx;
-        // Keep previously active mvar only if belonging to this map; otherwise
-        // reset cleanly to Base Map
-        if (!selectedMvar.empty()) {
-          bool belongs = false;
-          for (const MapEntry &v : grp.variants)
-            if (v.mvar == selectedMvar) {
-              belongs = true;
-              break;
-            }
-          if (!belongs)
-            selectedMvar.clear();
-        }
-        if (same && isExpanded) {
-          st.mapDrawerKey.clear();
-          st.mapDrawerFocus = -1;
-          MenuSounds::Back();
-        } else {
-          st.mapDrawerKey = grp.key;
-          st.mapDrawerFocus = 0;
-          MenuSounds::Click();
-        }
-      }
-
-      // Cover background (crisp aspect, no upscaling)
-      ui.dl->AddRectFilled(t0, t1, IM_COL32(12, 18, 28, 240));
-      if (UiTexture tex = ResolveMapTileTexture(grp.base, false)) {
-        const ImU32 tint =
-            grp.base.enabled ? IM_COL32_WHITE : IM_COL32(150, 150, 150, 180);
-        ui.dl->PushClipRect(t0, t1, true);
-        UiArt::DrawCoverCrisp(ui.dl, tex, t0, t1, tint, crispMax);
-        ui.dl->PopClipRect();
-      }
-
-      // Bottom gradient scrim so white/orange title & player info always read
-      // crisp
-      const float scrimY = t0.y + tileH * 0.36f;
-      ui.dl->AddRectFilledMultiColor(
-          ImVec2(t0.x, scrimY), t1, IM_COL32(5, 9, 14, 0),
-          IM_COL32(5, 9, 14, 0), IM_COL32(5, 9, 14, 240),
-          IM_COL32(5, 9, 14, 240));
-
-      // Variant / Mod pill top-right
-      if (!grp.variants.empty() || grp.base.mod) {
-        char badge[40];
-        if (!grp.variants.empty())
-          std::snprintf(badge, sizeof(badge), "BASE + %zu",
-                        grp.variants.size());
-        else
-          std::snprintf(badge, sizeof(badge), "MOD MAP");
-        const float bw =
-            TextWidth(NobleStyle::SmallFont(), 12.0f * ui.s, badge) +
-            14.0f * ui.s;
-        const float bh = 20.0f * ui.s;
-        const ImVec2 b0(t1.x - bw - 10.0f * ui.s, t0.y + 10.0f * ui.s),
-            b1(b0.x + bw, b0.y + bh);
-        ui.dl->AddRectFilled(b0, b1,
-                             isExpanded ? IM_COL32(255, 168, 62, 60)
-                                        : IM_COL32(10, 22, 34, 205),
-                             2.0f * ui.s);
-        ui.dl->AddRect(b0, b1,
-                       isExpanded ? IM_COL32(255, 185, 80, 230)
-                                  : IM_COL32(143, 216, 255, 140),
-                       2.0f * ui.s);
-        Text(ui, NobleStyle::SmallFont(), 12.0f,
-             ImVec2(b0.x + 7.0f * ui.s, b0.y + 3.0f * ui.s),
-             isExpanded ? IM_COL32(255, 220, 150, 255) : kAccent, badge);
-      }
-
-      // Bottom Map Title & Players / Active Variant subtitle (like SWORD BASE /
-      // 8-16 Players)
-      const MapCardMeta meta = GetMapCardMeta(&grp.base, nullptr);
-      const std::string titleStr =
-          Ellipsize(NobleStyle::TitleFont(), 22.0f * ui.s, Upper(grp.base.name),
-                    tileW - 28.0f * ui.s);
-      std::string subStr = meta.players;
-      if (isSelected && !selectedMvar.empty()) {
-        for (const MapEntry &v : grp.variants) {
-          if (v.mvar == selectedMvar) {
-            subStr = "VARIANT: " + v.name;
-            break;
-          }
-        }
-      } else if (isExpanded) {
-        subStr = meta.players + "  \xC2\xB7  SELECTING BELOW";
-      }
-      subStr = Ellipsize(NobleStyle::SmallFont(), 14.0f * ui.s, subStr,
-                         tileW - 28.0f * ui.s);
-
-      const float textX = t0.x + 14.0f * ui.s;
-      const float titleY = t1.y - 46.0f * ui.s;
-      Text(ui, NobleStyle::TitleFont(), 22.0f,
-           ImVec2(textX + 1.0f * ui.s, titleY + 1.0f * ui.s),
-           IM_COL32(0, 0, 0, 220), titleStr.c_str());
-      Text(ui, NobleStyle::TitleFont(), 22.0f, ImVec2(textX, titleY),
-           grp.base.enabled ? kWhite : kDisabled, titleStr.c_str());
-      Text(ui, NobleStyle::SmallFont(), 14.0f,
-           ImVec2(textX, t1.y - 22.0f * ui.s),
-           (isSelected && !selectedMvar.empty()) ? IM_COL32(255, 198, 100, 255)
-                                                 : IM_COL32(190, 210, 225, 235),
-           subStr.c_str());
-
-      NobleUi::DrawTacticalFrame(ui.dl, t0, t1, ui.s, isFocused,
-                                 isSelected || isExpanded, hovered, true);
-    }
-
-    // Inline Expanded [BASE MAP] + Variants Drawer directly underneath this
-    // row!
-    if (vr.expandedCol >= 0) {
-      const int gIdx = vr.col[vr.expandedCol];
-      const MapTileGroup &grp = groups[gIdx];
-      const float dTop = rowDrawY + vr.tilesH + 10.0f * ui.s;
-      const float dW = tileW * 2.0f + colGap;
-      const ImVec2 d0(gridPos.x + pad, dTop);
-      const ImVec2 d1(d0.x + dW, rowDrawY + vr.tilesH + vr.drawerH);
-
-      // Pointer notch connecting to the expanded tile above it
-      const float ownerCenterX =
-          gridPos.x + pad + vr.expandedCol * (tileW + colGap) + tileW * 0.5f;
-      ui.dl->AddTriangleFilled(ImVec2(ownerCenterX - 9.0f * ui.s, d0.y),
-                               ImVec2(ownerCenterX + 9.0f * ui.s, d0.y),
-                               ImVec2(ownerCenterX, d0.y - 8.0f * ui.s),
-                               IM_COL32(255, 168, 62, 230));
-
-      ui.dl->AddRectFilled(d0, d1, IM_COL32(10, 17, 26, 245), 2.0f * ui.s);
-      NobleUi::DrawTacticalFrame(ui.dl, d0, d1, ui.s,
-                                 hasFocus && st.mapDrawerFocus >= 0, true,
-                                 false, true);
-
-      // Drawer Header
-      const ImVec2 hd0(d0.x + 1.0f, d0.y + 1.0f),
-          hd1(d1.x - 1.0f, d0.y + drawerHeadH);
-      ui.dl->AddRectFilled(hd0, hd1, IM_COL32(22, 40, 58, 220));
-      ui.dl->AddLine(ImVec2(hd0.x, hd1.y), ImVec2(hd1.x, hd1.y),
-                     IM_COL32(255, 175, 70, 140), 1.0f);
-      char headTxt[128];
-      std::snprintf(headTxt, sizeof(headTxt),
-                    "%s  \xE2\x80\x94  BASE MAP & VARIANTS (%zu)",
-                    Upper(grp.base.name).c_str(), grp.variants.size());
-      Text(ui, NobleStyle::TitleFont(), 15.5f,
-           ImVec2(hd0.x + 12.0f * ui.s, hd0.y + 6.0f * ui.s),
-           IM_COL32(255, 200, 115, 255), headTxt);
-
-      // Close pill
-      const float closeW = 92.0f * ui.s;
-      const ImVec2 cl0(hd1.x - closeW - 8.0f * ui.s, hd0.y + 4.0f * ui.s),
-          cl1(hd1.x - 8.0f * ui.s, hd1.y - 4.0f * ui.s);
-      ImGui::SetCursorScreenPos(cl0);
-      if (ImGui::InvisibleButton("##close_drawer",
-                                 ImVec2(closeW, cl1.y - cl0.y))) {
-        st.mapDrawerKey.clear();
-        st.mapDrawerFocus = -1;
-        MenuSounds::Back();
-      }
-      const bool clHov = ImGui::IsItemHovered();
-      ui.dl->AddRectFilled(cl0, cl1,
-                           clHov ? IM_COL32(60, 90, 120, 220)
-                                 : IM_COL32(18, 28, 40, 200),
-                           2.0f * ui.s);
-      ui.dl->AddRect(cl0, cl1, IM_COL32(143, 216, 255, 120), 2.0f * ui.s);
-      Text(ui, NobleStyle::SmallFont(), 12.0f,
-           ImVec2(cl0.x + 14.0f * ui.s, cl0.y + 4.0f * ui.s), kWhite,
-           "COLLAPSE");
-
-      // Scrollable variant rows inside drawer
-      const int totalItems = 1 + static_cast<int>(grp.variants.size());
-      int &dScroll = s_drawerScroll[grp.key];
-      const int maxDScroll = std::max(0, totalItems - vr.drawerVisibleRows);
-      if (st.mapDrawerFocus >= 0) {
-        if (st.mapDrawerFocus < dScroll)
-          dScroll = st.mapDrawerFocus;
-        if (st.mapDrawerFocus >= dScroll + vr.drawerVisibleRows)
-          dScroll = st.mapDrawerFocus - vr.drawerVisibleRows + 1;
-      }
-      const ImVec2 list0(d0.x + 8.0f * ui.s, hd1.y + 4.0f * ui.s),
-          list1(d1.x - 8.0f * ui.s, d1.y - 6.0f * ui.s);
-      if (totalItems > vr.drawerVisibleRows &&
-          ImGui::IsMouseHoveringRect(list0, list1, false) &&
-          ImGui::GetIO().MouseWheel != 0.0f) {
-        dScroll -= static_cast<int>(ImGui::GetIO().MouseWheel);
-      }
-      dScroll = std::clamp(dScroll, 0, maxDScroll);
-
-      const float rowW =
-          (list1.x - list0.x) - (maxDScroll > 0 ? 12.0f * ui.s : 0.0f);
-      for (int v = 0; v < vr.drawerVisibleRows && dScroll + v < totalItems;
-           ++v) {
-        const int itemIdx = dScroll + v;
-        const bool isBase = (itemIdx == 0);
-        const MapEntry *varEntry =
-            isBase ? &grp.base : &grp.variants[itemIdx - 1];
-        const bool itemActive =
-            (selectedGroupIdx == gIdx) &&
-            (isBase ? selectedMvar.empty() : (selectedMvar == varEntry->mvar));
-        const bool itemFocus = hasFocus && (st.mapDrawerFocus == itemIdx);
-        const ImVec2 r0(list0.x, list0.y + v * drawerRowH),
-            r1(list0.x + rowW, r0.y + drawerRowH - 3.0f * ui.s);
-
-        ImGui::SetCursorScreenPos(r0);
-        ImGui::PushID("dvar");
-        ImGui::PushID(itemIdx);
-        const bool rowClick =
-            ImGui::InvisibleButton("##v", ImVec2(rowW, r1.y - r0.y));
-        const bool rowHov = ImGui::IsItemHovered();
-        ImGui::PopID();
-        ImGui::PopID();
-
-        if (rowClick) {
-          selectedGroupIdx = gIdx;
-          selectedMvar = isBase ? std::filesystem::path{} : varEntry->mvar;
-          st.mapDrawerFocus = itemIdx;
-          res.pickedBaseOrVariant = true;
-          MenuSounds::Click();
-        }
-
-        const ImU32 rbg = itemFocus    ? IM_COL32(54, 96, 138, 225)
-                          : itemActive ? IM_COL32(28, 66, 94, 210)
-                          : rowHov     ? IM_COL32(32, 50, 70, 200)
-                                       : IM_COL32(14, 22, 32, 185);
-        ui.dl->AddRectFilled(r0, r1, rbg, 2.0f * ui.s);
-        if (itemFocus)
-          NobleUi::DrawFocusHighlight(ui.dl, r0, r1, ui.s, true);
-        else if (itemActive)
-          ui.dl->AddRect(r0, r1, IM_COL32(255, 175, 70, 210), 2.0f * ui.s, 0,
-                         1.5f * ui.s);
-        else
-          ui.dl->AddRect(r0, r1, IM_COL32(95, 130, 160, 60), 2.0f * ui.s);
-
-        const char *tag = isBase ? (baseItemTag ? baseItemTag : "BASE MAP")
-                                 : (!varEntry->forgeGroup.empty()
-                                        ? varEntry->forgeGroup.c_str()
-                                        : "VARIANT");
-        const float tagW =
-            std::max(84.0f * ui.s,
-                     TextWidth(NobleStyle::SmallFont(), 12.0f * ui.s, tag) +
-                         16.0f * ui.s);
-        const ImVec2 tg0(r0.x + 8.0f * ui.s, r0.y + 5.0f * ui.s),
-            tg1(tg0.x + tagW, r1.y - 5.0f * ui.s);
-        ui.dl->AddRectFilled(tg0, tg1,
-                             isBase ? IM_COL32(45, 110, 155, 150)
-                                    : IM_COL32(255, 168, 62, 55),
-                             2.0f * ui.s);
-        Text(ui, NobleStyle::SmallFont(), 12.0f,
-             ImVec2(tg0.x + 8.0f * ui.s, tg0.y + 3.0f * ui.s),
-             isBase ? kAccent : IM_COL32(255, 205, 115, 255),
-             Upper(tag).c_str());
-
-        const std::string nameLabel =
-            isBase ? (grp.base.name + "  (Standard Unmodified)")
-                   : varEntry->name;
-        const float nameX = tg1.x + 12.0f * ui.s;
-        const float activeW = itemActive ? 74.0f * ui.s : 8.0f * ui.s;
-        const std::string fittedName =
-            Ellipsize(NobleStyle::TitleFont(), 16.0f * ui.s, nameLabel,
-                      (r1.x - activeW) - nameX);
-        Text(ui, NobleStyle::TitleFont(), 16.0f,
-             ImVec2(nameX, r0.y + 6.0f * ui.s),
-             itemActive || itemFocus ? kWhite : IM_COL32(215, 225, 235, 240),
-             fittedName.c_str());
-
-        if (itemActive) {
-          Text(ui, NobleStyle::SmallFont(), 12.5f,
-               ImVec2(r1.x - 66.0f * ui.s, r0.y + 8.0f * ui.s),
-               IM_COL32(125, 235, 150, 255), "SELECTED");
-        }
-      }
-      if (maxDScroll > 0) {
-        const float tx = list1.x - 5.0f * ui.s;
-        const float trackH = list1.y - list0.y;
-        ui.dl->AddRectFilled(ImVec2(tx, list0.y),
-                             ImVec2(tx + 4.0f * ui.s, list1.y),
-                             IM_COL32(255, 255, 255, 22));
-        const float th = std::max(
-            18.0f * ui.s, trackH * static_cast<float>(vr.drawerVisibleRows) /
-                              static_cast<float>(totalItems));
-        const float ty =
-            list0.y + (trackH - th) * (static_cast<float>(dScroll) /
-                                       static_cast<float>(maxDScroll));
-        ui.dl->AddRectFilled(ImVec2(tx, ty), ImVec2(tx + 4.0f * ui.s, ty + th),
-                             kAccent);
-      }
-    }
-  }
-  ui.dl->PopClipRect();
-
-  // Right scrollbar for whole grid
-  if (maxScroll > 1.0f) {
-    const float tx = gridEnd.x - 8.0f * ui.s;
-    const float tTop = gridPos.y + 8.0f * ui.s, tBot = gridEnd.y - 8.0f * ui.s;
-    const float trackH = tBot - tTop;
-    ui.dl->AddRectFilled(ImVec2(tx, tTop), ImVec2(tx + 4.0f * ui.s, tBot),
-                         IM_COL32(255, 255, 255, 22));
-    const float thumbH =
-        std::max(28.0f * ui.s, trackH * (gridSize.y / (totalContentH + pad)));
-    const float thumbY =
-        tTop + (trackH - thumbH) * (st.mapGridScrollY / maxScroll);
-    ui.dl->AddRectFilled(ImVec2(tx, thumbY),
-                         ImVec2(tx + 4.0f * ui.s, thumbY + thumbH), kAccent);
-  }
-  return res;
-}
-
-// Unified Right Detail Card matching SWORD BASE reference card: Title, Crisp
-// Artwork, Modes/Terrain, Description
-static float DrawMapDetailHeaderCard(const Ui &ui, ImVec2 cardPos, float cardW,
-                                     float previewH, const MapEntry *baseMap,
-                                     const MapEntry *activeVariant,
-                                     const char *fallbackMode) {
-  const float pad = 16.0f * ui.s;
-  float y = cardPos.y + 12.0f * ui.s;
-  const MapEntry *displayEntry = activeVariant ? activeVariant : baseMap;
-  const std::string titleRaw =
-      displayEntry ? Upper(displayEntry->name) : std::string("NO MAP SELECTED");
-  float titlePx = 28.0f * ui.s;
-  while (titlePx > 19.0f * ui.s &&
-         TextWidth(NobleStyle::TitleFont(), titlePx, titleRaw.c_str()) >
-             cardW - pad * 2.0f) {
-    titlePx -= 2.0f * ui.s;
-  }
-  const std::string title =
-      Ellipsize(NobleStyle::TitleFont(), titlePx, titleRaw, cardW - pad * 2.0f);
-  Text(ui, NobleStyle::TitleFont(), titlePx / ui.s, ImVec2(cardPos.x + pad, y),
-       kWhite, title.c_str());
-  y += titlePx + 6.0f * ui.s;
-  if (activeVariant && baseMap && activeVariant != baseMap) {
-    const std::string varTag =
-        Ellipsize(NobleStyle::SmallFont(), 13.0f * ui.s,
-                  "VARIANT ON " + Upper(baseMap->name), cardW - pad * 2.0f);
-    Text(ui, NobleStyle::SmallFont(), 13.0f,
-         ImVec2(cardPos.x + pad, y - 2.0f * ui.s), IM_COL32(255, 195, 95, 255),
-         varTag.c_str());
-    y += 18.0f * ui.s;
-  }
-  ui.dl->AddLine(ImVec2(cardPos.x + pad, y), ImVec2(cardPos.x + cardW - pad, y),
-                 IM_COL32(143, 216, 255, 80), 1.0f);
-  y += 10.0f * ui.s;
-
-  // Crisp Cover Artwork Box (zero blurry upscaling)
-  const ImVec2 img0(cardPos.x + pad, y),
-      img1(cardPos.x + cardW - pad, y + previewH);
-  ui.dl->AddRectFilled(img0, img1, IM_COL32(6, 10, 16, 240));
-  if (baseMap) {
-    if (UiTexture tex = ResolveMapTileTexture(*baseMap, true)) {
-      const float crispMax =
-          std::max(1.0f, ImGui::GetIO().DisplaySize.y / 1080.0f);
-      ui.dl->PushClipRect(img0, img1, true);
-      UiArt::DrawCoverCrisp(ui.dl, tex, img0, img1, IM_COL32_WHITE, crispMax);
-      ui.dl->PopClipRect();
-    }
-  }
-  ui.dl->AddRect(img0, img1, IM_COL32(143, 216, 255, 110), 1.0f * ui.s);
-  y = img1.y + 10.0f * ui.s;
-
-  // GAME MODES / TERRAIN / LORE matching reference screenshot
-  const MapCardMeta meta = GetMapCardMeta(baseMap, fallbackMode);
-  auto metaRow = [&](const char *label, const std::string &val) {
-    Text(ui, NobleStyle::SmallFont(), 12.5f, ImVec2(cardPos.x + pad, y),
-         IM_COL32(135, 175, 205, 225), label);
-    const std::string fitted = Ellipsize(NobleStyle::TitleFont(), 15.0f * ui.s,
-                                         Upper(val), cardW - pad * 2.0f);
-    Text(ui, NobleStyle::TitleFont(), 15.0f,
-         ImVec2(cardPos.x + pad, y + 14.0f * ui.s), kWhite, fitted.c_str());
-    y += 34.0f * ui.s;
-  };
-  metaRow("GAME MODES:", meta.modes);
-  metaRow("TERRAIN:", meta.terrain);
-
-  const std::string blurb = displayEntry ? displayEntry->blurb : std::string();
-  if (!blurb.empty()) {
-    const float lineH = 15.5f * ui.s * 1.3f;
-    const std::string fittedBlurb = FitWrapped(
-        nullptr, 15.5f * ui.s, blurb, cardW - pad * 2.0f, lineH * 2.0f);
-    const float hUsed =
-        std::min(Font(nullptr)
-                     ->CalcTextSizeA(15.5f * ui.s, FLT_MAX, cardW - pad * 2.0f,
-                                     fittedBlurb.c_str())
-                     .y,
-                 lineH * 2.0f);
-    Text(ui, nullptr, 15.5f, ImVec2(cardPos.x + pad, y),
-         IM_COL32(202, 216, 228, 240), fittedBlurb.c_str(),
-         cardPos.x + cardW - pad);
-    y += hUsed + 8.0f * ui.s;
-  }
-  ui.dl->AddLine(ImVec2(cardPos.x + pad, y), ImVec2(cardPos.x + cardW - pad, y),
-                 IM_COL32(255, 255, 255, 34), 1.0f);
-  return y + 8.0f * ui.s;
-}
-
-// Sleek Tiled & Tabbed Game Options Screen (replaces old collapsible text
-// accordion)
-static void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui,
-                                    float left, float top, bool ff, bool forge,
-                                    bool back) {
-  MenuState &st = ctx.st;
-  const std::vector<VariantRules::Rule> &rules = VariantRules::Rules();
-  DrawTopTelemetryBar(ui, "GAME OPTIONS");
-  DrawTitle(ui, ImVec2(left, top), "GAME OPTIONS",
-            forge ? "FORGE" : (ff ? "FIREFIGHT" : "MULTIPLAYER"));
-
-  const float px = left + 26.0f * ui.s;
-  const float maxRight = ui.origin.x + ui.size.x * 0.94f;
-  const float fullW = maxRight - px;
-  float y = top + 72.0f * ui.s;
-  const bool typing = ImGui::GetIO().WantTextInput;
-
-  // Row 1: Mode Name + Rule Search + Changed Only toggle
-  const float nameW = fullW * 0.30f;
-  const float toggleW = 190.0f * ui.s;
-  const float searchW = fullW - nameW - toggleW - 20.0f * ui.s;
-  DrawSearchBox(ui, "##mode_name", ImVec2(px, y), nameW, st.optionsName,
-                sizeof(st.optionsName), "Game mode name");
-  if (!typing && ImGui::GetIO().KeyCtrl &&
-      ImGui::IsKeyPressed(ImGuiKey_F, false))
-    ImGui::SetKeyboardFocusHere();
-  DrawSearchBox(ui, "##options_search", ImVec2(px + nameW + 10.0f * ui.s, y),
-                searchW, st.optionsSearch, sizeof(st.optionsSearch),
-                "Search rules or categories (Ctrl+F)");
-  {
-    const ImVec2 t0(maxRight - toggleW, y),
-        t1(maxRight, y + ImGui::GetFrameHeight());
-    ImGui::SetCursorScreenPos(t0);
-    bool flip =
-        ImGui::InvisibleButton("##changed_only", ImVec2(toggleW, t1.y - t0.y));
-    const bool hovered = ImGui::IsItemHovered();
-    if (!typing && (ImGui::IsKeyPressed(ImGuiKey_X, false) || UiPad::ActionX()))
-      flip = true;
-    if (flip) {
-      st.optionsChangedOnly = !st.optionsChangedOnly;
-      MenuSounds::Change();
-    }
-    NobleUi::DrawBox(ui.dl, t0, t1,
-                     st.optionsChangedOnly ? "CHANGED ONLY: ON"
-                                           : "CHANGED ONLY: OFF",
-                     hovered, st.optionsChangedOnly, false);
-  }
-  y += 42.0f * ui.s;
-
-  // Row 2: Quick Presets as Sleek Tactical Tiles
-  const std::vector<OptionsPreset> &presets = OptionsPresets();
-  const auto applyPreset = [&](const OptionsPreset &preset) {
-    st.optionsValues.clear();
-    for (const auto &[key, wanted] : preset.values) {
-      for (const VariantRules::Rule &rule : rules) {
-        if (std::strcmp(rule.key, key) != 0)
-          continue;
-        const int value = std::clamp(wanted, rule.minValue, rule.maxValue);
-        if (value != VariantRules::Read(rule, st.optionsDecoded.data()))
-          st.optionsValues[rule.key] = value;
-      }
-    }
-    st.confirmAction.clear();
-    st.optionsMessage = std::string(preset.name) + " applied (" +
-                        std::to_string(st.optionsValues.size()) +
-                        " modified rule(s)).";
-    NOBLE_INFO("FrontEndMenu: game options preset {} ({} change(s))",
-               preset.name, st.optionsValues.size());
-    MenuSounds::Click();
-  };
-  {
-    const int pCount = static_cast<int>(presets.size());
-    const float labelW = 92.0f * ui.s;
-    const float pGap = 8.0f * ui.s;
-    const float tileW =
-        (fullW - labelW - pGap * std::max(0, pCount - 1)) / std::max(1, pCount);
-    const float tileH = 42.0f * ui.s;
-    Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(px, y + 11.0f * ui.s),
-         kAccent, "PRESETS");
-    for (int i = 0; i < pCount; ++i) {
-      const ImVec2 t0(px + labelW + i * (tileW + pGap), y),
-          t1(t0.x + tileW, y + tileH);
-      ImGui::SetCursorScreenPos(t0);
-      ImGui::PushID("opt_preset");
-      ImGui::PushID(i);
-      const bool clicked = ImGui::InvisibleButton("##p", ImVec2(tileW, tileH));
-      const bool hovered = ImGui::IsItemHovered();
-      ImGui::PopID();
-      ImGui::PopID();
-      char sub[32];
-      if (presets[i].values.empty())
-        std::snprintf(sub, sizeof(sub), "BASE DEFAULTS");
-      else
-        std::snprintf(sub, sizeof(sub), "%zu RULE%s", presets[i].values.size(),
-                      presets[i].values.size() == 1 ? "" : "S");
-      ui.dl->AddRectFilled(t0, t1,
-                           hovered ? IM_COL32(34, 62, 92, 225)
-                                   : IM_COL32(12, 20, 30, 215),
-                           2.0f * ui.s);
-      NobleUi::DrawTacticalFrame(ui.dl, t0, t1, ui.s,
-                                 hovered && st.optionsPresetPick == i,
-                                 st.optionsPresetPick == i, hovered, false);
-      Text(ui, NobleStyle::TitleFont(), 16.0f,
-           ImVec2(t0.x + 12.0f * ui.s, t0.y + 4.0f * ui.s), kWhite,
-           presets[i].name);
-      Text(ui, NobleStyle::SmallFont(), 11.5f,
-           ImVec2(t0.x + 12.0f * ui.s, t0.y + 23.0f * ui.s), kDim, sub);
-      if (clicked) {
-        st.optionsPresetPick = i;
-        applyPreset(presets[i]);
-      }
-    }
-    y += tileH + 12.0f * ui.s;
-  }
-
-  // Group all rules cleanly into Category list
-  struct CategoryBucket {
-    std::string name;
-    std::vector<int> ruleIndices;
-    int changedCount = 0;
-  };
-  std::vector<CategoryBucket> categories;
-  const std::string query = st.optionsSearch;
-  const bool filtering = !query.empty() || st.optionsChangedOnly;
-  for (int i = 0; i < static_cast<int>(rules.size()); ++i) {
-    const VariantRules::Rule &r = rules[i];
-    const bool isChanged = st.optionsValues.count(r.key) != 0;
-    const bool matchesQuery = query.empty() || ContainsNoCase(r.label, query) ||
-                              ContainsNoCase(r.help, query) ||
-                              ContainsNoCase(r.group, query);
-    if (st.optionsChangedOnly && !isChanged)
-      continue;
-    if (!matchesQuery)
-      continue;
-    if (categories.empty() || categories.back().name != r.group) {
-      categories.push_back({r.group, {}, 0});
-    }
-    categories.back().ruleIndices.push_back(i);
-    if (isChanged)
-      ++categories.back().changedCount;
-  }
-  if (!categories.empty())
-    st.optionsCategoryIdx = std::clamp(st.optionsCategoryIdx, 0,
-                                       static_cast<int>(categories.size()) - 1);
-  else
-    st.optionsCategoryIdx = 0;
-
-  // LB / RB cycles categories effortlessly on controller
-  if (!typing && !categories.empty()) {
-    if (UiPad::TabPrev() || ImGui::IsKeyPressed(ImGuiKey_Q, false)) {
-      st.optionsCategoryIdx =
-          (st.optionsCategoryIdx + static_cast<int>(categories.size()) - 1) %
-          static_cast<int>(categories.size());
-      st.optionsRuleFocus = 0;
-      st.optionsFirst = 0;
-      MenuSounds::Tab(-1);
-    } else if (UiPad::TabNext() || ImGui::IsKeyPressed(ImGuiKey_E, false)) {
-      st.optionsCategoryIdx =
-          (st.optionsCategoryIdx + 1) % static_cast<int>(categories.size());
-      st.optionsRuleFocus = 0;
-      st.optionsFirst = 0;
-      MenuSounds::Tab(1);
-    }
-  }
-
-  const float bodyBottom = ui.origin.y + ui.size.y - 68.0f * ui.s;
-  const float bodyH = std::max(140.0f * ui.s, bodyBottom - y);
-  const float catW = fullW * 0.23f;
-  const float gap = 14.0f * ui.s;
-  const float midW = fullW * 0.48f;
-  const float rightW = fullW - catW - midW - gap * 2.0f;
-
-  // Column 1: Category Tiles
-  const ImVec2 cBox0(px, y), cBox1(px + catW, y + bodyH);
-  ui.dl->AddRectFilled(cBox0, cBox1, IM_COL32(8, 13, 20, 185), 2.0f * ui.s);
-  NobleUi::DrawTacticalFrame(ui.dl, cBox0, cBox1, ui.s, false, false, false,
-                             false);
-  Text(ui, NobleStyle::SmallFont(), 13.0f,
-       ImVec2(cBox0.x + 12.0f * ui.s, cBox0.y + 8.0f * ui.s), kAccent,
-       "CATEGORIES [LB/RB]");
-  float cy = cBox0.y + 30.0f * ui.s;
-  ui.dl->PushClipRect(cBox0, cBox1, true);
-  for (int ci = 0; ci < static_cast<int>(categories.size()); ++ci) {
-    const float ch = 36.0f * ui.s;
-    if (cy + ch > cBox1.y - 6.0f * ui.s)
-      break;
-    const ImVec2 b0(cBox0.x + 8.0f * ui.s, cy),
-        b1(cBox1.x - 8.0f * ui.s, cy + ch - 4.0f * ui.s);
-    ImGui::SetCursorScreenPos(b0);
-    ImGui::PushID("opt_cat");
-    ImGui::PushID(ci);
-    const bool clk =
-        ImGui::InvisibleButton("##c", ImVec2(b1.x - b0.x, b1.y - b0.y));
-    const bool hov = ImGui::IsItemHovered();
-    ImGui::PopID();
-    ImGui::PopID();
-    const bool active = (ci == st.optionsCategoryIdx);
-    ui.dl->AddRectFilled(
-        b0, b1,
-        active ? IM_COL32(42, 86, 126, 225)
-               : (hov ? IM_COL32(28, 46, 68, 195) : IM_COL32(14, 22, 32, 165)),
-        2.0f * ui.s);
-    if (active)
-      ui.dl->AddRectFilled(b0, ImVec2(b0.x + 3.0f * ui.s, b1.y),
-                           IM_COL32(255, 172, 66, 255));
-    const std::string cName =
-        Ellipsize(NobleStyle::TitleFont(), 15.5f * ui.s,
-                  Upper(categories[ci].name), (b1.x - b0.x) - 52.0f * ui.s);
-    Text(ui, NobleStyle::TitleFont(), 15.5f,
-         ImVec2(b0.x + 12.0f * ui.s, b0.y + 7.0f * ui.s),
-         active ? kWhite : kDim, cName.c_str());
-    char cnt[24];
-    if (categories[ci].changedCount > 0)
-      std::snprintf(cnt, sizeof(cnt), "%d*", categories[ci].changedCount);
-    else
-      std::snprintf(cnt, sizeof(cnt), "%zu", categories[ci].ruleIndices.size());
-    const float cw = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, cnt);
-    Text(ui, NobleStyle::SmallFont(), 13.0f,
-         ImVec2(b1.x - cw - 10.0f * ui.s, b0.y + 9.0f * ui.s),
-         categories[ci].changedCount > 0 ? NobleUi::kAmber : kDim, cnt);
-    if (clk) {
-      st.optionsCategoryIdx = ci;
-      st.optionsRuleFocus = 0;
-      st.optionsFirst = 0;
-      MenuSounds::Change();
-    }
-    cy += ch;
-  }
-  ui.dl->PopClipRect();
-
-  // Active Category's Rules + Action buttons (Save/Reset/Delete live in Right
-  // Column, plus controller D-pad navigates rules cleanly)
-  const std::vector<int> emptyList;
-  const std::vector<int> &activeRules =
-      categories.empty() ? emptyList
-                         : categories[st.optionsCategoryIdx].ruleIndices;
-  const bool canDelete =
-      !st.optionsFile.empty() &&
-      st.optionsFile.parent_path() == VariantRules::Directory();
-  const int ruleCount = static_cast<int>(activeRules.size());
-  const int saveRow = ruleCount, resetRow = ruleCount + 1,
-            deleteRow = ruleCount + 2;
-  const int maxRowCount = ruleCount + (canDelete ? 3 : 2);
-  st.optionsRuleFocus =
-      std::clamp(st.optionsRuleFocus, 0, std::max(0, maxRowCount - 1));
-
-  if (!typing && maxRowCount > 0) {
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
-      st.optionsRuleFocus = (st.optionsRuleFocus + 1) % maxRowCount;
-      MenuSounds::Scroll();
-    } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
-      st.optionsRuleFocus =
-          (st.optionsRuleFocus + maxRowCount - 1) % maxRowCount;
-      MenuSounds::Scroll();
-    }
-  }
-
-  // Column 2: Scrollable Option Rows
-  const float mX = cBox1.x + gap;
-  const ImVec2 m0(mX, y), m1(mX + midW, y + bodyH);
-  ui.dl->AddRectFilled(m0, m1, IM_COL32(8, 13, 20, 185), 2.0f * ui.s);
-  NobleUi::DrawTacticalFrame(ui.dl, m0, m1, ui.s, false, false, false, false);
-  const std::string activeCatTitle =
-      categories.empty()
-          ? (st.optionsChangedOnly ? std::string("NO CHANGED RULES YET")
-                                   : std::string("NO MATCHING RULES"))
-          : (Upper(categories[st.optionsCategoryIdx].name) +
-             (filtering ? " (FILTERED)" : ""));
-  Text(ui, NobleStyle::TitleFont(), 17.0f,
-       ImVec2(m0.x + 14.0f * ui.s, m0.y + 8.0f * ui.s), kWhite,
-       activeCatTitle.c_str());
-
-  const float listTop = m0.y + 34.0f * ui.s;
-  const float listBot = m1.y - 10.0f * ui.s;
-  const float rowStep = 38.0f * ui.s;
-  const int visibleRuleRows =
-      std::max(1, static_cast<int>((listBot - listTop) / rowStep));
-  if (st.optionsRuleFocus < ruleCount) {
-    if (st.optionsRuleFocus < st.optionsFirst)
-      st.optionsFirst = st.optionsRuleFocus;
-    if (st.optionsRuleFocus >= st.optionsFirst + visibleRuleRows)
-      st.optionsFirst = st.optionsRuleFocus - visibleRuleRows + 1;
-  }
-  if (ImGui::IsMouseHoveringRect(m0, m1, false) &&
-      ImGui::GetIO().MouseWheel != 0.0f) {
-    st.optionsFirst -= static_cast<int>(ImGui::GetIO().MouseWheel);
-  }
-  const float rStick = UiPad::AnalogScrollY(true);
-  if (rStick != 0.0f && ruleCount > visibleRuleRows) {
-    st.optionsFirst += (rStick > 0.0f) ? 1 : -1;
-  }
-  st.optionsFirst =
-      std::clamp(st.optionsFirst, 0, std::max(0, ruleCount - visibleRuleRows));
-
-  const float ruleW = midW - 28.0f * ui.s;
-  const VariantRules::Rule *focusedRule = nullptr;
-  ui.dl->PushClipRect(ImVec2(m0.x, listTop), ImVec2(m1.x, listBot), true);
-  for (int vis = 0; vis < visibleRuleRows && st.optionsFirst + vis < ruleCount;
-       ++vis) {
-    const int idxInCat = st.optionsFirst + vis;
-    const int rIdx = activeRules[idxInCat];
-    const VariantRules::Rule &rule = rules[rIdx];
-    const bool rowFocused = (!typing && st.optionsRuleFocus == idxInCat);
-    if (rowFocused)
-      focusedRule = &rule;
-    const float ry = listTop + vis * rowStep;
-    const int baseVal = VariantRules::Read(rule, st.optionsDecoded.data());
-    const auto edIt = st.optionsValues.find(rule.key);
-    int curVal = (edIt != st.optionsValues.end()) ? edIt->second : baseVal;
-    const std::string valStr = OptionValueText(rule, curVal);
-
-    std::vector<int> pickValues;
-    int pickedChoice = -1;
-    const bool listable =
-        rule.order || (rule.maxValue - rule.minValue + 1) <= 40;
-    const auto fillChoices = [&](std::vector<std::string> &choices,
-                                 int &current) {
-      if (rule.order) {
-        for (int v : *rule.order)
-          pickValues.push_back(v);
-      } else {
-        for (int v = rule.minValue; v <= rule.maxValue; ++v) {
-          if (!rule.names || !(*rule.names)[v - rule.minValue].empty())
-            pickValues.push_back(v);
-        }
-      }
-      for (size_t n = 0; n < pickValues.size(); ++n) {
-        choices.push_back(OptionValueText(rule, pickValues[n]));
-        if (pickValues[n] == curVal)
-          current = static_cast<int>(n);
-      }
-    };
-    const int change =
-        listable
-            ? PickerRow(ui, rule.key, ImVec2(m0.x + 12.0f * ui.s, ry), ruleW,
-                        rule.label, valStr.c_str(), rowFocused, fillChoices,
-                        &pickedChoice, rowFocused && AcceptPressed(),
-                        curVal == baseVal ? "(default)" : nullptr)
-            : OptionRow(ui, rule.key, ImVec2(m0.x + 12.0f * ui.s, ry), ruleW,
-                        rule.label, valStr.c_str(), rowFocused,
-                        curVal == baseVal ? "(default)" : nullptr);
-    if (edIt != st.optionsValues.end()) {
-      const float nw =
-          TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, rule.label);
-      NobleUi::ChangedDot(
-          ui.dl,
-          ImVec2(m0.x + 22.0f * ui.s + nw + 9.0f * ui.s, ry + 16.0f * ui.s),
-          ui.s);
-    }
-    if (change != 0 || pickedChoice >= 0) {
-      int next = std::clamp(curVal, rule.minValue, rule.maxValue);
-      if (pickedChoice >= 0 &&
-          pickedChoice < static_cast<int>(pickValues.size())) {
-        next = pickValues[pickedChoice];
-      } else if (rule.order) {
-        const std::vector<int> &order = *rule.order;
-        const int count = static_cast<int>(order.size());
-        const auto at = std::find(order.begin(), order.end(), curVal);
-        const int pos = at == order.end()
-                            ? (change > 0 ? -1 : 0)
-                            : static_cast<int>(at - order.begin());
-        next = order[(pos + change + count) % count];
-      } else {
-        const int span = rule.maxValue - rule.minValue + 1;
-        for (int step = 0; step < span; ++step) {
-          next = next + change > rule.maxValue   ? rule.minValue
-                 : next + change < rule.minValue ? rule.maxValue
-                                                 : next + change;
-          if (!rule.names || !(*rule.names)[next - rule.minValue].empty())
-            break;
-        }
-      }
-      st.optionsRuleFocus = idxInCat;
-      focusedRule = &rule;
-      if (next == baseVal)
-        st.optionsValues.erase(rule.key);
-      else
-        st.optionsValues[rule.key] = next;
-    }
-  }
-  ui.dl->PopClipRect();
-  if (!focusedRule && !activeRules.empty())
-    focusedRule = &rules[activeRules.front()];
-
-  // Column 3: Focused Rule Detail + Live Changes Summary + Save/Reset/Delete
-  // Actions
-  const float rX = m1.x + gap;
-  const ImVec2 rBox0(rX, y), rBox1(rX + rightW, y + bodyH);
-  ui.dl->AddRectFilled(rBox0, rBox1, IM_COL32(8, 13, 20, 205), 2.0f * ui.s);
-  NobleUi::DrawTacticalFrame(ui.dl, rBox0, rBox1, ui.s, false, true, false,
-                             false);
-
-  const float rPad = 14.0f * ui.s;
-  float ry = rBox0.y + 12.0f * ui.s;
-  const float rInnerW = rightW - rPad * 2.0f;
-  if (focusedRule) {
-    Text(ui, NobleStyle::SmallFont(), 12.5f, ImVec2(rBox0.x + rPad, ry),
-         kAccent, "RULE DETAILS");
-    ry += 18.0f * ui.s;
-    Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(rBox0.x + rPad, ry), kWhite,
-         Ellipsize(NobleStyle::TitleFont(), 20.0f * ui.s,
-                   Upper(focusedRule->label), rInnerW)
-             .c_str());
-    ry += 26.0f * ui.s;
-    const int baseV =
-        VariantRules::Read(*focusedRule, st.optionsDecoded.data());
-    const auto edIt = st.optionsValues.find(focusedRule->key);
-    const int curV = edIt != st.optionsValues.end() ? edIt->second : baseV;
-    char cmp[96];
-    std::snprintf(cmp, sizeof(cmp), "DEFAULT: %s   \xE2\x86\x92   CURRENT: %s",
-                  OptionValueText(*focusedRule, baseV).c_str(),
-                  OptionValueText(*focusedRule, curV).c_str());
-    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(rBox0.x + rPad, ry),
-         edIt != st.optionsValues.end() ? NobleUi::kAmber : kDim, cmp);
-    ry += 22.0f * ui.s;
-    const std::string help = OptionHelpText(*focusedRule);
-    const float maxHelpH = 86.0f * ui.s;
-    const std::string fittedHelp =
-        FitWrapped(nullptr, 15.0f * ui.s, help, rInnerW, maxHelpH);
-    Text(ui, nullptr, 15.0f, ImVec2(rBox0.x + rPad, ry),
-         IM_COL32(205, 218, 232, 240), fittedHelp.c_str(),
-         rBox0.x + rPad + rInnerW);
-    ry += std::min(maxHelpH, Font(nullptr)
-                                 ->CalcTextSizeA(15.0f * ui.s, FLT_MAX, rInnerW,
-                                                 fittedHelp.c_str())
-                                 .y) +
-          12.0f * ui.s;
-  }
-
-  ui.dl->AddLine(ImVec2(rBox0.x + rPad, ry), ImVec2(rBox1.x - rPad, ry),
-                 IM_COL32(255, 255, 255, 36), 1.0f);
-  ry += 10.0f * ui.s;
-  char modHead[48];
-  std::snprintf(modHead, sizeof(modHead), "ACTIVE CHANGES (%zu)",
-                st.optionsValues.size());
-  Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(rBox0.x + rPad, ry),
-       st.optionsValues.empty() ? kDim : NobleUi::kAmber, modHead);
-  ry += 20.0f * ui.s;
-  const float btnAreaH = (canDelete ? 168.0f : 114.0f) * ui.s;
-  const float summaryBottom = rBox1.y - btnAreaH - 18.0f * ui.s;
-  int shownDiffs = 0;
-  for (const VariantRules::Rule &rule : rules) {
-    const auto it = st.optionsValues.find(rule.key);
-    if (it == st.optionsValues.end())
-      continue;
-    if (ry + 18.0f * ui.s > summaryBottom) {
-      Text(ui, NobleStyle::SmallFont(), 12.5f, ImVec2(rBox0.x + rPad, ry), kDim,
-           "...more rules modified");
-      break;
-    }
-    char line[96];
-    std::snprintf(line, sizeof(line), "\xE2\x80\xA2 %s: %s", rule.label,
-                  OptionValueText(rule, it->second).c_str());
-    Text(ui, NobleStyle::SmallFont(), 12.5f, ImVec2(rBox0.x + rPad, ry), kWhite,
-         Ellipsize(NobleStyle::SmallFont(), 12.5f * ui.s, line, rInnerW)
-             .c_str());
-    ry += 17.0f * ui.s;
-    ++shownDiffs;
-  }
-  if (shownDiffs == 0 && ry + 18.0f * ui.s <= summaryBottom) {
-    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(rBox0.x + rPad, ry), kDim,
-         "Using unmodified base rules.");
-  }
-
-  if (!st.optionsMessage.empty()) {
-    Text(ui, NobleStyle::SmallFont(), 13.0f,
-         ImVec2(rBox0.x + rPad, rBox1.y - btnAreaH - 22.0f * ui.s),
-         IM_COL32(255, 196, 108, 255),
-         Ellipsize(NobleStyle::SmallFont(), 13.0f * ui.s, st.optionsMessage,
-                   rInnerW)
-             .c_str());
-  }
-
-  float by = rBox1.y - btnAreaH;
-  bool save = BigAction(ui, "mode_save", ImVec2(rBox0.x + rPad, by), rInnerW,
-                        "SAVE MODE", "Save & select in mode list", true, true,
-                        st.optionsRuleFocus == saveRow);
-  by += 56.0f * ui.s;
-  bool reset = BigAction(ui, "mode_reset", ImVec2(rBox0.x + rPad, by), rInnerW,
-                         "RESET ALL", "Restore base rules", false, true,
-                         st.optionsRuleFocus == resetRow);
-  by += 56.0f * ui.s;
-  bool erase =
-      canDelete && BigAction(ui, "mode_delete", ImVec2(rBox0.x + rPad, by),
-                             rInnerW, "DELETE MODE", "Remove saved custom mode",
-                             false, true, st.optionsRuleFocus == deleteRow);
-
-  if (!typing && AcceptPressed()) {
-    if (st.optionsRuleFocus == saveRow)
-      save = true;
-    if (st.optionsRuleFocus == resetRow)
-      reset = true;
-    if (canDelete && st.optionsRuleFocus == deleteRow)
-      erase = true;
-  }
-
-  const auto reloadModes = [&](const std::filesystem::path &select) {
-    if (forge) {
-      st.forgeCustomVariant = select;
-      return;
-    }
-    ctx.variants = ScanVariants(ctx.reachDir, false);
-    ctx.ffVariants = ScanVariants(ctx.reachDir, true);
-    ctx.forgeMaps = ScanForgeMaps();
-    ctx.forgeMapsScanned = true;
-    int &index = ff ? st.ffVariant : st.variant;
-    const std::vector<MenuVariant> &modes = ff ? ctx.ffVariants : ctx.variants;
-    index =
-        FindVariant(modes, ff ? L"hr_ff_standard_1set.bin" : L"slayer_054.bin");
-    for (size_t i = 0; i < modes.size(); ++i)
-      if (modes[i].path == select)
-        index = static_cast<int>(i);
-  };
-  if (reset) {
-    st.optionsValues.clear();
-    st.confirmAction.clear();
-    st.optionsMessage = "Reset all options to base defaults.";
-    MenuSounds::Back();
-  }
-  if (erase) {
-    if (st.confirmAction != "delete") {
-      st.confirmAction = "delete";
-      st.optionsMessage = "Press DELETE again to remove permanently.";
-      MenuSounds::Error();
-    } else {
-      std::error_code removeError;
-      std::filesystem::remove(st.optionsFile, removeError);
-      NOBLE_INFO("FrontEndMenu: game mode deleted: {}",
-                 st.optionsFile.filename().string());
-      reloadModes({});
-      st.optionsOpen = false;
-      MenuSounds::Back();
-    }
-  }
-  if (save) {
-    std::string file;
-    for (const char c : std::string(st.optionsName)) {
-      if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '-' ||
-          c == '_')
-        file.push_back(c);
-    }
-    while (!file.empty() && file.back() == ' ')
-      file.pop_back();
-    if (file.empty()) {
-      st.optionsMessage = "Give the mode a name first.";
-      MenuSounds::Error();
-    } else {
-      VariantRules::Preset preset;
-      preset.name = st.optionsName;
-      preset.base = st.optionsBase;
-      preset.values = st.optionsValues;
-      const std::filesystem::path path =
-          VariantRules::Directory() / (file + ".json");
-      std::error_code existsError;
-      const bool wouldReplace =
-          std::filesystem::exists(path, existsError) && path != st.optionsFile;
-      if (wouldReplace && st.confirmAction != "replace") {
-        st.confirmAction = "replace";
-        st.optionsMessage = "Name exists — press SAVE again to overwrite.";
-        MenuSounds::Error();
-      } else if (VariantRules::Save(path, preset)) {
-        NOBLE_INFO(
-            "FrontEndMenu: game mode saved: '{}' on '{}' with {} change(s)",
-            preset.name, preset.base, preset.values.size());
-        reloadModes(path);
-        st.optionsOpen = false;
-        MenuSounds::Click();
-      } else {
-        st.optionsMessage = "Couldn't save the game mode.";
-        MenuSounds::Error();
-      }
-    }
-  }
-  if (back) {
-    st.optionsOpen = false;
-    MenuSounds::Back();
-  }
-  DrawHints(ui,
-            {{Prompt::Accept, "Select / Apply"},
-             {Prompt::Back, "Back"},
-             {Prompt::Change, "Change"},
-             {Prompt::Tabs, "Category"}},
-            {{InputPrompts::Button::X, "X", "Changed Only"}});
-}
-
-static void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
-                             float top, FrontEndChoice &choice, bool &done,
-                             bool back);
-
-static void DrawLobbyMapPickerModal(OverlayContext &ctx, const Ui &ui,
-                                    float left, float top, bool back) {
-  MenuState &st = ctx.st;
-  const bool campaign = (st.lobbyMode == "campaign");
-  const bool ff = (st.lobbyMode == "firefight");
-  const bool forge = (st.lobbyMode == "forge");
-  const char *title = campaign ? "CAMPAIGN MAP SELECT"
-                      : ff     ? "FIREFIGHT MAP SELECT"
-                      : forge  ? "FORGE MAP SELECT"
-                               : "LOBBY MAP SELECT";
-
-  DrawTopTelemetryBar(ui, "MAP SELECT");
-  DrawTitle(ui, ImVec2(left, top), title, "LOBBY");
-  DrawParty(ui, Settings::Get().Snapshot().playerName,
-            st.isLobbyHost ? "HOSTING LOBBY" : "IN LOBBY");
-
-  const std::vector<const ModEntry *> &modList = campaign ? ctx.campaignMods
-                                                 : ff     ? ctx.ffMods
-                                                          : ctx.mpMods;
-  const MenuMap *baseMaps = campaign ? kMissions : ff ? kFirefightMaps : kMaps;
-  const int baseCount = campaign ? Count(kMissions)
-                        : ff     ? Count(kFirefightMaps)
-                                 : Count(kMaps);
-  const ModMode modMode = campaign ? ModMode::Campaign
-                          : ff     ? ModMode::Firefight
-                                   : ModMode::Multiplayer;
-  const std::string carrier = campaign ? "m10"
-                              : ff     ? "ff60_icecave"
-                              : forge  ? "forge_halo"
-                                       : "70_boneyard";
-  const int forgeCount =
-      (!campaign && !ff) ? static_cast<int>(ctx.forgeMaps.size()) : -1;
-
-  static int s_lobbyPickerSource = 0;
-  static int s_lobbyPickerIdx = 0;
-  static std::filesystem::path s_lobbyPickerMvar;
-  static bool s_lobbyPickerInit = false;
-  if (!s_lobbyPickerInit) {
-    s_lobbyPickerSource = !st.lobbyModFolder.empty() ? 1 : 0;
-    s_lobbyPickerMvar = st.lobbyMapVariant;
-    s_lobbyPickerInit = true;
-  }
-
-  float tabsEnd = 0.0f;
-  if (DrawSourceTabs(ui, ImVec2(left + 26.0f * ui.s, top + 72.0f * ui.s),
-                     s_lobbyPickerSource, static_cast<int>(modList.size()),
-                     forgeCount, &tabsEnd)) {
-    st.mapDrawerKey.clear();
-    st.mapDrawerFocus = -1;
-    st.mapGridScrollY = 0.0f;
-  }
-  const bool modded = (s_lobbyPickerSource == 1);
-  const bool forgeTab = (s_lobbyPickerSource == 2 && forgeCount >= 0);
-  const float searchX =
-      std::max(left + 26.0f * ui.s + 240.0f * ui.s, tabsEnd + 10.0f * ui.s);
-  DrawSearchBox(ui, "##lobby_map_search", ImVec2(searchX, top + 72.0f * ui.s),
-                180.0f * ui.s, st.mapSearch, sizeof(st.mapSearch),
-                "Search maps & variants");
-
-  const std::vector<MapTileGroup> groups =
-      BuildMapTileGroups(ctx, modded, forgeTab, modMode, modList, baseMaps,
-                         baseCount, carrier, !campaign && !ff, st.mapSearch);
-
-  const float gridX = left + 24.0f * ui.s;
-  const float gridY = top + 114.0f * ui.s;
-  const float gridBottom = ui.origin.y + ui.size.y - 68.0f * ui.s;
-  const float rightMax = ui.origin.x + ui.size.x * 0.94f;
-  const float gridW = (rightMax - gridX) * 0.59f;
-  const float colGap = 24.0f * ui.s;
-  const float cardX = gridX + gridW + colGap;
-  const float cardW = rightMax - cardX;
-  const float cardY = std::max(gridY, ui.origin.y + 150.0f * ui.s);
-  const float cardH = gridBottom - cardY;
-
-  const TacticalGridResult gRes = DrawTacticalMapGrid(
-      ui, st, ImVec2(gridX, gridY), ImVec2(gridW, gridBottom - gridY), groups,
-      s_lobbyPickerIdx, s_lobbyPickerMvar, true,
-      modded ? "No matching modded maps"
-             : (forgeTab ? "No matching Forge maps" : "No maps found"),
-      campaign ? "BASE MISSION" : "BASE MAP");
-
-  // Right Preview & Confirm Card
-  const MapTileGroup *selGrp =
-      groups.empty() ? nullptr
-                     : &groups[std::clamp(s_lobbyPickerIdx, 0,
-                                          static_cast<int>(groups.size()) - 1)];
-  const MapEntry *selBase = selGrp ? &selGrp->base : nullptr;
-  const MapEntry *selVar = nullptr;
-  if (selGrp && !s_lobbyPickerMvar.empty()) {
-    for (const MapEntry &v : selGrp->variants)
-      if (v.mvar == s_lobbyPickerMvar) {
-        selVar = &v;
-        break;
-      }
-  }
-  const ImVec2 rc0(cardX, cardY), rc1(cardX + cardW, cardY + cardH);
-  ui.dl->AddRectFilled(rc0, rc1, IM_COL32(8, 14, 22, 215), 2.0f * ui.s);
-  NobleUi::DrawTacticalFrame(ui.dl, rc0, rc1, ui.s, false, true, false, false);
-  const float previewH =
-      std::clamp(cardH * 0.38f, 95.0f * ui.s, cardW * 292.0f / 668.0f);
-  DrawMapDetailHeaderCard(ui, rc0, cardW, previewH, selBase, selVar,
-                          Upper(st.lobbyMode).c_str());
-
-  const bool canPick = selBase && selBase->enabled;
-  const float btnY = rc1.y - 62.0f * ui.s;
-  const float bw = (cardW - 32.0f * ui.s - 10.0f * ui.s) * 0.5f;
-  const bool applyClick = BigAction(
-      ui, "lmp_apply", ImVec2(rc0.x + 16.0f * ui.s, btnY), bw, "SELECT MAP",
-      selVar ? selVar->name.c_str() : "Apply to Lobby", true, canPick, false);
-  const bool cancelClick = BigAction(
-      ui, "lmp_cancel", ImVec2(rc0.x + 16.0f * ui.s + bw + 10.0f * ui.s, btnY),
-      bw, "CANCEL", "Return to Lobby", false, true, false);
-
-  if ((gRes.pickedBaseOrVariant || applyClick) && canPick) {
-    const MapEntry chosen = selVar ? *selVar : *selBase;
-    st.lobbyMap =
-        chosen.launchScenario.empty() ? chosen.scenario : chosen.launchScenario;
-    st.lobbyMapOverride = chosen.mapOverride;
-    st.lobbyMapVariant = selVar ? selVar->mvar : std::filesystem::path{};
-    st.lobbyMapTitle =
-        (chosen.mapOverride.empty() && st.lobbyMapVariant.empty())
-            ? std::string()
-            : chosen.name;
-    st.lobbyMapImage = chosen.imageLoading;
-    st.lobbyMapThumb = chosen.imageThumbnail;
-    if (chosen.mod) {
-      st.lobbyModId = chosen.mod->workshopId;
-      st.lobbyModTitle = chosen.mod->title;
-      st.lobbyModFolder = chosen.mod->folder;
-    } else if (!modded) {
-      st.lobbyModId.clear();
-      st.lobbyModTitle.clear();
-      st.lobbyModFolder.clear();
-    }
-    // Keep game type valid on stock maps
-    if (st.lobbyMode == "multiplayer" && st.lobbyMapOverride.empty() &&
-        !st.lobbyVariantPath.empty() && !ctx.variants.empty()) {
-      const std::string vType = VariantPathType(st.lobbyVariantPath);
-      if (!vType.empty() && !MapGameTypes::Supports(st.lobbyMap, vType)) {
-        for (const MenuVariant &mv : ctx.variants) {
-          if (mv.type.empty() || MapGameTypes::Supports(st.lobbyMap, mv.type)) {
-            st.lobbyVariantPath = mv.path.string();
-            st.lobbyVariantName = mv.label;
-            break;
-          }
-        }
-      }
-    }
-    MasterServerClient::Get().UpdateLobbyAdvert(
-        st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
-        st.lobbySkulls);
-    st.lobbyMapPickerOpen = false;
-    s_lobbyPickerInit = false;
-    st.mapDrawerKey.clear();
-    st.mapDrawerFocus = -1;
-    MenuSounds::Click();
-    return;
-  }
-
-  if (cancelClick || (back && st.mapDrawerKey.empty())) {
-    st.lobbyMapPickerOpen = false;
-    s_lobbyPickerInit = false;
-    MenuSounds::Back();
-  } else if (back && !st.mapDrawerKey.empty()) {
-    st.mapDrawerKey.clear();
-    st.mapDrawerFocus = -1;
-    MenuSounds::Back();
-  }
-  DrawHints(ui,
-            {{Prompt::Accept, "Select / Expand"},
-             {Prompt::Back, "Back"},
-             {Prompt::Tabs, "Vanilla / Modded / Forge"}},
-            {{InputPrompts::Button::Y, "Y", "Toggle Variants"}});
-}
-
-static void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
-                             float top, FrontEndChoice &choice, bool &done,
-                             bool back) {
-  MenuState &st = ctx.st;
-  TakePendingLobbyEvents(st);
-  if (st.lobbyMapPickerOpen) {
-    DrawLobbyMapPickerModal(ctx, ui, left, top, back);
-    return;
-  }
-
-  if (st.isLobbyHost) {
-    const std::string curId = MasterServerClient::Get().GetCurrentSessionId();
-    const std::string curTok =
-        MasterServerClient::Get().GetCurrentSessionToken();
-    if (!curId.empty())
-      st.lobbySessionId = curId;
-    if (!curTok.empty())
-      st.lobbySessionToken = curTok;
-  }
-
-  // Non-blocking asynchronous lobby polling (never stalls the render thread)
-  static std::atomic<bool> s_lobbyPollActive{false};
-  static std::mutex s_lobbyPollMutex;
-  static LobbyState s_latestLobbyState;
-  static std::atomic<bool> s_hasNewLobbyState{false};
-
-  const double now = ImGui::GetTime();
-  const double lobbyPollInterval =
-      st.isLobbyHost ? 8.0
-                     : (NetworkTransport::Get().IsRelayConnected() ? 5.0 : 2.5);
-  if (now - st.lastLobbyPoll > lobbyPollInterval && !s_lobbyPollActive.load()) {
-    st.lastLobbyPoll = now;
-    if (st.isLobbyHost && st.lobbySessionId.empty()) {
-      st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
-      st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
-    }
-    if ((!st.lobbySessionId.empty() ||
-         (!st.isLobbyHost && !st.lobbyHostEndpoint.empty())) &&
-        MasterServerClient::Get().Enabled()) {
-      s_lobbyPollActive.store(true);
-      const std::string pollSessionId = st.lobbySessionId;
-      const bool pollIsHost = st.isLobbyHost;
-      const std::string pollHostEndpoint = st.lobbyHostEndpoint;
-      const std::string pName = AuthClient::Get().IsLoggedIn()
-                                    ? AuthClient::Get().GetUsername()
-                                    : Settings::Get().Snapshot().playerName;
-      const uint64_t fallbackId =
-          (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL) < 2ULL
-              ? 2ULL
-              : (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-      const uint64_t pId =
-          AuthClient::Get().IsLoggedIn()
-              ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
-              : fallbackId;
-      const std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
-      const bool isDev = AuthClient::Get().IsDeveloper();
-      const int rankIdx = Career::RankIndex(Career::Get().credits);
-      const auto &prof = UIManager::GetArmorCustomizer().GetProfile();
-      const int embIdx = prof.emblemIndex;
-      const int embBgIdx = prof.emblemBackgroundIndex;
-      const int npIdx = prof.nameplateIndex;
-
-      std::thread([pollSessionId, pollIsHost, pollHostEndpoint, pName, pId,
-                   sTag, isDev, rankIdx, embIdx, embBgIdx, npIdx]() {
-        LobbyState current =
-            MasterServerClient::Get().FetchLobbyStateSync(pollSessionId);
-        if (!current.ok && !current.isClosed && !pollIsHost &&
-            !pollHostEndpoint.empty()) {
-          std::string hostIp = pollHostEndpoint;
-          uint16_t hostPort = 11774;
-          const size_t colon = hostIp.rfind(':');
-          if (colon != std::string::npos) {
-            hostPort =
-                static_cast<uint16_t>(std::atoi(hostIp.c_str() + colon + 1));
-            hostIp = hostIp.substr(0, colon);
-          }
-          LobbyState rejoined = MasterServerClient::Get().JoinLobbySync(
-              pollSessionId, pId, pName.empty() ? "Guest" : pName, isDev, sTag,
-              rankIdx, embIdx, embBgIdx, npIdx, 0, 11774, hostIp, hostPort);
-          if (rejoined.ok) {
-            current = std::move(rejoined);
-          }
-        }
-        {
-          std::lock_guard<std::mutex> lk(s_lobbyPollMutex);
-          s_latestLobbyState = std::move(current);
-          s_hasNewLobbyState.store(true);
-        }
-        s_lobbyPollActive.store(false);
-      }).detach();
-    }
-  }
-
-  if (s_hasNewLobbyState.exchange(false)) {
-    LobbyState current;
-    {
-      std::lock_guard<std::mutex> lk(s_lobbyPollMutex);
-      current = std::move(s_latestLobbyState);
-    }
-    if (!current.sessionId.empty() && current.sessionId != st.lobbySessionId) {
-      st.lobbySessionId = current.sessionId;
-    }
-    if (current.ok)
-      st.lobbyPollFailures = 0;
-    if (!current.ok || current.isClosed) {
-      if (st.isLobbyHost) {
-        // The host owns the session; a failed fetch just means the master
-        // server blipped.
-      } else if (!current.isClosed) {
-        // Never kick a guest while the WebSocket relay is connected or during
-        // cross-region / transient HTTP poll drops.
-        ++st.lobbyPollFailures;
-        if (NetworkTransport::Get().IsRelayConnected()) {
-          st.lobbyPollFailures = 1;
-        } else if (st.lobbyPollFailures <= 5 ||
-                   (st.lobbyPollFailures % 10) == 0) {
-          NOBLE_WARN("FrontEndMenu: lobby poll failed ({}, http {}); staying "
-                     "in the lobby",
-                     st.lobbyPollFailures, current.httpStatus);
-        }
-      } else {
-        // The host explicitly closed or disbanded the session: return to the
-        // main menu.
-        NOBLE_INFO(
-            "FrontEndMenu: lobby closed/disbanded ({}); returning to main menu",
-            current.closeReason.empty() ? "host closed" : current.closeReason);
-        st.screen = Screen::Main;
-        st.lobbySessionId.clear();
-        st.lobbySessionToken.clear();
-        st.lobbyRoster.clear();
-        st.isLobbyHost = false;
-        st.lobbyPollFailures = 0;
-        NetworkTransport::Get().StopRelay();
-        return;
-      }
-    } else if (current.ok) {
-      if (!st.isLobbyHost && !current.roster.empty()) {
-        st.lobbyRoster = current.roster;
-        SanitizeLobbyRoster(st.lobbyRoster);
-      }
-      if (!st.isLobbyHost) {
-        st.lobbyMap = current.map;
-        st.lobbyMode = current.mode;
-        st.lobbyVariantName = current.variant;
-        st.lobbyDifficulty = current.difficulty;
-        st.lobbySkulls = current.skulls;
-        if (current.isLan && !current.hostLanIp.empty()) {
-          st.lobbyHostEndpoint =
-              current.hostLanIp + ":" + std::to_string(current.hostPort);
-        }
-      }
-      if (!current.roster.empty()) {
-        st.lobbyRoster = current.roster;
-        SanitizeLobbyRoster(st.lobbyRoster);
-        if (st.isLobbyHost) {
-          std::string pName = AuthClient::Get().IsLoggedIn()
-                                  ? AuthClient::Get().GetUsername()
-                                  : Settings::Get().Snapshot().playerName;
-          if (pName.empty())
-            pName = "Host";
-          const uint64_t hostPId =
-              AuthClient::Get().IsLoggedIn()
-                  ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
-                  : 1ULL;
-          const std::string hostTag =
-              PlayerServiceTag(Settings::Get().Snapshot());
-          const bool hostDev = AuthClient::Get().IsDeveloper();
-          bool hostFound = false;
-          for (auto &p : st.lobbyRoster) {
-            if (p.isHost) {
-              hostFound = true;
-              p.peerId = hostPId;
-              p.machineId = DeviceIdentityStore::Get().deviceId;
-              p.username = pName;
-              p.serviceTag = hostTag;
-              p.isDev = hostDev;
-              const auto &prof = UIManager::GetArmorCustomizer().GetProfile();
-              p.rankIndex = Career::RankIndex(Career::Get().credits);
-              p.emblemId = prof.emblemIndex;
-              p.nameplateId = prof.nameplateIndex;
-              p.emblemBackgroundId = prof.emblemBackgroundIndex;
-              const auto rec = Career::GetRecord();
-              p.gamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
-              p.kills = static_cast<int>(rec.totals.kills);
-              p.deaths = static_cast<int>(rec.totals.deaths);
-              int cd = 0;
-              for (const auto &c : Career::Challenges())
-                if (c.done)
-                  ++cd;
-              p.challengesDone = cd;
-              int ct = 0, ctm = 0;
-              for (const auto &c : Career::Commendations()) {
-                if (c.tracked) {
-                  ct += c.tier;
-                  ctm += 6;
-                }
-              }
-              p.commendations = ctm > 0 ? (ct * 100 / ctm) : 0;
-              p.armoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
-            } else {
-              Career::PeerStats peer;
-              peer.playerId =
-                  !p.machineId.empty()
-                      ? p.machineId
-                      : (!p.username.empty() ? p.username
-                                             : std::to_string(p.peerId));
-              peer.playerName = p.username;
-              peer.serviceTag = p.serviceTag;
-              peer.rank = p.rankIndex;
-              peer.gamesPlayed = p.gamesPlayed;
-              peer.kills = p.kills;
-              peer.deaths = p.deaths;
-              peer.challengesDone = p.challengesDone;
-              peer.commendations = p.commendations;
-              peer.armoryOwned = p.armoryOwned;
-              Career::SavePeerStats(peer);
-              Career::RegisterPlayerName(p.peerId, p.username, p.serviceTag);
-            }
-          }
-          if (!hostFound) {
-            LobbyPlayer hp;
-            hp.peerId = hostPId;
-            hp.machineId = DeviceIdentityStore::Get().deviceId;
-            hp.username = pName;
-            hp.serviceTag = hostTag;
-            hp.isHost = true;
-            hp.isDev = hostDev;
-            const auto &prof = UIManager::GetArmorCustomizer().GetProfile();
-            hp.rankIndex = Career::RankIndex(Career::Get().credits);
-            hp.emblemId = prof.emblemIndex;
-            hp.nameplateId = prof.nameplateIndex;
-            hp.emblemBackgroundId = prof.emblemBackgroundIndex;
-            const auto rec = Career::GetRecord();
-            hp.gamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
-            hp.kills = static_cast<int>(rec.totals.kills);
-            hp.deaths = static_cast<int>(rec.totals.deaths);
-            int cd = 0;
-            for (const auto &c : Career::Challenges())
-              if (c.done)
-                ++cd;
-            hp.challengesDone = cd;
-            int ct = 0, ctm = 0;
-            for (const auto &c : Career::Commendations()) {
-              if (c.tracked) {
-                ct += c.tier;
-                ctm += 6;
-              }
-            }
-            hp.commendations = ctm > 0 ? (ct * 100 / ctm) : 0;
-            hp.armoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
-            st.lobbyRoster.insert(st.lobbyRoster.begin(), hp);
-          }
-        }
-      }
-      // A vote: everyone sees it through the session; the host alone closes it
-      // and applies the result.
-      if (current.voteId != st.voteId)
-        st.voteCast = -1;
-      st.voteId = current.voteId;
-      st.voteOptions = current.voteOptions;
-      st.voteCounts = current.voteCounts;
-      st.voteMsLeft = current.voteMsLeft;
-      if (st.isLobbyHost && !st.voteId.empty() && st.voteMsLeft <= 0)
-        FinishLobbyVote(ctx);
-      if (st.isLobbyHost && !st.lobbyRoster.empty()) {
-        // Every lobby mode: Forge assigns teams too, and a mode without teams
-        // deals 0 (no dividers).
-        RefreshLobbyMode(ctx);
-        AssignLobbyTeams(st);
-      }
-      // Launch only while the host's match is running. The server keeps the
-      // last launch_data when the host re-registers the same address and port
-      // for its next lobby, so "launch_data present" alone sent a guest
-      // straight into a match that wasn't starting (2026-10-29 review, tested
-      // against server.js).
-      if (!st.isLobbyHost && current.inProgress) {
-        st.lobbyLaunchPending = true;
-        st.lobbyLaunchMap =
-            current.launchMap.empty() ? current.map : current.launchMap;
-        st.lobbyLaunchMode =
-            current.launchMode.empty() ? current.mode : current.launchMode;
-        st.lobbyLaunchVariant = current.launchVariant;
-        st.lobbyLaunchDiff = current.launchDifficulty;
-        st.lobbyLaunchSkulls = current.launchSkulls;
-        st.lobbyLaunchMapOverride = current.launchMapOverride;
-        st.lobbyLaunchMapVariant = current.launchMapVariant;
-        st.lobbyLaunchModFolder = current.launchModFolder;
-        st.lobbyLaunchModId =
-            current.launchModId.empty() ? current.modId : current.launchModId;
-      }
-    }
-  }
-
-  // If launch was signaled (via WebSocket or HTTP poll) and we are guest,
-  // launch!
-  if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
-    st.lobbyLaunchPending = false;
-    choice.play = true;
-    for (size_t p = 0; p < st.lobbyRoster.size(); ++p) {
-      const auto &player = st.lobbyRoster[p];
-      Career::RegisterPlayerName(player.peerId, player.username,
-                                 player.serviceTag);
-      Career::RegisterPlayerSlot(static_cast<int>(p), player.username,
-                                 player.serviceTag);
-    }
-    choice.host = false;
-    choice.map = st.lobbyLaunchMap.empty() ? st.lobbyMap : st.lobbyLaunchMap;
-    choice.mapTitle = st.lobbyMapTitle;
-    choice.mapImage = st.lobbyMapImage;
-    choice.mapThumb = st.lobbyMapThumb;
-    choice.mode =
-        st.lobbyLaunchMode.empty() ? st.lobbyMode : st.lobbyLaunchMode;
-    choice.variantPath = st.lobbyLaunchVariant;
-    choice.difficulty = st.lobbyLaunchDiff;
-    choice.skulls = st.lobbyLaunchSkulls;
-
-    // Resolve mod and modded map override for guest
-    std::filesystem::path hostMapOverride =
-        !st.lobbyLaunchMapOverride.empty()
-            ? std::filesystem::path(st.lobbyLaunchMapOverride)
-            : st.lobbyMapOverride;
-    std::filesystem::path hostModFolder =
-        !st.lobbyLaunchModFolder.empty()
-            ? std::filesystem::path(st.lobbyLaunchModFolder)
-            : st.lobbyModFolder;
-    std::string hostModId =
-        !st.lobbyLaunchModId.empty() ? st.lobbyLaunchModId : st.lobbyModId;
-
-    // A map override only applies to the map it belongs to. Leftovers from a
-    // previous lobby used to be applied to whatever launched next (a campaign
-    // mission loading the previous lobby's mod map, then failing mid-load).
-    if (!hostMapOverride.empty()) {
-      const std::string overrideStem = hostMapOverride.stem().string();
-      const std::string scenario = choice.map;
-      const bool belongs = overrideStem == scenario ||
-                           overrideStem.rfind(scenario + "_", 0) == 0 ||
-                           scenario.rfind(overrideStem + "_", 0) == 0;
-      if (!belongs) {
-        NOBLE_WARN("FrontEndMenu: ignoring map override '{}' for map '{}' "
-                   "(left over from another lobby)",
-                   hostMapOverride.filename().string(), scenario);
-        hostMapOverride.clear();
-        st.lobbyMapOverride.clear();
-        st.lobbyLaunchMapOverride.clear();
-      }
-    }
-
-    if (!hostMapOverride.empty() || !hostModFolder.empty() ||
-        !hostModId.empty()) {
-      std::filesystem::path resolvedMap;
-      std::filesystem::path resolvedModFolder = hostModFolder;
-      std::error_code ec;
-
-      if (!hostMapOverride.empty() &&
-          std::filesystem::exists(hostMapOverride, ec)) {
-        resolvedMap = hostMapOverride;
-      }
-
-      const std::string wantMapFile = !hostMapOverride.empty()
-                                          ? hostMapOverride.filename().string()
-                                          : (choice.map + ".map");
-
-      if (resolvedMap.empty() && !hostModId.empty()) {
-        if (const ModEntry *installed =
-                ModCatalog::FindByWorkshopId(ctx.mods, hostModId)) {
-          resolvedModFolder = installed->folder;
-          const auto candidate = installed->folder / "maps" / wantMapFile;
-          if (std::filesystem::exists(candidate, ec))
-            resolvedMap = candidate;
-        }
-      }
-
-      if (resolvedMap.empty() && !hostModFolder.empty()) {
-        const std::string folderName = hostModFolder.filename().string();
-        for (const ModEntry &mod : ctx.mods) {
-          if (_stricmp(mod.folder.filename().string().c_str(),
-                       folderName.c_str()) == 0 ||
-              _stricmp(mod.id.c_str(), folderName.c_str()) == 0) {
-            resolvedModFolder = mod.folder;
-            const auto candidate = mod.folder / "maps" / wantMapFile;
-            if (std::filesystem::exists(candidate, ec)) {
-              resolvedMap = candidate;
-              break;
-            }
-          }
-        }
-      }
-
-      if (resolvedMap.empty()) {
-        for (const ModEntry &mod : ctx.mods) {
-          const auto candidate = mod.folder / "maps" / wantMapFile;
-          if (std::filesystem::exists(candidate, ec)) {
-            resolvedMap = candidate;
-            resolvedModFolder = mod.folder;
-            break;
-          }
-        }
-      }
-
-      if (!resolvedMap.empty()) {
-        choice.mapOverride = resolvedMap;
-        choice.modFolder = resolvedModFolder;
-        st.lobbyMapOverride = resolvedMap;
-        st.lobbyModFolder = resolvedModFolder;
-        NOBLE_INFO(
-            "FrontEndMenu: Guest resolved modded map: '{}' (folder: '{}')",
-            choice.mapOverride.string(), choice.modFolder.string());
-      } else {
-        // The host is on a mod map this PC does not have. Launching the plain
-        // map anyway puts the guest in a match on a different map than the host
-        // (the engine then errors out or the two desync), so refuse the launch
-        // and say which Workshop item is missing instead.
-        const bool stockScenario =
-            KnownScenario(choice.map, kMissions, Count(kMissions)) ||
-            KnownScenario(choice.map, kFirefightMaps, Count(kFirefightMaps)) ||
-            KnownScenario(choice.map, kMaps, Count(kMaps));
-        if (!stockScenario || !hostModId.empty()) {
-          NOBLE_WARN("FrontEndMenu: host's mod map '{}' (mod: '{}') is not on "
-                     "this PC; not launching",
-                     wantMapFile, hostModId);
-          st.lobbyLaunchPending = false;
-          return;
-        }
-        choice.mapOverride.clear();
-        choice.modFolder.clear();
-        NOBLE_WARN("FrontEndMenu: host launched stock map '{}' without a mod "
-                   "map; launching it as is",
-                   choice.map);
-      }
-    } else {
-      choice.mapOverride = st.lobbyMapOverride;
-      choice.modFolder = st.lobbyModFolder;
-    }
-    choice.modTitle = st.lobbyModTitle;
-    // The host's Forge map arrives as a file name; use this PC's copy (Noble
-    // ships the megapack's maps).
-    choice.mapVariant.clear();
-    if (!st.lobbyLaunchMapVariant.empty()) {
-      const std::filesystem::path want =
-          std::filesystem::path(st.lobbyLaunchMapVariant).filename();
-      for (const ForgeMap &fm : ctx.forgeMaps) {
-        if (_wcsicmp(fm.path.filename().c_str(), want.c_str()) == 0) {
-          choice.mapVariant = fm.path;
-          break;
-        }
-      }
-      if (choice.mapVariant.empty()) {
-        NOBLE_WARN("FrontEndMenu: host's Forge map '{}' isn't on this PC; "
-                   "launching the plain map",
-                   want.string());
-      }
-    }
-    NOBLE_INFO("Guest launching from lobby: map='{}' mode='{}' "
-               "mapOverride='{}' mod='{}' connect='{}'",
-               choice.map, choice.mode, choice.mapOverride.string(),
-               choice.modFolder.string(), st.lobbyHostEndpoint);
-    choice.connectAddress = st.lobbyHostEndpoint;
-    choice.sessionId = st.lobbySessionId;
-    if (st.lobbySessionToken.empty())
-      st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
-    choice.sessionToken = st.lobbySessionToken;
-
-    // The host sends its variant as a path on its own PC; use the guest's copy
-    // of the same file. Without a variant the guest's launch block has no game
-    // variant (the 5% load hang from 2026-10-28).
-    if (st.lobbyLaunchVariant.empty() && !st.lobbyVariantName.empty()) {
-      st.lobbyLaunchVariant = st.lobbyVariantName;
-    }
-    if (!st.lobbyLaunchVariant.empty()) {
-      const std::filesystem::path want =
-          std::filesystem::path(st.lobbyLaunchVariant).filename();
-      std::filesystem::path local;
-      for (const auto *list : {&ctx.variants, &ctx.ffVariants})
-        for (const MenuVariant &v : *list)
-          if (local.empty() &&
-              (_wcsicmp(v.path.filename().c_str(), want.c_str()) == 0 ||
-               _stricmp(v.label.c_str(), st.lobbyLaunchVariant.c_str()) == 0))
-            local = v.path;
-      if (local.empty() &&
-          (st.lobbyLaunchMode == "forge" || st.lobbyMode == "forge" ||
-           _wcsicmp(want.c_str(), kForgeVariant) == 0)) {
-        if (std::filesystem::exists(ctx.forgeVariant))
-          local = ctx.forgeVariant;
-      }
-      if (!local.empty()) {
-        choice.variantPath = local.string();
-      } else {
-        NOBLE_WARN("FrontEndMenu: host's game variant '{}' isn't in this PC's "
-                   "variants; launching without it",
-                   st.lobbyLaunchVariant);
-      }
-    } else if (st.lobbyLaunchMode == "forge" || st.lobbyMode == "forge") {
-      if (std::filesystem::exists(ctx.forgeVariant))
-        choice.variantPath = ctx.forgeVariant.string();
-    }
-    NOBLE_INFO("FrontEndMenu: Guest executing synchronized lobby launch to {}",
-               st.lobbyHostEndpoint);
-    done = true;
-    return;
-  }
-
-  // Same frame as the setup screens: DrawTitle at (left, top), the option
-  // column under it, the right column at px/pw, DrawHints at the bottom. Every
-  // block has a fixed place, so nothing moves between the empty, one player and
-  // full states or between host and guest (design pass, 2026-10-31).
-  ui.dl->AddRectFilled(ui.origin,
-                       ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y),
-                       IM_COL32(4, 8, 12, 110));
-  const float colX = left + 34.0f * ui.s;
-  const float colW = 380.0f * ui.s;
-  const float px = ui.origin.x + ui.size.x * 0.47f;
-  const float pw = ui.size.x * 0.44f;
-  const ImU32 panelFill = IM_COL32(8, 12, 18, 190);
-  const ImU32 panelEdge = IM_COL32(170, 200, 220, 120);
-  const ImU32 kRuleLine = IM_COL32(255, 255, 255, 50);
-
-  // Resolve Map Display Name. A mod map uses the title from its map JSON; a
-  // stock map uses the Reach table. Without this the lobby says "Boneyard" for
-  // every Campaign-to-Forge selection because 70_boneyard is only the carrier
-  // the engine launches through.
-  std::string mapDisplay =
-      !st.lobbyMapTitle.empty() ? st.lobbyMapTitle : st.lobbyMap;
-  if (st.lobbyMapTitle.empty()) {
-    for (int i = 0; i < Count(kMaps); ++i) {
-      if (kMaps[i].scenario == st.lobbyMap) {
-        mapDisplay = kMaps[i].name;
-        break;
-      }
-    }
-    for (int i = 0; i < Count(kFirefightMaps); ++i) {
-      if (kFirefightMaps[i].scenario == st.lobbyMap) {
-        mapDisplay = kFirefightMaps[i].name;
-        break;
-      }
-    }
-    for (int i = 0; i < Count(kMissions); ++i) {
-      if (kMissions[i].scenario == st.lobbyMap) {
-        mapDisplay = kMissions[i].name;
-        break;
-      }
-    }
-  }
-
-  const bool campaign = st.lobbyMode == "campaign";
-  const bool forge = st.lobbyMode == "forge";
-  const bool firefight = st.lobbyMode == "firefight";
-  DrawTitle(ui, ImVec2(left, top),
-            campaign    ? "CAMPAIGN"
-            : forge     ? "FORGE"
-            : firefight ? "FIREFIGHT"
-                        : "CUSTOM GAME",
-            campaign    ? "CO-OP"
-            : forge     ? "EDIT"
-            : firefight ? "SURVIVAL"
-                        : "MULTIPLAYER");
-
-  const char *subtitle =
-      !st.isLobbyHost
-          ? (st.lobbyHostEndpoint.empty()
-                 ? "Connecting to the host..."
-                 : "The host chooses the game and starts the match.")
-      : st.lobbyNetMode == 0 ? "Local network game."
-      : st.lobbyPrivacy == 0 ? "Public game, listed in the server browser."
-                             : "Private game, join by invite.";
-  Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(colX, top + 70.0f * ui.s),
-       kDim, subtitle);
-
-  struct LobbyMenuOption {
-    std::string label;
-    std::string value;
-    bool isStart;
-    bool editable;
-    std::string tooltip;
-  };
-  std::vector<LobbyMenuOption> optRows;
-  const char *const kReadyTip =
-      "Your own ready state. It isn't sent to the host yet.";
-  const char *const kOptionsTip =
-      "Uses the game type's own settings. Edit them from GAME OPTIONS on "
-      "Custom Game, before hosting.";
-  const bool playlistActive =
-      st.isLobbyHost && st.playlistChoice >= 0 &&
-      st.playlistChoice < static_cast<int>(st.playlists.size());
-  // A guest: is the host's game type one this PC has? A host's own game mode
-  // isn't sent to guests yet (@deepseek's transport); until it is, say so
-  // rather than let the player find out from the match.
-  bool hostModeKnown = st.isLobbyHost || st.lobbyVariantName.empty() ||
-                       st.lobbyVariantName == "Default";
-  if (!hostModeKnown) {
-    for (const auto *list : {&ctx.variants, &ctx.ffVariants}) {
-      for (const MenuVariant &v : *list) {
-        if (_stricmp(v.label.c_str(), st.lobbyVariantName.c_str()) == 0 ||
-            _stricmp(v.path.filename().string().c_str(),
-                     st.lobbyVariantName.c_str()) == 0)
-          hostModeKnown = true;
-      }
-    }
-  }
-  const char *const hostModeTip =
-      hostModeKnown ? "You have the game type the host picked."
-                    : "The host made this game mode, and this PC doesn't have "
-                      "it. Downloading it from the host is coming.";
-
-  // Teams are a property of the game type, whatever the lobby mode: read them
-  // before the rows are built so the roster (and the TEAM COUNT / CHANGE TEAM
-  // rows) agree with the mode from the first frame.
-  RefreshLobbyMode(ctx);
-
-  if (campaign) {
-    optRows.push_back({"READY", st.lobbyReady ? "READY" : "NOT READY", false,
-                       true, kReadyTip});
-    optRows.push_back({"MISSION", mapDisplay, false, st.isLobbyHost,
-                       "Select which campaign mission to play."});
-    int skullCount = 0;
-    for (int b = 0; b < 64; ++b)
-      if ((st.lobbySkulls >> b) & 1ULL)
-        ++skullCount;
-    optRows.push_back(
-        {"SKULLS",
-         skullCount >= kSkullCount ? std::string("ALL ON")
-                                   : std::to_string(skullCount) + " ON",
-         false, false,
-         "Skulls are chosen on the Campaign screen before hosting."});
-    static const char *kDiffs[] = {"EASY", "NORMAL", "HEROIC", "LEGENDARY"};
-    optRows.push_back({"DIFFICULTY",
-                       kDiffs[std::clamp(st.lobbyDifficulty, 0, 3)], false,
-                       st.isLobbyHost, "Set campaign difficulty level."});
-    if (st.isLobbyHost)
-      optRows.push_back({"START CO-OP CAMPAIGN", "", true, true,
-                         "Start the selected mission."});
-  } else if (forge) {
-    optRows.push_back({"GAME TYPE", "BASIC EDITING", false, false,
-                       "Forge uses Basic Editing as base."});
-    optRows.push_back({"MAP", mapDisplay, false, st.isLobbyHost,
-                       "Choose which map to forge."});
-    if (st.lobbyTeamsOn) {
-      // Forge is red/blue only: the engine ignores side overrides in a Forge
-      // session, so the lobby must not offer colours the match cannot show
-      // (there is no TEAM COUNT row here for the same reason).
-      constexpr int teams = 2;
-      if (!st.lobbyRoster.empty()) {
-        const LobbyPlayer &selectedPlayer = st.lobbyRoster[std::clamp(
-            st.lobbyRosterSelection, 0,
-            static_cast<int>(st.lobbyRoster.size()) - 1)];
-        const int shownTeam = selectedPlayer.team > 0
-                                  ? std::clamp(selectedPlayer.team, 1, teams)
-                                  : 0;
-        optRows.push_back(
-            {"CHANGE TEAM",
-             shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName)
-                           : std::string("AUTO"),
-             false, st.isLobbyHost,
-             "Opens the team list: pick a team by name and colour."});
-      }
-    }
-    const std::string forgeOptVal =
-        st.lobbyModeChanges > 0
-            ? std::to_string(st.lobbyModeChanges) + " CHANGED"
-            : (st.forgeCustomVariant.empty() ? "DEFAULTS" : "CUSTOM");
-    optRows.push_back({"GAME OPTIONS", forgeOptVal, false, st.isLobbyHost,
-                       "Customize player traits, shields, speed, damage, and "
-                       "game options for Forge."});
-    if (st.isLobbyHost)
-      optRows.push_back(
-          {"START GAME", "", true, true, "Start the selected Forge session."});
-  } else if (firefight) {
-    optRows.push_back({"READY", st.lobbyReady ? "READY" : "NOT READY", false,
-                       true, kReadyTip});
-    optRows.push_back(
-        {"GAME TYPE",
-         st.lobbyVariantName.empty() ? "NORMAL" : st.lobbyVariantName, false,
-         st.isLobbyHost, "Select Firefight game variant."});
-    optRows.push_back({"MAP", mapDisplay, false, st.isLobbyHost,
-                       "Choose which Firefight map to play."});
-    if (st.isLobbyHost)
-      optRows.push_back(
-          {"GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip});
-    else
-      optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
-                         false, false, hostModeTip});
-    if (st.isLobbyHost)
-      optRows.push_back(
-          {"START FIREFIGHT", "", true, true, "Start the Firefight match."});
-  } else { // Custom Game
-    optRows.push_back({"READY", st.lobbyReady ? "READY" : "NOT READY", false,
-                       true, kReadyTip});
-    optRows.push_back(
-        {"GAME TYPE",
-         st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false,
-         st.isLobbyHost, "Choose game type and rule set."});
-    optRows.push_back({"MAP", mapDisplay, false, st.isLobbyHost,
-                       "Choose which map you want to play."});
-    if (st.lobbyTeamsOn) {
-      // Multi-team: the host sets how many teams the lobby deals, and any team
-      // can be handed out.
-      const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
-      char countTip[200];
-      std::snprintf(countTip, sizeof(countTip),
-                    "This game type assigns teams. %d team%s in this lobby; "
-                    "the host deals players across them. "
-                    "Halo: Reach's multi-team modes use up to 8.",
-                    teams, teams == 1 ? "" : "s");
-      optRows.push_back({"TEAM COUNT", std::to_string(teams), false,
-                         st.isLobbyHost, countTip});
-      if (!st.lobbyRoster.empty()) {
-        const LobbyPlayer &selectedPlayer = st.lobbyRoster[std::clamp(
-            st.lobbyRosterSelection, 0,
-            static_cast<int>(st.lobbyRoster.size()) - 1)];
-        const int shownTeam = selectedPlayer.team > 0
-                                  ? std::clamp(selectedPlayer.team, 1, teams)
-                                  : 0;
-        const std::string teamText =
-            shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName)
-                          : std::string("AUTO");
-        char teamTip[220];
-        std::snprintf(teamTip, sizeof(teamTip),
-                      "Opens the team list for %s: pick a team by name and "
-                      "colour. The host owns the teams"
-                      " in this lobby.",
-                      selectedPlayer.username.empty()
-                          ? "the host"
-                          : selectedPlayer.username.c_str());
-        optRows.push_back(
-            {"CHANGE TEAM", teamText, false, st.isLobbyHost, teamTip});
-      }
-    }
-    const std::string modeValue =
-        st.lobbyModeChanges > 0
-            ? std::to_string(st.lobbyModeChanges) + " CHANGED"
-            : std::string("DEFAULTS");
-    const std::string modeTip = st.lobbyModeChanges > 0
-                                    ? st.lobbyModeSummary
-                                    : std::string(kOptionsTip);
-    if (playlistActive)
-      optRows.push_back(
-          {"VOTE", "START", false, false,
-           st.lobbyModeChanges > 0
-               ? "Vote on what's next. This mode: " + st.lobbyModeSummary
-               : "Press to let everyone vote on what to play next from this "
-                 "playlist."});
-    else if (st.isLobbyHost)
-      optRows.push_back({"GAME OPTIONS", modeValue, false, false, modeTip});
-    else
-      optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
-                         false, false, hostModeTip});
-    if (st.isLobbyHost)
-      optRows.push_back(
-          {"START GAME", "", true, true, "Start the selected custom game."});
-  }
-
-  const int totalRows = static_cast<int>(optRows.size());
-  st.lobbyMenuRow = std::clamp(st.lobbyMenuRow, 0, totalRows - 1);
-  if (st.lobbyRoster.empty())
-    st.lobbyFocusZone = 0;
-
-  // Controller & Keyboard Navigation
-  auto stepRow = [&](int d) {
-    st.lobbyMenuRow = (st.lobbyMenuRow + d + totalRows) % totalRows;
-    MenuSounds::Scroll();
-  };
-  if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen &&
-      st.lobbyFocusZone == 0) {
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down())
-      stepRow(1);
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up())
-      stepRow(-1);
-  }
-
-  // A vanilla map only hosts the game types it was built for (Invasion on Sword
-  // Base crashed the engine), so the lobby's cycling skips what the Custom Game
-  // screen refuses. Modded lobbies are never restricted.
-  auto comboAllowed = [&](const std::string &scenario,
-                          const std::string &variantPath) {
-    if (campaign || firefight || forge || !st.lobbyModFolder.empty() ||
-        variantPath.empty())
-      return true;
-    const std::string type = VariantPathType(variantPath);
-    return type.empty() || MapGameTypes::Supports(scenario, type);
-  };
-
-  // The pre-game map row offers the maps from the host's selected mod first,
-  // then the stock Reach table. A Campaign-to-Forge map keeps its own title and
-  // art even though the engine launches it through 70_boneyard; a stock choice
-  // clears the override again.
-  struct LobbyMapChoice {
-    std::string
-        launch; // scenario the engine launches (the carrier for a mod map)
-    std::string label; // title to show
-    std::filesystem::path overrideFile;
-    std::filesystem::path image;
-    std::filesystem::path thumb;
-    std::filesystem::path mvar; // Forge map laid over `launch`
-  };
-  const MenuMap *baseMaps =
-      campaign ? kMissions : (firefight ? kFirefightMaps : kMaps);
-  const int baseCount =
-      campaign ? Count(kMissions)
-               : (firefight ? Count(kFirefightMaps) : Count(kMaps));
-  const std::string carrier =
-      campaign ? "m10" : (firefight ? "ff60_icecave" : "70_boneyard");
-  const ModEntry *lobbyMod = nullptr;
-  for (const ModEntry &mod : ctx.mods) {
-    if ((!st.lobbyModFolder.empty() && mod.folder == st.lobbyModFolder) ||
-        (!st.lobbyModId.empty() && !mod.workshopId.empty() &&
-         mod.workshopId == st.lobbyModId)) {
-      lobbyMod = &mod;
-      break;
-    }
-  }
-  std::vector<LobbyMapChoice> mapChoices;
-  auto addMapChoice = [&](LobbyMapChoice choice) {
-    for (const LobbyMapChoice &existing : mapChoices) {
-      if (existing.launch == choice.launch &&
-          existing.overrideFile == choice.overrideFile &&
-          existing.label == choice.label) {
-        return;
-      }
-    }
-    mapChoices.push_back(std::move(choice));
-  };
-  if (lobbyMod) {
-    const std::vector<ModMap> &listed = campaign    ? lobbyMod->campaign
-                                        : firefight ? lobbyMod->firefight
-                                                    : lobbyMod->multiplayer;
-    const std::vector<MapEntry> maps =
-        ModMaps(*lobbyMod, listed, baseMaps, baseCount, carrier);
-    for (const MapEntry &m : maps) {
-      if (m.header || !m.enabled || m.mapOverride.empty())
-        continue;
-      addMapChoice({m.launchScenario.empty() ? m.scenario : m.launchScenario,
-                    m.name, m.mapOverride,
-                    m.imageLarge.empty() ? m.imageThumbnail : m.imageLarge,
-                    m.imageThumbnail});
-    }
-  }
-  if (!st.lobbyMapOverride.empty()) {
-    addMapChoice({st.lobbyMap,
-                  st.lobbyMapTitle.empty() ? st.lobbyMap : st.lobbyMapTitle,
-                  st.lobbyMapOverride, st.lobbyMapImage, st.lobbyMapThumb});
-  }
-  if (!st.lobbyMapVariant.empty()) { // the lobby's Forge map stays one of the
-                                     // choices after cycling away
-    addMapChoice({st.lobbyMap,
-                  st.lobbyMapTitle.empty() ? st.lobbyMapVariant.stem().string()
-                                           : st.lobbyMapTitle,
-                  {},
-                  st.lobbyMapImage,
-                  st.lobbyMapThumb,
-                  st.lobbyMapVariant});
-  }
-  for (int i = 0; i < baseCount; ++i) {
-    addMapChoice({baseMaps[i].scenario, baseMaps[i].name, {}, {}, {}});
-  }
-
-  auto cycleOption = [&](int dir) {
-    const auto &row = optRows[st.lobbyMenuRow];
-    if (!row.editable || row.isStart)
-      return;
-    if (row.label == "READY") {
-      st.lobbyReady = !st.lobbyReady;
-      MenuSounds::Change();
-    } else if (row.label == "TEAM COUNT") {
-      if (!st.isLobbyHost)
-        return;
-      st.lobbyTeamCount =
-          st.lobbyTeamCount >= kTeamCount ? 2 : st.lobbyTeamCount + 1;
-      st.lobbyTeamsManual = false; // re-deal across the new number of teams
-      NOBLE_INFO("FrontEndMenu: lobby team count set to {}", st.lobbyTeamCount);
-      MenuSounds::Change();
-    } else if (row.label == "CHANGE TEAM") {
-      if (!st.isLobbyHost || st.lobbyRoster.empty())
-        return;
-      LobbyPlayer &player = st.lobbyRoster[std::clamp(
-          st.lobbyRosterSelection, 0,
-          static_cast<int>(st.lobbyRoster.size()) - 1)];
-      const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
-      const int current = std::clamp(player.team, 0, teams);
-      const int next =
-          current <= 0 ? 1 : ((current - 1 + dir + teams) % teams) + 1;
-      player.team = next;
-      st.lobbyTeamsManual =
-          true; // stop the automatic deal from undoing this on the next poll
-      if (player.isHost)
-        MasterServerClient::Get().SetAdvertHostTeam(next);
-      if (st.lobbySessionId.empty() ||
-          !MasterServerClient::Get().SetTeamsSync(st.lobbySessionId,
-                                                  {{player.peerId, next}})) {
-        NOBLE_INFO("FrontEndMenu: team for '{}' set to {} locally (no session "
-                   "to sync)",
-                   player.username, next);
-      }
-      MenuSounds::Change();
-    } else if (row.label == "MISSION" || row.label == "MAP") {
-      if (mapChoices.empty())
-        return;
-      const int count = static_cast<int>(mapChoices.size());
-      int cur = 0;
-      bool found = false;
-      for (int i = 0; i < count; ++i) {
-        if (mapChoices[i].launch == st.lobbyMap &&
-            mapChoices[i].overrideFile == st.lobbyMapOverride &&
-            mapChoices[i].mvar == st.lobbyMapVariant) {
-          cur = i;
-          found = true;
-          break;
-        }
-      }
-      if (!found && !st.lobbyMapTitle.empty()) {
-        for (int i = 0; i < count; ++i) {
-          if (mapChoices[i].label == st.lobbyMapTitle) {
-            cur = i;
-            found = true;
-            break;
-          }
-        }
-      }
-      if (!found) {
-        for (int i = 0; i < count; ++i) {
-          if (mapChoices[i].launch == st.lobbyMap &&
-              mapChoices[i].overrideFile.empty() &&
-              mapChoices[i].mvar.empty()) {
-            cur = i;
-            break;
-          }
-        }
-      }
-      for (int tries = 0; tries < count; ++tries) {
-        cur = (cur + dir + count) % count;
-        const LobbyMapChoice &candidate = mapChoices[cur];
-        if (!candidate.overrideFile.empty() ||
-            comboAllowed(candidate.launch, st.lobbyVariantPath))
-          break;
-      }
-      const LobbyMapChoice &chosen = mapChoices[cur];
-      st.lobbyMap = chosen.launch;
-      st.lobbyMapOverride = chosen.overrideFile;
-      st.lobbyMapVariant = chosen.mvar;
-      st.lobbyMapTitle = chosen.overrideFile.empty() && chosen.mvar.empty()
-                             ? std::string()
-                             : chosen.label;
-      st.lobbyMapImage = chosen.image;
-      st.lobbyMapThumb = chosen.thumb;
-      if (lobbyMod && !chosen.overrideFile.empty()) {
-        st.lobbyModFolder = lobbyMod->folder;
-        st.lobbyModId = lobbyMod->workshopId;
-        st.lobbyModTitle = lobbyMod->title;
-      }
-      MasterServerClient::Get().UpdateLobbyAdvert(
-          st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
-          st.lobbySkulls);
-      MenuSounds::Change();
-    } else if (row.label == "GAME TYPE") {
-      const std::vector<MenuVariant> &varList =
-          firefight ? ctx.ffVariants : ctx.variants;
-      if (!varList.empty()) {
-        const int count = static_cast<int>(varList.size());
-        int cur = 0;
-        for (int i = 0; i < count; ++i) {
-          if (varList[i].label == st.lobbyVariantName) {
-            cur = i;
-            break;
-          }
-        }
-        for (int tries = 0; tries < count; ++tries) {
-          cur = (cur + dir + count) % count;
-          if (comboAllowed(st.lobbyMap, varList[cur].path.string()))
-            break;
-        }
-        st.lobbyVariantPath = varList[cur].path.string();
-        st.lobbyVariantName = varList[cur].label;
-        MasterServerClient::Get().UpdateLobbyAdvert(
-            st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
-            st.lobbySkulls);
-        MenuSounds::Change();
-      }
-    } else if (row.label == "DIFFICULTY") {
-      st.lobbyDifficulty = (st.lobbyDifficulty + dir + 4) % 4;
-      MasterServerClient::Get().UpdateLobbyAdvert(
-          st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
-          st.lobbySkulls);
-      MenuSounds::Change();
-    }
-  };
-
-  if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen &&
-      st.lobbyFocusZone == 0) {
-    const auto &curRow = optRows[st.lobbyMenuRow];
-    const bool isStepper = curRow.editable && !curRow.isStart;
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) || UiPad::Left()) {
-      if (isStepper)
-        cycleOption(-1);
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) || UiPad::Right()) {
-      if (isStepper)
-        cycleOption(1);
-      else if (!st.lobbyRoster.empty()) {
-        st.lobbyFocusZone = 1;
-        MenuSounds::Scroll();
-      }
-    }
-  }
-
-  auto startMatch = [&]() {
-    const std::string variantFileName =
-        st.lobbyVariantPath.empty()
-            ? ""
-            : std::filesystem::path(st.lobbyVariantPath).filename().string();
-    {
-      const std::string curId = MasterServerClient::Get().GetCurrentSessionId();
-      const std::string curTok =
-          MasterServerClient::Get().GetCurrentSessionToken();
-      if (!curId.empty())
-        st.lobbySessionId = curId;
-      if (!curTok.empty())
-        st.lobbySessionToken = curTok;
-    }
-    // Refresh the roster once at launch so the host's peer barrier counts every
-    // guest that is actually in the lobby, not a snapshot that is up to 1.2 s
-    // old.
-    if (!st.lobbySessionId.empty() && MasterServerClient::Get().Enabled()) {
-      const LobbyState current =
-          MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
-      if (current.ok && !current.roster.empty())
-        st.lobbyRoster = current.roster;
-    }
-    std::string variantBody;
-    if (!st.lobbyVariantPath.empty() &&
-        VariantRules::IsPresetFile(st.lobbyVariantPath)) {
-      std::ifstream in(st.lobbyVariantPath, std::ios::binary);
-      if (in)
-        variantBody.assign(std::istreambuf_iterator<char>(in),
-                           std::istreambuf_iterator<char>());
-    }
-    try {
-      MasterServerClient::Get().LaunchLobbySync(
-          st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName,
-          st.lobbyDifficulty, st.lobbySkulls, variantBody,
-          st.lobbyMapOverride.string(), st.lobbyModFolder.string(),
-          st.lobbyModId, st.lobbyMapVariant.filename().string());
-    } catch (const std::exception &e) {
-      NOBLE_ERROR("FrontEndMenu: LaunchLobbySync exception: {}", e.what());
-    } catch (...) {
-      NOBLE_ERROR("FrontEndMenu: LaunchLobbySync unknown exception");
-    }
-    NOBLE_INFO("Lobby start broadcast: session='{}' map='{}' mode='{}' "
-               "variant='{}' difficulty={} skulls=0x{:X} roster={}",
-               st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName,
-               st.lobbyDifficulty, st.lobbySkulls, st.lobbyRoster.size());
-
-    choice.play = true;
-    choice.host = true;
-    for (size_t p = 0; p < st.lobbyRoster.size(); ++p) {
-      const auto &player = st.lobbyRoster[p];
-      Career::RegisterPlayerName(player.peerId, player.username,
-                                 player.serviceTag);
-      Career::RegisterPlayerSlot(static_cast<int>(p), player.username,
-                                 player.serviceTag);
-    }
-    choice.sessionId = st.lobbySessionId;
-    choice.sessionToken = st.lobbySessionToken;
-    choice.hostOnline = (st.lobbyNetMode == 1);
-    choice.hostPublic = (st.lobbyPrivacy == 0);
-    choice.hostMaxPlayers = st.lobbyMaxPlayers;
-    choice.expectedPeers = 0;
-    for (const auto &player : st.lobbyRoster) {
-      if (!player.isHost)
-        ++choice.expectedPeers;
-    }
-    choice.map = st.lobbyMap;
-    choice.mapOverride = st.lobbyMapOverride;
-    choice.mapVariant = st.lobbyMapVariant;
-    choice.mapTitle = st.lobbyMapTitle;
-    choice.mapImage = st.lobbyMapImage;
-    choice.mapThumb = st.lobbyMapThumb;
-    choice.mode = st.lobbyMode;
-    choice.variantPath = st.lobbyVariantPath;
-    choice.difficulty = st.lobbyDifficulty;
-    choice.skulls = st.lobbySkulls;
-    // The host picked this lobby's map from a mod; the relaunched match must
-    // read that mod first.
-    choice.modFolder = st.lobbyModFolder;
-    choice.modTitle = st.lobbyModTitle;
-    RequestMatchLaunch(choice, done, choice);
-  };
-
-  // A rotation that starts by itself. B or Esc stops the countdown for this
-  // lobby, and a vote holds it.
-  if (st.autoStartAt > 0.0 && st.isLobbyHost) {
-    if (back) {
-      st.autoStartAt = 0.0;
-      back = false;
-      NOBLE_INFO("FrontEndMenu: next-match countdown cancelled");
-      MenuSounds::Back();
-    } else if (!st.voteId.empty()) {
-      st.autoStartAt += ImGui::GetIO().DeltaTime;
-    } else if (ImGui::GetTime() >= st.autoStartAt) {
-      st.autoStartAt = 0.0;
-      NOBLE_INFO("FrontEndMenu: countdown finished, starting the next match");
-      startMatch();
-    }
-  }
-  bool pickerJustOpened =
-      false; // the press that opened the list must not also pick from it
-  auto triggerAction = [&]() {
-    const auto &cur = optRows[st.lobbyMenuRow];
-    if (cur.isStart) {
-      startMatch();
-    } else if (cur.label == "VOTE") {
-      StartLobbyVote(ctx);
-    } else if ((cur.label == "MAP" || cur.label == "MISSION") && cur.editable) {
-      st.lobbyMapPickerOpen = true;
-      st.mapSearch[0] = 0;
-      st.mapDrawerKey.clear();
-      st.mapDrawerFocus = -1;
-      st.mapGridScrollY = 0.0f;
-      MenuSounds::Click();
-    } else if (cur.label == "GAME OPTIONS" && cur.editable) {
-      if (forge) {
-        MenuVariant forgeMv;
-        forgeMv.path = st.forgeCustomVariant.empty() ? ctx.forgeVariant
-                                                     : st.forgeCustomVariant;
-        forgeMv.label =
-            st.forgeCustomVariant.empty() ? "Basic Editing" : "Forge Custom";
-        forgeMv.custom = !st.forgeCustomVariant.empty();
-        OpenGameOptions(ctx, forgeMv);
-      } else if (!ctx.variants.empty()) {
-        OpenGameOptions(
-            ctx,
-            ctx.variants[std::clamp(
-                st.variant, 0, static_cast<int>(ctx.variants.size()) - 1)]);
-      }
-    } else if (cur.label == "GAME TYPE" && cur.editable) {
-      st.lobbyPickerOpen = true;
-      pickerJustOpened = true;
-      MenuSounds::Click();
-    } else if (cur.label == "CHANGE TEAM" && cur.editable) {
-      st.lobbyTeamPickerOpen = true;
-      st.lobbyTeamPickerOpenedAt = ImGui::GetTime();
-      if (!st.lobbyRoster.empty()) {
-        const LobbyPlayer &picked = st.lobbyRoster[std::clamp(
-            st.lobbyRosterSelection, 0,
-            static_cast<int>(st.lobbyRoster.size()) - 1)];
-        st.lobbyTeamPickerRow =
-            std::clamp(picked.team, 1,
-                       std::clamp(st.lobbyTeamCount, 2, kTeamCount)) -
-            1;
-      }
-      MenuSounds::Click();
-    } else {
-      cycleOption(1);
-    }
-  };
-
-  if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen &&
-      st.lobbyFocusZone == 0 && AcceptPressed()) {
-    UiPad::ConsumeAccept();
-    triggerAction();
-  }
-
-  // Option rows. The start button keeps one place whichever mode's list is
-  // above it.
-  const float rowsY = top + 108.0f * ui.s;
-  const float rowStep = 36.0f * ui.s;
-  // The start button sits under however many option rows this mode has
-  // (Campaign, Forge and Custom Game each have a different count, and the team
-  // rows added two more) - a fixed 4-row offset drew it over them.
-  int optionRowCount = 0;
-  for (const auto &r : optRows) {
-    if (!r.isStart)
-      ++optionRowCount;
-  }
-  const float startY =
-      rowsY + rowStep * static_cast<float>(optionRowCount) + 10.0f * ui.s;
-  const bool mouseMoved = ImGui::GetIO().MouseDelta.x != 0.0f ||
-                          ImGui::GetIO().MouseDelta.y != 0.0f;
-  float curY = rowsY;
-  float teamRowY = -1.0f;
-  const bool pickerWasOpen = st.lobbyPickerOpen;
-  const bool teamPickerWasOpen = st.lobbyTeamPickerOpen;
-  const bool voteUp = !st.voteId.empty();
-  if (voteUp) {
-    // The vote takes the option rows' place for everyone: three choices and
-    // "none of these".
-    st.lobbyPickerOpen = true;
-    st.voteWasUp = true;
-    const int choices = static_cast<int>(st.voteOptions.size()) + 1;
-    char head[64];
-    std::snprintf(head, sizeof(head), "VOTE: WHAT'S NEXT?   %d s",
-                  std::max(0, (st.voteMsLeft + 999) / 1000));
-    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(colX, rowsY - 26.0f * ui.s),
-         kAccent, head);
-    st.voteRow = std::clamp(st.voteRow, 0, choices - 1);
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
-      st.voteRow = (st.voteRow + 1) % choices;
-      MenuSounds::Scroll();
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
-      st.voteRow = (st.voteRow + choices - 1) % choices;
-      MenuSounds::Scroll();
-    }
-    int cast = AcceptPressed() ? st.voteRow : -1;
-    for (int i = 0; i < choices; ++i) {
-      const ImVec2 r0(colX, rowsY + i * 40.0f * ui.s),
-          r1(colX + colW, r0.y + 36.0f * ui.s);
-      ImGui::SetCursorScreenPos(r0);
-      ImGui::PushID(i);
-      if (ImGui::InvisibleButton("##vote_option", ImVec2(colW, 36.0f * ui.s)))
-        cast = i;
-      if (ImGui::IsItemHovered() && mouseMoved)
-        st.voteRow = i;
-      ImGui::PopID();
-      ui.dl->AddRectFilled(r0, r1,
-                           st.voteCast == i ? IM_COL32(52, 112, 156, 230)
-                                            : IM_COL32(8, 12, 18, 170));
-      if (st.voteRow == i)
-        ui.dl->AddRect(r0, r1, kAccent, 0.0f, 0, 2.0f * ui.s);
-      const std::string label = i < static_cast<int>(st.voteOptions.size())
-                                    ? st.voteOptions[i]
-                                    : std::string("None of these");
-      Text(ui, NobleStyle::TitleFont(), 17.0f,
-           ImVec2(r0.x + 10.0f * ui.s, r0.y + 8.0f * ui.s), kWhite,
-           Ellipsize(NobleStyle::TitleFont(), 17.0f * ui.s, Upper(label),
-                     colW - 60.0f * ui.s)
-               .c_str());
-      const std::string count = std::to_string(
-          i < static_cast<int>(st.voteCounts.size()) ? st.voteCounts[i] : 0);
-      Text(ui, NobleStyle::TitleFont(), 17.0f,
-           ImVec2(r1.x - 26.0f * ui.s, r0.y + 8.0f * ui.s), kAccent,
-           count.c_str());
-    }
-    if (cast >= 0) {
-      st.voteCast = cast;
-      uint64_t peer = 1;
-      if (AuthClient::Get().IsLoggedIn())
-        peer = static_cast<uint64_t>(AuthClient::Get().GetUserId());
-      else if (!st.isLobbyHost) {
-        peer = MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL;
-        if (peer < 2ULL)
-          peer = 2ULL;
-      }
-      if (!MasterServerClient::Get().CastVoteSync(st.lobbySessionId, peer,
-                                                  cast))
-        NOBLE_WARN("FrontEndMenu: the vote wasn't accepted");
-      MenuSounds::Click();
-    }
-  } else if (st.voteWasUp) { // the vote just closed: the normal rows come back
-    st.voteWasUp = false;
-    st.lobbyPickerOpen = false;
-  }
-  if (st.lobbyPickerOpen && !voteUp) {
-    // The game types this map can host, from the variants that ship with the
-    // game. Nothing here is invented: the settings inside a variant can't be
-    // read until the variant viewer exists.
-    const std::vector<MenuVariant> &varList =
-        firefight ? ctx.ffVariants : ctx.variants;
-    const bool anyMap =
-        campaign || firefight || forge || !st.lobbyModFolder.empty();
-    if (pickerJustOpened) {
-      const MenuVariant *current = nullptr;
-      for (const MenuVariant &v : varList)
-        if (v.label == st.lobbyVariantName)
-          current = &v;
-      BeginVariantList(st, varList, st.lobbyMap, anyMap, current);
-    }
-    VariantRow shown;
-    const MenuVariant *picked = DrawVariantList(
-        ui, st, varList, st.lobbyMap, anyMap, ImVec2(colX, rowsY),
-        colW - 10.0f * ui.s, 32.0f, 5, !pickerJustOpened, shown);
-    DrawVariantInfo(
-        ui,
-        ImVec2(colX, rowsY + 40.0f * ui.s + 32.0f * ui.s * 5.0f + 10.0f * ui.s),
-        colW, shown, true);
-    if (picked) {
-      st.lobbyVariantPath = picked->path.string();
-      st.lobbyVariantName = picked->label;
-      MasterServerClient::Get().UpdateLobbyAdvert(
-          st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
-          st.lobbySkulls);
-      st.lobbyPickerOpen = false;
-      MenuSounds::Change();
-    }
-    if (back) {
-      st.lobbyPickerOpen = false;
-      MenuSounds::Back();
-    }
-  }
-  for (int i = 0; i < totalRows && !pickerWasOpen; ++i) {
-    const auto &row = optRows[i];
-    const bool focused = st.lobbyFocusZone == 0 && st.lobbyMenuRow == i;
-    if (row.isStart) {
-      if (BigAction(ui, "lobby_start", ImVec2(colX, startY), colW,
-                    row.label.c_str(), row.tooltip.c_str(), true, true,
-                    focused)) {
-        st.lobbyFocusZone = 0;
-        st.lobbyMenuRow = i;
-        startMatch();
-      }
-      // Only a moved mouse takes the focus: a pointer left resting on a row
-      // used to pull the controller's focus back to that row every frame.
-      if (ImGui::IsItemHovered() && mouseMoved) {
-        st.lobbyFocusZone = 0;
-        st.lobbyMenuRow = i;
-      }
-      continue;
-    }
-    char rowId[32];
-    std::snprintf(rowId, sizeof(rowId), "##lobby_row_%d", i);
-    const float h = 32.0f * ui.s;
-    const ImVec2 r0(colX, curY), r1(colX + colW, curY + h);
-    ImGui::SetCursorScreenPos(r0);
-    // While the team dropdown is up it owns the mouse: the rows underneath are
-    // drawn but inert, so a click on a team never also hits START GAME / the
-    // row below it.
-    if (!st.lobbyTeamPickerOpen &&
-        ImGui::InvisibleButton(rowId, ImVec2(colW, h))) {
-      st.lobbyFocusZone = 0;
-      st.lobbyMenuRow = i;
-      if (row.label == "CHANGE TEAM" || row.label == "GAME OPTIONS" ||
-          row.label == "VOTE" || row.label == "GAME TYPE") {
-        triggerAction();
-      } else {
-        cycleOption(ImGui::GetMousePos().x < colX + colW * 0.48f + 28.0f * ui.s
-                        ? -1
-                        : 1);
-      }
-    }
-    if (!st.lobbyTeamPickerOpen && ImGui::IsItemHovered() && mouseMoved &&
-        !focused) {
-      st.lobbyFocusZone = 0;
-      st.lobbyMenuRow = i;
-      MenuSounds::Scroll();
-    }
-    // The same plate, focus band, accent edge, font and arrows as OptionRow; a
-    // row that can't change has no arrows.
-    ui.dl->AddRectFilled(r0, r1, IM_COL32(8, 12, 18, 165));
-    if (focused) {
-      NobleUi::DrawFocusHighlight(ui.dl, r0, r1, ui.s, true);
-    } else if (st.lobbyMenuRow == i) {
-      ui.dl->AddRectFilled(r0, ImVec2(r0.x + 2.0f * ui.s, r1.y),
-                           IM_COL32(143, 216, 255, 110));
-    }
-    Text(ui, NobleStyle::TitleFont(), 18.0f,
-         ImVec2(r0.x + 10.0f * ui.s, r0.y + 6.0f * ui.s),
-         focused ? kWhite : kDim, row.label.c_str());
-    const float vx = colX + colW * 0.48f, vw = colW * 0.52f, aw = 28.0f * ui.s;
-    const float cy = r0.y + h * 0.5f, ah = 6.0f * ui.s;
-    const bool teamRow = row.label == "CHANGE TEAM";
-    if (teamRow) {
-      // A dropdown, not a stepper: one chevron on the right.
-      teamRowY = r0.y;
-      const float cx = vx + vw - aw * 0.6f;
-      ui.dl->AddTriangleFilled(ImVec2(cx - ah, cy - ah * 0.35f),
-                               ImVec2(cx + ah, cy - ah * 0.35f),
-                               ImVec2(cx, cy + ah), focused ? kWhite : kDim);
-    } else if (row.editable) {
-      ui.dl->AddTriangleFilled(
-          ImVec2(vx + aw * 0.65f, cy - ah), ImVec2(vx + aw * 0.65f, cy + ah),
-          ImVec2(vx + aw * 0.3f, cy), focused ? kWhite : kDim);
-      const float rx = vx + vw - aw;
-      ui.dl->AddTriangleFilled(
-          ImVec2(rx + aw * 0.35f, cy - ah), ImVec2(rx + aw * 0.35f, cy + ah),
-          ImVec2(rx + aw * 0.7f, cy), focused ? kWhite : kDim);
-    }
-    const std::string value =
-        Upper(Ellipsize(NobleStyle::TitleFont(), 18.0f * ui.s, row.value,
-                        vw - aw * 2.0f - 4.0f * ui.s));
-    const float tw =
-        TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, value.c_str());
-    ui.dl->PushClipRect(ImVec2(vx + aw, r0.y), ImVec2(vx + vw - aw, r1.y),
-                        true);
-    Text(ui, NobleStyle::TitleFont(), 18.0f,
-         ImVec2(std::max(vx + aw, vx + (vw - tw) * 0.5f), r0.y + 6.0f * ui.s),
-         row.editable ? kWhite : kDim, value.c_str());
-    ui.dl->PopClipRect();
-    curY += rowStep;
-  }
-  if (!st.isLobbyHost) {
-    BigAction(ui, "lobby_waiting", ImVec2(colX, startY), colW,
-              "WAITING FOR HOST", "The match starts when the host starts it.",
-              true, false);
-  }
-
-  // ---- CHANGE TEAM dropdown: this mode's teams, by name and colour.
-  // Enter/click opens it, Up/Down moves, Enter picks, Back/Esc closes. Never a
-  // stepper, and the choice survives the lobby's team re-deal.
-  if (!st.isLobbyHost)
-    st.lobbyTeamPickerOpen = false;
-  if (st.lobbyTeamPickerOpen) {
-    const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
-    const float pickRowH = 30.0f * ui.s;
-    const float panelH2 = teams * pickRowH + 8.0f * ui.s;
-    const float anchorY = teamRowY >= 0.0f ? teamRowY + 34.0f * ui.s : rowsY;
-    const float dy = std::min(anchorY, top + 540.0f * ui.s - panelH2);
-    const ImVec2 p0(colX, dy), p1(colX + colW, dy + panelH2);
-    // Blocker in front of everything the panel covers (submitted first, so the
-    // team rows below win the pointer).
-    ImGui::SetCursorScreenPos(
-        ImVec2(colX - 40.0f * ui.s, rowsY - 40.0f * ui.s));
-    ImGui::InvisibleButton(
-        "##team_pick_blocker",
-        ImVec2(colW + 80.0f * ui.s,
-               startY + 60.0f * ui.s - (rowsY - 40.0f * ui.s)));
-    const bool acceptClicks =
-        ImGui::GetTime() - st.lobbyTeamPickerOpenedAt > 0.15;
-    ui.dl->AddRectFilled(ImVec2(p0.x + 2.0f * ui.s, p0.y + 3.0f * ui.s),
-                         ImVec2(p1.x + 2.0f * ui.s, p1.y + 3.0f * ui.s),
-                         IM_COL32(0, 0, 0, 120));
-    ui.dl->AddRectFilled(p0, p1, IM_COL32(6, 10, 16, 248));
-    ui.dl->AddRect(p0, p1, kAccent, 2.0f * ui.s);
-    st.lobbyTeamPickerRow = std::clamp(st.lobbyTeamPickerRow, 0, teams - 1);
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) {
-      st.lobbyTeamPickerRow = (st.lobbyTeamPickerRow + 1) % teams;
-      MenuSounds::Scroll();
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) {
-      st.lobbyTeamPickerRow = (st.lobbyTeamPickerRow + teams - 1) % teams;
-      MenuSounds::Scroll();
-    }
-    int picked = -1;
-    // Only a press made while the dropdown was already up counts: the same
-    // Enter that opened it must not also pick the highlighted team (that closed
-    // it again on the frame it appeared).
-    if (teamPickerWasOpen && acceptClicks && AcceptPressed())
-      picked = st.lobbyTeamPickerRow;
-    const int currentTeam =
-        st.lobbyRoster.empty()
-            ? 0
-            : st.lobbyRoster[std::clamp(
-                                 st.lobbyRosterSelection, 0,
-                                 static_cast<int>(st.lobbyRoster.size()) - 1)]
-                  .team;
-    for (int t = 1; t <= teams; ++t) {
-      const int idx = t - 1;
-      const ImVec2 r0(p0.x + 5.0f * ui.s, p0.y + 4.0f * ui.s + idx * pickRowH);
-      const ImVec2 r1(p1.x - 5.0f * ui.s, r0.y + pickRowH - 2.0f * ui.s);
-      ImGui::SetCursorScreenPos(r0);
-      ImGui::PushID(2000 + t);
-      if (acceptClicks && ImGui::InvisibleButton(
-                              "##team_pick", ImVec2(r1.x - r0.x, r1.y - r0.y)))
-        picked = idx;
-      if (ImGui::IsItemHovered() && mouseMoved)
-        st.lobbyTeamPickerRow = idx;
-      ImGui::PopID();
-      const TeamStyle &style = TeamStyleFor(t);
-      ui.dl->AddRectFilled(r0, r1,
-                           idx == st.lobbyTeamPickerRow
-                               ? IM_COL32(44, 68, 96, 240)
-                               : IM_COL32(12, 18, 26, 220));
-      ui.dl->AddRectFilled(ImVec2(r0.x, r0.y), ImVec2(r0.x + 6.0f * ui.s, r1.y),
-                           style.header);
-      Text(ui, NobleStyle::TitleFont(), 17.0f,
-           ImVec2(r0.x + 14.0f * ui.s, r0.y + 4.0f * ui.s), kWhite, style.name);
-      if (t == currentTeam) {
-        const char *equippedTag = "EQUIPPED";
-        const float nw =
-            TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, equippedTag);
-        Text(ui, NobleStyle::SmallFont(), 13.0f,
-             ImVec2(r1.x - nw - 8.0f * ui.s, r0.y + 7.0f * ui.s), kAccent,
-             equippedTag);
-      }
-    }
-    if (picked >= 0 && !st.lobbyRoster.empty()) {
-      const int team = picked + 1;
-      LobbyPlayer &player = st.lobbyRoster[std::clamp(
-          st.lobbyRosterSelection, 0,
-          static_cast<int>(st.lobbyRoster.size()) - 1)];
-      player.team = team;
-      st.lobbyTeamsManual =
-          true; // the lobby's automatic deal must not undo a hand-picked team
-      if (player.isHost)
-        MasterServerClient::Get().SetAdvertHostTeam(team);
-      if (!st.lobbySessionId.empty()) {
-        MasterServerClient::Get().SetTeamsSync(st.lobbySessionId,
-                                               {{player.peerId, team}});
-      }
-      NOBLE_INFO("FrontEndMenu: team for '{}' set to {} ({})", player.username,
-                 team, TeamStyleFor(team).shortName);
-      st.lobbyTeamPickerOpen = false;
-      MenuSounds::Change();
-    }
-    if (back) {
-      st.lobbyTeamPickerOpen = false;
-      MenuSounds::Back();
-    }
-  }
-  // What the focused row does; the start button already says it on its own
-  // second line.
-  float lobbyTipY = startY + 58.0f * ui.s;
-  if (!hostModeKnown && !pickerWasOpen) {
-    // Greyed until the host can send its mode: a plain row, because nothing can
-    // be pressed yet.
-    const ImVec2 d0(colX, lobbyTipY), d1(colX + colW, lobbyTipY + 32.0f * ui.s);
-    ui.dl->AddRectFilled(d0, d1, IM_COL32(8, 12, 18, 150));
-    Text(ui, NobleStyle::TitleFont(), 18.0f,
-         ImVec2(d0.x + 10.0f * ui.s, d0.y + 6.0f * ui.s), kDisabled,
-         "DOWNLOAD MODE");
-    const char *soon = "Coming later";
-    Text(ui, nullptr, 15.0f,
-         ImVec2(d1.x - TextWidth(nullptr, 15.0f * ui.s, soon) - 10.0f * ui.s,
-                d0.y + 7.0f * ui.s),
-         kDisabled, soon);
-    lobbyTipY += 38.0f * ui.s;
-  }
-  if (!pickerWasOpen && !st.lobbyTeamPickerOpen &&
-      !optRows[st.lobbyMenuRow].isStart) {
-    Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY), kDim,
-         optRows[st.lobbyMenuRow].tooltip.c_str(), colX + colW);
-  }
-  if (playlistActive && !pickerWasOpen) {
-    const Playlists::Playlist &active = st.playlists[st.playlistChoice];
-    const std::string line =
-        "PLAYLIST: " + active.name + (active.shuffle ? "  (shuffled)" : "");
-    Text(ui, NobleStyle::SmallFont(), 15.0f,
-         ImVec2(colX, lobbyTipY + 22.0f * ui.s), kAccent, line.c_str(),
-         colX + colW);
-  }
-  if (!st.voteMessage.empty() && !pickerWasOpen)
-    Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY + 42.0f * ui.s),
-         IM_COL32(255, 190, 120, 255), st.voteMessage.c_str(), colX + colW);
-  if (st.autoStartAt > 0.0 && st.isLobbyHost && !pickerWasOpen) {
-    char countdown[64];
-    std::snprintf(countdown, sizeof(countdown),
-                  "Next match in %d s. B or Esc cancels.",
-                  std::max(0, static_cast<int>(st.autoStartAt -
-                                               ImGui::GetTime() + 0.999)));
-    Text(ui, NobleStyle::TitleFont(), 17.0f,
-         ImVec2(colX, lobbyTipY + 62.0f * ui.s), kAccent, countdown);
-  }
-
-  // Friends and the invite strip sit at the foot of the left column, above the
-  // prompts.
-  const float netH = 44.0f * ui.s;
-  const float netY =
-      ui.origin.y + ui.size.y - 58.0f * ui.s - 8.0f * ui.s - netH;
-  const float friendRowH = 25.0f * ui.s;
-  const float friendsH = 26.0f * ui.s + friendRowH * 4.0f;
-  const float friendsY = netY - 8.0f * ui.s - friendsH;
-
-  const ImVec2 fr0(colX, friendsY), fr1(colX + colW, friendsY + friendsH);
-  ui.dl->AddRectFilled(fr0, fr1, panelFill);
-  ui.dl->AddRect(fr0, fr1, panelEdge);
-  Text(ui, NobleStyle::TitleFont(), 16.0f,
-       ImVec2(fr0.x + 10.0f * ui.s, fr0.y + 4.0f * ui.s), kWhite, "FRIENDS");
-  ui.dl->AddLine(ImVec2(fr0.x, fr0.y + 26.0f * ui.s),
-                 ImVec2(fr1.x, fr0.y + 26.0f * ui.s), kRuleLine, 1.0f);
-  const bool lobbyTyping =
-      ImGui::GetIO().WantTextInput; // these keys are letters in a search box
-  const bool friendsPressed =
-      (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_F, false)) ||
-      ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) ||
-      (ImGui::IsMouseClicked(0) &&
-       ImGui::IsMouseHoveringRect(fr0, ImVec2(fr1.x, fr0.y + 26.0f * ui.s),
-                                  false));
-  if (friendsPressed) {
-    st.socialPreviousScreen = Screen::PreGameLobby;
-    st.screen = Screen::Social;
-    MenuSounds::Click();
-  }
-  float friendY = friendsY + 26.0f * ui.s;
-  const auto realFriends = SocialClient::Get().GetFriends();
-  if (realFriends.empty()) {
-    Text(ui, NobleStyle::SmallFont(), 15.0f,
-         ImVec2(fr0.x + 10.0f * ui.s, friendY + 5.0f * ui.s), kDim,
-         "No friends online.");
-  }
-  int friendIdx = 0;
-  for (const auto &f : realFriends) {
-    if (friendIdx >= 4)
-      break;
-    Text(ui, NobleStyle::SmallFont(), 15.0f,
-         ImVec2(fr0.x + 10.0f * ui.s, friendY + 4.0f * ui.s), kWhite,
-         f.username.c_str());
-    if (st.isLobbyHost) {
-      const float invW = 64.0f * ui.s;
-      const float invH = 20.0f * ui.s;
-      ImGui::SetCursorScreenPos(
-          ImVec2(fr1.x - invW - 6.0f * ui.s, friendY + 2.5f * ui.s));
-      ImGui::PushID(1500 + friendIdx);
-      if (ImGui::Button("INVITE", ImVec2(invW, invH))) {
-        std::string myIp = UPnP::Get().GetExternalIP();
-        if (myIp.empty() || myIp == "Unknown")
-          myIp = "127.0.0.1";
-        std::string invMode = "Custom Game";
-        if (campaign)
-          invMode = "Campaign";
-        else if (firefight)
-          invMode = "Firefight";
-        else if (forge)
-          invMode = "Forge";
-        SocialClient::Get().SendInviteAsync(
-            f.username, myIp, 11774,
-            [](bool ok, const std::string &msg) {
-              (void)msg;
-              if (ok)
-                MenuSounds::Click();
-            },
-            invMode, st.lobbyMap, st.lobbySessionId);
-      }
-      ImGui::PopID();
-    }
-    friendY += friendRowH;
-    ++friendIdx;
-  }
-
-  // The invite strip never prints the address: it copies it. A public IP on
-  // screen ends up in screenshots and streams.
-  const std::string extIp = UPnP::Get().GetExternalIP();
-  const bool ipKnown = !extIp.empty() && extIp != "Unknown";
-  const std::string hostEp = st.isLobbyHost
-                                 ? (ipKnown ? extIp + ":11774" : std::string())
-                                 : st.lobbyHostEndpoint;
-  const ImVec2 net0(colX, netY), net1(colX + colW, netY + netH);
-  ui.dl->AddRectFilled(net0, net1, panelFill);
-  ui.dl->AddRect(net0, net1, panelEdge);
-  const char *netTitle = st.isLobbyHost   ? "HOSTING"
-                         : hostEp.empty() ? "CONNECTING"
-                                          : "CONNECTED";
-  const char *netDesc =
-      st.isLobbyHost
-          ? (st.lobbyNetMode == 1 ? "Online peer-to-peer" : "Local network")
-          : "Peer-to-peer";
-  Text(ui, NobleStyle::TitleFont(), 16.0f,
-       ImVec2(net0.x + 10.0f * ui.s, net0.y + 3.0f * ui.s), kWhite, netTitle);
-  static double s_inviteCopiedAt = -10.0;
-  const bool justCopied = now - s_inviteCopiedAt < 2.0;
-  Text(ui, NobleStyle::SmallFont(), 14.0f,
-       ImVec2(net0.x + 10.0f * ui.s, net0.y + 23.0f * ui.s),
-       justCopied ? kAccent : kDim,
-       justCopied ? "Invite copied to the clipboard." : netDesc);
-  bool copyPressed = false;
-  if (!hostEp.empty()) {
-    const float cpW = 112.0f * ui.s, cpH = 28.0f * ui.s;
-    ImGui::SetCursorScreenPos(
-        ImVec2(net1.x - cpW - 8.0f * ui.s, net0.y + 8.0f * ui.s));
-    ImGui::PushID("btn_copy_inv");
-    copyPressed = ImGui::Button("COPY INVITE", ImVec2(cpW, cpH));
-    ImGui::PopID();
-    copyPressed = copyPressed ||
-                  (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_X, false)) ||
-                  ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false);
-  }
-  if (copyPressed) {
-    ImGui::SetClipboardText(("/connect " + hostEp).c_str());
-    s_inviteCopiedAt = now;
-    MenuSounds::Click();
-  }
-
-  // Right column: the map banner, then the session's roster in a panel of fixed
-  // size, so a filling lobby never moves anything.
-  const float bannerY = top + 96.0f * ui.s;
-  const float bannerH = 92.0f * ui.s;
-  std::string kicker =
-      !st.lobbyModTitle.empty() ? "MOD: " + Upper(st.lobbyModTitle)
-      : campaign                ? std::string("HALO: REACH \xC2\xB7 CAMPAIGN")
-      : forge ? std::string("HALO: REACH \xC2\xB7 FORGE")
-              : "HALO: REACH \xC2\xB7 " + Upper(st.lobbyVariantName.empty()
-                                                    ? "MULTIPLAYER"
-                                                    : st.lobbyVariantName);
-  const std::filesystem::path bannerImage =
-      st.lobbyMapImage.empty() ? st.lobbyMapThumb : st.lobbyMapImage;
-  HeroBanner(ui, ImVec2(px, bannerY), pw, bannerH, st.lobbyMap, kicker,
-             mapDisplay.c_str(), "", bannerImage);
-
-  const float headY = bannerY + bannerH + 8.0f * ui.s;
-  const float headH = 28.0f * ui.s;
-  const float slotH = 40.0f * ui.s;
-  const float slotGap = 2.0f * ui.s;
-  const float slotPad = 6.0f * ui.s;
-  const float teamHeadH = 20.0f * ui.s;
-  const float panelH =
-      headH + teamHeadH + slotPad + (slotH + slotGap) * 8.0f - slotGap;
-  ui.dl->AddRectFilled(ImVec2(px, headY), ImVec2(px + pw, headY + panelH),
-                       panelFill);
-  ui.dl->AddRect(ImVec2(px, headY), ImVec2(px + pw, headY + panelH),
-                 st.lobbyFocusZone == 1 ? IM_COL32(143, 216, 255, 220)
-                                        : panelEdge,
-                 0.0f, 0, st.lobbyFocusZone == 1 ? 1.8f * ui.s : 1.0f);
-  Text(ui, NobleStyle::TitleFont(), 18.0f,
-       ImVec2(px + 10.0f * ui.s, headY + 4.0f * ui.s), kWhite,
-       "MY GAME SESSION");
-  char countBuf[32];
-  std::snprintf(countBuf, sizeof(countBuf), "%zu/%d", st.lobbyRoster.size(),
-                st.lobbyMaxPlayers);
-  const float countW =
-      TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, countBuf);
-  Text(ui, NobleStyle::TitleFont(), 18.0f,
-       ImVec2(px + pw - countW - 10.0f * ui.s, headY + 4.0f * ui.s), kWhite,
-       countBuf);
-  ui.dl->AddLine(ImVec2(px, headY + headH), ImVec2(px + pw, headY + headH),
-                 kRuleLine, 1.0f);
-
-  const int rosterCount = static_cast<int>(st.lobbyRoster.size());
-  const int slotCount =
-      std::clamp(std::max(st.lobbyMaxPlayers, rosterCount), 1, 128);
-  const int openSlots = std::max(0, slotCount - rosterCount);
-  const auto &ownProf = UIManager::GetArmorCustomizer().GetProfile();
-  const std::string localName = AuthClient::Get().IsLoggedIn()
-                                    ? AuthClient::Get().GetUsername()
-                                    : Settings::Get().Snapshot().playerName;
-  const std::string localDevId = DeviceIdentityStore::Get().deviceId;
-  const std::string localLobbyMachineId =
-      std::to_string(MasterServerClient::GetLobbyMachineId());
-  const uint64_t localPeerId =
-      AuthClient::Get().IsLoggedIn()
-          ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
-          : (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-
-  auto isLocal = [&](const LobbyPlayer &p) {
-    if (st.isLobbyHost)
-      return p.isHost;
-    if (p.isHost)
-      return false;
-    if (!p.machineId.empty() &&
-        (p.machineId == localDevId || p.machineId == localLobbyMachineId))
-      return true;
-    if (p.peerId != 0 && p.peerId == localPeerId)
-      return true;
-    return false;
-  };
-
-  // One list, in Reach's lobby style: when the game type assigns teams each
-  // team gets its own divider bar and its players underneath, and every team
-  // the lobby deals is listed even while it is empty - so a host alone in the
-  // lobby still sees RED / BLUE / ... instead of one undivided row. Without
-  // teams it is a plain list. Only the entries in view are drawn, so a
-  // 128-player roster costs the same as a full 16.
-  constexpr int kVisibleRows = 8;
-  struct RosterEntry {
-    enum class Kind { Header, Player, Open } kind;
-    int team = 0;
-    int index = -1;
-  };
-  const int lobbyTeams =
-      st.lobbyTeamsOn ? std::clamp(st.lobbyTeamCount, 2, kTeamCount) : 1;
-  std::vector<RosterEntry> entries;
-  if (st.lobbyTeamsOn) {
-    for (int t = 1; t <= lobbyTeams; ++t) {
-      entries.push_back({RosterEntry::Kind::Header, t, -1});
-      int members = 0;
-      for (int i = 0; i < rosterCount; ++i) {
-        const int team = st.lobbyRoster[i].team > 0
-                             ? std::clamp(st.lobbyRoster[i].team, 1, lobbyTeams)
-                             : 1;
-        if (team != t)
-          continue;
-        entries.push_back({RosterEntry::Kind::Player, t, i});
-        ++members;
-      }
-      if (members == 0)
-        entries.push_back({RosterEntry::Kind::Open, t, -1});
-    }
-  } else {
-    for (int i = 0; i < rosterCount; ++i)
-      entries.push_back({RosterEntry::Kind::Player, 0, i});
-  }
-  // Spare seats at the end, capped so a 128-player lobby does not become a
-  // hundred OPEN rows.
-  for (int i = 0, shown = 0; i < openSlots && shown < kVisibleRows;
-       ++i, ++shown) {
-    entries.push_back({RosterEntry::Kind::Open, 0, -1});
-  }
-  auto entryOfPlayer = [&](int rosterIndex) {
-    for (size_t e = 0; e < entries.size(); ++e) {
-      if (entries[e].kind == RosterEntry::Kind::Player &&
-          entries[e].index == rosterIndex)
-        return static_cast<int>(e);
-    }
-    return -1;
-  };
-  auto keepInView = [&](int rosterIndex) {
-    const int entry = entryOfPlayer(rosterIndex);
-    if (entry < 0)
-      return;
-    int &scroll = st.lobbyRosterScroll[0];
-    if (entry < scroll)
-      scroll = entry;
-    if (entry >= scroll + kVisibleRows)
-      scroll = entry - kVisibleRows + 1;
-  };
-  if (rosterCount > 0) {
-    st.lobbyRosterSelection =
-        std::clamp(st.lobbyRosterSelection, 0, rosterCount - 1);
-    const bool prev =
-        (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_Q, false)) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false);
-    const bool next =
-        (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_E, false)) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false);
-    if (prev != next) {
-      st.lobbyRosterSelection =
-          (st.lobbyRosterSelection + (next ? 1 : -1) + rosterCount) %
-          rosterCount;
-      keepInView(st.lobbyRosterSelection);
-      MenuSounds::Scroll();
-    }
-    if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen &&
-        !st.lobbyProfileOpen && st.lobbyFocusZone == 1) {
-      if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) {
-        st.lobbyRosterSelection = (st.lobbyRosterSelection + 1) % rosterCount;
-        keepInView(st.lobbyRosterSelection);
-        MenuSounds::Scroll();
-      }
-      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) {
-        st.lobbyRosterSelection =
-            (st.lobbyRosterSelection + rosterCount - 1) % rosterCount;
-        keepInView(st.lobbyRosterSelection);
-        MenuSounds::Scroll();
-      }
-      if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) || UiPad::Left()) {
-        st.lobbyFocusZone = 0;
-        MenuSounds::Scroll();
-      }
-      if (AcceptPressed()) {
-        UiPad::ConsumeAccept();
-        st.lobbyProfileOpen = true;
-        MenuSounds::Click();
-      }
-    }
-    const bool pageUp = ImGui::IsKeyPressed(ImGuiKey_PageUp, false) ||
-                        ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false);
-    const bool pageDown = ImGui::IsKeyPressed(ImGuiKey_PageDown, false) ||
-                          ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false);
-    if (pageUp != pageDown) {
-      // Page by players, not by rows: a page may cross a team divider.
-      const int step = pageDown ? kVisibleRows : -kVisibleRows;
-      st.lobbyRosterSelection =
-          std::clamp(st.lobbyRosterSelection + step, 0, rosterCount - 1);
-      keepInView(st.lobbyRosterSelection);
-      MenuSounds::Scroll();
-    }
-  }
-
-  // The selected player's card: Start or Tab, Back closes it. Only the local
-  // player's own numbers are known here.
-  const bool profileWasOpen = st.lobbyProfileOpen;
-  if (rosterCount > 0 && !pickerWasOpen &&
-      (ImGui::IsKeyPressed(ImGuiKey_Tab, false) ||
-       ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false))) {
-    st.lobbyProfileOpen = !st.lobbyProfileOpen;
-    MenuSounds::Click();
-  }
-  if (rosterCount == 0)
-    st.lobbyProfileOpen = false;
-  bool rosterOverflows = false;
-  const float teamY = headY + headH;
-  const float listY = teamY + teamHeadH;
-  const float listH = (slotH + slotGap) * kVisibleRows - slotGap;
-  if (st.lobbyProfileOpen) {
-    const LobbyPlayer &player = st.lobbyRoster[st.lobbyRosterSelection];
-    const bool local = isLocal(player);
-    const float cardX = px + slotPad, cardW = pw - slotPad * 2.0f;
-    float y = headY + headH + slotPad;
-    const int rank =
-        player.rankIndex >= 0
-            ? player.rankIndex
-            : (local ? Career::RankIndex(Career::Get().credits) : -1);
-    PlayerRow(ui, ImVec2(cardX, y), cardW, rank,
-              player.emblemId > 0 ? player.emblemId
-                                  : (local ? ownProf.emblemIndex : 0),
-              player.nameplateId > 0 ? player.nameplateId
-                                     : (local ? ownProf.nameplateIndex : 0),
-              player.team, player.serviceTag, player.username, player.isDev,
-              false,
-              player.emblemBackgroundId > 0
-                  ? player.emblemBackgroundId
-                  : (local ? ownProf.emblemBackgroundIndex : 0),
-              local ? UIManager::GetArmorCustomizer().EmblemColorsNow()
-                    : UiArt::EmblemColors{},
-              player.isTester);
-    y += slotH + 14.0f * ui.s;
-    auto statLine = [&](const char *label, const std::string &value) {
-      Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(cardX + 4.0f * ui.s, y),
-           kDim, label);
-      const float w =
-          TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, value.c_str());
-      Text(ui, NobleStyle::TitleFont(), 18.0f,
-           ImVec2(cardX + cardW - w - 4.0f * ui.s, y - 2.0f * ui.s), kWhite,
-           value.c_str());
-      y += 28.0f * ui.s;
-    };
-    const auto &ranks = Career::Ranks();
-    statLine("RANK", rank >= 0 && rank < static_cast<int>(ranks.size())
-                         ? std::string(ranks[rank].name)
-                         : std::string("Not shared yet"));
-    if (local) {
-      const Career::Record rec = Career::GetRecord();
-      int challengesDone = 0, challengeCount = 0, tiers = 0, tierMax = 0;
-      for (const auto &c : Career::Challenges()) {
-        ++challengeCount;
-        if (c.done)
-          ++challengesDone;
-      }
-      for (const auto &c : Career::Commendations()) {
-        if (c.tracked) {
-          tiers += c.tier;
-          tierMax += 6;
-        }
-      }
-      statLine("GAMES PLAYED", std::to_string(rec.totals.gamesPlayed));
-      statLine("KILLS / DEATHS", std::to_string(rec.totals.kills) + " / " +
-                                     std::to_string(rec.totals.deaths));
-      const int totalChallenges = challengeCount > 0 ? challengeCount : 4;
-      statLine("CHALLENGES DONE NOW", std::to_string(challengesDone) + " / " +
-                                          std::to_string(totalChallenges));
-      statLine("COMMENDATIONS",
-               tierMax > 0 ? std::to_string(tiers * 100 / tierMax) + "%"
-                           : std::string("0%"));
-      size_t boughtCount = rec.totals.armoryOwned.size();
-      if (rec.totals.armoryUnlockAll && boughtCount == 0) {
-        boughtCount = 179; // Total catalog count when unlock-all is active
-      }
-      statLine("ARMORY ITEMS BOUGHT", std::to_string(boughtCount));
-    } else {
-      int games = player.gamesPlayed;
-      int kills = player.kills;
-      int deaths = player.deaths;
-      int challenges = player.challengesDone;
-      int commendations = player.commendations;
-      int armoryItems = player.armoryOwned;
-
-      Career::PeerStats cached;
-      if (Career::LoadPeerStats(player.machineId, cached) ||
-          Career::LoadPeerStats(player.username, cached)) {
-        if (games <= 0)
-          games = static_cast<int>(cached.gamesPlayed);
-        if (kills <= 0)
-          kills = static_cast<int>(cached.kills);
-        if (deaths <= 0)
-          deaths = static_cast<int>(cached.deaths);
-        if (challenges <= 0)
-          challenges = cached.challengesDone;
-        if (commendations <= 0)
-          commendations = cached.commendations;
-        if (armoryItems <= 0)
-          armoryItems = cached.armoryOwned;
-      }
-
-      statLine("GAMES PLAYED", std::to_string(games));
-      statLine("KILLS / DEATHS",
-               std::to_string(kills) + " / " + std::to_string(deaths));
-      statLine("CHALLENGES DONE NOW", std::to_string(challenges) + " / 4");
-      statLine("COMMENDATIONS", std::to_string(commendations) + "%");
-      statLine("ARMORY ITEMS BOUGHT", std::to_string(armoryItems));
-    }
-
-    y += 10.0f * ui.s;
-    if ((local || st.isLobbyHost) && st.lobbyTeamsOn) {
-      // The same dropdown as the lobby's CHANGE TEAM row: pick the team by name
-      // and colour.
-      if (ActionButton(ui, "lobby_change_team", ImVec2(cardX, y), cardW,
-                       "CHANGE TEAM", false)) {
-        st.lobbyTeamPickerOpen = true;
-        st.lobbyTeamPickerRow =
-            std::clamp(player.team, 1,
-                       std::clamp(st.lobbyTeamCount, 2, kTeamCount)) -
-            1;
-        MenuSounds::Click();
-      }
-      y += 36.0f * ui.s;
-    }
-  }
-  if (!st.lobbyProfileOpen) {
-    const float listX = px + slotPad;
-    const float listW = pw - slotPad * 2.0f;
-    const float barW = 6.0f * ui.s;
-    const float rowW = listW - barW;
-    const float headHdr = 24.0f * ui.s; // a team divider bar
-
-    // Wheel over the list scrolls it (entries, not pixels).
-    int &scroll = st.lobbyRosterScroll[0];
-    if (ImGui::IsMouseHoveringRect(ImVec2(listX, listY),
-                                   ImVec2(listX + listW, listY + listH),
-                                   false)) {
-      const float wheel = ImGui::GetIO().MouseWheel;
-      if (wheel != 0.0f)
-        scroll -= static_cast<int>(wheel);
-    }
-    static float s_rosterStickAccum = 0.0f;
-    const float rStickRoster = UiPad::AnalogScrollY(false);
-    if (rStickRoster != 0.0f) {
-      s_rosterStickAccum += rStickRoster / std::max(1.0f, slotH);
-      const int step = static_cast<int>(s_rosterStickAccum);
-      if (step != 0) {
-        scroll += step;
-        s_rosterStickAccum -= static_cast<float>(step);
-      }
-    } else {
-      s_rosterStickAccum = 0.0f;
-    }
-    const int total = static_cast<int>(entries.size());
-    auto entryHeight = [&](const RosterEntry &e) {
-      return e.kind == RosterEntry::Kind::Header ? headHdr : slotH;
-    };
-
-    // Scroll so the selected player is visible, then clamp to what fits.
-    const int selectedEntry = entryOfPlayer(st.lobbyRosterSelection);
-    if (selectedEntry >= 0) {
-      if (selectedEntry < scroll)
-        scroll = selectedEntry;
-      if (selectedEntry >= scroll + kVisibleRows)
-        scroll = selectedEntry - kVisibleRows + 1;
-    }
-    scroll = std::clamp(scroll, 0, std::max(0, total - 1));
-    float used = 0.0f;
-    int firstHidden = total;
-    for (int e = scroll; e < total; ++e) {
-      const float h = entryHeight(entries[e]);
-      if (used + h > listH + 0.5f) {
-        firstHidden = e;
-        break;
-      }
-      used += h + slotGap;
-    }
-    if (firstHidden < total)
-      scroll = std::min(scroll, std::max(0, firstHidden - 1));
-    const bool overflow = scroll > 0 || firstHidden < total;
-    rosterOverflows = overflow;
-
-    float y = listY;
-    for (int e = scroll; e < total; ++e) {
-      const RosterEntry &entry = entries[e];
-      const float h = entryHeight(entry);
-      if (y + h > listY + listH + 0.5f)
-        break;
-      const ImVec2 s0(listX, y);
-      const ImVec2 s1(listX + rowW, y + h);
-      if (entry.kind == RosterEntry::Kind::Header) {
-        // Team divider: a colour bar with the team's name and how many players
-        // it holds.
-        const TeamStyle &style = TeamStyleFor(entry.team);
-        ui.dl->AddRectFilledMultiColor(s0, s1, style.header,
-                                       IM_COL32(10, 14, 20, 220),
-                                       IM_COL32(10, 14, 20, 220), style.rowAlt);
-        ui.dl->AddRectFilled(ImVec2(s0.x, s0.y),
-                             ImVec2(s0.x + 4.0f * ui.s, s1.y), style.header);
-        int members = 0;
-        for (const LobbyPlayer &p : st.lobbyRoster) {
-          const int team =
-              p.team > 0 ? std::clamp(p.team, 1, std::max(2, lobbyTeams)) : 1;
-          if (team == entry.team)
-            ++members;
-        }
-        Text(ui, NobleStyle::SmallFont(), 14.0f,
-             ImVec2(s0.x + 12.0f * ui.s, s0.y + 4.0f * ui.s), kWhite,
-             style.name);
-        const std::string teamCount = std::to_string(members);
-        const float teamCountW =
-            TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, teamCount.c_str());
-        Text(ui, NobleStyle::SmallFont(), 14.0f,
-             ImVec2(s1.x - teamCountW - 10.0f * ui.s, s0.y + 4.0f * ui.s),
-             IM_COL32(220, 232, 245, 235), teamCount.c_str());
-      } else if (entry.kind == RosterEntry::Kind::Open) {
-        ui.dl->AddRectFilled(s0, s1, IM_COL32(255, 255, 255, 8));
-        ui.dl->AddRect(s0, s1, IM_COL32(255, 255, 255, 24));
-        Text(ui, NobleStyle::SmallFont(), 14.0f,
-             ImVec2(s0.x + 12.0f * ui.s, s0.y + 12.0f * ui.s), kDisabled,
-             "OPEN");
-      } else {
-        const int idx = entry.index;
-        const LobbyPlayer &player = st.lobbyRoster[idx];
-        const bool local = isLocal(player);
-        const bool selected = st.lobbyRosterSelection == idx;
-        const int teamForRow =
-            st.lobbyTeamsOn ? (player.team > 0 ? player.team : entry.team) : 0;
-        // The team's row tint behind the row, so the section reads as one block
-        // even when a row is selected.
-        ui.dl->AddRectFilled(s0, s1,
-                             selected ? IM_COL32(36, 78, 112, 240)
-                                      : TeamStyleFor(teamForRow).rowBase);
-        PlayerRow(ui, ImVec2(s0.x + 4.0f * ui.s, s0.y), rowW - 4.0f * ui.s,
-                  player.rankIndex >= 0
-                      ? player.rankIndex
-                      : (local ? Career::RankIndex(Career::Get().credits) : -1),
-                  player.emblemId > 0 ? player.emblemId
-                                      : (local ? ownProf.emblemIndex : 0),
-                  player.nameplateId > 0 ? player.nameplateId
-                                         : (local ? ownProf.nameplateIndex : 0),
-                  teamForRow, player.serviceTag,
-                  (local
-                       ? (Settings::Get().Snapshot().playerName.empty()
-                              ? std::string("Noble Six")
-                              : Settings::Get().Snapshot().playerName)
-                       : (player.username.empty()
-                              ? std::string(player.isHost ? "Host" : "Spartan")
-                              : player.username)),
-                  player.isDev, selected,
-                  player.emblemBackgroundId > 0
-                      ? player.emblemBackgroundId
-                      : (local ? ownProf.emblemBackgroundIndex : 0),
-                  local ? UIManager::GetArmorCustomizer().EmblemColorsNow()
-                        : UiArt::EmblemColors{},
-                  player.isTester);
-        if (selected) {
-          if (st.lobbyFocusZone == 1)
-            NobleUi::DrawFocusHighlight(ui.dl, s0, s1, ui.s, true);
-          else
-            ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
-        }
-        {
-          uint64_t machine =
-              1000ULL +
-              static_cast<uint64_t>(
-                  idx); // demo rosters have no ids; only real ids ever talk
-          try {
-            if (!player.machineId.empty())
-              machine = std::stoull(player.machineId, nullptr, 0);
-          } catch (...) {
-          }
-          SocialOverlay::DrawPlayerVoiceIcon(
-              ui.dl, ImVec2(s1.x - 20.0f * ui.s, (s0.y + s1.y) * 0.5f), ui.s,
-              machine, local);
-        }
-        char slotId[32];
-        std::snprintf(slotId, sizeof(slotId), "##lobby_slot_%d", idx);
-        ImGui::SetCursorScreenPos(s0);
-        if (ImGui::InvisibleButton(slotId, ImVec2(rowW, h))) {
-          if (st.lobbyRosterSelection == idx) {
-            st.lobbyProfileOpen = !st.lobbyProfileOpen;
-          } else {
-            st.lobbyRosterSelection = idx;
-            st.lobbyProfileOpen = true;
-          }
-          MenuSounds::Scroll();
-        }
-      }
-      y += h + slotGap;
-    }
-    if (overflow) {
-      const float trackX = listX + listW - 3.0f * ui.s;
-      ui.dl->AddRectFilled(ImVec2(trackX, listY),
-                           ImVec2(trackX + 3.0f * ui.s, listY + listH),
-                           IM_COL32(255, 255, 255, 24));
-      const int shown = std::max(1, std::min(total - scroll, kVisibleRows));
-      const float thumbH = std::max(listH * static_cast<float>(shown) /
-                                        static_cast<float>(std::max(1, total)),
-                                    18.0f * ui.s);
-      const float thumbY =
-          listY + (listH - thumbH) * static_cast<float>(scroll) /
-                      static_cast<float>(std::max(1, total - shown));
-      ui.dl->AddRectFilled(ImVec2(trackX, thumbY),
-                           ImVec2(trackX + 3.0f * ui.s, thumbY + thumbH),
-                           kAccent);
-    }
-  }
-
-  // Back / Cancel Lobby Handling: the host returns to the setup screen of the
-  // mode it came from.
-  if (back && teamPickerWasOpen) {
-    UiPad::ConsumeBack();
-    // The dropdown already consumed Back this frame.
-  } else if (back && st.lobbyProfileOpen) {
-    UiPad::ConsumeBack();
-    st.lobbyProfileOpen = false;
-    MenuSounds::Back();
-  } else if (back && !pickerWasOpen && !profileWasOpen) {
-    UiPad::ConsumeBack();
-    st.lobbyLaunchPending = false;
-    ClearPendingLobbyEvents();
-    if (st.isLobbyHost) {
-      MasterServerClient::Get().StopAdvertisingSync();
-      SessionManager::Get().StopHosting();
-      NetworkTransport::Get().StopRelay();
-      st.lobbySessionId.clear();
-      st.lobbySessionToken.clear();
-      st.lobbyRoster.clear();
-      st.screen = campaign    ? Screen::Campaign
-                  : firefight ? Screen::Firefight
-                  : forge     ? Screen::Forge
-                              : Screen::CustomGame;
-    } else {
-      uint64_t fallbackId =
-          (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-      if (fallbackId < 2ULL)
-        fallbackId = 2ULL;
-      uint64_t pId = AuthClient::Get().IsLoggedIn()
-                         ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
-                         : fallbackId;
-      if (!st.lobbySessionId.empty()) {
-        MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
-      }
-      NetworkTransport::Get().StopRelay();
-      st.lobbySessionId.clear();
-      st.lobbySessionToken.clear();
-      st.lobbyHostEndpoint.clear();
-      st.lobbyRoster.clear();
-      st.screen = Screen::Servers;
-    }
-    st.focusRow = 0;
-    MenuSounds::Back();
-  }
-
-  std::vector<HintExtra> extras = {{InputPrompts::Button::Y, "F", "Friends"}};
-  if (!hostEp.empty())
-    extras.push_back({InputPrompts::Button::X, "X", "Copy invite"});
-  if (rosterOverflows)
-    extras.push_back({InputPrompts::Button::RT, "PGDN", "Page"});
-  if (rosterCount > 0 && !pickerWasOpen)
-    extras.push_back({InputPrompts::Button::Start, "TAB",
-                      st.lobbyProfileOpen ? "Close card" : "Player card"});
-  if (pickerWasOpen)
-    DrawHints(ui, {{Prompt::Accept, "Select"}, {Prompt::Back, "Back"}});
-  else
-    DrawHints(ui,
-              {{Prompt::Accept, "Select"},
-               {Prompt::Back, "Back"},
-               {Prompt::Tabs, "Players"}},
-              extras);
-}
-
-static void DrawSocialScreen(OverlayContext &ctx, const Ui &ui, float left,
-                             float top, FrontEndChoice &choice, bool &done,
-                             bool back) {
-  (void)left;
-  (void)top;
-  (void)choice;
-  (void)done;
-  MenuState &st = ctx.st;
-
-  const float px = ui.origin.x + 32.0f * ui.s;
-  const float py = ui.origin.y + 88.0f * ui.s;
-  const float panelW = ui.size.x - 64.0f * ui.s;
-  const float panelH = ui.origin.y + ui.size.y - py - 60.0f * ui.s;
-
-  ui.dl->AddRectFilled(ui.origin,
-                       ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y),
-                       IM_COL32(4, 8, 12, 225));
-  DrawTitle(ui, ImVec2(px, ui.origin.y + 12.0f * ui.s), "COMMUNITY", "SOCIAL");
-
-  // Account Status Badge (top right)
-  const bool loggedIn = AuthClient::Get().IsLoggedIn();
-  std::string userTag =
-      loggedIn ? AuthClient::Get().GetUsername() : "Not logged in";
-  char statBuf[128];
-  if (loggedIn) {
-    std::snprintf(statBuf, sizeof(statBuf), "ONLINE: %s (ID: %d)",
-                  userTag.c_str(), AuthClient::Get().GetUserId());
-  } else {
-    std::snprintf(statBuf, sizeof(statBuf), "OFFLINE - Auth Required");
-  }
-  const float tagW =
-      TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, statBuf) + 24.0f * ui.s;
-  const ImVec2 statP0(ui.origin.x + ui.size.x - 32.0f * ui.s - tagW,
-                      ui.origin.y + 20.0f * ui.s);
-  const ImVec2 statP1(ui.origin.x + ui.size.x - 32.0f * ui.s,
-                      ui.origin.y + 48.0f * ui.s);
-  ui.dl->AddRectFilled(statP0, statP1,
-                       loggedIn ? IM_COL32(18, 36, 24, 220)
-                                : IM_COL32(36, 18, 18, 220),
-                       4.0f * ui.s);
-  ui.dl->AddRect(statP0, statP1,
-                 loggedIn ? IM_COL32(60, 180, 80, 200)
-                          : IM_COL32(180, 60, 60, 200),
-                 4.0f * ui.s);
-  Text(ui, NobleStyle::SmallFont(), 13.0f,
-       ImVec2(statP0.x + 12.0f * ui.s, statP0.y + 7.0f * ui.s),
-       loggedIn ? IM_COL32(120, 240, 140, 240) : IM_COL32(240, 140, 140, 240),
-       statBuf);
-
-  if (!loggedIn) {
-    const float actW = 140.0f * ui.s;
-    ImGui::SetCursorScreenPos(
-        ImVec2(statP0.x - actW - 12.0f * ui.s, ui.origin.y + 22.0f * ui.s));
-    if (ImGui::Button("LOG IN / REGISTER", ImVec2(actW, 26.0f * ui.s))) {
-      OpenAccountModal();
-      MenuSounds::Click();
-    }
-  }
-
-  ImGui::SetCursorScreenPos(ImVec2(px, py));
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.05f, 0.08f, 0.75f));
-  ImGui::BeginChild("##social_panel", ImVec2(panelW, panelH),
-                    ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
-
-  // Controller: the D-pad or stick steps through every button on the page in
-  // reading order and A presses it. Fields that need typing are left out; those
-  // still need a keyboard.
-  static int s_padFocus = 0;
-  static int s_padTab = -1;
-  if (s_padTab != st.socialTab) {
-    s_padTab = st.socialTab;
-    s_padFocus = 0;
-  }
-  int padCount = 0;
-  const bool padLive = InputPrompts::Current() == InputPrompts::Device::Gamepad;
-  const bool padNext = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) ||
-                       ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
-                       ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown) ||
-                       ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight);
-  const bool padPrev = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) ||
-                       ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
-                       ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp) ||
-                       ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft);
-  const bool padAccept = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
-  if (padNext) {
-    ++s_padFocus;
-    MenuSounds::Scroll();
-  }
-  if (padPrev) {
-    --s_padFocus;
-    MenuSounds::Scroll();
-  }
-  const auto padButton = [&](const char *label, const ImVec2 &size) {
-    const int me = padCount++;
-    const bool pressed = ImGui::Button(label, size);
-    const bool focused = padLive && me == s_padFocus;
-    if (focused) {
-      ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(),
-                                          ImGui::GetItemRectMax(), kAccent,
-                                          2.0f, 0, 2.0f * ui.s);
-      if (padNext || padPrev)
-        ImGui::SetScrollHereY();
-    }
-    return pressed || (focused && padAccept);
-  };
-
-  // 1. Game Invites Card (prominent at top if any exist)
-  const auto invites = SocialClient::Get().GetInvites();
-  if (!invites.empty()) {
-    ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.14f, 0.20f, 0.85f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.9f, 0.7f, 0.2f, 0.8f));
-    const float invBoxH =
-        (36.0f * ui.s * static_cast<float>(invites.size())) + 32.0f * ui.s;
-    ImGui::BeginChild("##invites_box", ImVec2(0, invBoxH),
-                      ImGuiChildFlags_Borders);
-
-    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
-                       "GAME INVITE RECEIVED:");
-    for (size_t i = 0; i < invites.size(); ++i) {
-      const auto &inv = invites[i];
-      ImGui::PushID(static_cast<int>(500 + i));
-      ImGui::Bullet();
-      ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
-                         "%s invited you to join their game!",
-                         inv.senderUsername.c_str());
-      ImGui::SameLine();
-      if (padButton("JOIN GAME", ImVec2(100.0f * ui.s, 24.0f * ui.s))) {
-        ServerEntry s;
-        s.id = inv.sessionId;
-        s.name = inv.senderUsername + "'s Game";
-        s.hostAddress = inv.hostIp;
-        s.port = inv.hostPort;
-        s.mapName = inv.map.empty() ? "20_sword_slayer" : inv.map;
-        s.gameMode = inv.mode.empty() ? "multiplayer" : inv.mode;
-        s.maxPlayers = 16;
-        EnterLobby(GetOverlayCtx(), s);
-        SocialClient::Get().ClearInviteAsync(inv.senderUsername);
-        MenuSounds::Click();
-      }
-      ImGui::SameLine();
-      if (padButton("DISMISS", ImVec2(80.0f * ui.s, 24.0f * ui.s))) {
-        SocialClient::Get().ClearInviteAsync(inv.senderUsername);
-        MenuSounds::Back();
-      }
-      ImGui::PopID();
-    }
-    ImGui::EndChild();
-    ImGui::PopStyleColor(2);
-    ImGui::Spacing();
-  }
-
-  // 2. Navigation Tabs
-  auto friends = SocialClient::Get().GetFriends();
-  static const bool s_friendsDemo =
-      wcsstr(GetCommandLineW(), L"-social-friends-demo") !=
-      nullptr; // test: rows without an account
-  if (s_friendsDemo && friends.empty()) {
-    friends.emplace_back();
-    friends.back().username = "Kat-B320";
-    friends.emplace_back();
-    friends.back().username = "Carter-A259";
-  }
-  const auto incoming = SocialClient::Get().GetIncomingRequests();
-  const auto outgoing = SocialClient::Get().GetOutgoingRequests();
-
-  // Tab switcher with Q/E
-  if (!ImGui::GetIO().WantTextInput) {
-    if (ImGui::IsKeyPressed(ImGuiKey_Q, false) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
-      st.socialTab = (st.socialTab + 2) % 3;
-      MenuSounds::Click();
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_E, false) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
-      st.socialTab = (st.socialTab + 1) % 3;
-      MenuSounds::Click();
-    }
-  }
-
-  const float tabW = 180.0f * ui.s;
-  const float tabH = 32.0f * ui.s;
-
-  auto TabButton = [&](int tabIdx, const std::string &label) {
-    const bool active = (st.socialTab == tabIdx);
-    if (active) {
-      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.45f, 0.7f, 0.8f));
-      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-    } else {
-      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.12f, 0.16f, 0.6f));
-      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.8f, 0.9f, 0.8f));
-    }
-    if (ImGui::Button(label.c_str(), ImVec2(tabW, tabH))) {
-      st.socialTab = tabIdx;
-      MenuSounds::Click();
-    }
-    ImGui::PopStyleColor(2);
-  };
-
-  TabButton(0, "FRIENDS (" + std::to_string(friends.size()) + ")");
-  ImGui::SameLine();
-  TabButton(1, "REQUESTS (" +
-                   std::to_string(incoming.size() + outgoing.size()) + ")");
-  ImGui::SameLine();
-  TabButton(2, "FIND PLAYERS");
-  ImGui::SameLine();
-
-  // Refresh button
-  if (padButton("REFRESH", ImVec2(100.0f * ui.s, tabH))) {
-    SocialClient::Get().RefreshFriendsAsync();
-    SocialClient::Get().PollInvitesAsync();
-    MenuSounds::Click();
-  }
-
-  ImGui::Separator();
-  ImGui::Spacing();
-
-  // 3. Tab Contents
-  if (st.socialTab == 0) {
-    // FRIENDS TAB: Quick Add Friend by Name or IP
-    static char s_quickAddBuf[64] = "";
-    ImGui::SetNextItemWidth(300.0f * ui.s);
-    bool enterAdd = ImGui::InputTextWithHint(
-        "##quick_add_friend", "Enter player name or IP address...",
-        s_quickAddBuf, sizeof(s_quickAddBuf),
-        ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    if ((ImGui::Button("ADD FRIEND", ImVec2(120.0f * ui.s, 24.0f * ui.s)) ||
-         enterAdd) &&
-        s_quickAddBuf[0] != '\0') {
-      SocialClient::Get().AddFriendDirect(s_quickAddBuf);
-      s_quickAddBuf[0] = '\0';
-      MenuSounds::Click();
-    }
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (friends.empty()) {
-      ImGui::Spacing();
-      ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f),
-                         "You have no friends on your list yet.");
-      ImGui::TextColored(ImVec4(0.5f, 0.6f, 0.7f, 0.8f),
-                         "Type a player name or IP above and click ADD FRIEND, "
-                         "or use the FIND PLAYERS tab!");
-    } else {
-      std::string myIp = UPnP::Get().GetExternalIP();
-      if (myIp.empty() || myIp == "Unknown")
-        myIp = "127.0.0.1";
-
-      ImGui::BeginTable("##friends_tbl", 3,
-                        ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV);
-      ImGui::TableSetupColumn("Spartan / Sangheili",
-                              ImGuiTableColumnFlags_WidthStretch);
-      ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed,
-                              140.0f * ui.s);
-      ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed,
-                              250.0f * ui.s);
-      ImGui::TableHeadersRow();
-
-      for (size_t i = 0; i < friends.size(); ++i) {
-        const auto &f = friends[i];
-        ImGui::TableNextRow(0, 32.0f * ui.s);
-
-        // Col 0: Name
-        ImGui::TableSetColumnIndex(0);
-        if (!f.endpoint.empty()) {
-          ImGui::TextColored(
-              ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s",
-              f.username.c_str()); // never the address: this ends up in
-                                   // screenshots and streams
-        } else {
-          ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s",
-                             f.username.c_str());
-        }
-
-        // Col 1: Status
-        ImGui::TableSetColumnIndex(1);
-        ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.5f, 1.0f), "Online / Friend");
-
-        // Col 2: Actions
-        ImGui::TableSetColumnIndex(2);
-        ImGui::PushID(static_cast<int>(i));
-
-        if (padButton("INVITE", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
-          std::string invMode = "Custom Game";
-          if (st.lobbyMode == "campaign")
-            invMode = "Campaign";
-          else if (st.lobbyMode == "firefight")
-            invMode = "Firefight";
-          else if (st.lobbyMode == "forge")
-            invMode = "Forge";
-          if (s_friendsDemo)
-            NOBLE_INFO(
-                "FrontEndMenu: -social-friends-demo INVITE pressed for {}",
-                f.username);
-          else
-            SocialClient::Get().SendInviteAsync(
-                f.username, myIp, 11774,
-                [](bool ok, const std::string &msg) {
-                  (void)msg;
-                  if (ok)
-                    MenuSounds::Click();
-                },
-                invMode, st.lobbyMap, st.lobbySessionId);
-        }
-        ImGui::SameLine();
-        if (!f.endpoint.empty()) {
-          if (padButton("JOIN", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
-            ServerEntry s;
-            s.name = f.username + "'s Game";
-            const size_t colon = f.endpoint.rfind(':');
-            s.hostAddress = colon != std::string::npos
-                                ? f.endpoint.substr(0, colon)
-                                : f.endpoint;
-            s.port = static_cast<uint16_t>(
-                colon != std::string::npos
-                    ? std::atoi(f.endpoint.c_str() + colon + 1)
-                    : 11774);
-            s.mapName = "20_sword_slayer";
-            s.gameMode = "multiplayer";
-            s.maxPlayers = 16;
-            EnterLobby(GetOverlayCtx(), s);
-            MenuSounds::Click();
-          }
-          ImGui::SameLine();
-        }
-        if (padButton("REMOVE", ImVec2(75.0f * ui.s, 24.0f * ui.s)) &&
-            !s_friendsDemo) {
-          SocialClient::Get().RemoveFriendAsync(f.username);
-          MenuSounds::Back();
-        }
-        ImGui::PopID();
-      }
-      ImGui::EndTable();
-    }
-  } else if (st.socialTab == 1) {
-    // REQUESTS TAB
-    ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.4f, 1.0f),
-                       "INCOMING REQUESTS (%zu)", incoming.size());
-    if (incoming.empty()) {
-      ImGui::TextColored(ImVec4(0.5f, 0.6f, 0.7f, 0.8f),
-                         "No incoming friend requests.");
-    } else {
-      for (size_t i = 0; i < incoming.size(); ++i) {
-        const auto &req = incoming[i];
-        ImGui::PushID(static_cast<int>(100 + i));
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
-                           "%s wants to be your friend.", req.username.c_str());
-        ImGui::SameLine();
-        if (padButton("ACCEPT", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
-          SocialClient::Get().AcceptFriendRequestAsync(req.username);
-          MenuSounds::Click();
-        }
-        ImGui::SameLine();
-        if (padButton("DECLINE", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
-          SocialClient::Get().RemoveFriendAsync(req.username);
-          MenuSounds::Back();
-        }
-        ImGui::PopID();
-      }
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.8f, 1.0f),
-                       "OUTGOING REQUESTS (%zu)", outgoing.size());
-    if (outgoing.empty()) {
-      ImGui::TextColored(ImVec4(0.5f, 0.6f, 0.7f, 0.8f),
-                         "No pending outgoing requests.");
-    } else {
-      for (size_t i = 0; i < outgoing.size(); ++i) {
-        const auto &req = outgoing[i];
-        ImGui::PushID(static_cast<int>(200 + i));
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f),
-                           "%s (Pending acceptance)", req.username.c_str());
-        ImGui::SameLine();
-        if (padButton("CANCEL", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
-          SocialClient::Get().RemoveFriendAsync(req.username);
-          MenuSounds::Back();
-        }
-        ImGui::PopID();
-      }
-    }
-  } else if (st.socialTab == 2) {
-    // FIND PLAYERS TAB
-    ImGui::TextColored(ImVec4(0.9f, 0.9f, 1.0f, 1.0f),
-                       "Search for community players by username:");
-    ImGui::Spacing();
-
-    ImGui::SetNextItemWidth(320.0f * ui.s);
-    bool enterPressed = ImGui::InputTextWithHint(
-        "##search_player", "Enter player name...", st.socialSearchBuf,
-        sizeof(st.socialSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    bool doSearch =
-        ImGui::Button("SEARCH", ImVec2(100.0f * ui.s, 26.0f * ui.s)) ||
-        enterPressed;
-
-    if (doSearch && st.socialSearchBuf[0] != '\0') {
-      st.socialSearching = true;
-      std::string q = st.socialSearchBuf;
-      SocialClient::Get().SearchUsersAsync(
-          q, [&st](bool ok, const std::vector<UserSearchResult> &results) {
-            (void)ok;
-            st.socialSearchResults = results;
-            st.socialSearching = false;
-          });
-      MenuSounds::Click();
-    }
-
-    ImGui::Spacing();
-    if (st.socialSearching) {
-      ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
-                         "Searching players...");
-    } else if (!st.socialSearchResults.empty()) {
-      ImGui::TextColored(
-          ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
-          "SEARCH RESULTS (%zu):", st.socialSearchResults.size());
-      ImGui::Spacing();
-
-      for (size_t i = 0; i < st.socialSearchResults.size(); ++i) {
-        const auto &u = st.socialSearchResults[i];
-        ImGui::PushID(static_cast<int>(300 + i));
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s (ID: %d)",
-                           u.username.c_str(), u.id);
-        ImGui::SameLine();
-        if (padButton("ADD FRIEND", ImVec2(110.0f * ui.s, 22.0f * ui.s))) {
-          SocialClient::Get().SendFriendRequestAsync(u.username);
-          MenuSounds::Click();
-        }
-        ImGui::PopID();
-      }
-    } else if (st.socialSearchBuf[0] != '\0') {
-      ImGui::TextColored(ImVec4(0.7f, 0.6f, 0.5f, 1.0f),
-                         "No players found matching '%s'.", st.socialSearchBuf);
-    }
-  }
-
-  if (padCount > 0)
-    s_padFocus = (s_padFocus % padCount + padCount) % padCount;
-  // Status message feedback
-  std::string statusMsg = SocialClient::Get().GetLastStatusMessage();
-  if (!statusMsg.empty()) {
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "INFO: %s",
-                       statusMsg.c_str());
-  }
-
-  ImGui::EndChild();
-  ImGui::PopStyleColor();
-
-  if (back && !ImGui::GetIO().WantTextInput) {
-    st.screen = st.socialPreviousScreen;
-    st.focusRow = 0;
-    MenuSounds::Back();
-  }
-  DrawHints(ui,
-            {{Prompt::Accept, "Select"},
-             {Prompt::Back, "Back"},
-             {Prompt::Tabs, "Switch Tab"}},
-            {}, 0.01875f); // the full-width panel's edge
-}
-
-// Shown once, the first time Noble starts (spec 4.12). New players get a short
-// setup; anyone else goes straight to the menu. Noble has no graphics presets,
-// so the spec's preset step is left out rather than offering one that does
-// nothing. Returns true while it's up, and then the menu behind it takes no
-// input.
-bool DrawFirstStart(const Ui &ui) {
-  static const bool s_forced =
-      wcsstr(GetCommandLineW(), L"-first-start") != nullptr;
-  static bool s_forcedDone = false;
-  const SettingsData saved = Settings::Get().Snapshot();
-  if (saved.firstStartDone && (!s_forced || s_forcedDone))
-    return false;
-
-  static int s_step = 0, s_focus = 0;
-  static bool s_controller = false, s_loaded = false;
-  static float s_sensitivity = 1.0f;
-  static char s_name[16] = "", s_tag[5] = "";
-  if (!s_loaded) {
-    s_loaded = true;
-    std::snprintf(s_name, sizeof(s_name), "%s", saved.playerName.c_str());
-    std::snprintf(s_tag, sizeof(s_tag), "%s", saved.serviceTag.c_str());
-  }
-  const auto finish = [&](bool setup) {
-    SettingsData d = Settings::Get().Snapshot();
-    d.firstStartDone = true;
-    if (setup) {
-      if (s_name[0])
-        d.playerName = s_name;
-      if (s_tag[0])
-        d.serviceTag = s_tag;
-      if (s_controller)
-        d.padLookSpeedX = d.padLookSpeedY = s_sensitivity;
-      else
-        d.mouseSensitivity = s_sensitivity;
-    }
-    Settings::Get().Update(d);
-    if (setup) {
-      const SettingsData updated = Settings::Get().Snapshot();
-      DeviceIdentity id = DeviceIdentityStore::Get();
-      id.playerName = updated.playerName;
-      id.serviceTag = updated.serviceTag;
-      DeviceIdentityStore::Save(id);
-      AuthClient::Get().SetPlayerName(updated.playerName);
-      if (UIManager::HasArmorCustomizer()) {
-        UIManager::GetArmorCustomizer().SetServiceTag(updated.serviceTag);
-      }
-    }
-    s_forcedDone = true;
-    s_step = 0;
-    s_focus = 0;
-    NOBLE_INFO("FrontEndMenu: first start answered (setup: {})", setup);
-    MenuSounds::Click();
-  };
-
-  ImGuiIO &io = ImGui::GetIO();
-  const float s = ui.s;
-  const ImVec2 size(720.0f * s, 440.0f * s);
-  ImGui::SetNextWindowPos(ImVec2(ui.origin.x + (ui.size.x - size.x) * 0.5f,
-                                 ui.origin.y + (ui.size.y - size.y) * 0.5f));
-  ImGui::SetNextWindowSize(size);
-  ImGui::SetNextWindowFocus();
-  ImGui::SetNextWindowBgAlpha(0.97f);
-  ImGui::Begin("##firststart", nullptr,
-               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                   ImGuiWindowFlags_NoSavedSettings |
-                   ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
-  const bool typing = io.WantTextInput;
-  const bool up = !typing && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) ||
-                              ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) ||
-                              ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp));
-  const bool down =
-      !typing && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
-                  ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) ||
-                  ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown));
-  const bool left =
-      !typing && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
-                  ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
-                  ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft));
-  const bool right =
-      !typing && (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
-                  ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
-                  ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight));
-  const bool accept =
-      !typing && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                  ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
-  const bool back =
-      !typing && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
-                  ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false));
-
-  const auto heading = [&](const char *title, const char *text) {
-    ImGui::Dummy(ImVec2(0, 10.0f * s));
-    ImGui::PushFont(NobleStyle::TitleFont());
-    ImGui::TextUnformatted(title);
-    ImGui::PopFont();
-    ImGui::Dummy(ImVec2(0, 6.0f * s));
-    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-    ImGui::TextWrapped("%s", text);
-    ImGui::PopStyleColor();
-    ImGui::Dummy(ImVec2(0, 14.0f * s));
-  };
-  int rows = 2;
-  const auto option = [&](int index, const char *label) {
-    const bool focused = s_focus == index;
-    ImGui::PushStyleColor(ImGuiCol_Button,
-                          focused ? ImVec4(0.20f, 0.45f, 0.70f, 0.95f)
-                                  : ImVec4(0.08f, 0.12f, 0.16f, 0.9f));
-    const bool clicked = ImGui::Button(
-        label, ImVec2(ImGui::GetContentRegionAvail().x, 44.0f * s));
-    ImGui::PopStyleColor();
-    return clicked || (accept && focused);
-  };
-  const auto nextStep = [&](int step) {
-    s_step = step;
-    s_focus = 0;
-    MenuSounds::Click();
-  };
-
-  if (s_step == 0) {
-    heading("NEW TO HALO: REACH?", "This is only asked once. You can run the "
-                                   "setup again from Settings > System.");
-    if (option(0, "NEW PLAYER"))
-      nextStep(1);
-    if (option(1, "REGULAR OR RETURNING PLAYER"))
-      finish(false);
-  } else if (s_step == 1) {
-    heading("HOW WILL YOU PLAY?",
-            "Both always work, and Noble switches to whichever you touched "
-            "last. This picks which look speed to set up next.");
-    const auto choose = [&](bool controller) {
-      s_controller = controller;
-      s_sensitivity = controller ? saved.padLookSpeedX : saved.mouseSensitivity;
-      nextStep(2);
-    };
-    if (option(0, "KEYBOARD AND MOUSE"))
-      choose(false);
-    if (option(1, "CONTROLLER"))
-      choose(true);
-  } else if (s_step == 2) {
-    rows = 1;
-    heading("YOUR NAME",
-            "Shown on scoreboards and in chat. Typing needs a keyboard; on a "
-            "controller, CONTINUE keeps what's here.");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
-    const bool nameDone = ImGui::InputTextWithHint(
-        "Name", "Up to 15 characters", s_name, sizeof(s_name),
-        ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.3f);
-    const bool tagDone = ImGui::InputTextWithHint(
-        "Service tag", "4 letters or digits", s_tag, sizeof(s_tag),
-        ImGuiInputTextFlags_EnterReturnsTrue |
-            ImGuiInputTextFlags_CharsUppercase |
-            ImGuiInputTextFlags_CharsNoBlank);
-    ImGui::Dummy(ImVec2(0, 10.0f * s));
-    if (option(0, "CONTINUE") || nameDone || tagDone)
-      nextStep(3);
-  } else {
-    rows = 1;
-    heading("LOOK SPEED", s_controller
-                              ? "Left and right change how fast you turn. "
-                                "2.00x is Reach's own speed."
-                              : "Left and right change how far you turn per "
-                                "mouse movement. 1.00x is Noble's default.");
-    const float lo = s_controller ? 1.0f : 0.1f,
-                hi = s_controller ? 10.0f : 5.0f,
-                step = s_controller ? 0.25f : 0.05f;
-    if (left)
-      s_sensitivity = std::clamp(s_sensitivity - step, lo, hi);
-    if (right)
-      s_sensitivity = std::clamp(s_sensitivity + step, lo, hi);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-    ImGui::SliderFloat("##firststartlook", &s_sensitivity, lo, hi, "%.2fx");
-    ImGui::Dummy(ImVec2(0, 10.0f * s));
-    if (option(0, "FINISH"))
-      finish(true);
-  }
-  if (up)
-    s_focus = (s_focus + rows - 1) % rows;
-  if (down)
-    s_focus = (s_focus + 1) % rows;
-  if (back && s_step > 0) {
-    s_focus = 0;
-    --s_step;
-    MenuSounds::Back();
-  }
-  ImGui::End();
-  return true;
-}
-
-// Menu music player: a compact now-playing strip (track, prev / play-pause /
-// next, mute, shuffle) in the bottom-right of the main menu. Every action takes
-// effect immediately and is saved to settings.json, the same rule the Settings
-// > Audio page uses for the music track.
-void DrawMusicPlayer(const Ui &ui) {
-  const SettingsData sd = Settings::Get().Snapshot();
-  // MusicTracks() builds the whole list, and this runs every frame on the main
-  // menu: build it once.
-  static const std::vector<ReachAudio::TrackInfo> tracks =
-      ReachAudio::MusicTracks();
-  if (tracks.empty())
-    return;
-
-  const std::string id = sd.menuMusicTrack;
-  int index = -1;
-  for (size_t i = 0; i < tracks.size(); ++i) {
-    if (tracks[i].id == id) {
-      index = static_cast<int>(i);
-      break;
-    }
-  }
-
-  std::string label;
-  if (id == "all")
-    label = "Shuffle \xC2\xB7 every game";
-  else if (id == "off")
-    label = "Music off";
-  else if (index >= 0)
-    label = tracks[index].game + " \xC2\xB7 " + tracks[index].label;
-  else
-    label = ReachAudio::TrackLabel(id);
-  if (ReachAudio::IsMusicPaused())
-    label += "   (paused)";
-
-  auto saveTrack = [&](const std::string &next) {
-    SettingsData d = Settings::Get().Snapshot();
-    d.menuMusicTrack = next;
-    Settings::Get().Update(d);
-    ReachAudio::PlayMenuMusic(next);
-  };
-  auto step = [&](int dir) {
-    if (tracks.empty())
-      return;
-    int from = index >= 0 ? index : 0;
-    from = (from + dir + static_cast<int>(tracks.size())) %
-           static_cast<int>(tracks.size());
-    saveTrack(tracks[from].id);
-  };
-
-  const float w = 470.0f * ui.s, h = 30.0f * ui.s;
-  const ImVec2 p0(ui.origin.x + ui.size.x - w - 40.0f * ui.s,
-                  ui.origin.y + ui.size.y - 140.0f * ui.s);
-  const ImVec2 p1(p0.x + w, p0.y + h);
-  ui.dl->AddRectFilled(p0, p1, IM_COL32(8, 12, 18, 190));
-  ui.dl->AddRect(p0, p1, IM_COL32(90, 120, 150, 90), 0.0f, 0, 1.0f);
-
-  // A small note glyph, then the track name (clipped if the file names are
-  // long).
-  const ImVec2 note(p0.x + 14.0f * ui.s, p0.y + h * 0.5f);
-  ui.dl->AddCircleFilled(ImVec2(note.x - 2.0f * ui.s, note.y + 4.0f * ui.s),
-                         3.5f * ui.s, kAccent);
-  ui.dl->AddLine(ImVec2(note.x + 1.5f * ui.s, note.y + 4.0f * ui.s),
-                 ImVec2(note.x + 1.5f * ui.s, note.y - 7.0f * ui.s), kAccent,
-                 1.6f * ui.s);
-  ui.dl->AddLine(ImVec2(note.x + 1.5f * ui.s, note.y - 7.0f * ui.s),
-                 ImVec2(note.x + 9.0f * ui.s, note.y - 9.0f * ui.s), kAccent,
-                 1.6f * ui.s);
-
-  const float buttonsW = 186.0f * ui.s; // five 34 s buttons with 4 s gaps
-  const float textRight = p1.x - buttonsW - 10.0f * ui.s;
-  const std::string shown = Upper(label);
-  ui.dl->PushClipRect(ImVec2(p0.x + 30.0f * ui.s, p0.y),
-                      ImVec2(textRight, p1.y), true);
-  Text(ui, NobleStyle::SmallFont(), 12.5f,
-       ImVec2(p0.x + 30.0f * ui.s, p0.y + 8.0f * ui.s),
-       ReachAudio::IsMusicPaused() ? kDim : IM_COL32(205, 220, 235, 235),
-       shown.c_str());
-  ui.dl->PopClipRect();
-
-  const char *glyphs[5] = {"|<<", "||>", ">>|", "VOL",
-                           "SHF"}; // prev, play/pause, next, mute, shuffle
-  if (ReachAudio::IsMusicPaused())
-    glyphs[1] = ">  ";
-  if (s_menuMusicMuted)
-    glyphs[3] = "MUT";
-  float bx = textRight + 6.0f * ui.s;
-  const float bw = 34.0f * ui.s;
-  for (int i = 0; i < 5; ++i) {
-    const ImVec2 a(bx + i * (bw + 4.0f * ui.s), p0.y + 4.0f * ui.s);
-    const ImVec2 b(a.x + bw, p0.y + h - 4.0f * ui.s);
-    ImGui::SetCursorScreenPos(a);
-    ImGui::PushID(3000 + i);
-    const bool pressed =
-        ImGui::InvisibleButton("##music", ImVec2(bw, h - 8.0f * ui.s));
-    const bool hovered = ImGui::IsItemHovered();
-    ImGui::PopID();
-    const bool active = (i == 1 && ReachAudio::IsMusicPaused()) ||
-                        (i == 3 && s_menuMusicMuted) || (i == 4 && id == "all");
-    ui.dl->AddRectFilled(a, b,
-                         active ? IM_COL32(52, 112, 156, 230)
-                                : (hovered ? IM_COL32(40, 56, 72, 230)
-                                           : IM_COL32(18, 24, 32, 220)));
-    ui.dl->AddRect(a, b,
-                   hovered ? IM_COL32(170, 220, 255, 180)
-                           : IM_COL32(80, 110, 140, 90),
-                   0.0f, 0, 1.0f);
-    const float gw =
-        TextWidth(NobleStyle::SmallFont(), 11.0f * ui.s, glyphs[i]);
-    Text(ui, NobleStyle::SmallFont(), 11.0f,
-         ImVec2(a.x + (bw - gw) * 0.5f, a.y + 4.0f * ui.s), kWhite, glyphs[i]);
-    if (!pressed)
-      continue;
-    MenuSounds::Click();
-    switch (i) {
-    case 0:
-      step(-1);
-      break;
-    case 1:
-      if (ReachAudio::IsMusicPaused())
-        ReachAudio::ResumeMusic();
-      else if (!ReachAudio::PauseMusic() || id == "off")
-        saveTrack(index >= 0 ? tracks[index].id : "reach:menu");
-      break;
-    case 2:
-      step(1);
-      break;
-    case 3:
-      s_menuMusicMuted = !s_menuMusicMuted;
-      ReachAudio::SetMuted(s_menuMusicMuted);
-      break;
-    case 4:
-      saveTrack(id == "all" ? (index >= 0 ? tracks[index].id : "reach:menu")
-                            : "all");
-      break;
-    default:
-      break;
-    }
-  }
-}
-
-// A friend's game invite is shown on every menu screen as a small panel with
-// JOIN / DISMISS, unless the player turned invites off in Settings > Online
-// services. The invite carries the host endpoint, so JOIN is the same relaunch
-// the server browser uses for a direct connect (2026-10-30).
-void DrawInviteToast(const Ui &ui, MenuState &st) {
-  if (st.confirmQuit || s_showAccountModal || s_showDevMenu ||
-      ModDownloadPrompt::Get().IsActive())
-    return;
-  if (!Settings::Get().Snapshot().inviteNotifications)
-    return;
-  if (!AuthClient::Get().IsLoggedIn())
-    return;
-
-  const std::vector<GameInvite> invites = SocialClient::Get().GetInvites();
-  if (invites.empty())
-    return;
-  const GameInvite *newest = &invites.front();
-  for (const GameInvite &inv : invites) {
-    if (inv.timestamp >= newest->timestamp)
-      newest = &inv;
-  }
-
-  static std::string
-      s_answered; // "sender|timestamp" already answered this session
-  char key[160];
-  std::snprintf(key, sizeof(key), "%s|%llu", newest->senderUsername.c_str(),
-                static_cast<unsigned long long>(newest->timestamp));
-  if (s_answered == key)
-    return;
-
-  const float w = 470.0f * ui.s, h = 96.0f * ui.s;
-  const ImVec2 p0(ui.origin.x + ui.size.x - w - 40.0f * ui.s,
-                  ui.origin.y + ui.size.y - h - 150.0f * ui.s);
-  const ImVec2 p1(p0.x + w, p0.y + h);
-  ui.dl->AddRectFilled(p0, p1, IM_COL32(12, 20, 30, 245));
-  ui.dl->AddRect(p0, p1, IM_COL32(143, 216, 255, 170), 0.0f, 0, 1.2f);
-  ui.dl->AddLine(ImVec2(p0.x, p0.y + 3.0f * ui.s),
-                 ImVec2(p1.x, p0.y + 3.0f * ui.s), kAccent, 3.0f * ui.s);
-
-  Text(ui, NobleStyle::SmallFont(), 12.0f,
-       ImVec2(p0.x + 16.0f * ui.s, p0.y + 11.0f * ui.s), kAccent,
-       "GAME INVITE");
-  Text(ui, NobleStyle::TitleFont(), 19.0f,
-       ImVec2(p0.x + 16.0f * ui.s, p0.y + 30.0f * ui.s), kWhite,
-       newest->senderUsername.c_str());
-  const float nameW = TextWidth(NobleStyle::TitleFont(), 19.0f * ui.s,
-                                newest->senderUsername.c_str());
-  const std::string inviteDesc =
-      newest->mode.empty()
-          ? "is inviting you to a match"
-          : ("is inviting you to a " + newest->mode + " match");
-  Text(ui, nullptr, 15.0f,
-       ImVec2(p0.x + 16.0f * ui.s + nameW + 8.0f * ui.s, p0.y + 36.0f * ui.s),
-       kDim, inviteDesc.c_str());
-
-  const float bw = 160.0f * ui.s, bh = 30.0f * ui.s;
-  const ImVec2 j0(p0.x + w - bw * 2.0f - 26.0f * ui.s,
-                  p1.y - bh - 12.0f * ui.s);
-  const ImVec2 d0(j0.x + bw + 10.0f * ui.s, j0.y);
-  auto button = [&](const char *id, ImVec2 a, const char *label, bool primary) {
-    ImGui::SetCursorScreenPos(a);
-    ImGui::PushID(id);
-    const bool pressed = ImGui::InvisibleButton("##b", ImVec2(bw, bh));
-    const bool hovered = ImGui::IsItemHovered();
-    ImGui::PopID();
-    const ImVec2 b(a.x + bw, a.y + bh);
-    ui.dl->AddRectFilled(a, b,
-                         primary ? (hovered ? IM_COL32(76, 150, 200, 255)
-                                            : IM_COL32(52, 112, 156, 240))
-                                 : (hovered ? IM_COL32(60, 74, 88, 240)
-                                            : IM_COL32(26, 32, 40, 230)));
-    ui.dl->AddRect(a, b,
-                   primary ? IM_COL32(170, 220, 255, hovered ? 220 : 90)
-                           : IM_COL32(120, 140, 160, 90));
-    const float tw = TextWidth(NobleStyle::TitleFont(), 16.0f * ui.s, label);
-    Text(ui, NobleStyle::TitleFont(), 16.0f,
-         ImVec2(a.x + (bw - tw) * 0.5f, a.y + 5.0f * ui.s), kWhite, label);
-    if (pressed)
-      MenuSounds::Click();
-    return pressed;
-  };
-
-  if (button("invite_join", j0, newest->hostIp.empty() ? "WAITING..." : "JOIN",
-             true)) {
-    if (newest->hostIp.empty()) {
-      // The server sent an invite without an endpoint (older server build): do
-      // not relaunch with "-connect :"
-      NOBLE_WARN(
-          "FrontEndMenu: invite from {} has no host address; ignoring JOIN",
-          newest->senderUsername);
-    } else {
-      s_answered = key;
-      SocialClient::Get().ClearInviteAsync(newest->senderUsername);
-      SocialClient::Get().RefreshFriendsAsync();
-      NOBLE_INFO(
-          "FrontEndMenu: accepting invite into lobby from {} ({}, mode='{}')",
-          newest->senderUsername, newest->hostIp, newest->mode);
-      ServerEntry s;
-      s.id = newest->sessionId;
-      s.name = newest->senderUsername + "'s Game";
-      s.hostAddress = newest->hostIp;
-      s.port = newest->hostPort;
-      s.mapName = newest->map.empty() ? "20_sword_slayer" : newest->map;
-      s.gameMode = newest->mode.empty() ? "multiplayer" : newest->mode;
-      s.maxPlayers = 16;
-      EnterLobby(GetOverlayCtx(), s);
-      MenuSounds::Click();
-    }
-  }
-  if (button("invite_dismiss", d0, "DISMISS", false)) {
-    s_answered = key;
-    SocialClient::Get().ClearInviteAsync(newest->senderUsername);
-    SocialClient::Get().RefreshFriendsAsync();
-  }
-}
-
 // ---- Container window mode: the match is a child process presenting inside
 // this launcher window ----
-namespace {
-
 // Starts a match process inside this launcher window and remembers it. The
 // launcher is the only process that starts matches in container mode (a match
 // cannot replace itself: see Relaunch::HandOff).
@@ -11311,7 +4783,10 @@ bool StartContainerChild(const std::wstring &args, OverlayContext &ctx) {
   ctx.hMatchProcess = hChild;
   ctx.matchRunning = true;
   FrontEndMenu::SetMatchRunning(true);
+  Window::FlushInputEvents();
   UiPad::ConsumeAll();
+  s_resetInputEdges.store(true);
+  s_resetFrameTimer.store(true);
   return true;
 }
 
@@ -11350,6 +4825,7 @@ void ContainerMatchEnded(OverlayContext &ctx, DWORD exitCode) {
 
   const std::wstring successor = Relaunch::TakeContainerRelaunch();
   if (successor == L"-quit-app") {
+    ctx.closed = true;
     ctx.matchRunning = false;
     FrontEndMenu::SetMatchRunning(false);
     if (!ctx.st.lobbySessionId.empty()) {
@@ -11396,13 +4872,24 @@ void ContainerMatchEnded(OverlayContext &ctx, DWORD exitCode) {
                "restoring the menu");
   }
 
-  ctx.matchRunning = false;
-  FrontEndMenu::SetMatchRunning(false);
-  // The menu was marked closed when the match started (ctx.closed), and
-  // RenderOverlay/HoldFrame both bail out on it: without this the launcher came
-  // back showing the engine's own mainmenu_all map (the spaceship) instead of
-  // Noble's front end.
-  ctx.closed = false;
+  std::lock_guard<std::recursive_mutex> lock(s_overlayMutex);
+  // Keep IsMatchRunning() true until lobby teardown, audio/scene sync, cursor
+  // restoration, and input flushes finish so Engine Thread (RenderOverlay) and
+  // Main Thread (HoldFrame) cannot race across the transition or flash stale
+  // frames.
+  ctx.st.confirmQuit = false;
+  ctx.st.lobbyLaunchPending = false;
+  ctx.st.playlistEditOpen = false;
+  ctx.st.confirmAction.clear();
+  ctx.st.optionsOpen = false;
+  ctx.st.optionsRuleDropdownOpen = false;
+  ctx.st.variantPickerOpen = false;
+  ctx.st.lobbyPickerOpen = false;
+  ctx.st.lobbyTeamPickerOpen = false;
+  ctx.st.lobbyProfileOpen = false;
+  ctx.st.theaterConfirmDelete.clear();
+  ctx.st.lobbyMapPickerOpen = false;
+
   if (isLobbyReturn) {
     ctx.st.screen = Screen::PreGameLobby;
     ctx.st.isLobbyHost =
@@ -11552,13 +5039,36 @@ void ContainerMatchEnded(OverlayContext &ctx, DWORD exitCode) {
                          Settings::Get().Snapshot().volumeMusic,
                          Settings::Get().Snapshot().volumeOther,
                          Settings::Get().Snapshot().masterMute);
+  UpdateSceneForScreen(ctx.st.screen);
+
+  // Restore launcher cursor, discard stale clicks/wheel/keys accumulated during
+  // or while leaving the child match, reset edge detectors, and settle briefly.
+  Window::FlushInputEvents();
+  UiPad::ResetAfterMatch();
+  if (ImGui::GetCurrentContext()) {
+    ImGuiIO &io = ImGui::GetIO();
+    io.ClearInputKeys();
+    io.ClearInputMouse();
+    io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    ImGui::SetWindowFocus(nullptr);
+  }
+  s_resetInputEdges.store(true);
+  s_resetFrameTimer.store(true);
+  s_postMatchInputSettleUntil.store(GetTickCount64() + 300);
+  if (!s_holdFrameOwned.load()) {
+    // Give HostSlot1_FrameTick a fresh grace period to resume presenting before
+    // HoldFrame considers taking over (prevents dual-thread clear/3D flicker).
+    s_lastEngineOverlayFrame.store(GetTickCount64());
+  }
+
+  ctx.closed = false;
+  ctx.matchRunning = false;
+  FrontEndMenu::SetMatchRunning(false);
   // The match window held the keyboard focus; hand it back to the launcher
   // window (the window's own thread does the SetFocus: this code runs on the
-  // engine thread).
+  // engine thread or main loop).
   Window::RequestFocus();
 }
-
-} // namespace
 
 void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
                           ID3D11DeviceContext *context, FrontEndChoice &choice,
@@ -11592,8 +5102,7 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
   // one A press could act twice (seen on the lobby's COPY INVITE, 2026-10-31).
   // The panel screens below keep it: their lists and buttons are plain ImGui
   // widgets.
-  if (ctx.st.screen != Screen::Servers && ctx.st.screen != Screen::Career &&
-      ctx.st.screen != Screen::Mods && ctx.st.screen != Screen::Social) {
+  if (ctx.st.screen != Screen::Servers && ctx.st.screen != Screen::Mods) {
     flags |= ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus;
   }
   ImGui::Begin("##NobleFrontEnd", nullptr, flags);
@@ -11639,9 +5148,11 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
   const bool modPromptOpen = ModDownloadPrompt::Get().IsActive();
   // A choice list that was open last frame owns Back and the up/down keys this
   // frame.
-  s_pickerBlocksNav = std::exchange(s_pickerOpenNow, false);
+  g_pickerBlocksNav = std::exchange(g_pickerOpenNow, false);
   // Esc in a text box only leaves the box.
-  const bool back = !modPromptOpen && !s_pickerBlocksNav &&
+  const bool back = !modPromptOpen && !g_pickerBlocksNav &&
+                    !g_showAccountModal && !g_showDevMenu &&
+                    !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
                     !ImGui::GetIO().WantTextInput &&
                     (UiPad::BackPressed() || HintClicked(Prompt::Back));
   auto goBack = [&](Screen to) {
@@ -11662,11 +5173,16 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
   case Screen::Main: {
     // While the quit box or a modal is open nothing behind it reacts to the
     // mouse (no hover, sounds or clicks).
+    static bool s_showChangelogManual = false;
     const bool firstStart = DrawFirstStart(ui);
     if (firstStart)
       ImGui::GetIO().ClearInputKeys();
-    const bool modal = firstStart || st.confirmQuit || s_showAccountModal ||
-                       s_showDevMenu || modPromptOpen;
+    const bool showChangelog =
+        !st.confirmQuit && !g_showAccountModal && !g_showDevMenu &&
+        !modPromptOpen &&
+        ShouldShowChangelogModal(s_showChangelogManual, firstStart);
+    const bool modal = firstStart || showChangelog || st.confirmQuit ||
+                       g_showAccountModal || g_showDevMenu || modPromptOpen;
     ImGui::BeginDisabled(modal);
     DrawParty(ui, settings.playerName, "In Main Menu Lobby");
     if (DrawUpdateBanner(ui))
@@ -11784,8 +5300,13 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
         st.confirmQuit = true;
         st.quitChoice = 1;
         MenuSounds::Back();
+      } else if (!ImGui::GetIO().WantTextInput &&
+                 (UiPad::ActionY() || ImGui::IsKeyPressed(ImGuiKey_N, false))) {
+        s_showChangelogManual = true;
+        MenuSounds::Click();
       }
-      DrawHints(ui, {{Prompt::Accept, "Select"}, {Prompt::Back, "Quit"}});
+      DrawHints(ui, {{Prompt::Accept, "Select"}, {Prompt::Back, "Quit"}},
+                {{InputPrompts::Button::Y, "N", "What's New"}});
     } else if (st.confirmQuit) {
       // Dim everything and show the question in the middle.
       ui.dl->AddRectFilled(
@@ -11841,7 +5362,9 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
       }
       DrawHints(ui, {{Prompt::Accept, "Select"}, {Prompt::Back, "Cancel"}});
     }
+    ImGui::BeginDisabled(modal);
     DrawMusicPlayer(ui);
+    ImGui::EndDisabled();
 
     std::string version(VERSION_STRING);
     const size_t paren = version.find(" (");
@@ -11849,1368 +5372,66 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
       version.resize(paren);
     char ver[64];
     std::snprintf(ver, sizeof(ver), "PROJECT NOBLE  v%s", version.c_str());
-    Text(ui, NobleStyle::SmallFont(), 14.0f,
-         ImVec2(ui.origin.x + ui.size.x -
-                    TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, ver) -
-                    24.0f * ui.s,
-                ui.origin.y + ui.size.y - 30.0f * ui.s),
+    const float verW = TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, ver);
+    const float verX = ui.origin.x + ui.size.x - verW - 24.0f * ui.s;
+    const float verY = ui.origin.y + ui.size.y - 30.0f * ui.s;
+    Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(verX, verY),
          IM_COL32(200, 210, 220, 110), ver);
+
+    {
+      const char *wnLbl = "WHAT'S NEW";
+      const float wnTw =
+          TextWidth(NobleStyle::SmallFont(), 12.5f * ui.s, wnLbl);
+      const float wnW = wnTw + 22.0f * ui.s;
+      const float wnH = 24.0f * ui.s;
+      const ImVec2 wn0(verX - wnW - 14.0f * ui.s, verY - 4.0f * ui.s);
+      const ImVec2 wn1(wn0.x + wnW, wn0.y + wnH);
+      bool wnHov = false;
+      bool wnClick = false;
+      if (!modal) {
+        ImGui::SetCursorScreenPos(wn0);
+        wnClick = ImGui::InvisibleButton("##main_whats_new", ImVec2(wnW, wnH));
+        wnHov = ImGui::IsItemHovered();
+      }
+      ui.dl->AddRectFilled(wn0, wn1,
+                           wnHov ? IM_COL32(28, 60, 88, 232)
+                                 : IM_COL32(14, 26, 40, 195),
+                           2.0f * ui.s);
+      ui.dl->AddRect(wn0, wn1,
+                     wnHov ? IM_COL32(143, 216, 255, 230)
+                           : IM_COL32(110, 165, 210, 125),
+                     2.0f * ui.s, 0, 1.0f);
+      Text(ui, NobleStyle::SmallFont(), 12.5f,
+           ImVec2(wn0.x + 11.0f * ui.s, wn0.y + 5.0f * ui.s),
+           wnHov ? kWhite : IM_COL32(180, 214, 240, 215), wnLbl);
+      if (wnClick) {
+        s_showChangelogManual = true;
+        MenuSounds::Click();
+      }
+    }
+
+    if (showChangelog) {
+      DrawChangelogModal(ui, s_showChangelogManual);
+    }
     break;
   }
 
   case Screen::Campaign: {
-    DrawTopTelemetryBar(ui, "CAMPAIGN");
-    DrawTitle(ui, ImVec2(left, top), "CAMPAIGN", "MAP SELECT");
-    float tabsEnd = 0.0f;
-    if (DrawSourceTabs(ui, ImVec2(left + 26.0f * ui.s, top + 72.0f * ui.s),
-                       st.campaignSource,
-                       static_cast<int>(ctx.campaignMods.size()), -1,
-                       &tabsEnd)) {
-      st.focusRow = 0;
-      st.mapDrawerKey.clear();
-      st.mapDrawerFocus = -1;
-      st.mapGridScrollY = 0.0f;
-    }
-    const bool modded = st.campaignSource == 1;
-    const float searchX =
-        std::max(left + 26.0f * ui.s + 240.0f * ui.s, tabsEnd + 10.0f * ui.s);
-    if (DrawSearchBox(ui, "##mission_search",
-                      ImVec2(searchX, top + 72.0f * ui.s), 180.0f * ui.s,
-                      st.mapSearch, sizeof(st.mapSearch),
-                      "Search missions & mods"))
-      st.mapSearchRow = 0;
-    if (ImGui::IsItemActive())
-      st.focusRow = 0;
-
-    const std::vector<MapTileGroup> groups = BuildMapTileGroups(
-        ctx, modded, false, ModMode::Campaign, ctx.campaignMods, kMissions,
-        Count(kMissions), "m10", false, st.mapSearch);
-    const bool searching = st.mapSearch[0] != 0;
-    int &pick =
-        searching ? st.mapSearchRow : (modded ? st.campaignModded : st.mission);
-
-    static Screen s_campLastScr = Screen::Main;
-    static int s_campLastSrc = -1;
-    const bool firstEnter =
-        (s_campLastScr != st.screen || s_campLastSrc != st.campaignSource);
-    s_campLastScr = st.screen;
-    s_campLastSrc = st.campaignSource;
-
-    const float gridX = left + 24.0f * ui.s;
-    const float gridTop = top + 114.0f * ui.s;
-    const float rightMax = ui.origin.x + ui.size.x * 0.94f;
-    const float gridW = (rightMax - gridX) * 0.56f;
-    const float gridBot = ui.origin.y + ui.size.y - 68.0f * ui.s;
-
-    std::filesystem::path campDummyMvar;
-    const TacticalGridResult gridRes = DrawTacticalMapGrid(
-        ui, st, ImVec2(gridX, gridTop), ImVec2(gridW, gridBot - gridTop),
-        groups, pick, campDummyMvar, st.focusRow == 0,
-        searching ? "Nothing matches your search"
-                  : "No Reach campaign mods installed",
-        "BASE MISSION", firstEnter);
-    if (gridRes.pickedBaseOrVariant) {
-      st.mapDrawerKey.clear();
-      st.mapDrawerFocus = -1;
-      st.focusRow = 1;
-    } else if (gridRes.moveFocusRight) {
-      st.focusRow = 1;
-    }
-
-    const MapTileGroup *selGrp =
-        groups.empty()
-            ? nullptr
-            : &groups[std::clamp(pick, 0, static_cast<int>(groups.size()) - 1)];
-    const MapEntry *mission =
-        (selGrp && selGrp->base.enabled) ? &selGrp->base : nullptr;
-    const ModEntry *mod = mission ? mission->mod : nullptr;
-
-    // Right Detail & Launch Card (anchored below DrawParty cleanly)
-    const float px = gridX + gridW + 24.0f * ui.s;
-    const float pw = rightMax - px;
-    const float cardTop = std::max(gridTop, ui.origin.y + 150.0f * ui.s);
-    const float cardBot = gridBot;
-    const ImVec2 rc0(px, cardTop), rc1(px + pw, cardBot);
-    ui.dl->AddRectFilled(rc0, rc1, IM_COL32(8, 14, 22, 215), 2.0f * ui.s);
-    NobleUi::DrawTacticalFrame(ui.dl, rc0, rc1, ui.s, st.focusRow > 0, true,
-                               false, false);
-
-    const float pad = 16.0f * ui.s;
-    const float innerW = pw - pad * 2.0f;
-    const float actionsY = cardBot - 62.0f * ui.s;
-    const float stripY = actionsY - LobbyStripHeight(ui) - 8.0f * ui.s;
-    const float controlsH =
-        98.0f * ui.s + 8.0f * ui.s + 36.0f * ui.s + 30.0f * ui.s;
-    const float metaFixedH = 195.0f * ui.s;
-    const float previewH = std::clamp(stripY - cardTop - controlsH - metaFixedH,
-                                      68.0f * ui.s, innerW * 292.0f / 668.0f);
-
-    float y = DrawMapDetailHeaderCard(ui, rc0, pw, previewH,
-                                      selGrp ? &selGrp->base : nullptr, nullptr,
-                                      "CAMPAIGN");
-    y += DifficultyTiles(ui, "diff", ImVec2(px + pad, y), innerW, st.difficulty,
-                         st.focusRow == 1) +
-         8.0f * ui.s;
-    const std::string skullText = SkullSummary(st.skulls);
-    if (OptionRow(ui, "skulls", ImVec2(px + pad, y), innerW, "SKULLS",
-                  skullText.c_str(), st.focusRow == 2, nullptr, false)) {
-      st.screen = Screen::Skulls;
-    }
-    ImGui::SetCursorScreenPos(ImVec2(px + pad, y));
-    if (ImGui::InvisibleButton("##skullrow", ImVec2(innerW, 32.0f * ui.s)))
-      st.screen = Screen::Skulls;
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-      ui.dl->AddRectFilled(ImVec2(px + pad + innerW * 0.48f, y + 2.0f * ui.s),
-                           ImVec2(px + pw - pad, y + 30.0f * ui.s),
-                           IM_COL32(143, 216, 255, 28), 2.0f * ui.s);
-      ui.dl->AddRectFilled(ImVec2(px + pad + innerW * 0.48f, y + 29.0f * ui.s),
-                           ImVec2(px + pw - pad, y + 31.0f * ui.s),
-                           IM_COL32(143, 216, 255, 140));
-    }
-    y += 36.0f * ui.s;
-    const float stripW =
-        SkullStrip(ui, ImVec2(px + pad + 8.0f * ui.s, y + 2.0f * ui.s),
-                   20.0f * ui.s, st.skulls, 13);
-    char mult[64];
-    std::snprintf(mult, sizeof(mult), "Score multiplier  x%.2f",
-                  ScoreMultiplier(st.difficulty, st.skulls));
-    Text(ui, nullptr, 15.5f,
-         ImVec2(px + pad + 8.0f * ui.s +
-                    (stripW > 0.0f ? stripW + 12.0f * ui.s : 0.0f),
-                y + 3.0f * ui.s),
-         kDim, mult);
-    DrawLobbyControls(ui, ImVec2(px + pad, stripY), innerW, st);
-
-    const bool canStart = mission && mission->enabled;
-    const float bw = (innerW - 10.0f * ui.s) * 0.5f;
-    std::string sub = mission ? std::string(mission->name) + " \xC2\xB7 " +
-                                    kDifficultyNames[st.difficulty]
-                              : std::string("Pick a mission");
-    const bool startSolo =
-        ((BigAction(ui, "start", ImVec2(px + pad, actionsY), bw, "PLAY SOLO",
-                    sub.c_str(), true, canStart, st.focusRow == 3) ||
-          (st.focusRow == 3 && AcceptPressed())) &&
-         canStart) ||
-        (AutoPlayNow() && canStart);
-    const char *coopSub = st.lobbyNetMode == 1
-                              ? (st.lobbyPrivacy == 0 ? "Public Online P2P"
-                                                      : "Private Online P2P")
-                              : "Local LAN Co-op";
-    const bool hostCoop =
-        ((BigAction(ui, "coop", ImVec2(px + pad + bw + 10.0f * ui.s, actionsY),
-                    innerW - bw - 10.0f * ui.s, "HOST CO-OP", coopSub, true,
-                    canStart, st.focusRow == 4) ||
-          (st.focusRow == 4 && AcceptPressed())) &&
-         canStart);
-    const std::string launchScenario =
-        mission ? (mission->launchScenario.empty() ? mission->scenario
-                                                   : mission->launchScenario)
-                : std::string();
-    if (hostCoop) {
-      SetupHostLobby(st, launchScenario, "campaign", "", "Campaign",
-                     st.difficulty, st.skulls, 16, mission->mod,
-                     mission->mapOverride, mission->name, mission->imageLoading,
-                     mission->imageThumbnail);
-    } else if (startSolo) {
-      FrontEndChoice req;
-      req.play = true;
-      req.host = false;
-      req.mode = "campaign";
-      req.map = launchScenario;
-      req.mapOverride = mission->mapOverride;
-      req.mapTitle = mission->name;
-      req.mapImage = mission->imageLoading;
-      req.mapThumb = mission->imageThumbnail;
-      req.difficulty = st.difficulty;
-      req.skulls = st.skulls;
-      if (mod) {
-        req.modFolder = mod->folder;
-        req.modTitle = mod->title;
-      }
-      RequestMatchLaunch(choice, done, req);
-    }
-    if (!s_pickerBlocksNav && st.focusRow > 0) {
-      if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
-          ImGui::IsKeyPressed(ImGuiKey_Tab) || UiPad::Down())
-        st.focusRow = std::min(4, st.focusRow + 1);
-      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())
-        st.focusRow = std::max(1, st.focusRow - 1);
-      if (st.focusRow == 3 &&
-          (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Right())) {
-        st.focusRow = 4;
-        MenuSounds::Scroll();
-      }
-      if (st.focusRow == 4 &&
-          (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left())) {
-        st.focusRow = 3;
-        MenuSounds::Scroll();
-      }
-    }
-    if (st.focusRow == 2 && AcceptPressed())
-      st.screen = Screen::Skulls;
-    if (!ImGui::GetIO().WantTextInput && UiPad::ActionX()) {
-      st.screen = Screen::Skulls;
-      MenuSounds::Click();
-    }
-    if (back) {
-      if (st.focusRow > 0)
-        st.focusRow = 0;
-      else if (!st.mapDrawerKey.empty()) {
-        st.mapDrawerKey.clear();
-        st.mapDrawerFocus = -1;
-      } else
-        goBack(Screen::Main);
-    }
-    DrawHints(ui,
-              {{Prompt::Accept, "Select / Expand"},
-               {Prompt::Back, "Back"},
-               {Prompt::Change, "Change"},
-               {Prompt::Tabs, "Vanilla / Modded"}},
-              {{InputPrompts::Button::X, "X", "Skulls"}});
+    DrawCampaignScreen(ctx, ui, left, top, choice, done, back);
     break;
   }
 
   case Screen::Skulls: {
-    DrawTitle(ui, ImVec2(left, top), "SKULLS", "CAMPAIGN");
-    const float gx = left + 46.0f * ui.s;
-    float gy = top + 92.0f * ui.s;
-    const float cell = 78.0f * ui.s, icon = 64.0f * ui.s;
-    auto section = [&](const char *name, float y) {
-      Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(gx, y), kWhite, name);
-      ui.dl->AddLine(ImVec2(gx, y + 26.0f * ui.s),
-                     ImVec2(gx + cell * 5.0f, y + 26.0f * ui.s),
-                     IM_COL32(255, 255, 255, 60));
-    };
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight))
-      st.skull = std::min(kSkullCount - 1, st.skull + 1);
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft))
-      st.skull = std::max(0, st.skull - 1);
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))
-      st.skull = std::min(kSkullCount - 1, st.skull + 5);
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))
-      st.skull = std::max(0, st.skull - 5);
-    bool toggle = AcceptPressed() || ImGui::IsKeyPressed(ImGuiKey_Space, false);
-
-    section("Primary Skulls", gy);
-    gy += 36.0f * ui.s;
-    int primaryIndex = 0, secondaryIndex = 0;
-    float secondaryTop = gy + cell * 2.0f + 14.0f * ui.s;
-    for (int i = 0; i < kSkullCount; ++i) {
-      const Skull &sk = kSkulls[i];
-      int idx = sk.primary ? primaryIndex++ : secondaryIndex++;
-      const float baseY = sk.primary ? gy : secondaryTop + 36.0f * ui.s;
-      const ImVec2 a(gx + (idx % 5) * cell, baseY + (idx / 5) * cell);
-      ImGui::SetCursorScreenPos(a);
-      ImGui::PushID(i);
-      if (ImGui::InvisibleButton("##skull", ImVec2(icon, icon))) {
-        st.skull = i;
-        toggle = true;
-      }
-      if (ImGui::IsItemHovered() && ImGui::GetIO().MouseDelta.x != 0.0f)
-        st.skull = i;
-      ImGui::PopID();
-      const bool on = (st.skulls & (1ull << sk.bit)) != 0;
-      if (i == st.skull)
-        ui.dl->AddCircle(ImVec2(a.x + icon * 0.5f, a.y + icon * 0.5f),
-                         icon * 0.56f, kWhite, 0, 2.0f * ui.s);
-      if (on)
-        ui.dl->AddCircleFilled(ImVec2(a.x + icon * 0.5f, a.y + icon * 0.5f),
-                               icon * 0.52f, IM_COL32(230, 160, 90, 70));
-      UiTexture tex = UiArt::SkullIcon(sk.icon);
-      const ImU32 tint =
-          on ? IM_COL32(255, 205, 160, 255) : IM_COL32(255, 255, 255, 105);
-      if (tex)
-        ui.dl->AddImage(tex.id, a, ImVec2(a.x + icon, a.y + icon), ImVec2(0, 0),
-                        ImVec2(1, 1), tint);
-      else
-        Text(ui, nullptr, 14.0f, ImVec2(a.x, a.y + icon * 0.4f),
-             on ? kWhite : kDim, sk.name, a.x + icon);
-    }
-    section("Secondary Skulls", secondaryTop);
-    if (toggle) {
-      st.skulls ^= 1ull << kSkulls[st.skull].bit;
-      saveSkulls();
-      MenuSounds::Click();
-    }
-
-    const Skull &sel = kSkulls[st.skull];
-    const float dx = ui.origin.x + ui.size.x * 0.60f;
-    float dy = top + 70.0f * ui.s;
-    UiTexture big = UiArt::SkullIcon(sel.icon);
-    const float bs = 170.0f * ui.s;
-    if (big)
-      ui.dl->AddImage(big.id, ImVec2(dx + 40.0f * ui.s, dy),
-                      ImVec2(dx + 40.0f * ui.s + bs, dy + bs));
-    dy += bs + 18.0f * ui.s;
-    // Dark panel behind the text: it sits on the background art, and the dim
-    // description was unreadable over it.
-    ui.dl->AddRectFilled(ImVec2(dx - 14.0f * ui.s, dy - 8.0f * ui.s),
-                         ImVec2(dx + 314.0f * ui.s, dy + 176.0f * ui.s),
-                         IM_COL32(8, 14, 22, 190), 3.0f * ui.s);
-    Text(ui, NobleStyle::HeroFont(), 34.0f, ImVec2(dx, dy), kWhite, sel.name);
-    dy += 42.0f * ui.s;
-    Text(ui, nullptr, 17.0f, ImVec2(dx, dy), IM_COL32(205, 218, 230, 255),
-         sel.description, dx + 300.0f * ui.s);
-    dy += 74.0f * ui.s;
-    const bool selOn = (st.skulls & (1ull << sel.bit)) != 0;
-    Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kWhite,
-         selOn ? "Status: On" : "Status: Off");
-    dy += 24.0f * ui.s;
-    char mult[64];
-    if (sel.multiplier > 1.0f)
-      std::snprintf(mult, sizeof(mult), "Score bonus: +%.1f", sel.multiplier);
-    else
-      std::snprintf(mult, sizeof(mult), "No score bonus");
-    Text(ui, nullptr, 17.0f, ImVec2(dx, dy), IM_COL32(205, 218, 230, 255),
-         mult);
-
-    const float by = ui.origin.y + ui.size.y - 104.0f * ui.s;
-    ui.dl->AddRectFilledMultiColor(
-        ImVec2(left + 40.0f * ui.s, by),
-        ImVec2(ui.origin.x + ui.size.x * 0.80f, by + 40.0f * ui.s),
-        IM_COL32(40, 52, 64, 210), IM_COL32(40, 52, 64, 60),
-        IM_COL32(40, 52, 64, 60), IM_COL32(40, 52, 64, 210));
-    Text(ui, NobleStyle::TitleFont(), 24.0f,
-         ImVec2(left + 52.0f * ui.s, by + 6.0f * ui.s), kWhite,
-         settings.playerName.c_str());
-    char total[64];
-    std::snprintf(total, sizeof(total), "x%.2f",
-                  ScoreMultiplier(st.difficulty, st.skulls));
-    Text(ui, NobleStyle::TitleFont(), 24.0f,
-         ImVec2(ui.origin.x + ui.size.x * 0.80f - 90.0f * ui.s,
-                by + 6.0f * ui.s),
-         kWhite, total);
-    if (back)
-      goBack(Screen::Campaign);
-    DrawHints(ui, {{Prompt::Accept, "Toggle"}, {Prompt::Back, "Back"}});
+    DrawSkullsScreen(ctx, ui, left, top, settings, back);
     break;
   }
 
   case Screen::Firefight:
   case Screen::CustomGame:
   case Screen::Forge: {
-    const bool ff = st.screen == Screen::Firefight;
-    const bool forge = st.screen == Screen::Forge;
-    if (st.playlistEditOpen) {
-      // Playlist editor: choose a map and game type, add them, repeat; the list
-      // is on the right.
-      DrawTopTelemetryBar(ui, "PLAYLIST");
-      DrawTitle(ui, ImVec2(left, top), "PLAYLIST", "MULTIPLAYER");
-      const std::vector<MapEntry> allMaps = AllMultiplayerMaps(ctx);
-      const float px = left + 18.0f * ui.s, pw = ui.size.x * 0.42f;
-      const float panelTop = top + 64.0f * ui.s;
-      const float lx = px + pw + 30.0f * ui.s,
-                  lw = (ui.origin.x + ui.size.x * 0.93f) - lx;
-      const float panelBot = ui.origin.y + ui.size.y * 0.90f;
-
-      ui.dl->AddRectFilled(ImVec2(px - 12.0f * ui.s, panelTop - 10.0f * ui.s),
-                           ImVec2(px + pw + 12.0f * ui.s, panelBot),
-                           IM_COL32(8, 15, 24, 200), 2.0f * ui.s);
-      NobleUi::DrawTacticalFrame(
-          ui.dl, ImVec2(px - 12.0f * ui.s, panelTop - 10.0f * ui.s),
-          ImVec2(px + pw + 12.0f * ui.s, panelBot), ui.s, true, true, false,
-          false);
-
-      ui.dl->AddRectFilled(ImVec2(lx - 12.0f * ui.s, panelTop - 10.0f * ui.s),
-                           ImVec2(lx + lw + 12.0f * ui.s, panelBot),
-                           IM_COL32(8, 15, 24, 200), 2.0f * ui.s);
-      NobleUi::DrawTacticalFrame(
-          ui.dl, ImVec2(lx - 12.0f * ui.s, panelTop - 10.0f * ui.s),
-          ImVec2(lx + lw + 12.0f * ui.s, panelBot), ui.s, false, true, false,
-          false);
-
-      float y = panelTop + 4.0f * ui.s;
-      DrawSearchBox(ui, "##playlist_name", ImVec2(px, y), pw, st.playlistName,
-                    sizeof(st.playlistName), "Playlist name");
-      y += 44.0f * ui.s;
-      const bool typing = ImGui::GetIO().WantTextInput;
-      const bool canDeleteList =
-          !st.playlistEdit.file.empty() &&
-          st.playlistEdit.file.parent_path() == Playlists::Directory();
-      constexpr int kMapRow = 0, kTypeRow = 1, kAddRow = 2, kShuffleRow = 3,
-                    kRandomRow = 4, kAutoRow = 5, kSaveRow = 6, kDeleteRow = 7;
-      const int kRows = canDeleteList ? 8 : 7;
-      if (!typing &&
-          (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down())) {
-        st.playlistEditRow = (st.playlistEditRow + 1) % kRows;
-        MenuSounds::Scroll();
-      }
-      if (!typing && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())) {
-        st.playlistEditRow = (st.playlistEditRow + kRows - 1) % kRows;
-        MenuSounds::Scroll();
-      }
-      if (!typing && canDeleteList &&
-          (st.playlistEditRow == kSaveRow ||
-           st.playlistEditRow == kDeleteRow) &&
-          (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
-           ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Left() ||
-           UiPad::Right())) {
-        st.playlistEditRow =
-            (st.playlistEditRow == kSaveRow) ? kDeleteRow : kSaveRow;
-        MenuSounds::Scroll();
-      }
-      st.playlistEditMap =
-          allMaps.empty() ? 0
-                          : std::clamp(st.playlistEditMap, 0,
-                                       static_cast<int>(allMaps.size()) - 1);
-      const MapEntry *editMap =
-          allMaps.empty() ? nullptr : &allMaps[st.playlistEditMap];
-      std::vector<const MenuVariant *> types;
-      for (const MenuVariant &v : ctx.variants) {
-        if (editMap && (editMap->mod || v.type.empty() ||
-                        MapGameTypes::Supports(editMap->scenario, v.type)))
-          types.push_back(&v);
-      }
-      st.playlistEditVariant =
-          types.empty() ? 0
-                        : std::clamp(st.playlistEditVariant, 0,
-                                     static_cast<int>(types.size()) - 1);
-      const int mapStep = OptionRow(ui, "pl_map", ImVec2(px, y), pw, "MAP",
-                                    editMap ? editMap->name.c_str() : "-",
-                                    !typing && st.playlistEditRow == kMapRow);
-      if (mapStep != 0 && !allMaps.empty())
-        st.playlistEditMap =
-            (st.playlistEditMap + mapStep + static_cast<int>(allMaps.size())) %
-            static_cast<int>(allMaps.size());
-      y += 36.0f * ui.s;
-      const int typeStep = OptionRow(
-          ui, "pl_type", ImVec2(px, y), pw, "GAME TYPE",
-          types.empty() ? "-" : types[st.playlistEditVariant]->label.c_str(),
-          !typing && st.playlistEditRow == kTypeRow);
-      if (typeStep != 0 && !types.empty())
-        st.playlistEditVariant = (st.playlistEditVariant + typeStep +
-                                  static_cast<int>(types.size())) %
-                                 static_cast<int>(types.size());
-      y += 40.0f * ui.s;
-      const float bw = (pw - 10.0f * ui.s) * 0.5f;
-      bool add = BigAction(ui, "pl_add", ImVec2(px, y), pw, "ADD TO PLAYLIST",
-                           "Adds this map and game type", true,
-                           editMap != nullptr && !types.empty(),
-                           st.playlistEditRow == kAddRow);
-      y += 62.0f * ui.s;
-      const int shuffleStep =
-          OptionRow(ui, "pl_shuffle", ImVec2(px, y), pw, "ORDER",
-                    st.playlistEdit.shuffle ? "SHUFFLED" : "IN ORDER",
-                    !typing && st.playlistEditRow == kShuffleRow);
-      if (shuffleStep != 0)
-        st.playlistEdit.shuffle = !st.playlistEdit.shuffle;
-      y += 36.0f * ui.s;
-      const int randomStep =
-          OptionRow(ui, "pl_random", ImVec2(px, y), pw, "RANDOM GAME TYPE",
-                    st.playlistEdit.randomType ? "ON" : "OFF",
-                    !typing && st.playlistEditRow == kRandomRow);
-      if (randomStep != 0)
-        st.playlistEdit.randomType = !st.playlistEdit.randomType;
-      y += 36.0f * ui.s;
-      static const int kAutoChoices[] = {0, 15, 30, 60};
-      int autoAt = 0;
-      for (int i = 0; i < 4; ++i)
-        if (kAutoChoices[i] == st.playlistEdit.autoStart)
-          autoAt = i;
-      const std::string autoText =
-          st.playlistEdit.autoStart > 0
-              ? std::to_string(st.playlistEdit.autoStart) + " S"
-              : std::string("OFF");
-      const int autoStep = OptionRow(
-          ui, "pl_auto", ImVec2(px, y), pw, "NEXT MATCH STARTS BY ITSELF",
-          autoText.c_str(), !typing && st.playlistEditRow == kAutoRow);
-      if (autoStep != 0)
-        st.playlistEdit.autoStart = kAutoChoices[(autoAt + autoStep + 4) % 4];
-      y += 42.0f * ui.s;
-      bool save = BigAction(
-          ui, "pl_save", ImVec2(px, y), canDeleteList ? bw : pw,
-          "SAVE PLAYLIST", "Then pick it on Custom Game", true,
-          !st.playlistEdit.entries.empty(), st.playlistEditRow == kSaveRow);
-      bool eraseList =
-          canDeleteList &&
-          BigAction(ui, "pl_delete", ImVec2(px + bw + 10.0f * ui.s, y), bw,
-                    "DELETE", "Removes this playlist", false, true,
-                    st.playlistEditRow == kDeleteRow);
-      if (!typing && AcceptPressed() && canDeleteList &&
-          st.playlistEditRow == kDeleteRow)
-        eraseList = true;
-      if (eraseList) {
-        if (st.confirmAction != "delete") {
-          st.confirmAction = "delete";
-          st.playlistMessage = "Press DELETE again to remove this playlist.";
-          MenuSounds::Error();
-        } else {
-          std::error_code removeError;
-          std::filesystem::remove(st.playlistEdit.file, removeError);
-          NOBLE_INFO("FrontEndMenu: playlist deleted: {}",
-                     st.playlistEdit.file.filename().string());
-          RefreshPlaylists(ctx);
-          st.playlistChoice = -1;
-          st.playlistEditOpen = false;
-          MenuSounds::Back();
-        }
-      }
-      if (!typing && AcceptPressed()) {
-        if (st.playlistEditRow == kAddRow)
-          add = editMap != nullptr && !types.empty();
-        if (st.playlistEditRow == kSaveRow)
-          save = !st.playlistEdit.entries.empty();
-        if (st.playlistEditRow == kShuffleRow)
-          st.playlistEdit.shuffle = !st.playlistEdit.shuffle;
-        if (st.playlistEditRow == kRandomRow)
-          st.playlistEdit.randomType = !st.playlistEdit.randomType;
-      }
-      if (add) {
-        Playlists::Entry entry;
-        entry.map = editMap->scenario;
-        entry.variant = types[st.playlistEditVariant]->path.filename().string();
-        entry.mod = editMap->mod ? editMap->mod->folder.filename().string()
-                                 : std::string();
-        st.playlistEdit.entries.push_back(std::move(entry));
-        st.playlistEditEntry =
-            static_cast<int>(st.playlistEdit.entries.size()) - 1;
-        MenuSounds::Click();
-      }
-      // The list so far. Y or a click on a row takes it out again.
-      Text(ui, NobleStyle::TitleFont(), 18.0f,
-           ImVec2(lx, panelTop + 4.0f * ui.s), kAccent,
-           ("ENTRIES (" + std::to_string(st.playlistEdit.entries.size()) + ")")
-               .c_str());
-      std::vector<ListItem> rows;
-      for (const Playlists::Entry &entry : st.playlistEdit.entries) {
-        std::string mapName = entry.map, typeName = entry.variant;
-        for (const MapEntry &m : allMaps)
-          if (m.scenario == entry.map) {
-            mapName = m.name;
-            break;
-          }
-        for (const MenuVariant &v : ctx.variants)
-          if (v.path.filename().string() == entry.variant)
-            typeName = v.label;
-        rows.push_back({mapName + " - " + typeName});
-      }
-      if (rows.empty())
-        rows.push_back({"Nothing added yet", false, false});
-      const int gone =
-          DrawList(ui, "playlist_rows", ImVec2(lx, panelTop + 34.0f * ui.s), lw,
-                   rows, st.playlistEditEntry, false, 32.0f, 14, true);
-      int removeRow = gone;
-      if (!typing && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))
-        removeRow = st.playlistEditEntry;
-      if (removeRow >= 0 &&
-          removeRow < static_cast<int>(st.playlistEdit.entries.size())) {
-        st.playlistEdit.entries.erase(st.playlistEdit.entries.begin() +
-                                      removeRow);
-        MenuSounds::Back();
-      }
-      std::error_code listExistsError;
-      const std::filesystem::path listTarget =
-          Playlists::PathFor(st.playlistName);
-      if (save && !listTarget.empty() &&
-          std::filesystem::exists(listTarget, listExistsError) &&
-          listTarget != st.playlistEdit.file && st.confirmAction != "replace") {
-        save = false;
-        st.confirmAction = "replace";
-        st.playlistMessage =
-            "A playlist with this name exists. Press SAVE again to replace it.";
-        MenuSounds::Error();
-      }
-      if (save) {
-        st.playlistEdit.name = st.playlistName;
-        std::filesystem::path savedAs;
-        if (Playlists::Save(st.playlistEdit, savedAs)) {
-          NOBLE_INFO("FrontEndMenu: playlist saved: '{}' with {} entries",
-                     st.playlistEdit.name, st.playlistEdit.entries.size());
-          RefreshPlaylists(ctx);
-          st.playlistChoice = -1;
-          for (size_t i = 0; i < st.playlists.size(); ++i)
-            if (st.playlists[i].file == savedAs)
-              st.playlistChoice = static_cast<int>(i);
-          st.playlistEditOpen = false;
-          MenuSounds::Click();
-        } else {
-          st.playlistMessage = "Give it a name first.";
-          MenuSounds::Error();
-        }
-      }
-      if (!st.playlistMessage.empty())
-        Text(ui, nullptr, 15.0f, ImVec2(px, y + 60.0f * ui.s),
-             IM_COL32(255, 190, 120, 255), st.playlistMessage.c_str());
-      if (back) {
-        st.playlistEditOpen = false;
-        MenuSounds::Back();
-      }
-      DrawHints(ui,
-                {{Prompt::Accept, "Select"},
-                 {Prompt::Back, "Back"},
-                 {Prompt::Change, "Change"}},
-                {{InputPrompts::Button::Y, "CLICK", "Remove Entry"}});
-      break;
-    }
-    if (st.optionsOpen) {
-      DrawTacticalGameOptions(ctx, ui, left, top, ff, forge, back);
-      break;
-    }
-    if (st.variantPickerOpen && !forge) {
-      DrawTopTelemetryBar(ui, "GAME TYPE");
-      const std::vector<MenuVariant> &list = ff ? ctx.ffVariants : ctx.variants;
-      int &current = ff ? st.ffVariant : st.variant;
-      DrawTitle(ui, ImVec2(left, top), "GAME TYPE",
-                ff ? "FIREFIGHT" : "MULTIPLAYER");
-      DrawParty(ui, settings.playerName, "SELECTING GAME TYPE");
-      Text(ui, nullptr, 17.0f, ImVec2(left + 30.0f * ui.s, top + 72.0f * ui.s),
-           kDim,
-           st.variantPickerModded
-               ? "Every game type, on a modded map."
-               : ("Game types " + st.variantPickerMapName + " can host.")
-                     .c_str());
-
-      const float listX = left + 24.0f * ui.s;
-      const float listTop = top + 108.0f * ui.s;
-      const float listBot = ui.origin.y + ui.size.y - 68.0f * ui.s;
-      const float rightMax = ui.origin.x + ui.size.x * 0.94f;
-      const float listW = (rightMax - listX) * 0.48f;
-      const ImVec2 lc0(listX, listTop), lc1(listX + listW, listBot);
-      ui.dl->AddRectFilled(lc0, lc1, IM_COL32(8, 14, 22, 200), 2.0f * ui.s);
-      NobleUi::DrawTacticalFrame(ui.dl, lc0, lc1, ui.s, true, true, false,
-                                 false);
-
-      const float rowH = 38.0f;
-      const int rows =
-          std::max(4, static_cast<int>((listBot - listTop - 24.0f * ui.s) /
-                                       (rowH * ui.s)));
-      VariantRow shown;
-      const MenuVariant *picked = DrawVariantList(
-          ui, st, list, st.variantPickerMap, ff || st.variantPickerModded,
-          ImVec2(listX + 12.0f * ui.s, listTop + 12.0f * ui.s),
-          listW - 24.0f * ui.s, rowH, rows, true, shown);
-      if (!shown.mode.empty()) {
-        const float infoX = listX + listW + 24.0f * ui.s;
-        const float infoW = rightMax - infoX;
-        const float infoTop = std::max(listTop, ui.origin.y + 150.0f * ui.s);
-        const ImVec2 ic0(infoX, infoTop),
-            ic1(infoX + infoW, infoTop + 230.0f * ui.s);
-        ui.dl->AddRectFilled(ic0, ic1, IM_COL32(8, 14, 22, 215), 2.0f * ui.s);
-        NobleUi::DrawTacticalFrame(ui.dl, ic0, ic1, ui.s, false, true, false,
-                                   false);
-        DrawVariantInfo(ui,
-                        ImVec2(infoX + 18.0f * ui.s, infoTop + 18.0f * ui.s),
-                        infoW - 36.0f * ui.s, shown);
-      }
-      if (picked) {
-        current = static_cast<int>(picked - list.data());
-        NOBLE_INFO("FrontEndMenu: game type picked: {} ({})", picked->label,
-                   picked->path.filename().string());
-        st.variantPickerOpen = false;
-        MenuSounds::Change();
-      } else if (back) {
-        st.variantPickerOpen = false;
-        MenuSounds::Back();
-      }
-      DrawHints(ui, {{Prompt::Accept, "Choose"}, {Prompt::Back, "Back"}});
-      break;
-    }
-
-    DrawTopTelemetryBar(ui, ff ? "FIREFIGHT" : forge ? "FORGE" : "MULTIPLAYER");
-    DrawTitle(ui, ImVec2(left, top),
-              ff      ? "FIREFIGHT"
-              : forge ? "FORGE"
-                      : "CUSTOM GAME",
-              "MAP SELECT");
-    const MenuMap *baseMaps = ff ? kFirefightMaps : kMaps;
-    const int baseCount = ff ? Count(kFirefightMaps) : Count(kMaps);
-    const std::vector<const ModEntry *> &modList = ff ? ctx.ffMods : ctx.mpMods;
-    int &source = ff ? st.ffSource : forge ? st.forgeSource : st.mpSource;
-    float tabsEnd = 0.0f;
-    if (DrawSourceTabs(ui, ImVec2(left + 26.0f * ui.s, top + 72.0f * ui.s),
-                       source, static_cast<int>(modList.size()),
-                       ff ? -1 : static_cast<int>(ctx.forgeMaps.size()),
-                       &tabsEnd)) {
-      st.focusRow = 0;
-      st.mapDrawerKey.clear();
-      st.mapDrawerFocus = -1;
-      st.mapGridScrollY = 0.0f;
-    }
-    const bool modded = source == 1;
-    const bool forgeTab = source == 2 && !ff;
-    const ModMode modMode = ff ? ModMode::Firefight : ModMode::Multiplayer;
-    const std::string carrier =
-        ff ? "ff60_icecave" : (forge ? "forge_halo" : "70_boneyard");
-    const float searchX =
-        std::max(left + 26.0f * ui.s + 240.0f * ui.s, tabsEnd + 10.0f * ui.s);
-    if (DrawSearchBox(ui, "##map_search", ImVec2(searchX, top + 72.0f * ui.s),
-                      180.0f * ui.s, st.mapSearch, sizeof(st.mapSearch),
-                      "Search maps & mods"))
-      st.mapSearchRow = 0;
-    if (ImGui::IsItemActive())
-      st.focusRow = 0;
-    const bool searching = st.mapSearch[0] != 0;
-
-    const std::vector<MapTileGroup> groups =
-        BuildMapTileGroups(ctx, modded, forgeTab, modMode, modList, baseMaps,
-                           baseCount, carrier, !ff && !forgeTab, st.mapSearch);
-
-    int &realIndex = forgeTab ? (forge ? st.forgeForgeMap : st.mpForgeMap)
-                     : modded ? (ff      ? st.ffModded
-                                 : forge ? st.forgeModded
-                                         : st.mpModded)
-                              : (ff      ? st.ffMap
-                                 : forge ? st.forgeMap
-                                         : st.map);
-    int &mapIndex = searching ? st.mapSearchRow : realIndex;
-    std::filesystem::path ffDummyMvar;
-    std::filesystem::path &activeMvar = ff       ? ffDummyMvar
-                                        : modded ? st.modSelectedMvar
-                                        : forge  ? st.forgeSelectedMvar
-                                                 : st.mpSelectedMvar;
-
-    if (const std::string autoMap = AutoPlayMap();
-        !autoMap.empty() && source == 0) {
-      for (size_t i = 0; i < groups.size(); ++i) {
-        if (groups[i].base.scenario == autoMap ||
-            groups[i].base.launchScenario == autoMap) {
-          mapIndex = static_cast<int>(i);
-          break;
-        }
-      }
-    }
-    if (groups.empty())
-      mapIndex = 0;
-    else
-      mapIndex = std::clamp(mapIndex, 0, static_cast<int>(groups.size()) - 1);
-
-    static Screen s_mpLastScr = Screen::Main;
-    static int s_mpLastSrc = -1;
-    const bool firstEnter = (s_mpLastScr != st.screen || s_mpLastSrc != source);
-    s_mpLastScr = st.screen;
-    s_mpLastSrc = source;
-
-    const float gridX = left + 24.0f * ui.s;
-    const float gridTop = top + 114.0f * ui.s;
-    const float rightMax = ui.origin.x + ui.size.x * 0.94f;
-    const float gridW = (rightMax - gridX) * 0.56f;
-    const float gridBot = ui.origin.y + ui.size.y - 68.0f * ui.s;
-
-    const TacticalGridResult gridRes = DrawTacticalMapGrid(
-        ui, st, ImVec2(gridX, gridTop), ImVec2(gridW, gridBot - gridTop),
-        groups, mapIndex, activeMvar, st.focusRow == 0,
-        searching  ? "Nothing matches your search"
-        : forgeTab ? "No Forge maps in data\\map_variants"
-        : ff       ? "No Reach Firefight mods installed"
-                   : "No Reach multiplayer mods installed",
-        forge ? "BASE CANVAS" : "BASE MAP", firstEnter);
-    if (gridRes.pickedBaseOrVariant) {
-      if (searching && !groups.empty()) {
-        const std::string chosenKey =
-            groups[std::clamp(mapIndex, 0, static_cast<int>(groups.size()) - 1)]
-                .key;
-        const std::vector<MapTileGroup> full = BuildMapTileGroups(
-            ctx, modded, forgeTab, modMode, modList, baseMaps, baseCount,
-            carrier, !ff && !forgeTab, "");
-        for (size_t i = 0; i < full.size(); ++i) {
-          if (full[i].key == chosenKey) {
-            realIndex = static_cast<int>(i);
-            break;
-          }
-        }
-        st.mapSearch[0] = 0;
-      }
-      st.mapDrawerKey.clear();
-      st.mapDrawerFocus = -1;
-      st.focusRow = 1;
-    } else if (gridRes.moveFocusRight) {
-      st.focusRow = 1;
-    }
-
-    const int clampedGroup =
-        groups.empty()
-            ? 0
-            : std::clamp(mapIndex, 0, static_cast<int>(groups.size()) - 1);
-    const MapTileGroup *selGrp =
-        groups.empty() ? nullptr : &groups[clampedGroup];
-    const MapEntry *selVar = nullptr;
-    if (selGrp && !activeMvar.empty()) {
-      for (const MapEntry &v : selGrp->variants) {
-        if (v.mvar == activeMvar) {
-          selVar = &v;
-          break;
-        }
-      }
-      if (!selVar)
-        activeMvar.clear();
-    }
-    const MapEntry *map =
-        selVar ? selVar
-               : (selGrp && selGrp->base.enabled ? &selGrp->base : nullptr);
-    const ModEntry *mod = map ? map->mod : nullptr;
-
-    // "-auto-play-variant <text>": a test run can ask for a specific game type.
-    if (const std::string autoStem = AutoPlayVariantStem();
-        !autoStem.empty() && !modded) {
-      const std::vector<MenuVariant> &list = ff ? ctx.ffVariants : ctx.variants;
-      int &v = ff ? st.ffVariant : st.variant;
-      std::string needle = autoStem;
-      for (char &c : needle)
-        c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-      int prefix = -1, anywhere = -1;
-      for (size_t i = 0; i < list.size(); ++i) {
-        std::string stem = list[i].path.stem().string();
-        for (char &c : stem)
-          c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-        if (stem.rfind(needle, 0) == 0) {
-          prefix = static_cast<int>(i);
-          break;
-        }
-        if (anywhere < 0 && stem.find(needle) != std::string::npos)
-          anywhere = static_cast<int>(i);
-      }
-      const int chosen = prefix >= 0 ? prefix : anywhere;
-      if (chosen >= 0) {
-        v = chosen;
-        static bool s_logged = false;
-        if (!s_logged) {
-          s_logged = true;
-          NOBLE_INFO("FrontEndMenu: -auto-play-variant {} -> {}", autoStem,
-                     list[chosen].path.filename().string());
-        }
-      }
-    }
-
-    // Game-type safety: a vanilla map only hosts the types it was built for
-    // (modded maps are unrestricted).
-    std::string gameType;
-    std::string typeConflict;
-    if (!ff && !forge && map && map->mod == nullptr) {
-      const std::vector<MenuVariant> &list = ctx.variants;
-      if (!list.empty()) {
-        gameType =
-            list[std::clamp(st.variant, 0, static_cast<int>(list.size()) - 1)]
-                .type;
-      }
-      if (!gameType.empty() &&
-          !MapGameTypes::Supports(map->scenario, gameType)) {
-        std::string good;
-        const std::vector<std::string> allowed =
-            MapGameTypes::RequiredMaps(gameType);
-        for (size_t i = 0; i < allowed.size(); ++i) {
-          std::string name = allowed[i];
-          for (const MenuMap &m : kMaps)
-            if (m.scenario == allowed[i]) {
-              name = m.name;
-              break;
-            }
-          if (i)
-            good += (i + 1 == allowed.size()) ? " or " : ", ";
-          good += name;
-        }
-        typeConflict = std::string(MapGameTypes::Name(gameType)) +
-                       " isn't set up on " + map->name + "  Pick " + good +
-                       " (modded maps are never restricted).";
-        static std::string s_lastRefusal;
-        if (s_lastRefusal != (map->scenario + "|" + gameType)) {
-          s_lastRefusal = map->scenario + "|" + gameType;
-          NOBLE_INFO("FrontEndMenu: refused to start {} on {} - {} has no "
-                     "setup for it",
-                     MapGameTypes::Name(gameType), map->name, map->scenario);
-        }
-      }
-    }
-    const bool forgeMissing =
-        forge && !std::filesystem::exists(ctx.forgeVariant);
-
-    // Right Detail & Match Setup Card
-    const float px = gridX + gridW + 24.0f * ui.s;
-    const float pw = rightMax - px;
-    const float cardTop = std::max(gridTop, ui.origin.y + 150.0f * ui.s);
-    const float cardBot = gridBot;
-    const ImVec2 rc0(px, cardTop), rc1(px + pw, cardBot);
-    ui.dl->AddRectFilled(rc0, rc1, IM_COL32(8, 14, 22, 215), 2.0f * ui.s);
-    NobleUi::DrawTacticalFrame(ui.dl, rc0, rc1, ui.s, st.focusRow > 0, true,
-                               false, false);
-
-    const float pad = 16.0f * ui.s;
-    const float innerW = pw - pad * 2.0f;
-    const float actionsY = cardBot - 62.0f * ui.s;
-    const float stripY = actionsY - LobbyStripHeight(ui) - 8.0f * ui.s;
-    const float controlsH = (forge ? 72.0f
-                             : ff  ? 214.0f
-                                   : 144.0f) *
-                                ui.s +
-                            (forgeMissing ? 26.0f * ui.s : 0.0f) +
-                            (typeConflict.empty() ? 0.0f : 42.0f * ui.s);
-    const float metaFixedH = (selVar ? 232.0f : 212.0f) * ui.s;
-    const float previewH = std::clamp(stripY - cardTop - controlsH - metaFixedH,
-                                      58.0f * ui.s, innerW * 292.0f / 668.0f);
-
-    const char *fallbackMode = ff      ? "FIREFIGHT"
-                               : forge ? "FORGE"
-                                       : "MULTIPLAYER";
-    float y = DrawMapDetailHeaderCard(ui, rc0, pw, previewH,
-                                      selGrp ? &selGrp->base : nullptr, selVar,
-                                      fallbackMode);
-
-    int focusRows = 1;
-    const bool navReady = (st.focusRow > 0);
-    if (!forge) {
-      const std::vector<MenuVariant> &list = ff ? ctx.ffVariants : ctx.variants;
-      int &v = ff ? st.ffVariant : st.variant;
-      const char *label =
-          list.empty()
-              ? "Default"
-              : list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)]
-                    .label.c_str();
-      const int dv =
-          OptionRow(ui, "variant", ImVec2(px + pad, y), innerW, "GAME TYPE",
-                    label, st.focusRow == focusRows, nullptr, false);
-      const float valueX = px + pad + innerW * 0.48f, rowHeight = 32.0f * ui.s;
-      ImGui::SetCursorScreenPos(ImVec2(px + pad, y));
-      bool openList = ImGui::InvisibleButton("##variant_label",
-                                             ImVec2(innerW * 0.48f, rowHeight));
-      ImGui::SetCursorScreenPos(ImVec2(valueX, y));
-      openList = ImGui::InvisibleButton("##variant_value",
-                                        ImVec2(innerW * 0.52f, rowHeight)) ||
-                 openList;
-      DrawMiddleHint(ui, ImVec2(px + pad, y), innerW, label,
-                     ImGui::IsItemHovered(), false, true);
-      if (navReady && st.focusRow == focusRows && AcceptPressed())
-        openList = true;
-      if (openList && !list.empty()) {
-        st.variantPickerOpen = true;
-        st.variantPickerModded = modded;
-        st.variantPickerMap = map ? map->scenario : std::string();
-        st.variantPickerMapName = map ? map->name : std::string();
-        BeginVariantList(
-            st, list, st.variantPickerMap, modded || ff,
-            &list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)]);
-        MenuSounds::Click();
-      }
-      if (!list.empty()) {
-        const int count = static_cast<int>(list.size());
-        auto allowed = [&](int index) {
-          if (modded || !map)
-            return true;
-          const std::string &type = list[index].type;
-          return type.empty() || MapGameTypes::Supports(map->scenario, type);
-        };
-        if (dv) {
-          int next = v;
-          for (int step = 0; step < count; ++step) {
-            next = (next + dv + count) % count;
-            if (allowed(next))
-              break;
-          }
-          v = next;
-        } else if (!allowed(v)) {
-          for (int step = 1; step <= count; ++step) {
-            const int candidate = (v + step) % count;
-            if (allowed(candidate)) {
-              v = candidate;
-              break;
-            }
-          }
-        }
-      }
-      y += 36.0f * ui.s;
-      ++focusRows;
-    }
-    if (!typeConflict.empty()) {
-      ui.dl->AddRectFilled(ImVec2(px + pad, y),
-                           ImVec2(px + pw - pad, y + 38.0f * ui.s),
-                           IM_COL32(90, 26, 26, 150));
-      Text(ui, nullptr, 14.0f, ImVec2(px + pad + 10.0f * ui.s, y + 4.0f * ui.s),
-           IM_COL32(255, 190, 180, 255), typeConflict.c_str(),
-           px + pw - pad - 10.0f * ui.s);
-      y += 42.0f * ui.s;
-    }
-    if (!ff) {
-      if (forge) {
-        const char *label =
-            st.forgeCustomVariant.empty() ? "EDIT" : "CUSTOM (EDIT)";
-        bool middleClicked = false;
-        const int optionsChange = ClickRow(
-            ui, "forge_options", ImVec2(px + pad, y), innerW, "GAME OPTIONS",
-            label, st.focusRow == focusRows, &middleClicked);
-        ImGui::SetCursorScreenPos(ImVec2(px + pad, y));
-        const bool clicked =
-            ImGui::InvisibleButton("##forge_options_open",
-                                   ImVec2(innerW * 0.48f, 32.0f * ui.s)) ||
-            middleClicked;
-        if ((clicked || optionsChange != 0 ||
-             (navReady && st.focusRow == focusRows && AcceptPressed())) &&
-            std::filesystem::exists(ctx.forgeVariant)) {
-          MenuVariant forgeMv;
-          forgeMv.path = st.forgeCustomVariant.empty() ? ctx.forgeVariant
-                                                       : st.forgeCustomVariant;
-          forgeMv.label =
-              st.forgeCustomVariant.empty() ? "Basic Editing" : "Forge Custom";
-          forgeMv.custom = !st.forgeCustomVariant.empty();
-          OpenGameOptions(ctx, forgeMv);
-        }
-        ++focusRows;
-      } else {
-        const std::vector<MenuVariant> &list = ctx.variants;
-        bool middleClicked = false;
-        const int optionsChange = ClickRow(
-            ui, "game_options", ImVec2(px + pad, y), innerW, "GAME OPTIONS",
-            "EDIT", st.focusRow == focusRows, &middleClicked);
-        ImGui::SetCursorScreenPos(ImVec2(px + pad, y));
-        const bool clicked =
-            ImGui::InvisibleButton("##game_options_open",
-                                   ImVec2(innerW * 0.48f, 32.0f * ui.s)) ||
-            middleClicked;
-        if ((clicked || optionsChange != 0 ||
-             (navReady && st.focusRow == focusRows && AcceptPressed())) &&
-            !list.empty()) {
-          OpenGameOptions(ctx,
-                          list[std::clamp(st.variant, 0,
-                                          static_cast<int>(list.size()) - 1)]);
-        }
-        ++focusRows;
-      }
-      y += 36.0f * ui.s;
-      if (!forge) {
-        const bool chosen =
-            st.playlistChoice >= 0 &&
-            st.playlistChoice < static_cast<int>(st.playlists.size());
-        const int count = static_cast<int>(st.playlists.size());
-        int playlistPicked = -1;
-        const int playlistStep = PickerRow(
-            ui, "playlist", ImVec2(px + pad, y), innerW, "PLAYLIST",
-            chosen ? st.playlists[st.playlistChoice].name.c_str() : "NONE",
-            st.focusRow == focusRows,
-            [&](std::vector<std::string> &choices, int &current) {
-              choices.push_back("None");
-              for (const auto &playlist : st.playlists)
-                choices.push_back(playlist.name);
-              current = chosen ? st.playlistChoice + 1 : 0;
-            },
-            &playlistPicked, false, nullptr, false);
-        if (playlistStep != 0)
-          st.playlistChoice =
-              ((st.playlistChoice + 1 + playlistStep + count + 1) %
-               (count + 1)) -
-              1;
-        else if (playlistPicked >= 0)
-          st.playlistChoice = playlistPicked - 1;
-        ImGui::SetCursorScreenPos(ImVec2(px + pad, y));
-        const bool openEditor = ImGui::InvisibleButton(
-            "##playlist_open", ImVec2(innerW * 0.48f, 32.0f * ui.s));
-        if (openEditor ||
-            (navReady && st.focusRow == focusRows && AcceptPressed())) {
-          st.playlistEdit =
-              chosen ? st.playlists[st.playlistChoice] : Playlists::Playlist{};
-          std::snprintf(st.playlistName, sizeof(st.playlistName), "%s",
-                        chosen ? st.playlistEdit.name.c_str() : "My Playlist");
-          st.playlistEditRow = 0;
-          st.playlistMessage.clear();
-          st.confirmAction.clear();
-          st.playlistEditOpen = true;
-          MenuSounds::Click();
-        }
-        ++focusRows;
-        y += 36.0f * ui.s;
-      }
-      static const int kCaps[] = {4, 8, 12, 16, 24, 32, 48, 64, 96, 128};
-      constexpr int kNumCaps =
-          static_cast<int>(sizeof(kCaps) / sizeof(kCaps[0]));
-      int capIdx = 3;
-      for (int ci = 0; ci < kNumCaps; ++ci) {
-        if (kCaps[ci] >= st.sessionMaxPlayers) {
-          capIdx = ci;
-          break;
-        }
-      }
-      char capText[32];
-      std::snprintf(capText, sizeof(capText), "%d PLAYERS", kCaps[capIdx]);
-      int capPicked = -1;
-      const int dc = PickerRow(
-          ui, "players", ImVec2(px + pad, y), innerW, "MAX PLAYERS", capText,
-          st.focusRow == focusRows,
-          [&](std::vector<std::string> &choices, int &current) {
-            for (int ci = 0; ci < kNumCaps; ++ci)
-              choices.push_back(std::to_string(kCaps[ci]) + " PLAYERS");
-            current = capIdx;
-          },
-          &capPicked, navReady && st.focusRow == focusRows && AcceptPressed());
-      if (dc) {
-        capIdx = (capIdx + dc + kNumCaps) % kNumCaps;
-        st.sessionMaxPlayers = kCaps[capIdx];
-      } else if (capPicked >= 0) {
-        st.sessionMaxPlayers = kCaps[capPicked];
-      }
-      y += 36.0f * ui.s;
-      ++focusRows;
-    }
-    if (ff) {
-      static const int kFfCaps[] = {4, 8, 12, 16};
-      constexpr int kNumFfCaps = 4;
-      int ffCapIdx = 3;
-      for (int ci = 0; ci < kNumFfCaps; ++ci) {
-        if (kFfCaps[ci] >= st.ffMaxPlayers) {
-          ffCapIdx = ci;
-          break;
-        }
-      }
-      char ffCapText[32];
-      std::snprintf(ffCapText, sizeof(ffCapText), "%d PLAYERS",
-                    kFfCaps[ffCapIdx]);
-      int ffCapPicked = -1;
-      const int dcFf = PickerRow(
-          ui, "ff_players", ImVec2(px + pad, y), innerW, "MAX PLAYERS",
-          ffCapText, st.focusRow == focusRows,
-          [&](std::vector<std::string> &choices, int &current) {
-            for (int ci = 0; ci < kNumFfCaps; ++ci)
-              choices.push_back(std::to_string(kFfCaps[ci]) + " PLAYERS");
-            current = ffCapIdx;
-          },
-          &ffCapPicked,
-          navReady && st.focusRow == focusRows && AcceptPressed());
-      if (dcFf) {
-        ffCapIdx = (ffCapIdx + dcFf + kNumFfCaps) % kNumFfCaps;
-        st.ffMaxPlayers = kFfCaps[ffCapIdx];
-      } else if (ffCapPicked >= 0) {
-        st.ffMaxPlayers = kFfCaps[ffCapPicked];
-      }
-      y += 36.0f * ui.s;
-      ++focusRows;
-
-      bool ffMiddleClicked = false;
-      const int ffOptionsChange = ClickRow(
-          ui, "ff_options", ImVec2(px + pad, y), innerW, "GAME OPTIONS", "EDIT",
-          st.focusRow == focusRows, &ffMiddleClicked);
-      ImGui::SetCursorScreenPos(ImVec2(px + pad, y));
-      const bool ffClicked =
-          ImGui::InvisibleButton("##ff_options_open",
-                                 ImVec2(innerW * 0.48f, 30.0f * ui.s)) ||
-          ffMiddleClicked;
-      if ((ffClicked || ffOptionsChange != 0 ||
-           (navReady && st.focusRow == focusRows && AcceptPressed())) &&
-          !ctx.ffVariants.empty()) {
-        OpenGameOptions(
-            ctx,
-            ctx.ffVariants[std::clamp(
-                st.ffVariant, 0, static_cast<int>(ctx.ffVariants.size()) - 1)]);
-      }
-      ++focusRows;
-      y += 36.0f * ui.s;
-      y += DifficultyTiles(ui, "ffdiff", ImVec2(px + pad, y), innerW,
-                           st.difficulty, st.focusRow == focusRows) +
-           8.0f * ui.s;
-      ++focusRows;
-    }
-    if (forgeMissing) {
-      Text(ui, nullptr, 15.0f, ImVec2(px + pad + 8.0f * ui.s, y),
-           IM_COL32(255, 190, 120, 255),
-           "MCC's Forge game type (00_basic_editing_054.bin) wasn't found.");
-    }
-    DrawLobbyControls(ui, ImVec2(px + pad, stripY), innerW, st);
-
-    const int soloRow = focusRows;
-    const int hostRow = focusRows + 1;
-    const bool canStart = map && map->enabled && typeConflict.empty();
-    const float bw = (innerW - 10.0f * ui.s) * 0.5f;
-    std::string sub;
-    if (!map)
-      sub = "Pick a map";
-    else if (ff)
-      sub = "Hold out alone \xC2\xB7 " +
-            std::string(kDifficultyNames[st.difficulty]);
-    else if (forge)
-      sub = map->name + " \xC2\xB7 Forge";
-    else {
-      const std::vector<MenuVariant> &list = ctx.variants;
-      sub = map->name + " \xC2\xB7 " +
-            (list.empty() ? std::string("Default")
-                          : list[std::clamp(st.variant, 0,
-                                            static_cast<int>(list.size()) - 1)]
-                                .label);
-    }
-
-    const char *soloLabel = ff      ? "PLAY SOLO"
-                            : forge ? "SOLO FORGE"
-                                    : "PLAY LOCAL";
-    const char *hostLabel = ff      ? "HOST CO-OP"
-                            : forge ? "HOST FORGE"
-                                    : "HOST LOBBY";
-    const char *hostSub = st.lobbyNetMode == 1
-                              ? (st.lobbyPrivacy == 0 ? "Public Online P2P"
-                                                      : "Private Online P2P")
-                              : "Local LAN Lobby";
-
-    const bool autoPlay = AutoPlayNow();
-    const bool startSolo =
-        ((BigAction(ui, "start", ImVec2(px + pad, actionsY), bw, soloLabel,
-                    sub.c_str(), true, canStart, st.focusRow == soloRow) ||
-          (st.focusRow == soloRow && AcceptPressed())) &&
-         canStart) ||
-        (autoPlay && canStart);
-    const bool startHost =
-        (BigAction(ui, "host", ImVec2(px + pad + bw + 10.0f * ui.s, actionsY),
-                   innerW - bw - 10.0f * ui.s, hostLabel, hostSub, true,
-                   canStart, st.focusRow == hostRow) ||
-         (st.focusRow == hostRow && AcceptPressed())) &&
-        canStart;
-
-    if (startHost) {
-      std::string varPath, varName;
-      if (ff) {
-        if (!ctx.ffVariants.empty()) {
-          varPath = ctx.ffVariants[st.ffVariant].path.string();
-          varName = ctx.ffVariants[st.ffVariant].label;
-        } else {
-          varName = "Firefight Standard";
-        }
-      } else if (forge) {
-        varPath = (!st.forgeCustomVariant.empty() &&
-                   std::filesystem::exists(st.forgeCustomVariant))
-                      ? st.forgeCustomVariant.string()
-                      : ctx.forgeVariant.string();
-        varName =
-            st.forgeCustomVariant.empty() ? "Basic Editing" : "Custom Forge";
-      } else {
-        if (!ctx.variants.empty()) {
-          varPath = ctx.variants[st.variant].path.string();
-          varName = ctx.variants[st.variant].label;
-        } else {
-          varName = "Slayer";
-        }
-      }
-      const std::string mode =
-          ff ? "firefight" : (forge ? "forge" : "multiplayer");
-      const std::string lobbyScenario =
-          map ? (map->launchScenario.empty() ? map->scenario
-                                             : map->launchScenario)
-              : std::string("20_sword_slayer");
-      SetupHostLobby(
-          st, lobbyScenario, mode, varPath, varName, ff ? st.difficulty : 1, 0,
-          ff ? st.ffMaxPlayers : st.sessionMaxPlayers, map ? map->mod : nullptr,
-          map ? map->mapOverride : std::filesystem::path(),
-          map ? map->name : std::string(),
-          map ? map->imageLoading : std::filesystem::path(),
-          map ? map->imageThumbnail : std::filesystem::path());
-      if (map && !map->mvar.empty()) {
-        st.lobbyMapVariant = map->mvar;
-        NOBLE_INFO("FrontEndMenu: lobby Forge map '{}' ({})", map->name,
-                   map->mvar.filename().string());
-      }
-      if (!ff && !forge && st.playlistChoice >= 0 &&
-          st.playlistChoice < static_cast<int>(st.playlists.size())) {
-        const Playlists::Playlist &playlist = st.playlists[st.playlistChoice];
-        st.playlistPosition = playlist.shuffle
-                                  ? static_cast<int>(std::random_device{}() %
-                                                     playlist.entries.size())
-                                  : 0;
-        ResolvedEntry resolved;
-        if (ResolveEntry(ctx, playlist.entries[st.playlistPosition],
-                         playlist.randomType, resolved))
-          ApplyEntryToLobby(st, resolved);
-      }
-    } else if (startSolo && map) {
-      FrontEndChoice req;
-      req.play = true;
-      req.host = false;
-      req.map =
-          map->launchScenario.empty() ? map->scenario : map->launchScenario;
-      req.mapOverride = map->mapOverride;
-      req.mapTitle = map->name;
-      req.mapImage = map->imageLoading;
-      req.mapThumb = map->imageThumbnail;
-      req.mapVariant = map->mvar;
-      if (mod) {
-        req.modFolder = mod->folder;
-        req.modTitle = mod->title;
-      }
-      if (ff) {
-        req.mode = "firefight";
-        req.difficulty = st.difficulty;
-        if (!ctx.ffVariants.empty())
-          req.variantPath = ctx.ffVariants[st.ffVariant].path.string();
-      } else {
-        req.mode = forge ? "forge" : "multiplayer";
-        if (forge) {
-          req.variantPath = (!st.forgeCustomVariant.empty() &&
-                             std::filesystem::exists(st.forgeCustomVariant))
-                                ? st.forgeCustomVariant.string()
-                                : ctx.forgeVariant.string();
-        } else if (!ctx.variants.empty()) {
-          req.variantPath = ctx.variants[st.variant].path.string();
-        }
-      }
-      RequestMatchLaunch(choice, done, req);
-    }
-    if (!s_pickerBlocksNav && st.focusRow > 0) {
-      if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
-          ImGui::IsKeyPressed(ImGuiKey_Tab) || UiPad::Down())
-        st.focusRow = std::min(hostRow, st.focusRow + 1);
-      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())
-        st.focusRow = std::max(1, st.focusRow - 1);
-      if (st.focusRow == soloRow &&
-          (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Right())) {
-        st.focusRow = hostRow;
-        MenuSounds::Scroll();
-      }
-      if (st.focusRow == hostRow &&
-          (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left())) {
-        st.focusRow = soloRow;
-        MenuSounds::Scroll();
-      }
-    }
-    if (!ImGui::GetIO().WantTextInput && UiPad::ActionX()) {
-      if (forge && std::filesystem::exists(ctx.forgeVariant)) {
-        MenuVariant forgeMv;
-        forgeMv.path = st.forgeCustomVariant.empty() ? ctx.forgeVariant
-                                                     : st.forgeCustomVariant;
-        forgeMv.label =
-            st.forgeCustomVariant.empty() ? "Basic Editing" : "Forge Custom";
-        forgeMv.custom = !st.forgeCustomVariant.empty();
-        OpenGameOptions(ctx, forgeMv);
-        MenuSounds::Click();
-      } else if (ff && !ctx.ffVariants.empty()) {
-        OpenGameOptions(
-            ctx,
-            ctx.ffVariants[std::clamp(
-                st.ffVariant, 0, static_cast<int>(ctx.ffVariants.size()) - 1)]);
-        MenuSounds::Click();
-      } else if (!ff && !forge && !ctx.variants.empty()) {
-        OpenGameOptions(
-            ctx,
-            ctx.variants[std::clamp(
-                st.variant, 0, static_cast<int>(ctx.variants.size()) - 1)]);
-        MenuSounds::Click();
-      }
-    }
-    if (back) {
-      if (st.focusRow > 0)
-        st.focusRow = 0;
-      else if (!st.mapDrawerKey.empty()) {
-        st.mapDrawerKey.clear();
-        st.mapDrawerFocus = -1;
-      } else
-        goBack(Screen::Main);
-    }
-    const char *tabsHint =
-        ff ? "Vanilla / Modded" : "Vanilla / Modded / Forge Maps";
-    if (forge) {
-      DrawHints(ui,
-                {{Prompt::Accept, "Select"},
-                 {Prompt::Back, "Back"},
-                 {Prompt::Tabs, tabsHint}},
-                {{InputPrompts::Button::X, "X", "Game Options"}});
-    } else {
-      DrawHints(ui,
-                {{Prompt::Accept, "Select"},
-                 {Prompt::Back, "Back"},
-                 {Prompt::Change, "Change"},
-                 {Prompt::Tabs, tabsHint}},
-                {{InputPrompts::Button::X, "X", "Game Options"}});
-    }
+    DrawFirefightCustomForgeScreen(ctx, ui, left, top, choice, done, back);
     break;
   }
-
   case Screen::Theater: {
     if (!ctx.theaterScanned) {
       ctx.theaterEntries = ScanTheaterEntries();
@@ -13234,16 +5455,13 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
     // Category tabs: ALL / RECENT FILMS / SAVED FILMS / VIDEOS (Q / E or LB /
     // RB to cycle)
     if (!ImGui::GetIO().WantTextInput) {
-      if (ImGui::IsKeyPressed(ImGuiKey_Q, false) ||
-          ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+      if (UiPad::TabPrev()) {
         st.theaterSource = (st.theaterSource + 3) % 4;
         st.focusRow = 0;
         st.theaterStatusMsg.clear();
         st.theaterConfirmDelete.clear();
         MenuSounds::Scroll();
-      } else if (ImGui::IsKeyPressed(ImGuiKey_E, false) ||
-                 ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ||
-                 HintClicked(Prompt::Tabs)) {
+      } else if (UiPad::TabNext() || HintClicked(Prompt::Tabs)) {
         st.theaterSource = (st.theaterSource + 1) % 4;
         st.focusRow = 0;
         st.theaterStatusMsg.clear();
@@ -13603,17 +5821,13 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
           "Opened '" + root.string() + "' in Windows Explorer.";
     }
 
-    if (!s_pickerBlocksNav && st.focusRow > 0 &&
+    if (!g_pickerBlocksNav && st.focusRow > 0 &&
         (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
-         ImGui::IsKeyPressed(ImGuiKey_Tab) ||
-         ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) ||
-         ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) {
+         ImGui::IsKeyPressed(ImGuiKey_Tab) || UiPad::Down())) {
       st.focusRow = std::min(folderRow, st.focusRow + 1);
     }
-    if (!s_pickerBlocksNav && st.focusRow > 0 &&
-        (ImGui::IsKeyPressed(ImGuiKey_UpArrow) ||
-         ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) ||
-         ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))) {
+    if (!g_pickerBlocksNav && st.focusRow > 0 &&
+        (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())) {
       st.focusRow = std::max(1, st.focusRow - 1);
     }
     if (back) {
@@ -13683,15 +5897,33 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
         ImGuiChildFlags_None,
         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse |
             ImGuiWindowFlags_NoScrollbar);
-    UIManager::GetArmorCustomizer().Render(device, context);
+    auto &armory = UIManager::GetArmorCustomizer();
+    armory.Render(device, context);
     ImGui::EndChild();
 
     if (back && !ImGui::GetIO().WantTextInput) {
-      goBack(Screen::Main);
+      if (!armory.HandleBackInput()) {
+        goBack(Screen::Main);
+      }
     }
-    DrawHints(ui, {{Prompt::Back, "Back"},
-                   {Prompt::Change, "Change Piece"},
-                   {Prompt::Tabs, "Rotate Character (Q/E or Drag)"}});
+    if (armory.IsColorModalOpen()) {
+      DrawHints(ui, {{Prompt::Accept, "Confirm"},
+                     {Prompt::Back, "Close"},
+                     {Prompt::Change, "Adjust RGB"}});
+    } else if (armory.IsPickerFocused()) {
+      DrawHints(ui,
+                {{Prompt::Accept, "Equip / Buy"}, {Prompt::Back, "Slot List"}},
+                {{InputPrompts::Button::DpadDown, "ARROWS", "Grid"},
+                 {InputPrompts::Button::RStick, "Q/E", "Rotate"}});
+    } else {
+      DrawHints(ui,
+                {{Prompt::Accept, "Browse"},
+                 {Prompt::Back, "Back"},
+                 {Prompt::Change, "Cycle"}},
+                {{InputPrompts::Button::LB, "LB/RB", "Species"},
+                 {InputPrompts::Button::Y, "Y", "Random"},
+                 {InputPrompts::Button::RStick, "Q/E", "Rotate"}});
+    }
     break;
   }
 
@@ -13826,7 +6058,16 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
                  {Prompt::Tabs, "Category"}},
                 {}, 0.01875f);
     else if (st.screen == Screen::Career)
-      DrawHints(ui, {{Prompt::Back, "Back"}, {Prompt::Tabs, "Switch Tab"}}, {},
+      DrawHints(ui, {{Prompt::Back, "Back"}, {Prompt::Tabs, "Switch Tab"}},
+                ctx.careerPanel.IsCommendationsTab()
+                    ? std::vector<HintExtra>{{InputPrompts::Button::DpadDown,
+                                              "ARROWS", "Navigate"},
+                                             {InputPrompts::Button::LT, "PgUp",
+                                              "Mode"}}
+                    : std::vector<HintExtra>{{InputPrompts::Button::DpadDown,
+                                              "ARROWS", "Navigate"},
+                                             {InputPrompts::Button::RStick,
+                                              "WHEEL", "Scroll"}},
                 0.01875f);
     else if (st.screen == Screen::Servers)
       DrawHints(ui,
@@ -13888,7 +6129,19 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
   ImGui::End();
 }
 
-} // namespace
+void GoBackScreen(MenuState &st, Screen to) {
+  UiPad::ConsumeBack();
+  st.screen = to;
+  st.focusRow = 0;
+  st.lobbyFocusZone = 0;
+  st.mapSearch[0] = 0;
+  MenuSounds::Back();
+}
+
+} // namespace fe
+
+using namespace noble::fe;
+
 // A Forge map saved during a match is not in the list yet: the scan is cached,
 // so drop it.
 void FrontEndMenu::InvalidateForgeMaps() {
@@ -14477,29 +6730,14 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
         NOBLE_INFO("FrontEndMenu: Received WebSocket real-time lobby launch "
                    "event! (map: {}, mode: {}, mod: {})",
                    lMap, lMode, lModId);
-        std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
-        if (s_lobbyEvents.launch)
-          return; // the host's launch can arrive twice
-        s_lobbyEvents.launch = true;
-        s_lobbyEvents.map = lMap;
-        s_lobbyEvents.mode = lMode;
-        s_lobbyEvents.variant = lVar;
-        s_lobbyEvents.difficulty = lDiff;
-        s_lobbyEvents.skulls = lSkulls;
-        if (!hIp.empty())
-          s_lobbyEvents.hostEndpoint = hIp + ":" + std::to_string(hPort);
-        s_lobbyEvents.sessionId = sId;
-        s_lobbyEvents.mapOverride = lMapOverride;
-        s_lobbyEvents.modFolder = lModFolder;
-        s_lobbyEvents.modId = lModId;
+        fe::EnqueueLobbyLaunch(lMap, lMode, lVar, lDiff, lSkulls, hIp, hPort,
+                               sId, lMapOverride, lModFolder, lModId);
       });
 
   NetworkTransport::Get().SetLobbyClosedCallback([](const std::string &reason) {
     NOBLE_INFO("FrontEndMenu: Received lobby_closed event! (reason: {})",
                reason);
-    std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
-    s_lobbyEvents.closed = true;
-    s_lobbyEvents.closeReason = reason;
+    fe::EnqueueLobbyClosed(reason);
   });
 
   NetworkTransport::Get().SetLobbyRosterCallback(
@@ -14537,9 +6775,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
               }
               updated.push_back(p);
             }
-            std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
-            s_lobbyEvents.roster = true;
-            s_lobbyEvents.rosterPlayers = std::move(updated);
+            fe::EnqueueLobbyRoster(std::move(updated));
           }
         } catch (...) {
         }
@@ -14555,33 +6791,50 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
 void FrontEndMenu::RenderOverlay(IDXGISwapChain *swapChain) {
   if (!swapChain || IsMatchRunning())
     return;
+  std::lock_guard<std::recursive_mutex> lock(s_overlayMutex);
+  if (IsMatchRunning())
+    return;
   s_overlaySwapChain.store(swapChain);
   s_lastEngineOverlayFrame.store(GetTickCount64());
-  std::lock_guard<std::recursive_mutex> lock(s_overlayMutex);
+  if (s_holdFrameOwned.exchange(false)) {
+    s_resetFrameTimer.store(true);
+    NOBLE_INFO(
+        "FrontEndMenu: engine resumed drawing the menu; yielding HoldFrame");
+  }
   RenderOverlayImpl(swapChain, false);
 }
 
 bool FrontEndMenu::HoldFrame() {
   if (IsMatchRunning())
     return false;
+  std::lock_guard<std::recursive_mutex> lock(s_overlayMutex);
+  if (IsMatchRunning())
+    return false;
   OverlayContext &ctx = GetOverlayCtx();
   if (!ctx.initialized || ctx.closed || !ReachArmory::IsMenuMode())
     return false;
+  const ULONGLONG now = GetTickCount64();
   const ULONGLONG last = s_lastEngineOverlayFrame.load();
   IDXGISwapChain *swapChain = s_overlaySwapChain.load();
-  if (!swapChain || last == 0 || GetTickCount64() - last < 1000)
+  if (!swapChain)
     return false;
-  static bool s_logged = false;
-  if (!s_logged) {
-    s_logged = true;
+  if (!s_holdFrameOwned.load()) {
+    if (last == 0 || now - last < 1200)
+      return false;
+    s_holdFrameOwned.store(true);
+    s_resetFrameTimer.store(true);
     NOBLE_INFO(
         "FrontEndMenu: engine stopped drawing the menu; Noble draws it itself");
   }
-  {
-    std::lock_guard<std::recursive_mutex> lock(s_overlayMutex);
-    RenderOverlayImpl(swapChain, true);
-    FrameCapture::OnFrame(nullptr, 0); // keeps -quit-after working in test runs
-    swapChain->Present(1, 0);
+  RenderOverlayImpl(swapChain, true);
+  FrameCapture::OnFrame(nullptr, 0); // keeps -quit-after working in test runs
+  const ULONGLONG t0 = GetTickCount64();
+  const HRESULT hr = swapChain->Present(1, 0);
+  const ULONGLONG elapsed = GetTickCount64() - t0;
+  // DXGI_STATUS_OCCLUDED (or immediate Present during window transitions) does
+  // not block on VSync; pace to ~60 FPS so HoldFrame never spins at 1000+ FPS.
+  if (hr == DXGI_STATUS_OCCLUDED || elapsed < 10) {
+    Sleep(16);
   }
   return true;
 }
@@ -14633,7 +6886,8 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
     QueryPerformanceCounter(&now);
     if (s_freq.QuadPart == 0)
       QueryPerformanceFrequency(&s_freq);
-    float dt = s_last.QuadPart
+    const bool resetTimer = s_resetFrameTimer.exchange(false);
+    float dt = (!resetTimer && s_last.QuadPart)
                    ? static_cast<float>(now.QuadPart - s_last.QuadPart) /
                          static_cast<float>(s_freq.QuadPart)
                    : 1.0f / 60.0f;
@@ -14706,7 +6960,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
       if (muteNow >= s_nextMuteCheck) {
         s_nextMuteCheck = muteNow + 500;
         const SettingsData audio = Settings::Get().Snapshot();
-        bool muted = audio.masterMute || s_menuMusicMuted;
+        bool muted = audio.masterMute || g_menuMusicMuted;
         bool bgMuted = false;
         if (!muted && audio.muteInBackground) {
           // "Active" means the foreground window belongs to this process: that
@@ -14748,6 +7002,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
       NOBLE_ERROR("FrontEndMenu: unknown exception in menu loop");
     }
 
+    UiPad::DrawVirtualCursor(ImGui::GetForegroundDrawList());
     ImGui::Render();
 
     ID3D11RenderTargetView *oldRtv = nullptr;
@@ -14926,6 +7181,10 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
           choice.play = false;
           ReachAudio::StopMusic();
           ReachAudio::SetMenuMusicEnabled(false);
+        } else {
+          ctx.closed = false;
+          done = false;
+          choice.play = false;
         }
       } else {
         NOBLE_INFO("FrontEndMenu: quit from menu");

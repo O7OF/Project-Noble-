@@ -2664,13 +2664,13 @@ static void DrawScoreboardPanel() {
                           : hovered  ? IM_COL32(255, 255, 255, 38)
                                      : baseBg;
 
-      dl->AddRectFilled(r0, r1, rowBg);
+      dl->AddRectFilled(r0, r1, rowBg, 4.0f * s);
 
       // Selected or local highlight borders
       if (selected) {
-        dl->AddRect(r0, r1, IM_COL32(143, 216, 255, 255), 0.0f, 0, 1.5f * s);
+        dl->AddRect(r0, r1, IM_COL32(143, 216, 255, 255), 4.0f * s, 0, 1.5f * s);
       } else if (r.local) {
-        dl->AddRect(r0, r1, IM_COL32(80, 180, 235, 180), 0.0f, 0, 1.0f * s);
+        dl->AddRect(r0, r1, IM_COL32(80, 180, 235, 180), 4.0f * s, 0, 1.0f * s);
       }
 
       // 1. Placement Rank Number
@@ -2817,16 +2817,40 @@ static void DrawScoreboardPanel() {
 
     // Scrollbar track & thumb if list overflows
     if (overflow) {
-      const float trackX = cx + colW - 3.0f * s;
+      const float trackX = cx + colW - 4.0f * s;
       const float trackH = totalListH;
-      dl->AddRectFilled(ImVec2(trackX, listY),
-                        ImVec2(trackX + 3.0f * s, listY + trackH),
-                        IM_COL32(255, 255, 255, 24));
-      const float thumbH = std::max(trackH * visibleRows / count, 18.0f * s);
-      const float thumbY =
-          listY + (trackH - thumbH) * scroll / std::max(1, count - visibleRows);
-      dl->AddRectFilled(ImVec2(trackX, thumbY),
-                        ImVec2(trackX + 3.0f * s, thumbY + thumbH), kAccent);
+      const float maxScrollPx = static_cast<float>(count - visibleRows) * rowH;
+      static float s_boardScrollPx[2] = {0.0f, 0.0f};
+      static int s_lastBoardScroll[2] = {0, 0};
+      const int safeCol = std::clamp(col, 0, 1);
+      if (s_boardScroll[safeCol] != s_lastBoardScroll[safeCol]) {
+        s_boardScrollPx[safeCol] =
+            static_cast<float>(s_boardScroll[safeCol]) * rowH;
+        s_lastBoardScroll[safeCol] = s_boardScroll[safeCol];
+      }
+      s_boardScrollPx[safeCol] =
+          std::clamp(s_boardScrollPx[safeCol], 0.0f, maxScrollPx);
+      if (pointer && !s_boardReport.load() && !s_showPlayerModal) {
+        NobleUi::DrawInteractiveScrollbar(
+            dl, safeCol == 0 ? "##sb_0" : "##sb_1",
+            ImVec2(trackX, listY), ImVec2(trackX + 4.0f * s, listY + trackH),
+            s_boardScrollPx[safeCol], maxScrollPx, totalListH, count * rowH, s);
+        s_boardScroll[safeCol] = std::clamp(
+            static_cast<int>(
+                std::round(s_boardScrollPx[safeCol] / std::max(rowH, 1.0f))),
+            0, std::max(0, count - visibleRows));
+        s_lastBoardScroll[safeCol] = s_boardScroll[safeCol];
+      } else {
+        dl->AddRectFilled(ImVec2(trackX, listY),
+                          ImVec2(trackX + 4.0f * s, listY + trackH),
+                          IM_COL32(255, 255, 255, 24), 2.0f * s);
+        const float thumbH = std::max(trackH * visibleRows / count, 18.0f * s);
+        const float thumbY =
+            listY + (trackH - thumbH) * scroll / std::max(1, count - visibleRows);
+        dl->AddRectFilled(ImVec2(trackX, thumbY),
+                          ImVec2(trackX + 4.0f * s, thumbY + thumbH), kAccent,
+                          2.0f * s);
+      }
     }
   }
 
@@ -4236,7 +4260,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       io.AddMouseButtonEvent(0, false);
     }
 
-    UiPad::Feed(io);
+    UiPad::Feed(io, open || gameOver || boardPointer || extraOverlay != nullptr);
     // Keyboard/WM_CHAR events are already forwarded to ImGui by
     // UIManager::HandleWndProc -> ImGui_ImplWin32_WndProcHandler. Plain ImGui
     // text (pause list, challenges, buttons, settings) uses the fonts' fixed
@@ -4330,6 +4354,9 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       extraOverlay();
     SocialOverlay::Draw(24.0f, 24.0f,
                         778.0f); // chat stays above the motion tracker
+    if (open || gameOver || boardPointer || extraOverlay != nullptr) {
+      UiPad::DrawVirtualCursor(ImGui::GetForegroundDrawList());
+    }
     ImGui::Render();
 
     // The DX11 backend saves/restores most pipeline state but not the

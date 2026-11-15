@@ -1,5 +1,6 @@
 #pragma once
 
+struct ImDrawList;
 struct ImGuiIO;
 
 namespace noble {
@@ -12,7 +13,17 @@ namespace noble {
 // `wait` skips one. Inputs: a b x y lb rb lt rt up down left right lsup lsdown lsleft lsright start back.
 namespace UiPad {
 
-void Feed(ImGuiIO& io);
+// Feed controller state into ImGui before ImGui::NewFrame().
+// When `menuActive` is false (e.g. active gameplay in a match), UI virtual cursor and L3 quick-toggle stay inactive.
+void Feed(ImGuiIO& io, bool menuActive = true);
+
+// Controller Virtual Cursor mode: left stick drives a smooth UI cursor, A clicks/holds,
+// right stick scrolls hovered lists cleanly, and L3 toggles virtual cursor mode on/off.
+void SetVirtualCursorEnabled(bool on);
+bool IsVirtualCursorEnabled();
+bool IsVirtualCursorActive();      // enabled AND a controller is connected
+bool IsVirtualCursorInputFrame();  // true on frames driven by stick cursor / A-click / R-stick scroll (for InputPrompts)
+void DrawVirtualCursor(ImDrawList* dl);
 
 // The same questions for every custom-drawn list, so D-pad and left stick always agree. They repeat while held.
 bool Up();
@@ -32,6 +43,8 @@ bool TabNext();         // Gamepad RB or E
 void ConsumeAccept();
 void ConsumeBack();
 void ConsumeAll();
+// Re-sync controller state after a child match exits so held exit/confirm buttons cannot edge-trigger frame 0.
+void ResetAfterMatch();
 
 bool HasGamepad();
 // Smooth pixel scroll delta per frame from the Right Stick (and optionally Left Stick) for custom scroll lists.

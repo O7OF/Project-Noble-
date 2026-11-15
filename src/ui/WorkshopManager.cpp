@@ -309,8 +309,11 @@ void WorkshopManager::Render() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(U(10.0f), U(10.0f)));
 
     // Left: Tactical Mod Card List
+    static bool s_detailHoveredLast = false;
     ImGui::BeginChild("##modsCardList", ImVec2(listW, bodyH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-    UiPad::ScrollWindow(false, true);
+    if (UiPad::IsVirtualCursorActive() ? ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) : !s_detailHoveredLast) {
+        UiPad::ScrollWindow(false, true);
+    }
     ImDrawList* ldl = ImGui::GetWindowDrawList();
     const float innerListW = ImGui::GetContentRegionAvail().x;
     if (shown.empty()) {
@@ -404,7 +407,9 @@ void WorkshopManager::Render() {
 
     // Right: Mod Details Pane
     ImGui::BeginChild("##modDetailPane", ImVec2(detailsW, bodyH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-    UiPad::ScrollWindow(false, true);
+    s_detailHoveredLast = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+    if (s_detailHoveredLast)
+        UiPad::ScrollWindow(false, true);
     ImDrawList* ddl = ImGui::GetWindowDrawList();
     const float detW = ImGui::GetContentRegionAvail().x;
     const ImVec2 dh0 = ImGui::GetCursorScreenPos();

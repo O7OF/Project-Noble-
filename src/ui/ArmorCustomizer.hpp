@@ -134,6 +134,12 @@ public:
     UiArt::EmblemColors EmblemColorsNow() const;
     AppearanceProfile& GetProfileMutable() { return m_profile; }
 
+    // Handles B / Escape in layered Armory order: Custom Color modal -> Picker Grid -> Slot List.
+    // Returns true if Armory consumed the Back input and should stay open.
+    bool HandleBackInput();
+    bool IsPickerFocused() const { return m_pane == 1; }
+    bool IsColorModalOpen() const { return m_showColorModal; }
+
     static std::filesystem::path ResolveDefaultProfilePath();
 
 private:
@@ -164,7 +170,14 @@ private:
     bool m_autoRotate = false;
 
     int m_focusedRow = 0;
+    int m_pane = 0;               // 0 = left slot rail, 1 = middle option picker grid
+    int m_gridCursor = 0;         // highlighted option index inside middle picker grid
+    int m_lastGridRow = -1;       // tracks slot changes to snap grid cursor to equipped option
+    bool m_gridScrollToCursor = false;
     bool m_showColorModal = false;
+    bool m_openColorPopup = false;
+    bool m_pendingTryReset = false;
+    int m_colorModalFocus = 0;
 };
 
 } // namespace noble

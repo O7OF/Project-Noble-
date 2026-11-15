@@ -1,4 +1,5 @@
 #include "InputPrompts.hpp"
+#include "UiPad.hpp"
 
 #include <cfloat>
 #include <cmath>
@@ -62,9 +63,11 @@ float DPadLeftRight(ImDrawList* dl, ImVec2 pos, float h) {
 
 bool AnyKeyboardOrMouse() {
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.MouseDelta.x * io.MouseDelta.x + io.MouseDelta.y * io.MouseDelta.y > 4.0f) return true;
-    if (io.MouseWheel != 0.0f) return true;
-    for (int b = 0; b < ImGuiMouseButton_COUNT; ++b) if (ImGui::IsMouseClicked(b)) return true;
+    if (!UiPad::IsVirtualCursorInputFrame()) {
+        if (io.MouseDelta.x * io.MouseDelta.x + io.MouseDelta.y * io.MouseDelta.y > 4.0f) return true;
+        if (io.MouseWheel != 0.0f) return true;
+        for (int b = 0; b < ImGuiMouseButton_COUNT; ++b) if (ImGui::IsMouseClicked(b)) return true;
+    }
     for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_GamepadStart; ++k) {
         if (ImGui::IsKeyPressed(static_cast<ImGuiKey>(k), false)) return true;
     }

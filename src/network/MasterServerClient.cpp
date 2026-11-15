@@ -1314,8 +1314,17 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
             state.launchMap = ld.value("map", state.map);
             state.launchMode = ld.value("mode", state.mode);
             state.launchVariant = ld.value("variant", state.variant);
+            const std::string lVarBody = ld.value("variant_body", "");
+            if (!lVarBody.empty() && !state.launchVariant.empty()) {
+                std::string matPath;
+                if (NetworkTransport::MaterializeHostVariant(state.launchVariant, lVarBody, matPath)) {
+                    NOBLE_INFO("MasterServerClient: materialized JIP host variant '{}' -> '{}'", state.launchVariant, matPath);
+                    state.launchVariant = matPath;
+                }
+            }
             state.launchDifficulty = ld.value("difficulty", state.difficulty);
             state.launchMapOverride = ld.value("map_override", "");
+            state.launchMapVariant = ld.value("map_variant", "");
             state.launchModFolder = ld.value("mod_folder", "");
             state.launchModId = ld.value("mod_id", state.modId);
             try { state.launchSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}

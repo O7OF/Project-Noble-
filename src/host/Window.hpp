@@ -80,6 +80,9 @@ public:
     // Left-button presses (WM_LBUTTONDOWN) since the last call. Overlay menus use it so that a click
     // shorter than one frame still counts. Any thread.
     static int TakeLeftClicks();
+    // Discard buffered clicks, wheel notches, and typed chars, release any cursor clip, and restore
+    // the default arrow cursor after a child match exits. Any thread.
+    static void FlushInputEvents();
     // Characters typed while capture is on, for a text line drawn on a thread that can't read the window's messages.
     static void SetCharCapture(bool on);
     static std::wstring TakeTypedChars();

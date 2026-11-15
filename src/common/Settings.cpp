@@ -150,6 +150,7 @@ void Settings::Load() {
         try {
             const nlohmann::json j = nlohmann::json::parse(in);
             d.firstStartDone = j.value("firstStartDone", true);
+            Read(j, "lastSeenVersion", d.lastSeenVersion);
             Read(j, "width", d.width);
             Read(j, "height", d.height);
             Read(j, "borderless", d.borderless);
@@ -220,6 +221,7 @@ void Settings::Load() {
             }
             Read(j, "padLeftDeadZone", d.padLeftDeadZone);
             Read(j, "padRightDeadZone", d.padRightDeadZone);
+            Read(j, "padVirtualCursor", d.padVirtualCursor);
             Read(j, "volumeGame", d.volumeGame);
             Read(j, "volumeMusic", d.volumeMusic);
             // Migrate legacy 50% default to 15% so menu music is not uncomfortably loud.
@@ -393,6 +395,7 @@ bool Settings::Save() {
         if (!d.padBindings.empty()) j["padBindings"] = d.padBindings;
         j["padLeftDeadZone"] = d.padLeftDeadZone;
         j["padRightDeadZone"] = d.padRightDeadZone;
+        j["padVirtualCursor"] = d.padVirtualCursor;
         j["volumeGame"] = d.volumeGame;
         j["volumeMusic"] = d.volumeMusic;
         j["volumeOther"] = d.volumeOther;
@@ -401,6 +404,7 @@ bool Settings::Save() {
         j["muteInBackground"] = d.muteInBackground;
         j["inviteNotifications"] = d.inviteNotifications;
     j["firstStartDone"] = d.firstStartDone;
+    j["lastSeenVersion"] = d.lastSeenVersion;
         j["voiceEnabled"] = d.voiceEnabled;
         j["voiceInputDevice"] = d.voiceInputDevice;
         j["voiceOutputDevice"] = d.voiceOutputDevice;
@@ -467,7 +471,8 @@ SettingsData Settings::Snapshot() const {
 namespace {
 void DropPrivateKeys(nlohmann::json& j) {
     for (const char* key : { "accountUsername", "accountToken", "accountUserId", "isDeveloper", "masterServerUrl",
-                             "voiceInputDevice", "voiceOutputDevice", "firstStartDone", "lastPlayedMode", "lastPlayedMap" }) {
+                             "voiceInputDevice", "voiceOutputDevice", "firstStartDone", "lastSeenVersion",
+                             "lastPlayedMode", "lastPlayedMap" }) {
         j.erase(key);
     }
 }
