@@ -5430,6 +5430,9 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
           done = true;
         } else if (picked == &kDeveloperEntry) {
           OpenDevMenuModal();
+        } else if (std::string(picked->label) == "Join with Code") {
+          st.screen = Screen::Servers;
+          UIManager::GetServerBrowser().OpenJoinCodeModal();
         } else if (std::string(picked->label) == "Account") {
           OpenAccountModal();
         } else {
@@ -6450,7 +6453,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
   {
     int argc = 0;
     LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    std::wstring demo, demoMode, demoMap;
+    std::wstring demo, demoMode, demoMap, demoSession;
     int demoPlayers = 1;
     int demoRed = -1;
     int demoTeams = 0;
@@ -6458,6 +6461,8 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
     for (int i = 1; argv && i + 1 < argc; ++i) {
       if (_wcsicmp(argv[i], L"-lobby-demo") == 0)
         demo = Lower(argv[i + 1]);
+      if (_wcsicmp(argv[i], L"-lobby-demo-session") == 0)
+        demoSession = argv[i + 1];
       if (_wcsicmp(argv[i], L"-lobby-demo-players") == 0)
         demoPlayers = std::clamp(_wtoi(argv[i + 1]), 0, 128);
       if (_wcsicmp(argv[i], L"-lobby-demo-mode") == 0)
@@ -6478,6 +6483,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
       st.screen = Screen::PreGameLobby;
       st.isLobbyHost = demo == L"host";
       st.lobbyHostEndpoint = (st.isLobbyHost || demoPlayers == 0) ? "" : "demo";
+      // Test-only: a made-up but valid 16-hex session id so the host's SHARE CODE panel can be captured offline.
+      if (st.isLobbyHost && demoSession.size() == 16)
+        st.lobbySessionId.assign(demoSession.begin(), demoSession.end());
       if (demoMode == L"campaign") {
         st.lobbyMode = "campaign";
         st.lobbyMap = kMissions[0].scenario;

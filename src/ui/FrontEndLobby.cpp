@@ -1,4 +1,5 @@
 #include "FrontEndInternal.hpp"
+#include "network/InviteCode.hpp"
 
 namespace noble::fe {
 
@@ -2509,10 +2510,21 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   const char *netTitle = st.isLobbyHost   ? "HOSTING"
                          : hostEp.empty() ? "CONNECTING"
                                           : "CONNECTED";
+  // A shareable join code works for public AND private (unlisted) lobbies. It is just the session id in a short,
+  // typo-tolerant format - the joiner resolves the host through the master server, so no IP is exposed in the code.
+  std::string joinCode;
+  if (st.isLobbyHost && st.lobbySessionId.size() == 16) {
+    InviteCodeInfo codeInfo;
+    codeInfo.sessionId = st.lobbySessionId;
+    codeInfo.isPrivate = st.lobbyPrivacy != 0;
+    joinCode = EncodeInviteCode(codeInfo);
+  }
   const char *netDesc =
       st.isLobbyHost
-          ? (st.lobbyNetMode == 1 ? "Online peer-to-peer" : "Local network")
+          ? ((st.lobbyNetMode == 1) ? "Online peer-to-peer" : "Local network")
           : "Peer-to-peer";
+  if (!joinCode.empty())
+    netDesc = "Share this code - anyone who has it can join.";
   Text(ui, NobleStyle::TitleFont(), 16.0f,
        ImVec2(net0.x + 10.0f * ui.s, net0.y + 3.0f * ui.s), kWhite, netTitle);
   static double s_inviteCopiedAt = -10.0;
@@ -2520,21 +2532,25 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   Text(ui, NobleStyle::SmallFont(), 14.0f,
        ImVec2(net0.x + 10.0f * ui.s, net0.y + 23.0f * ui.s),
        justCopied ? kAccent : kDim,
-       justCopied ? "Invite copied to the clipboard." : netDesc);
+       justCopied ? (joinCode.empty() ? "Invite copied to the clipboard." : "Join code copied to the clipboard.")
+                  : netDesc);
+  if (!joinCode.empty())
+    Text(ui, NobleStyle::TitleFont(), 15.0f,
+         ImVec2(net0.x + 10.0f * ui.s, net0.y + 39.0f * ui.s), NobleUi::kAmber, joinCode.c_str());
   bool copyPressed = false;
-  if (!hostEp.empty()) {
+  if (!hostEp.empty() || !joinCode.empty()) {
     const float cpW = 112.0f * ui.s, cpH = 28.0f * ui.s;
     ImGui::SetCursorScreenPos(
         ImVec2(net1.x - cpW - 8.0f * ui.s, net0.y + 8.0f * ui.s));
     ImGui::PushID("btn_copy_inv");
-    copyPressed = ImGui::Button("COPY INVITE", ImVec2(cpW, cpH));
+    copyPressed = ImGui::Button(joinCode.empty() ? "COPY INVITE" : "COPY CODE", ImVec2(cpW, cpH));
     ImGui::PopID();
     copyPressed = copyPressed ||
                   (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_X, false)) ||
                   UiPad::ActionX();
   }
   if (copyPressed) {
-    ImGui::SetClipboardText(("/connect " + hostEp).c_str());
+    ImGui::SetClipboardText(joinCode.empty() ? ("/connect " + hostEp).c_str() : joinCode.c_str());
     s_inviteCopiedAt = now;
     MenuSounds::Click();
   }
@@ -3084,8 +3100,8 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   }
 
   std::vector<HintExtra> extras = {{InputPrompts::Button::Y, "F", "Friends"}};
-  if (!hostEp.empty())
-    extras.push_back({InputPrompts::Button::X, "X", "Copy invite"});
+  if (!hostEp.empty() || !joinCode.empty())
+    extras.push_back({InputPrompts::Button::X, "X", joinCode.empty() ? "Copy invite" : "Copy code"});
   if (rosterOverflows)
     extras.push_back({InputPrompts::Button::RT, "PGDN", "Page"});
   if (rosterCount > 0 && !pickerWasOpen)

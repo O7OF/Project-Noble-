@@ -220,6 +220,7 @@ set(SOURCES
     src/network/NetworkTransport.cpp
     src/network/AuthClient.cpp
     src/network/SocialClient.cpp
+    src/network/InviteCode.cpp
     src/res/noble.rc
 )
 
@@ -299,6 +300,7 @@ set(HEADERS
     src/network/NetworkTransport.hpp
     src/network/AuthClient.hpp
     src/network/SocialClient.hpp
+    src/network/InviteCode.hpp
 )
 
 # The menu map and string table are game data and are never committed. Embed them when the builder has

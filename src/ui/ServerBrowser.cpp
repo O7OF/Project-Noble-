@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <shellapi.h>
 #include "ServerBrowser.hpp"
 #include "MenuSounds.hpp"
 #include "UiPad.hpp"
@@ -15,6 +16,7 @@
 #include "network/MasterServerClient.hpp"
 #include "network/NetworkTransport.hpp"
 #include "network/SessionManager.hpp"
+#include "network/InviteCode.hpp"
 #include "network/UPnP.hpp"
 #include "FrontEndMenu.hpp"
 #include "NobleUi.hpp"
@@ -314,6 +316,28 @@ ServerBrowser::ServerBrowser() {
     const std::string masterUrl = s.masterServerUrl;  // empty = LAN/direct only
     MasterServerClient::Get().SetUrl(masterUrl);
     m_directConnectIp[0] = '\0';
+    // Test-only hooks: "-invite-code-selftest" runs the codec round-trip/negative tests; "-join-code-test <code>"
+    // pre-fills the join-by-code modal for a capture; "-invite-code-make <session>" logs a valid code to copy.
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; argv && i + 1 < argc; ++i) {
+        if (_wcsicmp(argv[i], L"-join-code-test") == 0) {
+            std::wstring ws(argv[i + 1]);
+            const std::string code(ws.begin(), ws.end());
+            std::snprintf(m_joinCode, sizeof(m_joinCode), "%s", code.c_str());
+            m_showJoinCodeModal = true;
+        } else if (_wcsicmp(argv[i], L"-invite-code-make") == 0) {
+            std::wstring ws(argv[i + 1]);
+            InviteCodeInfo info;
+            info.sessionId.assign(ws.begin(), ws.end());
+            NOBLE_INFO("InviteCode make: session {} -> '{}'", info.sessionId, EncodeInviteCode(info));
+        }
+    }
+    if (argv) LocalFree(argv);
+    if (wcsstr(GetCommandLineW(), L"-invite-code-selftest")) {
+        const int failures = InviteCodeSelfTest();
+        NOBLE_INFO("InviteCode self-test: {} failure(s)", failures);
+    }
 }
 
 void ServerBrowser::RefreshServers() {
@@ -580,6 +604,7 @@ void ServerBrowser::Render() {
     ImGui::PopStyleColor(2);
 
     if (m_showDirectConnectModal) RenderDirectConnectModal();
+    if (m_showJoinCodeModal) RenderJoinCodeModal();
     if (m_showMasterModal) RenderMasterServerModal();
 }
 
@@ -834,6 +859,11 @@ void ServerBrowser::RenderFilterBar() {
     }
     if (drawActionBtn("##directConnBtn", "DIRECT CONNECT", false)) {
         m_showDirectConnectModal = true;
+        MenuSounds::Click();
+    }
+    if (drawActionBtn("##joinCodeBtn", "JOIN WITH CODE", false)) {
+        m_showJoinCodeModal = true;
+        m_joinCodeError.clear();
         MenuSounds::Click();
     }
     const char* regShort = (curRegion == 0) ? "REGION: GLOBAL" : "REGION: LAN ONLY";
@@ -1593,6 +1623,114 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
     NOBLE_INFO("ServerBrowser: Connecting to {}:{} (map='{}', session='{}') via Relaunch", address, port, map, sessionId);
     Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
     CloseThisNobleWindow();
+}
+
+void ServerBrowser::OpenJoinCodeModal() {
+    m_showJoinCodeModal = true;
+    m_joinCodeError.clear();
+    MenuSounds::Click();
+}
+
+void ServerBrowser::JoinByCode() {
+    InviteCodeInfo info;
+    std::string error;
+    if (!DecodeInviteCode(m_joinCode, &info, &error)) {
+        m_joinCodeError = error;
+        return;
+    }
+    if (!CanStartJoinNow(m_status)) {
+        m_joinCodeError = m_status;
+        return;
+    }
+    if (!MasterServerClient::Get().Enabled()) {
+        m_joinCodeError = "Join codes need the master server (SETTINGS > ONLINE SERVICES).";
+        return;
+    }
+    const LobbyState lobby = MasterServerClient::Get().FetchLobbyStateSync(info.sessionId);
+    if (!lobby.ok) {
+        m_joinCodeError = "That code is not for a live lobby any more - ask for a new one.";
+        return;
+    }
+    ServerEntry s;
+    s.id = info.sessionId;
+    s.name = lobby.name.empty() ? "Invite code lobby" : lobby.name;
+    s.hostAddress = lobby.hostIp;
+    s.port = lobby.hostPort ? lobby.hostPort : 11774;
+    s.mapName = lobby.map;
+    s.gameMode = lobby.mode;
+    s.variantName = lobby.variant;
+    s.playerCount = lobby.playerCount;
+    s.maxPlayers = lobby.maxPlayers;
+    s.inProgress = lobby.inProgress;
+    s.isMod = !lobby.modId.empty();
+    s.modId = lobby.modId;
+    s.modTitle = lobby.modTitle;
+    s.source = "CODE";
+    NOBLE_INFO("ServerBrowser: join by code -> lobby '{}' ({}:{}, session {}, {})", s.name, s.hostAddress, s.port,
+               info.sessionId, InviteCodePrivacyName(info));
+    if (!m_joinLobbyHandler) {
+        m_joinCodeError = "Join-by-code needs the in-game menu (start Noble normally).";
+        return;
+    }
+    StampJoinAttemptNow();
+    UiPad::ConsumeAll();
+    m_showJoinCodeModal = false;
+    m_joinCodeError.clear();
+    ImGui::CloseCurrentPopup();
+    m_joinLobbyHandler(s);
+}
+
+void ServerBrowser::RenderJoinCodeModal() {
+    ImGui::OpenPopup("JOIN WITH CODE");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(U(500.0f), 0));
+    if (ImGui::BeginPopupModal("JOIN WITH CODE", &m_showJoinCodeModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        const float sScale = NobleUi::Scale();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (UiPad::BackPressed() || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            UiPad::ConsumeBack();
+            m_showJoinCodeModal = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::TextWrapped("Paste the lobby code a friend shared (Discord, chat, etc.). It works for public and private "
+                           "lobbies - private lobbies are not listed in the browser, but this code still joins them.");
+        ImGui::Spacing();
+        ImGui::Text("Lobby code");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - U(78.0f));
+        bool codeSubmitted = false;
+        if (ImGui::InputTextWithHint("##LobbyCode", "NB1-XXXX-XXXX-XXXX-XXXX", m_joinCode, IM_ARRAYSIZE(m_joinCode),
+                                     ImGuiInputTextFlags_EnterReturnsTrue))
+            codeSubmitted = true;
+        if (ImGui::IsItemEdited()) m_joinCodeError.clear();
+        ImGui::SameLine();
+        if (ImGui::Button("PASTE", ImVec2(U(68.0f), 0))) {
+            if (const char* clip = ImGui::GetClipboardText()) std::snprintf(m_joinCode, sizeof(m_joinCode), "%s", clip);
+            m_joinCodeError.clear();
+        }
+        if (!m_joinCodeError.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.42f, 0.42f, 1.0f));
+            ImGui::TextWrapped("%s", m_joinCodeError.c_str());
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextDisabled("Typing is forgiving: lowercase and missing dashes are fine.");
+        }
+        ImGui::Spacing();
+        const bool hasText = m_joinCode[0] != 0;
+        ImGui::BeginDisabled(!hasText);
+        if (NobleStyle::PrimaryButton("JOIN LOBBY", ImVec2(U(150.0f), U(34.0f))) || (hasText && codeSubmitted)) {
+            JoinByCode();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("CANCEL", ImVec2(U(95.0f), U(34.0f)))) {
+            m_showJoinCodeModal = false;
+            m_joinCodeError.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        (void)sScale;
+        (void)dl;
+        ImGui::EndPopup();
+    }
 }
 
 void ServerBrowser::RenderDirectConnectModal() {
