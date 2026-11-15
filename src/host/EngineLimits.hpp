@@ -13,6 +13,13 @@ namespace noble::limits {
 
 enum class Profile : uint32_t { Stock = 0, V16 = 1, V16Particles = 2, Full = 3 };
 
+// THE SHIPPING PIN (2026-11-15, Tyler): every install runs this profile and AI actor count; the ENGINE LIMITS and
+// AI ACTORS settings pickers are gone so peers cannot end up with different game-state layouts. Retune both values
+// together in a release: the network id (ProfileNetworkId) and the save-folder suffix (ActiveSaveSuffix) derive from
+// them, so old saves stay in their own folder and old clients refuse to join (limits_id mismatch).
+constexpr Profile kShippedProfile = Profile::Full;
+constexpr int kShippedAiActors = 1024;
+
 struct PrepareResult {
     std::filesystem::path dllPath;   // what Loader should load (stock path on any fallback)
     Profile active = Profile::Stock; // what is actually running
@@ -30,6 +37,9 @@ uint32_t ProfileNetworkId(Profile p, int aiActors = 0);
 uint32_t LocalNetworkId();   // lobby / server registration; high byte = profile,
                                                         // low 16 bits = AI actor count (0 = stock 96)
 std::string SaveFolderSuffix(Profile p);  // "" for Stock, "_ext_v16" / "_ext_v16p" / "_ext_full"
+// Suffix for the profile actually running, including the AI actor count ("_ext_full_a1024"). Campaign save
+// folders use it so a save made with one engine layout is never read by another. "" when running Stock at 96.
+std::string ActiveSaveSuffix();
 
 // Profile Full only: the light-volume routines copied into .deltrac have no .pdata entries (all section slots are
 // used), so register their RUNTIME_FUNCTIONs at load, reusing the original routines' unwind info.

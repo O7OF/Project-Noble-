@@ -380,6 +380,8 @@ std::string Narrow(const wchar_t* w) {
 }
 
 void ReadPoolOptions() {
+#ifdef NOBLE_DEV_BUILD
+    // Development-only bisect/test overrides. Shipped builds must not let a player change pool sizes.
     wchar_t env[256] = {};
     if (GetEnvironmentVariableW(L"NOBLE_AI_POOLS", env, 256) > 0) s_only = Narrow(env);
     if (GetEnvironmentVariableW(L"NOBLE_POOL_TRACE", env, 256) > 0) s_trace = env[0] == L'1';
@@ -399,9 +401,13 @@ void ReadPoolOptions() {
         }
     }
     if (argv) LocalFree(argv);
+#endif
 }
 
 int ReadActorSetting() {
+#ifdef NOBLE_DEV_BUILD
+    // Development-only override so the stability tests can A/B a profile. Shipped builds are pinned: every player
+    // and server must run the same game-state layout, so no env var or flag may change the actor count there.
     int value = 0;
     wchar_t env[32] = {};
     if (GetEnvironmentVariableW(L"NOBLE_AI_ACTORS", env, 32) > 0) value = _wtoi(env);
@@ -414,9 +420,10 @@ int ReadActorSetting() {
         }
     }
     if (argv) LocalFree(argv);
-    // No fallback to the settings file here: the dedicated server target has no Settings. The client copies
-    // SETTINGS > ENGINE > AI ACTORS into NOBLE_AI_ACTORS before loading the engine (main.cpp, step 8).
     return value;
+#else
+    return noble::limits::kShippedAiActors;
+#endif
 }
 
 } // namespace

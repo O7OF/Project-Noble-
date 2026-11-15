@@ -205,6 +205,19 @@ std::string SaveFolderSuffix(Profile p) {
     }
 }
 
+std::string ActiveSaveSuffix() {
+#ifndef NOBLE_LIMITS_CORE_ONLY
+    std::string suffix = SaveFolderSuffix(s_active);
+    wchar_t env[16] = {};
+    int actors = 0;
+    if (GetEnvironmentVariableW(L"NOBLE_AI_ACTORS", env, 16) > 0) actors = _wtoi(env);
+    if (actors > 96) suffix += "_a" + std::to_string(actors);
+    return suffix;
+#else
+    return {};
+#endif
+}
+
 Profile ProfileFromInt(int value) {
     switch (value) {
     case 1: return Profile::V16;
