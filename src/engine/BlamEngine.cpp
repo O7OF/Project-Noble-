@@ -112,13 +112,78 @@ void HookCopyMapVariant(void* dst, void* src, long long mode, void* extra) {
 using GetVariantSourceFn = void* (*)();
 GetVariantSourceFn s_origGetVariantSource = nullptr;
 
-void* HookGetVariantSource() {
-    void* source = s_origGetVariantSource ? s_origGetVariantSource() : nullptr;
+struct GetVariantSourceStubBlock {
+    uint8_t code[192];
+    void* originalFn;
+};
+GetVariantSourceStubBlock* s_getVariantSourceStub = nullptr;
+
+void __fastcall RecordLiveVariantSource(void* source) {
     if (source) {
         s_lastLiveVariantSource.store(source, std::memory_order_release);
     }
     RecordVariantCandidate(source);
-    return source;
+}
+
+// 0x6BCEC is a tiny LTCG leaf called from ~103 sites; preserve r9/r10/r11 and XMM0..5
+// across C++ atomics/mutex inside RecordLiveVariantSource.
+void* EnsureGetVariantSourceStub() {
+    if (s_getVariantSourceStub) return s_getVariantSourceStub->code;
+    auto* blk = static_cast<GetVariantSourceStubBlock*>(
+        VirtualAlloc(nullptr, sizeof(GetVariantSourceStubBlock), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    if (!blk) return nullptr;
+    std::memset(blk, 0, sizeof(GetVariantSourceStubBlock));
+
+    size_t p = 0;
+    auto emit = [&](std::initializer_list<uint8_t> bytes) {
+        for (uint8_t b : bytes) blk->code[p++] = b;
+    };
+    auto emitU32 = [&](uint32_t v) {
+        std::memcpy(blk->code + p, &v, 4);
+        p += 4;
+    };
+    auto emitU64 = [&](uint64_t v) {
+        std::memcpy(blk->code + p, &v, 8);
+        p += 8;
+    };
+
+    // Align rsp%16==0 for Win64 call into original getter
+    emit({ 0x48, 0x83, 0xEC, 0x28 });       // sub rsp, 0x28
+    emit({ 0xFF, 0x15 });                   // call qword ptr [rip + disp32]
+    size_t dispPos = p;
+    emitU32(0);
+    int32_t disp = static_cast<int32_t>(offsetof(GetVariantSourceStubBlock, originalFn) - (dispPos + 4));
+    std::memcpy(blk->code + dispPos, &disp, 4);
+
+    // Save rax (`source`) + volatile r9/r10/r11 (4 qwords -> rsp%16==0) and XMM0..5
+    emit({ 0x50 });                         // push rax
+    emit({ 0x41, 0x51, 0x41, 0x52, 0x41, 0x53 }); // push r9, r10, r11
+    emit({ 0x48, 0x81, 0xEC, 0x80, 0x00, 0x00, 0x00 }); // sub rsp, 0x80
+    emit({ 0xF3, 0x0F, 0x7F, 0x44, 0x24, 0x20 });
+    emit({ 0xF3, 0x0F, 0x7F, 0x4C, 0x24, 0x30 });
+    emit({ 0xF3, 0x0F, 0x7F, 0x54, 0x24, 0x40 });
+    emit({ 0xF3, 0x0F, 0x7F, 0x5C, 0x24, 0x50 });
+    emit({ 0xF3, 0x0F, 0x7F, 0x64, 0x24, 0x60 });
+    emit({ 0xF3, 0x0F, 0x7F, 0x6C, 0x24, 0x70 });
+    emit({ 0x48, 0x89, 0xC1 });             // mov rcx, rax
+    emit({ 0x48, 0xB8 });
+    emitU64(reinterpret_cast<uint64_t>(&RecordLiveVariantSource));
+    emit({ 0xFF, 0xD0 });                   // call rax
+    emit({ 0xF3, 0x0F, 0x6F, 0x44, 0x24, 0x20 });
+    emit({ 0xF3, 0x0F, 0x6F, 0x4C, 0x24, 0x30 });
+    emit({ 0xF3, 0x0F, 0x6F, 0x54, 0x24, 0x40 });
+    emit({ 0xF3, 0x0F, 0x6F, 0x5C, 0x24, 0x50 });
+    emit({ 0xF3, 0x0F, 0x6F, 0x64, 0x24, 0x60 });
+    emit({ 0xF3, 0x0F, 0x6F, 0x6C, 0x24, 0x70 });
+    emit({ 0x48, 0x81, 0xC4, 0x80, 0x00, 0x00, 0x00 }); // add rsp, 0x80
+    emit({ 0x41, 0x5B, 0x41, 0x5A, 0x41, 0x59 }); // pop r11, r10, r9
+    emit({ 0x58 });                         // pop rax
+    emit({ 0x48, 0x83, 0xC4, 0x28 });       // add rsp, 0x28
+    emit({ 0xC3 });                         // ret
+
+    FlushInstructionCache(GetCurrentProcess(), blk, sizeof(GetVariantSourceStubBlock));
+    s_getVariantSourceStub = blk;
+    return blk->code;
 }
 
 void HookSerializeMapVariant(void* outChunk, void* variant) {
@@ -149,10 +214,12 @@ bool BlamEngine::InstallMapVariantCapture() {
     }
 
     void* getterTarget = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(m_hModule) + 0x6BCEC);
-    if (!HookManager::InstallHook(getterTarget, reinterpret_cast<void*>(&HookGetVariantSource),
-                                  reinterpret_cast<void**>(&s_origGetVariantSource), "capture_mvar_source")) {
+    void* getterDetour = EnsureGetVariantSourceStub();
+    if (!getterDetour || !HookManager::InstallHook(getterTarget, getterDetour,
+                                  &s_getVariantSourceStub->originalFn, "capture_mvar_source")) {
         NOBLE_WARN("BlamEngine: could not hook the map-variant source getter");
     } else {
+        s_origGetVariantSource = reinterpret_cast<GetVariantSourceFn>(s_getVariantSourceStub->originalFn);
         NOBLE_INFO("BlamEngine: map-variant source getter hooked (RVA 0x6BCEC)");
     }
     return true;
@@ -1764,7 +1831,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
 
     // Campaign & Firefight co-op: keep joining peers even when the engine decides their progress is incompatible
     // (see LobbyPatches::Hook_BootPeer) - otherwise the mission ends with "Error hosting co-op".
-    noble::LobbyPatches::SetCampaignCoop(gameModeTag == 1 || gameModeTag == 1035);
+    noble::LobbyPatches::SetCampaignCoop(gameModeTag == 1 || gameModeTag == 1035 || gameModeTag == 5);
     {
         // Noble Actual and Lone Wolf are the only stock missions with no gameplay. Their "mission end"
         // happens right after the cutscene, so do not let the premature-end guard swallow it.
@@ -1850,25 +1917,29 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
                 NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
 
-                // For online co-op / multiplayer with expected peers:
-                // Wait for remote players to connect and join membership BEFORE posting Command 11 (simulation start).
+                // For online co-op / multiplayer / Forge with expected peers:
+                // Wait for remote players to finish loading and join Blam! membership (msg 27)
+                // BEFORE posting Command 11 (simulation start) so state replication matches all clients.
                 if (peersToWaitFor > 0) {
                     const size_t targetPeers = static_cast<size_t>(peersToWaitFor);
-                    const ULONGLONG deadline = GetTickCount64() + 45000;
+                    const ULONGLONG waitStart = GetTickCount64();
+                    const ULONGLONG deadline = waitStart + 45000;
                     ULONGLONG lastLog = 0;
                     NOBLE_INFO("BlamEngine: waiting for {} remote player(s) to finish loading and join membership before starting simulation...",
                                targetPeers);
                     while (GetTickCount64() < deadline) {
+                        if (!m_isGameRunning || !m_engineInstance || !m_fnProcessEvent) return;
                         const size_t playersJoined = LobbyPatches::GetRemotePlayerAddCount();
                         const size_t channelPeers = NetworkTransport::Get().GetGamePeerCount();
-                        if (playersJoined >= targetPeers || channelPeers >= targetPeers) {
-                            const int settleMs = settleLonger ? 1000 : 400;
-                            NOBLE_INFO("BlamEngine: {}/{} remote player(s) in session (membership: {}, engine peers: {}); settling {} ms for world replication",
-                                       std::max(playersJoined, channelPeers), targetPeers, playersJoined, channelPeers, settleMs);
+                        const ULONGLONG now = GetTickCount64();
+                        const ULONGLONG elapsed = now - waitStart;
+                        if (playersJoined >= targetPeers || (elapsed >= 8000ULL && channelPeers >= targetPeers)) {
+                            const int settleMs = settleLonger ? 1200 : 500;
+                            NOBLE_INFO("BlamEngine: {}/{} remote player(s) in session (membership: {}, engine peers: {}, elapsed {} ms); settling {} ms for world replication",
+                                       std::max(playersJoined, channelPeers), targetPeers, playersJoined, channelPeers, elapsed, settleMs);
                             std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
                             break;
                         }
-                        const ULONGLONG now = GetTickCount64();
                         if (lastLog == 0 || now - lastLog >= 3000) {
                             lastLog = now;
                             NOBLE_INFO("BlamEngine: membership wait: {}/{} player(s) in session (engine peers: {})",
@@ -1884,6 +1955,8 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                     const int simDelay = 200;
                     std::this_thread::sleep_for(std::chrono::milliseconds(simDelay));
                 }
+
+                if (!m_isGameRunning || !m_engineInstance || !m_fnProcessEvent) return;
 
                 NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18...");
                 int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);

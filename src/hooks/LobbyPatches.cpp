@@ -462,26 +462,114 @@ static void __fastcall Hook_NetLog(const char* fmt, uintptr_t a1, uintptr_t a2, 
 typedef void(__fastcall* GameFinishFn)();
 static GameFinishFn s_originalGameFinish = nullptr;
 static std::atomic<int> s_gameFinishLogCount{0};
-static void __fastcall Hook_GameFinish() {
+
+struct GameFinishStubBlock {
+    uint8_t code[256];
+    void* originalFn;
+};
+static GameFinishStubBlock* s_gameFinishStub = nullptr;
+
+// Return 1 to continue into s_originalGameFinish, 0 to suppress.
+static uint8_t __fastcall Hook_GameFinishImpl(uintptr_t callerAddr) {
     if (s_gameFinishLogCount.fetch_add(1) < 20) {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME FINISH requested by hr+0x{:X} stack: {}", RefuseRole(), GetCurrentProcessId(),
-                   CallerRva(_ReturnAddress()), ReachStack());
+                   CallerRva(reinterpret_cast<void*>(callerAddr)), ReachStack());
     }
 #ifndef NOBLE_DEDICATED
     if (noble::BlamEngine::IsSavedFilmPlayback()) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED GAME FINISH during Theater saved film playback");
-        return;
+        return 0;
     }
 #endif
     if (ShouldBlockPrematureEnd()) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED premature GAME FINISH during cutscene / match startup!");
-        return;
+        return 0;
     }
 #ifndef NOBLE_DEDICATED   // client only: career save + game-over screen
     Career::EnsureMatchSaved("game_finish");
     PauseMenu::ShowGameOver();
 #endif
-    if (s_originalGameFinish) s_originalGameFinish();
+    if (s_gameFinishStub && s_gameFinishStub->originalFn) {
+        s_originalGameFinish = reinterpret_cast<GameFinishFn>(s_gameFinishStub->originalFn);
+        return 1;
+    }
+    return 0;
+}
+
+// LTCG callers (e.g. hr+0x355EC -> 0x355F1, hr+0x1B084C) keep volatile registers like R10 live
+// across calls to 0x59330. Preserve all volatile GP and XMM registers across our C++ guard and
+// tail-jump directly to MinHook's trampoline with original registers/stack intact.
+static void EnsureGameFinishStub() {
+    if (s_gameFinishStub) return;
+    auto* blk = static_cast<GameFinishStubBlock*>(
+        VirtualAlloc(nullptr, sizeof(GameFinishStubBlock), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    if (!blk) return;
+    std::memset(blk, 0, sizeof(GameFinishStubBlock));
+
+    size_t p = 0;
+    auto emit = [&](std::initializer_list<uint8_t> bytes) {
+        for (uint8_t b : bytes) blk->code[p++] = b;
+    };
+    auto emitU32 = [&](uint32_t v) {
+        std::memcpy(blk->code + p, &v, 4);
+        p += 4;
+    };
+    auto emitU64 = [&](uint64_t v) {
+        std::memcpy(blk->code + p, &v, 8);
+        p += 8;
+    };
+
+    // Save rflags + volatile GP regs (8 qwords -> rsp % 16 == 0)
+    emit({ 0x9C });                         // pushfq
+    emit({ 0x50, 0x51, 0x52 });             // push rax, rcx, rdx
+    emit({ 0x41, 0x50, 0x41, 0x51 });       // push r8, r9
+    emit({ 0x41, 0x52, 0x41, 0x53 });       // push r10, r11
+    // Reserve 0x88 bytes: 0x20 shadow + 0x60 xmm0..xmm5 + 0x08 align pad
+    emit({ 0x48, 0x81, 0xEC, 0x88, 0x00, 0x00, 0x00 });
+    emit({ 0xF3, 0x0F, 0x7F, 0x44, 0x24, 0x20 }); // movdqu [rsp+0x20], xmm0
+    emit({ 0xF3, 0x0F, 0x7F, 0x4C, 0x24, 0x30 }); // movdqu [rsp+0x30], xmm1
+    emit({ 0xF3, 0x0F, 0x7F, 0x54, 0x24, 0x40 }); // movdqu [rsp+0x40], xmm2
+    emit({ 0xF3, 0x0F, 0x7F, 0x5C, 0x24, 0x50 }); // movdqu [rsp+0x50], xmm3
+    emit({ 0xF3, 0x0F, 0x7F, 0x64, 0x24, 0x60 }); // movdqu [rsp+0x60], xmm4
+    emit({ 0xF3, 0x0F, 0x7F, 0x6C, 0x24, 0x70 }); // movdqu [rsp+0x70], xmm5
+    // Pass original return address ([rsp + 0x40 + 0x88] = [rsp + 0xC8]) in RCX
+    emit({ 0x48, 0x8B, 0x8C, 0x24, 0xC8, 0x00, 0x00, 0x00 });
+    emit({ 0x48, 0xB8 });
+    emitU64(reinterpret_cast<uint64_t>(&Hook_GameFinishImpl));
+    emit({ 0xFF, 0xD0 });                   // call rax
+    // Restore xmm0..xmm5 (flags unchanged by movdqu)
+    emit({ 0xF3, 0x0F, 0x6F, 0x44, 0x24, 0x20 }); // movdqu xmm0, [rsp+0x20]
+    emit({ 0xF3, 0x0F, 0x6F, 0x4C, 0x24, 0x30 }); // movdqu xmm1, [rsp+0x30]
+    emit({ 0xF3, 0x0F, 0x6F, 0x54, 0x24, 0x40 }); // movdqu xmm2, [rsp+0x40]
+    emit({ 0xF3, 0x0F, 0x6F, 0x5C, 0x24, 0x50 }); // movdqu xmm3, [rsp+0x50]
+    emit({ 0xF3, 0x0F, 0x6F, 0x64, 0x24, 0x60 }); // movdqu xmm4, [rsp+0x60]
+    emit({ 0xF3, 0x0F, 0x6F, 0x6C, 0x24, 0x70 }); // movdqu xmm5, [rsp+0x70]
+    emit({ 0x84, 0xC0 });                   // test al, al
+    emit({ 0x75 });                         // jnz do_orig
+    size_t jnzRelPos = p++;
+
+    // Suppress: restore stack & volatile registers and return directly
+    emit({ 0x48, 0x81, 0xC4, 0x88, 0x00, 0x00, 0x00 });
+    emit({ 0x41, 0x5B, 0x41, 0x5A });       // pop r11, r10
+    emit({ 0x41, 0x59, 0x41, 0x58 });       // pop r9, r8
+    emit({ 0x5A, 0x59, 0x58, 0x9D, 0xC3 }); // pop rdx, rcx, rax, popfq, ret
+
+    size_t doOrigPos = p;
+    blk->code[jnzRelPos] = static_cast<uint8_t>(static_cast<int8_t>(doOrigPos - (jnzRelPos + 1)));
+
+    // Proceed: restore exact entry state and tail-jump into s_originalGameFinish
+    emit({ 0x48, 0x81, 0xC4, 0x88, 0x00, 0x00, 0x00 });
+    emit({ 0x41, 0x5B, 0x41, 0x5A });       // pop r11, r10
+    emit({ 0x41, 0x59, 0x41, 0x58 });       // pop r9, r8
+    emit({ 0x5A, 0x59, 0x58, 0x9D });       // pop rdx, rcx, rax, popfq
+    emit({ 0xFF, 0x25 });                   // jmp qword ptr [rip + disp32]
+    size_t dispPos = p;
+    emitU32(0);
+    int32_t disp = static_cast<int32_t>(offsetof(GameFinishStubBlock, originalFn) - (dispPos + 4));
+    std::memcpy(blk->code + dispPos, &disp, 4);
+
+    FlushInstructionCache(GetCurrentProcess(), blk, sizeof(GameFinishStubBlock));
+    s_gameFinishStub = blk;
 }
 
 // Game over with reason (hr+0x7BA58, (reason) -> 0x59330). Called from the game engine's end-of-game check
@@ -1096,8 +1184,10 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                   reinterpret_cast<void**>(&s_originalTeamCount), "team_count" },
                 { 0x7BA58, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_GameOver),
                   reinterpret_cast<void**>(&s_originalGameOver), "game_over" },
-                { 0x59330, { 0x48, 0x83, 0xEC, 0x28, 0x8B }, reinterpret_cast<void*>(&Hook_GameFinish),
-                  reinterpret_cast<void**>(&s_originalGameFinish), "game_finish" },
+                { 0x59330, { 0x48, 0x83, 0xEC, 0x28, 0x8B },
+                  (EnsureGameFinishStub(), s_gameFinishStub ? reinterpret_cast<void*>(s_gameFinishStub->code) : nullptr),
+                  (s_gameFinishStub ? &s_gameFinishStub->originalFn : reinterpret_cast<void**>(&s_originalGameFinish)),
+                  "game_finish" },
                 { 0x43B98C, { 0x48, 0x89, 0x5C, 0x24, 0x18 }, reinterpret_cast<void*>(&Hook_CloseChannel),
                   reinterpret_cast<void**>(&s_originalCloseChannel), "close_channel" },
                 { 0x43BAE8, { 0x48, 0x89, 0x5C, 0x24, 0x18 }, reinterpret_cast<void*>(&Hook_ChannelReceive),

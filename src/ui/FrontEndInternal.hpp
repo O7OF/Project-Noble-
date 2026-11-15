@@ -795,7 +795,8 @@ void EnqueueLobbyLaunch(const std::string &lMap, const std::string &lMode,
                         const std::string &hIp, uint16_t hPort,
                         const std::string &sId, const std::string &lMapOverride,
                         const std::string &lModFolder,
-                        const std::string &lModId);
+                        const std::string &lModId,
+                        const std::string &lMapVariant = "");
 void EnqueueLobbyClosed(const std::string &reason);
 void EnqueueLobbyRoster(std::vector<LobbyPlayer> &&updated);
 void SetupHostLobby(

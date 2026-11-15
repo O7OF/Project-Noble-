@@ -438,6 +438,8 @@ void ApplyEntryToLobby(MenuState &st, const ResolvedEntry &e) {
   MasterServerClient::Get().UpdateLobbyAdvert(
       st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
       st.lobbySkulls);
+  MasterServerClient::Get().UpdateLobbyModAdvert(
+      !st.lobbyModId.empty(), st.lobbyModId, st.lobbyModTitle);
   NOBLE_INFO("FrontEndMenu: lobby now {} on {}", st.lobbyVariantName,
              st.lobbyMapTitle);
 }
@@ -2078,6 +2080,15 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
           const auto reloadModes = [&](const std::filesystem::path &select) {
             if (forge) {
               st.forgeCustomVariant = select;
+              if (st.screen == Screen::PreGameLobby) {
+                st.lobbyVariantPath =
+                    select.empty() ? ctx.forgeVariant.string() : select.string();
+                st.lobbyVariantName =
+                    select.empty() ? "Basic Editing" : std::string(st.optionsName);
+                MasterServerClient::Get().UpdateLobbyAdvert(
+                    st.lobbyMap, st.lobbyMode, st.lobbyVariantName,
+                    st.lobbyDifficulty, st.lobbySkulls);
+              }
               return;
             }
             ctx.variants = ScanVariants(ctx.reachDir, false);
@@ -2092,6 +2103,14 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
             for (size_t i = 0; i < modes.size(); ++i)
               if (modes[i].path == select)
                 index = static_cast<int>(i);
+            if (st.screen == Screen::PreGameLobby && index >= 0 &&
+                index < static_cast<int>(modes.size())) {
+              st.lobbyVariantPath = modes[static_cast<size_t>(index)].path.string();
+              st.lobbyVariantName = modes[static_cast<size_t>(index)].label;
+              MasterServerClient::Get().UpdateLobbyAdvert(
+                  st.lobbyMap, st.lobbyMode, st.lobbyVariantName,
+                  st.lobbyDifficulty, st.lobbySkulls);
+            }
           };
           if (reset) {
             st.optionsValues.clear();

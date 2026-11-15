@@ -222,12 +222,17 @@ public:
                          const std::string& mapOverride = "",
                          const std::string& modFolder = "",
                          const std::string& modId = "",
-                         const std::string& mapVariant = "");
+                         const std::string& mapVariant = "",
+                         bool variantIsBase64 = false,
+                         const std::string& variantSha256 = "",
+                         const std::string& mapVariantBody = "",
+                         const std::string& mapVariantSha256 = "");
 
     bool ReturnLobbySync(const std::string& sessionId);
     bool DisbandSessionSync(const std::string& sessionId);
 
     void UpdateLobbyAdvert(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls);
+    void UpdateLobbyModAdvert(bool isMod, const std::string& modId, const std::string& modTitle);
     std::string GetCurrentSessionId() const;
     std::string GetCurrentSessionToken() const;
 

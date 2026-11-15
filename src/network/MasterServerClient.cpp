@@ -412,6 +412,13 @@ void MasterServerClient::UpdateLobbyAdvert(const std::string& map, const std::st
     m_advert.skulls = skulls;
 }
 
+void MasterServerClient::UpdateLobbyModAdvert(bool isMod, const std::string& modId, const std::string& modTitle) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_advert.isMod = isMod;
+    m_advert.modId = modId;
+    m_advert.modTitle = modTitle;
+}
+
 std::string MasterServerClient::GetCurrentSessionId() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_sessionId;
@@ -1034,11 +1041,13 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
     }
 
     HttpResult r;
+    std::string activeBaseUrl;
     for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
         r = HttpRequest(baseUrl, L"GET", "/api/sessions/" + sessionId + "/lobby", {}, {},
                         haveCachedState ? cachedEtag : std::string());
         state.httpStatus = r.status;
         if (r.ok) {
+            activeBaseUrl = baseUrl;
             SetSessionRegionUrl(sessionId, baseUrl);
             break;
         }
@@ -1137,14 +1146,68 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
         }
 
         if (j.contains("launch_data") && j["launch_data"].is_object()) {
-            const auto& ld = j["launch_data"];
+            nlohmann::json ld = j["launch_data"];
+            const bool needVarAsset =
+                !ld.value("variant_sha256", "").empty() &&
+                ld.value("variant_body", "").empty();
+            const bool needMvarAsset =
+                !ld.value("map_variant_sha256", "").empty() &&
+                ld.value("map_variant_body", "").empty();
+            if ((needVarAsset || needMvarAsset) && !activeBaseUrl.empty()) {
+                const auto assetResp = HttpRequest(
+                    activeBaseUrl, L"GET", "/api/sessions/" + sessionId + "/lobby?assets=1", {});
+                if (assetResp.ok && assetResp.status == 200 && !assetResp.body.empty()) {
+                    try {
+                        nlohmann::json aj = nlohmann::json::parse(assetResp.body);
+                        if (aj.contains("launch_data") && aj["launch_data"].is_object()) {
+                            ld = aj["launch_data"];
+                        }
+                    } catch (...) {}
+                }
+            }
+
             state.launchTriggered = true;
             state.launchMap = ld.value("map", state.map);
             state.launchMode = ld.value("mode", state.mode);
             state.launchVariant = ld.value("variant", state.variant);
+            const std::string lVarBody = ld.value("variant_body", "");
+            const bool lVarB64 = ld.value("variant_is_base64", false);
+            const std::string lVarSha = ld.value("variant_sha256", "");
+            if (!lVarBody.empty() && !state.launchVariant.empty()) {
+                std::vector<uint8_t> rawCheck;
+                bool shaOk = true;
+                if (!lVarSha.empty()) {
+                    if (lVarB64 && NetworkTransport::Base64Decode(lVarBody, rawCheck)) {
+                        shaOk = NetworkTransport::VerifySha256Hex(rawCheck.data(), rawCheck.size(), lVarSha);
+                    } else if (!lVarB64) {
+                        shaOk = NetworkTransport::VerifySha256Hex(
+                            reinterpret_cast<const uint8_t*>(lVarBody.data()), lVarBody.size(), lVarSha);
+                    } else {
+                        shaOk = false;
+                    }
+                }
+                std::string matPath;
+                if (shaOk && NetworkTransport::MaterializeHostVariantFromPayload(
+                                 state.launchVariant, lVarBody, lVarB64, matPath)) {
+                    state.launchVariant = matPath;
+                }
+            }
             state.launchDifficulty = ld.value("difficulty", state.difficulty);
             state.launchMapOverride = ld.value("map_override", "");
             state.launchMapVariant = ld.value("map_variant", "");
+            const std::string lMvarBody = ld.value("map_variant_body", "");
+            const std::string lMvarSha = ld.value("map_variant_sha256", "");
+            if (!lMvarBody.empty() && !state.launchMapVariant.empty()) {
+                std::vector<uint8_t> rawCheck;
+                bool shaOk = lMvarSha.empty() ||
+                             (NetworkTransport::Base64Decode(lMvarBody, rawCheck) &&
+                              NetworkTransport::VerifySha256Hex(rawCheck.data(), rawCheck.size(), lMvarSha));
+                std::string mvarMatPath;
+                if (shaOk && NetworkTransport::MaterializeHostMapVariant(
+                                 state.launchMapVariant, lMvarBody, mvarMatPath)) {
+                    state.launchMapVariant = mvarMatPath;
+                }
+            }
             state.launchModFolder = ld.value("mod_folder", "");
             state.launchModId = ld.value("mod_id", state.modId);
             try { state.launchSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
@@ -1321,9 +1384,22 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
             state.launchMode = ld.value("mode", state.mode);
             state.launchVariant = ld.value("variant", state.variant);
             const std::string lVarBody = ld.value("variant_body", "");
+            const bool lVarB64 = ld.value("variant_is_base64", false);
+            const std::string lVarSha = ld.value("variant_sha256", "");
             if (!lVarBody.empty() && !state.launchVariant.empty()) {
+                std::vector<uint8_t> rawCheck;
+                bool shaOk = true;
+                if (!lVarSha.empty()) {
+                    if (lVarB64 && NetworkTransport::Base64Decode(lVarBody, rawCheck)) {
+                        shaOk = NetworkTransport::VerifySha256Hex(rawCheck.data(), rawCheck.size(), lVarSha);
+                    } else if (!lVarB64) {
+                        shaOk = NetworkTransport::VerifySha256Hex(
+                            reinterpret_cast<const uint8_t*>(lVarBody.data()), lVarBody.size(), lVarSha);
+                    }
+                }
                 std::string matPath;
-                if (NetworkTransport::MaterializeHostVariant(state.launchVariant, lVarBody, matPath)) {
+                if (shaOk && NetworkTransport::MaterializeHostVariantFromPayload(
+                                 state.launchVariant, lVarBody, lVarB64, matPath)) {
                     NOBLE_INFO("MasterServerClient: materialized JIP host variant '{}' -> '{}'", state.launchVariant, matPath);
                     state.launchVariant = matPath;
                 }
@@ -1331,6 +1407,20 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
             state.launchDifficulty = ld.value("difficulty", state.difficulty);
             state.launchMapOverride = ld.value("map_override", "");
             state.launchMapVariant = ld.value("map_variant", "");
+            const std::string lMvarBody = ld.value("map_variant_body", "");
+            const std::string lMvarSha = ld.value("map_variant_sha256", "");
+            if (!lMvarBody.empty() && !state.launchMapVariant.empty()) {
+                std::vector<uint8_t> rawCheck;
+                bool shaOk = lMvarSha.empty() ||
+                             (NetworkTransport::Base64Decode(lMvarBody, rawCheck) &&
+                              NetworkTransport::VerifySha256Hex(rawCheck.data(), rawCheck.size(), lMvarSha));
+                std::string mvarMatPath;
+                if (shaOk && NetworkTransport::MaterializeHostMapVariant(
+                                 state.launchMapVariant, lMvarBody, mvarMatPath)) {
+                    NOBLE_INFO("MasterServerClient: materialized JIP host map variant '{}' -> '{}'", state.launchMapVariant, mvarMatPath);
+                    state.launchMapVariant = mvarMatPath;
+                }
+            }
             state.launchModFolder = ld.value("mod_folder", "");
             state.launchModId = ld.value("mod_id", state.modId);
             try { state.launchSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
@@ -1343,7 +1433,8 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
 bool MasterServerClient::LeaveLobbySync(const std::string& sessionId, uint64_t peerId) {
     if (sessionId.empty() || !Enabled()) return false;
     nlohmann::json body = {
-        { "peer_id", peerId }
+        { "peer_id", peerId },
+        { "machine_id", std::to_string(GetLobbyMachineId()) }
     };
     const std::string dump = body.dump();
     for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
@@ -1449,7 +1540,11 @@ bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
                                          const std::string& mapOverride,
                                          const std::string& modFolder,
                                          const std::string& modId,
-                                         const std::string& mapVariant) {
+                                         const std::string& mapVariant,
+                                         bool variantIsBase64,
+                                         const std::string& variantSha256,
+                                         const std::string& mapVariantBody,
+                                         const std::string& mapVariantSha256) {
     std::string token;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -1464,13 +1559,16 @@ bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
             { "mode", mode },
             { "variant", variant },
             { "variant_body", variantBody },
+            { "variant_is_base64", variantIsBase64 },
+            { "variant_sha256", variantSha256 },
             { "difficulty", difficulty },
             { "skulls", std::to_string(skulls) },
             { "map_override", mapOverride },
             { "mod_folder", modFolder },
             { "mod_id", modId },
-            // File name only: guests look it up in their own map_variants folder.
-            { "map_variant", mapVariant }
+            { "map_variant", mapVariant },
+            { "map_variant_body", mapVariantBody },
+            { "map_variant_sha256", mapVariantSha256 }
         };
 
         const std::string dump = body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
