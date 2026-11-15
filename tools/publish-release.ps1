@@ -48,18 +48,20 @@ if ($LASTEXITCODE -gt 7) { throw "robocopy data failed ($LASTEXITCODE)" }
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\mods') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\limits') | Out-Null
 
-# Copy the armor folder (rr_elite_pack.map, .rrreloc, etc.) into data\armor\
+# Copy the armour pack (elite_armor.map + its .noblereloc relocation sidecar) into data\armor\.
+# Noble's own naming/format: no Reach Renaissance file names ship in the package.
 $srcArmor = Join-Path $root 'data\armor'
-if (-not (Test-Path (Join-Path $srcArmor 'rr_elite_pack.map'))) {
+if (-not (Test-Path (Join-Path $srcArmor 'elite_armor.map'))) {
     $srcArmor = Join-Path $release 'data\armor'
 }
-if (Test-Path (Join-Path $srcArmor 'rr_elite_pack.map')) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\armor') | Out-Null
-    # Never the dev backups kept next to the packs (*.before-*, *.bak*, *.heuristic: 500 MB each).
-    & robocopy $srcArmor (Join-Path $pkg 'data\armor') /E /XF '*.before*' '*.bak*' '*.heuristic' /NFL /NDL /NJH /NJS /NP | Out-Null
-    if ($LASTEXITCODE -gt 7) { throw "robocopy armor failed ($LASTEXITCODE)" }
-} else {
-    Write-Warning "data\armor\rr_elite_pack.map was not found to package"
+New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\armor') | Out-Null
+foreach ($name in 'elite_armor.map', 'elite_armor.map.noblereloc') {
+    $src = Join-Path $srcArmor $name
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $pkg ('data\armor\' + $name)) -Force
+    } else {
+        throw "data\armor\$name was not found to package"
+    }
 }
 
 # Copy the Armory menu map and its string_id tables into data\menumaps\.

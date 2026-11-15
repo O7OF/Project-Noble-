@@ -83,12 +83,13 @@ const char* s_extraList[1] = {nullptr};
 
 template <typename T> T At(uintptr_t rva) { return reinterpret_cast<T>(s_base + rva); }
 
+// Noble relocation sidecar: magic "NBRL", version 1, the pack's packed-pointer offsets and bases.
 bool ReadReloc(const std::filesystem::path& file, Reloc& out) {
     std::ifstream in(file, std::ios::binary);
     if (!in) return false;
     std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (d.size() < 0x20 || std::memcmp(d.data(), "RRRL", 4) != 0) {
-        NOBLE_WARN("ElitePack: {} is not a relocation sidecar", file.string());
+    if (d.size() < 0x20 || std::memcmp(d.data(), "NBRL", 4) != 0) {
+        NOBLE_WARN("ElitePack: {} is not a Noble relocation sidecar", file.string());
         return false;
     }
     uint32_t version = 0, count = 0;
@@ -1493,16 +1494,20 @@ std::filesystem::path FindPackMap(const std::filesystem::path& dataDir) {
     std::error_code ec;
     const auto folder = dataDir / "armor";
     std::filesystem::path first;
+    std::filesystem::path named;
     for (const auto& e : std::filesystem::directory_iterator(folder, ec)) {
         if (!e.is_regular_file(ec) || e.path().extension() != ".map") continue;
         auto sidecar = e.path();
-        sidecar += ".rrreloc";
+        sidecar += ".noblereloc";
         if (!std::filesystem::is_regular_file(sidecar, ec)) continue;
         std::string name = e.path().filename().string();
         std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (name.find("elite_pack") != std::string::npos || name.find("armory") != std::string::npos) return e.path();
+        if (name == "noble_elite_pack.map") return e.path();
+        if (name == "elite_armor.map" && named.empty()) named = e.path();
+        else if (named.empty() && (name.find("elite_pack") != std::string::npos || name.find("armory") != std::string::npos)) named = e.path();
         if (first.empty()) first = e.path();
     }
+    if (!named.empty()) return named;
     return first;
 }
 
@@ -1525,7 +1530,7 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
         return;
     }
     auto sidecar = s_packPath;
-    sidecar += ".rrreloc";
+    sidecar += ".noblereloc";
     if (!ReadReloc(sidecar, s_reloc)) { s_packPath.clear(); return; }
     s_packStem = s_packPath.stem().string();
     s_base = reinterpret_cast<uintptr_t>(engine);

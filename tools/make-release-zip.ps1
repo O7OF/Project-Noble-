@@ -6,8 +6,8 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $release = Join-Path $repo 'build\bin\Release'
 $client = Join-Path $release 'noble-client.exe'
-$mapMod = Join-Path $release 'data\menumaps\mainmenu_all.map'
-$pack = Join-Path $release 'data\armor\rr_elite_pack.map'
+$mapMod = Join-Path $release 'data\menumaps\noble_menu.map'
+$pack = Join-Path $release 'data\armor\elite_armor.map'
 foreach ($required in @($client, $mapMod, $pack)) {
     if (-not (Test-Path $required)) { throw "Missing required file: $required" }
 }
@@ -25,7 +25,7 @@ New-Item -ItemType Directory -Force -Path $destData | Out-Null
 & robocopy (Join-Path $release 'data') $destData /E /XD userdata autosave cache sandbox /XF appearance.dat settings.json career.json launch_block_1.bin lb_m_c_1.bin profile_1.bin *.log *.dmp *.tmp /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "robocopy failed ($LASTEXITCODE)" }
 
-foreach ($check in @('data\menumaps\noble_menu.map', 'data\armor\rr_elite_pack.map')) {
+foreach ($check in @('data\menumaps\noble_menu.map', 'data\armor\elite_armor.map')) {
     if (-not (Test-Path (Join-Path $pkg $check))) { throw "Package is missing $check" }
 }
 # mainmenu_all.map is superseded by noble_menu.map (tested 2026-11-14: Armory + Marine tab work without it).

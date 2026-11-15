@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <array>
 #include <cstdint>
@@ -137,7 +137,7 @@ public:
     // show the character from another camera or pose for a single frame).
     static void HoldStageBriefly();
 
-    // True when the player has an armour pack map installed (data\armor\*.map + .rrreloc).
+    // True when the player has an armour pack map installed (data\armor\*.map + .noblereloc).
     static bool HasArmoryMap();
     // True only when data\menumaps\mainmenu_all.map (the custom Armory scene) is present. The Elite
     // pack alone does not change the stock menu map's cameras, so framing must not follow HasArmoryMap.

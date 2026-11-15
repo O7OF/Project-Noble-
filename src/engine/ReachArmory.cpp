@@ -1,4 +1,4 @@
-#include "ReachArmory.hpp"
+﻿#include "ReachArmory.hpp"
 #include "ElitePack.hpp"
 #include "SharedTagCache.hpp"
 #include "common/Logger.hpp"
@@ -151,7 +151,7 @@ using ArmoryLock = std::lock_guard<std::recursive_mutex>;
 static bool s_stringIdsLoaded = false;
 static std::unordered_map<std::string, uint32_t> s_stringIds;
 
-// The armour pack map (data\armor\<name>.map + .rrreloc): its own string table and .rrpmcg are the
+// The armour pack map (data\armor\<name>.map + .noblereloc): its own string table and .rrpmcg are the
 // authority for the Armory piece ids. Discovered once per process.
 static std::filesystem::path s_armoryMapPath;
 static bool s_armoryMapChecked = false;
