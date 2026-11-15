@@ -971,6 +971,23 @@ ArmorCustomizer::ArmorCustomizer() {
     if (!migrated) LoadProfile(m_profilePath);
     m_previewSpecies = m_profile.species;
 #ifdef NOBLE_DEV_BUILD
+    // Test-only "-armor-effect-test <index>": equip an armor effect (0..6: none, birthday, heart, pestilence,
+    // inclement weather, legendary/flames, eternal/blue flames) and save, so match captures can show effects without
+    // hand-driving the Armory. Back up appearance.dat before use; this writes the profile.
+    {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-armor-effect-test") == 0) {
+                const int idx = std::clamp(_wtoi(argv[i + 1]), 0, static_cast<int>(kArmorEffects.size()) - 1);
+                m_profile.armorEffectIndex = idx;
+                SaveProfile(m_profilePath);
+                NOBLE_INFO("ArmorCustomizer: -armor-effect-test equipped armor effect {} ({})", idx,
+                           kArmorEffects[static_cast<size_t>(idx)].stringId);
+            }
+        }
+        if (argv) LocalFree(argv);
+    }
     ValidateArmoryCatalog();
 #endif
 
