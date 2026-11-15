@@ -948,6 +948,27 @@ void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU
     dl->AddImage(tex.id, min, max, uv0, uv1, tint);
 }
 
+void DrawCoverCrisp(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint, float maxScale) {
+    if (!tex || !dl || tex.width <= 0 || tex.height <= 0) return;
+    const float w = max.x - min.x, h = max.y - min.y;
+    if (w <= 0.0f || h <= 0.0f) return;
+    const float tw = static_cast<float>(tex.width);
+    const float th = static_cast<float>(tex.height);
+    const float coverScale = std::max(w / tw, h / th);
+    const float s = (maxScale > 0.0f) ? std::min(coverScale, maxScale) : coverScale;
+    const float scaledW = tw * s;
+    const float scaledH = th * s;
+    const float dw = std::min(w, scaledW);
+    const float dh = std::min(h, scaledH);
+    const float uKeep = std::clamp(dw / scaledW, 0.01f, 1.0f);
+    const float vKeep = std::clamp(dh / scaledH, 0.01f, 1.0f);
+    const ImVec2 uv0((1.0f - uKeep) * 0.5f, (1.0f - vKeep) * 0.5f);
+    const ImVec2 uv1(1.0f - uv0.x, 1.0f - uv0.y);
+    const ImVec2 c0((min.x + max.x - dw) * 0.5f, (min.y + max.y - dh) * 0.5f);
+    const ImVec2 c1(c0.x + dw, c0.y + dh);
+    dl->AddImage(tex.id, c0, c1, uv0, uv1, tint);
+}
+
 
 static std::vector<NameplateInfo> s_nameplateCatalog;
 static std::vector<EmblemInfo> s_emblemCatalog;

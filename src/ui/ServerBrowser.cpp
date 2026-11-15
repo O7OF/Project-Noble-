@@ -16,10 +16,13 @@
 #include "network/NetworkTransport.hpp"
 #include "network/SessionManager.hpp"
 #include "network/UPnP.hpp"
+#include "FrontEndMenu.hpp"
+#include "NobleUi.hpp"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <charconv>
 #include <cstring>
@@ -33,9 +36,66 @@ namespace noble {
 
 namespace {
 
-// Pixel sizes in this file were laid out for the fonts at 1x. Text now scales with the display
-// (io.FontGlobalScale, set by FrontEndMenu), so buttons, columns and panels scale with it.
-float U(float px) { return px * ImGui::GetIO().FontGlobalScale; }
+float U(float px) { return px * NobleUi::Scale(); }
+
+static std::atomic<uint64_t> s_lastJoinAttemptMs{ 0 };
+static int s_browserPane = 0;   // 0 = server cards list, 1 = right game details buttons
+static int s_detailBtnIdx = 0;  // 0 = primary action, 1 = favorite, 2 = copy invite
+
+bool CanStartJoinNow(std::string& statusOut) {
+    if (FrontEndMenu::IsMatchRunning()) {
+        statusOut = "A match is already running. Close it before joining another server.";
+        NOBLE_WARN("ServerBrowser: join ignored because a match process is already running");
+        return false;
+    }
+    const uint64_t now = GetTickCount64();
+    const uint64_t prev = s_lastJoinAttemptMs.load();
+    if (prev != 0 && now >= prev && (now - prev) < 1500) {
+        statusOut = "Connection already starting...";
+        NOBLE_WARN("ServerBrowser: duplicate join ignored within 1500ms");
+        return false;
+    }
+    return true;
+}
+
+void StampJoinAttemptNow() {
+    s_lastJoinAttemptMs.store(GetTickCount64());
+}
+
+std::string UpperAscii(std::string s) {
+    for (char& c : s) c = static_cast<char>(::toupper(static_cast<unsigned char>(c)));
+    return s;
+}
+
+std::string EllipsizeLabel(ImFont* font, float pxSize, const std::string& text, float maxW) {
+    if (maxW <= 4.0f || text.empty()) return "";
+    ImFont* f = font ? font : ImGui::GetFont();
+    if (f->CalcTextSizeA(pxSize, FLT_MAX, 0.0f, text.c_str()).x <= maxW) return text;
+    const float dotsW = f->CalcTextSizeA(pxSize, FLT_MAX, 0.0f, "...").x;
+    std::string out = text;
+    while (!out.empty()) {
+        out.pop_back();
+        if (f->CalcTextSizeA(pxSize, FLT_MAX, 0.0f, out.c_str()).x + dotsW <= maxW) {
+            return out + "...";
+        }
+    }
+    return "...";
+}
+
+void DrawSignalBars(ImDrawList* dl, ImVec2 pos, float s, int ping) {
+    const int bars = (ping < 0) ? 0 : (ping <= 75) ? 3 : (ping <= 145) ? 2 : 1;
+    const ImU32 activeCol = (ping <= 75) ? IM_COL32(82, 224, 128, 255)
+                          : (ping <= 145) ? IM_COL32(255, 198, 72, 255)
+                                          : IM_COL32(245, 95, 85, 255);
+    const ImU32 offCol = IM_COL32(55, 72, 92, 160);
+    const float bw = 4.0f * s, gap = 2.5f * s, baseH = 14.0f * s;
+    for (int i = 0; i < 3; ++i) {
+        const float h = baseH * (0.42f + 0.29f * i);
+        const ImVec2 b0(pos.x + i * (bw + gap), pos.y + baseH - h);
+        const ImVec2 b1(b0.x + bw, pos.y + baseH);
+        dl->AddRectFilled(b0, b1, i < bars ? activeCol : offCol, 1.0f * s);
+    }
+}
 
 struct MasterRegion {
     const char* label;
@@ -370,13 +430,12 @@ void ServerBrowser::RefreshServers() {
 
 void ServerBrowser::Render() {
     // Live list: re-read LAN/master results every 2 s, probe the LAN and ask the master server
-    // every 5 s so server listings, Players Online, and Total Players stay live.
+    // every 8 s (/api/browser already includes Players Online & Total Players, avoiding a second request).
     const double now = ImGui::GetTime();
-    if (now - m_lastMasterRequest > 5.0) {
+    if (now - m_lastMasterRequest > 8.0) {
         m_lastMasterRequest = now;
         SessionManager::Get().TriggerDiscoveryScan();
         MasterServerClient::Get().RequestList();
-        MasterServerClient::Get().RequestOnlineCount();
     }
     if (now - m_lastRefresh > 2.0) {
         m_lastRefresh = now;
@@ -388,31 +447,41 @@ void ServerBrowser::Render() {
     if (m_selectedServerIndex < 0 && !m_servers.empty()) m_selectedServerIndex = 0;
     if (m_selectedServerIndex >= static_cast<int>(m_servers.size())) m_selectedServerIndex = m_servers.empty() ? -1 : 0;
 
-    RenderFilterBar();
-    NobleStyle::SectionGap();
+    if (m_servers.empty() || m_selectedServerIndex < 0) s_browserPane = 0;
 
-    const float detailsWidth = U(310.0f);
-    const float promptBarH = U(32.0f);
-    ImGui::BeginChild("##serverlist", ImVec2(-detailsWidth - U(12.0f), -promptBarH), ImGuiChildFlags_None);
+    RenderFilterBar();
+    ImGui::Dummy(ImVec2(0.0f, U(6.0f)));
+
+    const float availW = ImGui::GetContentRegionAvail().x;
+    const float detailsWidth = std::clamp(availW * 0.30f, U(300.0f), U(410.0f));
+    const float paneGap = U(12.0f);
+    const float listWidth = std::max(U(320.0f), availW - detailsWidth - paneGap);
+    const float bodyH = std::max(U(180.0f), ImGui::GetContentRegionAvail().y - U(4.0f));
+    const float sScale = NobleUi::Scale();
+    ImDrawList* parentDl = ImGui::GetWindowDrawList();
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(8, 14, 22, 210));
+    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(45, 75, 102, 120));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(U(10.0f), U(10.0f)));
+
+    ImGui::BeginChild("##serverlist", ImVec2(listWidth, bodyH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     UiPad::ScrollWindow(false, true);
     RenderServerList();
     ImGui::EndChild();
-    ImGui::SameLine();
-    ImGui::BeginChild("##serverdetails", ImVec2(0, -promptBarH), ImGuiChildFlags_Borders);
+    NobleUi::DrawTacticalFrame(parentDl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale,
+                               s_browserPane == 0, true, false, s_browserPane == 0);
+
+    ImGui::SameLine(0.0f, paneGap);
+
+    ImGui::BeginChild("##serverdetails", ImVec2(detailsWidth, bodyH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     UiPad::ScrollWindow(false, true);
     RenderServerDetails();
     ImGui::EndChild();
+    NobleUi::DrawTacticalFrame(parentDl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale,
+                               s_browserPane == 1, m_selectedServerIndex >= 0, false, s_browserPane == 1);
 
-    // Modern bottom controller / keyboard hints bar
-    ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-    const bool padConnected = (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad) != 0;
-    if (padConnected) {
-        ImGui::TextUnformatted("[A] Join Match   [Y] Favourite   [X] Refresh   [LB/RB] Filter Mode   [Stick / D-pad] Navigate   [B] Back");
-    } else {
-        ImGui::TextUnformatted("Enter / Double-Click Join   F5 Refresh   Y Favourite   Arrow Keys Navigate   Esc Back");
-    }
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
 
     if (m_showDirectConnectModal) RenderDirectConnectModal();
     if (m_showMasterModal) RenderMasterServerModal();
@@ -421,153 +490,278 @@ void ServerBrowser::Render() {
 void ServerBrowser::RenderFilterBar() {
     SessionManager& sessions = SessionManager::Get();
     const bool hosting = sessions.IsHosting();
-    const ImVec2 filterStartPos = ImGui::GetCursorScreenPos();
-    const float filterRightX = filterStartPos.x + ImGui::GetContentRegionAvail().x;
+    const float sScale = NobleUi::Scale();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont* titleFont = NobleStyle::TitleFont() ? NobleStyle::TitleFont() : ImGui::GetFont();
+    ImFont* bodyFont = ImGui::GetFont();
 
-    if (hosting) {
-        if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(U(140), 0))) {
-            sessions.StopHosting();
-            MasterServerClient::Get().StopAdvertisingSync();
-            m_status = "Session closed. Stopped hosting.";
-            RefreshServers();
+    const bool modalBlocking = ImGui::GetIO().WantTextInput || m_showDirectConnectModal || m_showMasterModal || ModDownloadPrompt::Get().IsActive();
+    if (!modalBlocking) {
+        if (UiPad::TabPrev()) {
+            m_modeFilter = (m_modeFilter + 4) % 5;
+            MenuSounds::Tab(-1);
         }
-    }
-    if (hosting) ImGui::SameLine();
-    if (ImGui::Button("DIRECT CONNECT...", ImVec2(U(160), 0))) m_showDirectConnectModal = true;
-    ImGui::SameLine();
-    if (ImGui::Button("REFRESH", ImVec2(U(100), 0))) {
-        m_lastMasterRequest = -100.0;
-        m_lastRefresh = -100.0;
-        sessions.TriggerDiscoveryScan();
-    }
-    ImGui::SameLine();
-    const char* regionNames[] = { "Global Main Master Server", "LAN / Offline Only" };
-    int curRegion = 0;
-    const std::string curUrl = MasterServerClient::Get().Url();
-    if (curUrl.empty()) {
-        curRegion = 1;
-    } else {
-        curRegion = 0;
-    }
-
-    ImGui::SetNextItemWidth(U(170));
-    if (ImGui::Combo("##MasterRegionToolbar", &curRegion, regionNames, IM_ARRAYSIZE(regionNames))) {
-        std::string chosenUrl = kMasterRegions[curRegion].url;
-        SettingsData d = Settings::Get().Snapshot();
-        d.masterServerUrl = chosenUrl;
-        Settings::Get().Update(d);
-        MasterServerClient::Get().SetUrl(chosenUrl);
-        m_lastMasterRequest = -100.0;
-        m_lastRefresh = -100.0;
-        m_status = std::string("Matchmaking region changed to ") + kMasterRegions[curRegion].label;
-        RefreshServers();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("REGIONS...", ImVec2(U(100), 0))) {
-        m_selectedRegion = curRegion;
-
-
-
-        m_showMasterModal = true;
-    }
-
-    ImGui::Spacing();
-    ImGui::SetNextItemWidth(U(220));
-    ImGui::InputTextWithHint("##Search", "Search by name or map", m_searchQuery, IM_ARRAYSIZE(m_searchQuery));
-    ImGui::SameLine();
-    const char* modeNames[] = { "All modes", "Multiplayer", "Campaign", "Firefight", "Forge" };
-    ImGui::SetNextItemWidth(U(140));
-    ImGui::Combo("##ModeCombo", &m_modeFilter, modeNames, IM_ARRAYSIZE(modeNames));
-    ImGui::SameLine();
-    // Controller: left and right pick a filter, Back turns it on or off.
-    static int s_padFilter = 0;
-    const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal;
-    if (padFree && UiPad::Left()) s_padFilter = (s_padFilter + 4) % 5;
-    if (padFree && UiPad::Right()) s_padFilter = (s_padFilter + 1) % 5;
-    const bool padToggle = padFree && ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false);
-    const bool padLive = ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad;
-    const auto filterBox = [&](int index, const char* label, bool& value) {
-        ImGui::Checkbox(label, &value);
-        if (padToggle && s_padFilter == index) {
-            value = !value;
+        if (UiPad::TabNext()) {
+            m_modeFilter = (m_modeFilter + 1) % 5;
+            MenuSounds::Tab(1);
+        }
+        if (UiPad::ActionX() || ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+            m_lastMasterRequest = -100.0;
+            m_lastRefresh = -100.0;
+            sessions.TriggerDiscoveryScan();
+            MasterServerClient::Get().RequestList();
+            m_status = "Refreshing server list...";
             MenuSounds::Click();
         }
-        if (padLive && s_padFilter == index) {
-            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(143, 216, 255, 255), 0.0f, 0, 2.0f);
-        }
-    };
-    filterBox(0, "Hide full", m_hideFull);
-    ImGui::SameLine();
-    filterBox(1, "Hide empty", m_hideEmpty);
-    ImGui::SameLine();
-    filterBox(2, "Favourites only", m_showOnlyFavorites);
-    ImGui::SameLine();
-    filterBox(3, "No password", m_hidePassworded);
-    ImGui::SameLine();
-    filterBox(4, "Not started", m_hideInProgress);
+    }
 
-    // NAT Type & UPnP Status Indicator
+    // Live player stats (top right) + NAT telemetry pill
+    int activeInServers = 0;
+    for (const auto& s : m_servers) {
+        if (s.name.find("Master") != std::string::npos || s.name.find("Relay") != std::string::npos) continue;
+        if (s.playerCount > 0) activeInServers += s.playerCount;
+    }
+    const int onlineCount = std::max({ MasterServerClient::Get().OnlinePlayers(), activeInServers, 1 });
+    const int totalCount = std::max(MasterServerClient::Get().TotalPlayers(), onlineCount);
+    const std::string onlineStr = FormatCountWithCommas(onlineCount) + " ONLINE";
+    const std::string totalStr = FormatCountWithCommas(totalCount) + " TOTAL";
+
     const bool upnpActive = UPnP::Get().IsActive();
     const UPnP::NatType natType = UPnP::Get().GetNatType();
     const char* natLabel = UPnP::Get().GetNatTypeString();
-    const ImVec4 natColor = (natType == UPnP::NatType::Open) ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
-                            : ((natType == UPnP::NatType::Moderate) ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f) : ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
-    const bool isOpenNat = (natType == UPnP::NatType::Open);
+    const ImU32 natCol = (natType == UPnP::NatType::Open) ? IM_COL32(82, 224, 128, 255)
+                       : (natType == UPnP::NatType::Moderate) ? IM_COL32(255, 198, 72, 255)
+                                                              : IM_COL32(245, 95, 85, 255);
+    const std::string curUrl = MasterServerClient::Get().Url();
+    const int curRegion = curUrl.empty() ? 1 : 0;
 
-    std::string regionDisplay = (curRegion == 0) ? kMasterRegions[0].label : "Offline / LAN Only";
-    const std::string masterStatus = MasterServerClient::Get().Enabled()
-        ? "Region: " + regionDisplay + " (" + MasterServerClient::Get().Status() + ")"
-        : std::string("Region: Offline / LAN Only");
+    // -------------------------------------------------------------------------
+    // Row 1: Tactical Mode Tabs (Left) + NAT Pill & Live Player Counter (Right)
+    // -------------------------------------------------------------------------
+    const ImVec2 row1Origin = ImGui::GetCursorScreenPos();
+    const float fullW = ImGui::GetContentRegionAvail().x;
+    const float tabH = 34.0f * sScale;
+    const float tabFontPx = 15.0f * sScale;
+    const float counterFontPx = 17.0f * sScale;
+    const float subCounterPx = 13.0f * sScale;
 
-    ImGui::TextDisabled("%s   |   NAT: ", masterStatus.c_str());
-    ImGui::SameLine();
-    ImGui::TextColored(natColor, "%s", natLabel);
-    ImGui::SameLine();
-    ImGui::TextDisabled("  |  UPnP: ");
-    ImGui::SameLine();
-    ImGui::TextColored(upnpActive ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f) : ImVec4(0.95f, 0.45f, 0.35f, 1.0f),
-                       upnpActive ? "ENABLED" : "DISABLED");
+    const ImVec2 onlineSz = titleFont->CalcTextSizeA(counterFontPx, FLT_MAX, 0.0f, onlineStr.c_str());
+    const ImVec2 totalSz = bodyFont->CalcTextSizeA(subCounterPx, FLT_MAX, 0.0f, totalStr.c_str());
+    const float statsW = std::max(onlineSz.x, totalSz.x) + 8.0f * sScale;
 
-    if (!isOpenNat || !upnpActive) {
-        ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.25f, 1.0f));
-        ImGui::TextWrapped("NOTICE: Your NAT Type is %s and UPnP is %s. If you host public games, remote players may encounter connection issues. For optimal hosting, enable UPnP in your router settings or forward UDP port 11774.",
-            natLabel, upnpActive ? "Enabled" : "Disabled");
-        ImGui::PopStyleColor();
+    std::string natBadgeText = std::string("NAT: ") + UpperAscii(natLabel ? natLabel : "UNKNOWN");
+    const ImVec2 natTextSz = bodyFont->CalcTextSizeA(13.5f * sScale, FLT_MAX, 0.0f, natBadgeText.c_str());
+    const float natPillW = natTextSz.x + 28.0f * sScale;
+
+    const float rightBlockW = statsW + natPillW + 16.0f * sScale;
+    const float tabsBudgetW = std::max(U(300.0f), fullW - rightBlockW - U(12.0f));
+
+    static const char* kModeLabels[] = { "ALL", "MULTIPLAYER", "CAMPAIGN", "FIREFIGHT", "FORGE" };
+    float cursorX = row1Origin.x;
+    const bool showPadHints = UiPad::HasGamepad();
+    if (showPadHints) {
+        const ImVec2 lbSz = bodyFont->CalcTextSizeA(13.0f * sScale, FLT_MAX, 0.0f, "[LB]");
+        dl->AddText(bodyFont, 13.0f * sScale, ImVec2(cursorX, row1Origin.y + (tabH - lbSz.y) * 0.5f),
+                    IM_COL32(143, 216, 255, 220), "[LB]");
+        cursorX += lbSz.x + 8.0f * sScale;
     }
 
+    const float perTabMaxW = (tabsBudgetW - (showPadHints ? 76.0f * sScale : 0.0f)) / 5.0f;
+    for (int i = 0; i < 5; ++i) {
+        const ImVec2 ts = titleFont->CalcTextSizeA(tabFontPx, FLT_MAX, 0.0f, kModeLabels[i]);
+        const float w = std::min(perTabMaxW - 6.0f * sScale, ts.x + 28.0f * sScale);
+        const ImVec2 p0(cursorX, row1Origin.y);
+        const ImVec2 p1(cursorX + w, row1Origin.y + tabH);
 
+        ImGui::SetCursorScreenPos(p0);
+        char tid[32];
+        std::snprintf(tid, sizeof(tid), "##modeTab%d", i);
+        if (ImGui::InvisibleButton(tid, ImVec2(w, tabH))) {
+            m_modeFilter = i;
+            MenuSounds::Tab(1);
+        }
+        const bool hovered = ImGui::IsItemHovered();
+        const bool active = (m_modeFilter == i);
+        const ImU32 bgCol = active ? IM_COL32(28, 62, 92, 235)
+                          : hovered ? IM_COL32(20, 42, 64, 210)
+                                    : IM_COL32(10, 18, 28, 170);
+        dl->AddRectFilled(p0, p1, bgCol, 2.0f * sScale);
+        dl->AddRect(p0, p1, active ? IM_COL32(108, 210, 255, 210) : hovered ? IM_COL32(100, 155, 195, 130) : IM_COL32(45, 70, 92, 110), 2.0f * sScale);
+        if (active) {
+            dl->AddRectFilled(ImVec2(p0.x + 2.0f * sScale, p1.y - 3.0f * sScale),
+                              ImVec2(p1.x - 2.0f * sScale, p1.y), NobleUi::kAmber);
+        }
+        const ImVec2 textPos(p0.x + (w - ts.x) * 0.5f, p0.y + (tabH - ts.y) * 0.5f);
+        dl->AddText(titleFont, tabFontPx, textPos, active ? IM_COL32(255, 248, 230, 255) : IM_COL32(190, 210, 226, 230), kModeLabels[i]);
+        cursorX += w + 6.0f * sScale;
+    }
 
+    if (showPadHints) {
+        const ImVec2 rbSz = bodyFont->CalcTextSizeA(13.0f * sScale, FLT_MAX, 0.0f, "[RB]");
+        dl->AddText(bodyFont, 13.0f * sScale, ImVec2(cursorX + 2.0f * sScale, row1Origin.y + (tabH - rbSz.y) * 0.5f),
+                    IM_COL32(143, 216, 255, 220), "[RB]");
+    }
+
+    // Right side of Row 1: NAT/UPnP compact indicator pill + Online/Total telemetry
+    {
+        const float natX = row1Origin.x + fullW - statsW - natPillW - 12.0f * sScale;
+        const ImVec2 n0(natX, row1Origin.y + 4.0f * sScale);
+        const ImVec2 n1(natX + natPillW, row1Origin.y + tabH - 4.0f * sScale);
+        ImGui::SetCursorScreenPos(n0);
+        ImGui::InvisibleButton("##natStatusPill", ImVec2(natPillW, n1.y - n0.y));
+        const bool natHovered = ImGui::IsItemHovered();
+        dl->AddRectFilled(n0, n1, natHovered ? IM_COL32(22, 36, 52, 230) : IM_COL32(10, 18, 28, 200), 3.0f * sScale);
+        dl->AddRect(n0, n1, natCol, 3.0f * sScale, 0, 1.0f * sScale);
+        dl->AddCircleFilled(ImVec2(n0.x + 11.0f * sScale, (n0.y + n1.y) * 0.5f), 4.0f * sScale, natCol);
+        dl->AddText(bodyFont, 13.5f * sScale, ImVec2(n0.x + 20.0f * sScale, n0.y + (n1.y - n0.y - natTextSz.y) * 0.5f),
+                    IM_COL32(226, 236, 245, 240), natBadgeText.c_str());
+        if (natHovered) {
+            ImGui::BeginTooltip();
+            ImGui::Text("NAT Type: %s  |  UPnP: %s", natLabel ? natLabel : "Unknown", upnpActive ? "Enabled" : "Disabled");
+            ImGui::Text("Master Region: %s (%s)", curRegion == 0 ? kMasterRegions[0].label : "LAN / Offline Only",
+                        MasterServerClient::Get().Enabled() ? MasterServerClient::Get().Status().c_str() : "Offline");
+            if (natType != UPnP::NatType::Open || !upnpActive) {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.28f, 1.0f),
+                                   "To host public matches reliably, enable UPnP in your router or forward UDP port 11774.");
+            }
+            ImGui::EndTooltip();
+        }
+
+        const float statRight = row1Origin.x + fullW;
+        dl->AddText(titleFont, counterFontPx, ImVec2(statRight - onlineSz.x, row1Origin.y - 1.0f * sScale),
+                    IM_COL32(143, 216, 255, 255), onlineStr.c_str());
+        dl->AddText(bodyFont, subCounterPx, ImVec2(statRight - totalSz.x, row1Origin.y + onlineSz.y + 1.0f * sScale),
+                    IM_COL32(160, 180, 198, 220), totalStr.c_str());
+    }
+
+    dl->AddLine(ImVec2(row1Origin.x, row1Origin.y + tabH + 5.0f * sScale),
+                ImVec2(row1Origin.x + fullW, row1Origin.y + tabH + 5.0f * sScale),
+                IM_COL32(72, 128, 175, 110), 1.0f * sScale);
+
+    ImGui::SetCursorScreenPos(ImVec2(row1Origin.x, row1Origin.y + tabH + 10.0f * sScale));
+
+    // -------------------------------------------------------------------------
+    // Row 2: Search Box + Toggle Filter Pills + Sort + Action Buttons
+    // -------------------------------------------------------------------------
+    const float rowStartX = ImGui::GetCursorScreenPos().x;
+    const float rowMaxRight = rowStartX + fullW;
+    const float pillH = 28.0f * sScale;
+    const float pillGap = 6.0f * sScale;
+
+    auto ensureSameLineOrWrap = [&](float itemW) {
+        const float curX = ImGui::GetCursorScreenPos().x;
+        if (curX > rowStartX + 4.0f && curX + itemW > rowMaxRight) {
+            ImGui::NewLine();
+        }
+    };
+
+    const float searchW = U(210.0f);
+    ImGui::SetNextItemWidth(searchW);
+    ImGui::InputTextWithHint("##Search", "Search server or map...", m_searchQuery, IM_ARRAYSIZE(m_searchQuery));
+
+    auto drawFilterPill = [&](const char* id, const char* label, bool& value) {
+        const ImVec2 ts = bodyFont->CalcTextSizeA(13.5f * sScale, FLT_MAX, 0.0f, label);
+        const float w = ts.x + 24.0f * sScale;
+        ImGui::SameLine(0.0f, pillGap);
+        ensureSameLineOrWrap(w);
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + w, p0.y + pillH);
+        if (ImGui::InvisibleButton(id, ImVec2(w, pillH))) {
+            value = !value;
+            MenuSounds::Click();
+        }
+        const bool hov = ImGui::IsItemHovered();
+        dl->AddRectFilled(p0, p1, value ? IM_COL32(28, 70, 98, 235) : (hov ? IM_COL32(20, 38, 56, 210) : IM_COL32(10, 18, 28, 190)), 2.0f * sScale);
+        dl->AddRect(p0, p1, value ? NobleUi::kAccent : (hov ? IM_COL32(120, 180, 225, 190) : IM_COL32(55, 82, 108, 130)), 2.0f * sScale);
+        dl->AddCircleFilled(ImVec2(p0.x + 9.0f * sScale, (p0.y + p1.y) * 0.5f), 3.0f * sScale,
+                            value ? NobleUi::kAmber : IM_COL32(78, 96, 114, 180));
+        dl->AddText(bodyFont, 13.5f * sScale, ImVec2(p0.x + 16.0f * sScale, p0.y + (pillH - ts.y) * 0.5f),
+                    value ? IM_COL32(244, 248, 252, 255) : IM_COL32(180, 198, 214, 220), label);
+    };
+
+    drawFilterPill("##fltFav", "FAVOURITES", m_showOnlyFavorites);
+    drawFilterPill("##fltFull", "HIDE FULL", m_hideFull);
+    drawFilterPill("##fltEmpty", "ACTIVE ONLY", m_hideEmpty);
+    drawFilterPill("##fltPass", "NO PASSWORD", m_hidePassworded);
+    drawFilterPill("##fltProg", "OPEN LOBBY", m_hideInProgress);
+
+    // Sort Cycle Pill
+    static const char* kSortLabels[] = { "SORT: PLAYERS", "SORT: PING", "SORT: NAME", "SORT: MODE" };
+    const char* sortLabel = kSortLabels[std::clamp(m_sortBy, 0, 3)];
+    {
+        const ImVec2 ts = bodyFont->CalcTextSizeA(13.5f * sScale, FLT_MAX, 0.0f, sortLabel);
+        const float w = ts.x + 20.0f * sScale;
+        ImGui::SameLine(0.0f, pillGap);
+        ensureSameLineOrWrap(w);
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + w, p0.y + pillH);
+        if (ImGui::InvisibleButton("##sortCyclePill", ImVec2(w, pillH))) {
+            m_sortBy = (m_sortBy + 1) % 4;
+            MenuSounds::Click();
+        }
+        const bool hov = ImGui::IsItemHovered();
+        dl->AddRectFilled(p0, p1, hov ? IM_COL32(24, 48, 70, 220) : IM_COL32(12, 22, 34, 200), 2.0f * sScale);
+        dl->AddRect(p0, p1, hov ? NobleUi::kAccent : IM_COL32(68, 102, 132, 160), 2.0f * sScale);
+        dl->AddText(bodyFont, 13.5f * sScale, ImVec2(p0.x + 10.0f * sScale, p0.y + (pillH - ts.y) * 0.5f),
+                    IM_COL32(205, 228, 245, 245), sortLabel);
+    }
+
+    auto drawActionBtn = [&](const char* id, const char* label, bool danger) -> bool {
+        const ImVec2 ts = bodyFont->CalcTextSizeA(13.5f * sScale, FLT_MAX, 0.0f, label);
+        const float w = ts.x + 22.0f * sScale;
+        ImGui::SameLine(0.0f, pillGap);
+        ensureSameLineOrWrap(w);
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + w, p0.y + pillH);
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(w, pillH));
+        const bool hov = ImGui::IsItemHovered();
+        const ImU32 bg = danger ? (hov ? IM_COL32(150, 36, 36, 240) : IM_COL32(110, 24, 24, 225))
+                                : (hov ? IM_COL32(34, 78, 112, 235) : IM_COL32(16, 34, 52, 215));
+        const ImU32 border = danger ? IM_COL32(235, 95, 85, 210) : (hov ? NobleUi::kAmber : IM_COL32(84, 150, 200, 175));
+        dl->AddRectFilled(p0, p1, bg, 2.0f * sScale);
+        dl->AddRect(p0, p1, border, 2.0f * sScale);
+        dl->AddText(bodyFont, 13.5f * sScale, ImVec2(p0.x + 11.0f * sScale, p0.y + (pillH - ts.y) * 0.5f),
+                    IM_COL32(244, 248, 252, 255), label);
+        return clicked;
+    };
+
+    if (drawActionBtn("##refreshBtn", showPadHints ? "REFRESH [X]" : "REFRESH [F5]", false)) {
+        m_lastMasterRequest = -100.0;
+        m_lastRefresh = -100.0;
+        sessions.TriggerDiscoveryScan();
+        MasterServerClient::Get().RequestList();
+        MenuSounds::Click();
+    }
+    if (drawActionBtn("##directConnBtn", "DIRECT CONNECT", false)) {
+        m_showDirectConnectModal = true;
+        MenuSounds::Click();
+    }
+    const char* regShort = (curRegion == 0) ? "REGION: GLOBAL" : "REGION: LAN ONLY";
+    if (drawActionBtn("##regionBtn", regShort, false)) {
+        m_selectedRegion = curRegion;
+        m_showMasterModal = true;
+        MenuSounds::Click();
+    }
+    if (hosting && drawActionBtn("##stopHostBtn", "STOP HOSTING", true)) {
+        sessions.StopHosting();
+        MasterServerClient::Get().StopAdvertisingSync();
+        m_status = "Session closed. Stopped hosting.";
+        RefreshServers();
+        MenuSounds::Click();
+    }
 
     if (!m_status.empty()) {
-        ImGui::TextColored(NobleStyle::Accent(), "%s", m_status.c_str());
-    }
-
-    // Right-aligned live player counters in the top-right header area (Players Online & Total Players).
-    {
-        if (MasterServerClient::Get().TotalPlayers() == 0) {
-            MasterServerClient::Get().RequestOnlineCount();
-        }
-        int activeInServers = 0;
-        for (const auto& s : m_servers) {
-            if (s.name.find("Master") != std::string::npos || s.name.find("Relay") != std::string::npos) continue;
-            if (s.playerCount > 0) activeInServers += s.playerCount;
-        }
-        const int onlineCount = std::max({ MasterServerClient::Get().OnlinePlayers(), activeInServers, 1 });
-        const int totalCount = std::max(MasterServerClient::Get().TotalPlayers(), onlineCount);
-
-        const std::string onlineStr = FormatCountWithCommas(onlineCount) + " Players Online";
-        const std::string totalStr = FormatCountWithCommas(totalCount) + " Total Players";
-
-        ImFont* counterFont = NobleStyle::TitleFont() ? NobleStyle::TitleFont() : ImGui::GetFont();
-        const float fontSize = 26.0f;
-        const ImVec2 onlineSize = counterFont->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, onlineStr.c_str());
-        const ImVec2 totalSize = counterFont->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, totalStr.c_str());
-
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImU32 textCol = IM_COL32(236, 240, 244, 255);
-        dl->AddText(counterFont, fontSize, ImVec2(filterRightX - onlineSize.x, filterStartPos.y - 2.0f), textCol, onlineStr.c_str());
-        dl->AddText(counterFont, fontSize, ImVec2(filterRightX - totalSize.x, filterStartPos.y + 26.0f), textCol, totalStr.c_str());
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * sScale));
+        ImDrawList* sdl = ImGui::GetWindowDrawList();
+        const ImVec2 s0 = ImGui::GetCursorScreenPos();
+        const ImVec2 ts = bodyFont->CalcTextSizeA(14.0f * sScale, fullW - 20.0f * sScale, 0.0f, m_status.c_str());
+        const ImVec2 s1(s0.x + fullW, s0.y + ts.y + 8.0f * sScale);
+        sdl->AddRectFilled(s0, s1, IM_COL32(14, 34, 52, 210), 2.0f * sScale);
+        sdl->AddRectFilled(s0, ImVec2(s0.x + 3.0f * sScale, s1.y), NobleUi::kAccent);
+        sdl->AddText(bodyFont, 14.0f * sScale, ImVec2(s0.x + 12.0f * sScale, s0.y + 4.0f * sScale),
+                     IM_COL32(190, 232, 255, 255), m_status.c_str());
+        ImGui::Dummy(ImVec2(fullW, s1.y - s0.y));
     }
 }
 
@@ -593,351 +787,481 @@ bool ServerBrowser::PassesFilters(const ServerEntry& s) const {
 }
 
 void ServerBrowser::RenderServerList() {
-    std::vector<int> visibleIndices;
-    for (int i = 0; i < static_cast<int>(m_servers.size()); ++i) {
-        if (PassesFilters(m_servers[i])) visibleIndices.push_back(i);
-    }
+    const float sScale = NobleUi::Scale();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont* titleFont = NobleStyle::TitleFont() ? NobleStyle::TitleFont() : ImGui::GetFont();
+    ImFont* bodyFont = ImGui::GetFont();
 
-    const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal && !ModDownloadPrompt::Get().IsActive();
-    if (padFree) {
-        if (!visibleIndices.empty()) {
-            if (UiPad::AcceptPressed()) {
-                UiPad::ConsumeAccept();
-                if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
-                    const auto& s = m_servers[m_selectedServerIndex];
-                    if (!s.isOwn) AttemptJoin(s);
-                }
-            }
-            if (UiPad::ActionY() || ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
-                if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
-                    ToggleFavorite(m_servers[m_selectedServerIndex].hostAddress, m_servers[m_selectedServerIndex].port);
-                    RefreshServers();
-                }
-            }
-        }
-        if (UiPad::ActionX() || ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
-            m_lastMasterRequest = -100.0;
-            m_lastRefresh = -100.0;
-            SessionManager::Get().TriggerDiscoveryScan();
-            MenuSounds::Click();
-        }
-        if (UiPad::TabPrev()) {
-            m_modeFilter = (m_modeFilter + 4) % 5;
-            MenuSounds::Tab(-1);
-        }
-        if (UiPad::TabNext()) {
-            m_modeFilter = (m_modeFilter + 1) % 5;
-            MenuSounds::Tab(1);
-        }
-    }
-
-    static const ImGuiTableFlags flags =
-        ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
-        ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable;
-
-    if (!ImGui::BeginTable("ServerTable", 7, flags, ImVec2(0, 0))) return;
-    UiPad::ScrollWindow(false, false);
-
-    // Widths include the cell padding and the sort arrow, so no header is elided ("Sour...", "Playe...").
-    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, U(86.0f));
-    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, U(200.0f));
-    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, U(112.0f));
-    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, U(240.0f)); // longest stock name plus the MOD badge
-    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, U(98.0f));
-    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, U(70.0f));
-    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, U(170.0f));
-    ImGui::TableSetupScrollFreeze(0, 1);
-    ImGui::TableHeadersRow();
-
-    // Sortable headers: build the filtered list, sort it with ImGui's sort spec, then draw in that order.
     std::vector<const ServerEntry*> visible;
     visible.reserve(m_servers.size());
     for (const ServerEntry& s : m_servers) {
         if (PassesFilters(s)) visible.push_back(&s);
     }
-    if (ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs(); specs && specs->SpecsCount > 0) {
-        const ImGuiTableColumnSortSpecs& spec = specs->Specs[0];
-        const bool ascending = spec.SortDirection != ImGuiSortDirection_Descending;
-        auto lower = [](std::string text) {
-            for (char& c : text) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-            return text;
-        };
-        std::stable_sort(visible.begin(), visible.end(), [&](const ServerEntry* a, const ServerEntry* b) {
-            int cmp = 0;
-            switch (spec.ColumnIndex) {
-            case 0: cmp = a->source.compare(b->source); break;
-            case 1: cmp = lower(a->name).compare(lower(b->name)); break;
-            case 2: cmp = lower(a->gameMode).compare(lower(b->gameMode)); break;
-            case 3: cmp = lower(MapNames::Display(a->mapName)).compare(lower(MapNames::Display(b->mapName))); break;
-            case 4: cmp = a->playerCount - b->playerCount; break;
-            case 5: cmp = a->ping - b->ping; break;
-            case 6: cmp = lower(a->hostAddress).compare(lower(b->hostAddress)); break;
-            default: break;
-            }
-            return ascending ? cmp < 0 : cmp > 0;
-        });
-    }
 
-    // Moves in the order the rows are drawn. It used to follow the unsorted list, so with the table sorted the highlight
-    // jumped around, and nothing scrolled it back into view.
+    auto lowerAscii = [](std::string text) {
+        for (char& c : text) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+        return text;
+    };
+    std::stable_sort(visible.begin(), visible.end(), [&](const ServerEntry* a, const ServerEntry* b) {
+        switch (m_sortBy) {
+        case 1: { // Ping ascending (unknown ping at bottom)
+            const int pa = a->ping >= 0 ? a->ping : 99999;
+            const int pb = b->ping >= 0 ? b->ping : 99999;
+            if (pa != pb) return pa < pb;
+            return a->playerCount > b->playerCount;
+        }
+        case 2: // Name ascending
+            return lowerAscii(a->name) < lowerAscii(b->name);
+        case 3: // Mode ascending
+            if (lowerAscii(a->gameMode) != lowerAscii(b->gameMode)) return lowerAscii(a->gameMode) < lowerAscii(b->gameMode);
+            return a->playerCount > b->playerCount;
+        case 0:
+        default: // Players descending, then ping ascending
+            if (a->playerCount != b->playerCount) return a->playerCount > b->playerCount;
+            const int pa = a->ping >= 0 ? a->ping : 99999;
+            const int pb = b->ping >= 0 ? b->ping : 99999;
+            return pa < pb;
+        }
+    });
+
+    const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal && !ModDownloadPrompt::Get().IsActive();
     bool scrollToSelected = false;
-    if (padFree && !visible.empty()) {
+    if (padFree && s_browserPane == 0 && !visible.empty()) {
         const int count = static_cast<int>(visible.size());
         int position = -1;
         for (int k = 0; k < count; ++k) {
-            if (static_cast<int>(visible[k] - m_servers.data()) == m_selectedServerIndex) position = k;
+            if (static_cast<int>(visible[k] - m_servers.data()) == m_selectedServerIndex) {
+                position = k;
+                break;
+            }
         }
-        int next = position;
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) next = (position + 1) % count;
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) next = (position - 1 + count) % count;
-        if (UiPad::PageDown() || ImGui::IsKeyPressed(ImGuiKey_PageDown)) next = std::min(position + 8, count - 1);
-        if (UiPad::PageUp() || ImGui::IsKeyPressed(ImGuiKey_PageUp)) next = std::max(position - 8, 0);
+        int next = (position >= 0) ? position : 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) next = (next + 1) % count;
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) next = (next - 1 + count) % count;
+        if (UiPad::PageDown() || ImGui::IsKeyPressed(ImGuiKey_PageDown)) next = std::min(next + 6, count - 1);
+        if (UiPad::PageUp() || ImGui::IsKeyPressed(ImGuiKey_PageUp)) next = std::max(next - 6, 0);
         if (next != position) {
             m_selectedServerIndex = static_cast<int>(visible[next] - m_servers.data());
-            scrollToSelected = true;
-            MenuSounds::Scroll();
+            scrollToSelected = (position >= 0);
+            if (position >= 0) MenuSounds::Scroll();
+        }
+
+        if (UiPad::Right() || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+            if (m_selectedServerIndex >= 0) {
+                s_browserPane = 1;
+                s_detailBtnIdx = 0;
+                MenuSounds::Scroll();
+            }
+        }
+
+        if (UiPad::AcceptPressed() || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+            if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
+                const auto& sel = m_servers[m_selectedServerIndex];
+                if (!sel.isOwn) {
+                    UiPad::ConsumeAccept();
+                    AttemptJoin(sel);
+                }
+            }
+        }
+        if (UiPad::ActionY() || ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
+            if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
+                ToggleFavorite(m_servers[m_selectedServerIndex].hostAddress, m_servers[m_selectedServerIndex].port);
+                RefreshServers();
+                MenuSounds::Click();
+            }
         }
     }
 
-    int visibleIndex = 0;
+    const float listAvailW = ImGui::GetContentRegionAvail().x;
+    if (visible.empty()) {
+        const float boxH = U(120.0f);
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + listAvailW, p0.y + boxH);
+        dl->AddRectFilled(p0, p1, IM_COL32(12, 22, 34, 200), 2.0f * sScale);
+        NobleUi::DrawTacticalFrame(dl, p0, p1, sScale, false, false, false, false);
+        const char* title = "NO MATCHING SESSIONS FOUND";
+        const char* sub = m_servers.empty()
+            ? "Scanning LAN & Master Server relays... Press [X] / [F5] to refresh or click DIRECT CONNECT."
+            : "Try clearing one or more active mode or search filters.";
+        const ImVec2 tsz = titleFont->CalcTextSizeA(18.0f * sScale, FLT_MAX, 0.0f, title);
+        const ImVec2 ssz = bodyFont->CalcTextSizeA(14.0f * sScale, listAvailW - U(40), 0.0f, sub);
+        dl->AddText(titleFont, 18.0f * sScale, ImVec2(p0.x + (listAvailW - tsz.x) * 0.5f, p0.y + U(30)), IM_COL32(190, 214, 234, 235), title);
+        dl->AddText(bodyFont, 14.0f * sScale, ImVec2(p0.x + (listAvailW - ssz.x) * 0.5f, p0.y + U(62)), IM_COL32(140, 165, 188, 210), sub, nullptr, listAvailW - U(40));
+        ImGui::Dummy(ImVec2(listAvailW, boxH));
+        return;
+    }
+
+    const float cardH = U(74.0f);
+    const float cardGap = U(6.0f);
+    const float pad = U(6.0f);
+    const float thumbH = cardH - pad * 2.0f;
+    const float thumbW = thumbH * (16.0f / 9.0f);
+    const float metricsW = U(165.0f);
+
     for (const ServerEntry* entry : visible) {
         const ServerEntry& s = *entry;
         const int i = static_cast<int>(entry - m_servers.data());
-
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-
         const bool selected = (m_selectedServerIndex == i);
-        if (scrollToSelected && selected) ImGui::SetScrollHereY(0.5f);
 
-        // Column 0: source tag
-        if (s.isOwn) {
-            ImGui::TextColored(NobleStyle::Accent(), "YOU");
-        } else if (s.isFavorite) {
-            ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "FAV");
-        } else if (!s.region.empty() && s.region != "ONLINE") {
-            const ImVec4 regionColor = (s.region == "US East") ? ImVec4(0.4f, 0.8f, 1.0f, 1.0f)
-                                     : (s.region == "US West") ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-                                     : (s.region == "UK")      ? ImVec4(0.95f, 0.75f, 0.35f, 1.0f)
-                                                               : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
-            ImGui::TextColored(regionColor, "%s", s.region.c_str());
-        } else {
-            ImGui::TextDisabled("%s", s.source.c_str());
-        }
+        const ImVec2 c0 = ImGui::GetCursorScreenPos();
+        const ImVec2 c1(c0.x + listAvailW, c0.y + cardH);
 
-        // Column 1: name (selectable across row)
-        ImGui::TableNextColumn();
-        char label[160];
-        if (s.build.find("-dev") != std::string::npos) {
-            std::snprintf(label, sizeof(label), "%s  [DEV]##row%d", s.name.c_str(), i);
-        } else {
-            std::snprintf(label, sizeof(label), "%s##row%d", s.name.c_str(), i);
-        }
-        if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_SpanAllColumns)) {
+        char rowId[32];
+        std::snprintf(rowId, sizeof(rowId), "##srvCard%d", i);
+        if (ImGui::InvisibleButton(rowId, ImVec2(listAvailW, cardH))) {
             m_selectedServerIndex = i;
+            s_browserPane = 0;
+            MenuSounds::Click();
         }
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !s.isOwn) {
+        const bool hovered = ImGui::IsItemHovered();
+        if (hovered && ImGui::IsMouseDoubleClicked(0) && !s.isOwn) {
             AttemptJoin(s);
         }
-
-        // Column 2: mode
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(s.gameMode.c_str());
-        if (s.inProgress) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.15f, 1.0f), "[IN PROGRESS]");
+        if (scrollToSelected && selected) {
+            ImGui::SetScrollHereY(0.45f);
         }
 
-        // Column 3: map, by the name players know it by ("Forge World", not "forge_halo"). Modded maps keep
-        // their own name and get the MOD badge; hovering shows the raw file name.
-        ImGui::TableNextColumn();
-        if (s.isMod) DrawModBadge();
-        ImGui::TextUnformatted(MapNames::Display(s.mapName).c_str());
-        if (s.isMod && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.mapName.c_str());
+        const bool focusedCard = (s_browserPane == 0 && selected);
+        const ImU32 cardBg = selected ? IM_COL32(20, 44, 66, 235)
+                           : hovered  ? IM_COL32(16, 33, 50, 220)
+                                      : IM_COL32(11, 20, 31, 205);
+        dl->AddRectFilled(c0, c1, cardBg, 2.0f * sScale);
 
-        // Column 4: players
-        ImGui::TableNextColumn();
-        ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
-
-        // Column 5: ping
-        ImGui::TableNextColumn();
-        if (s.ping >= 0) {
-            const ImVec4 color = s.ping <= 100 ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
-                               : s.ping <= 150 ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
-                                              : ImVec4(0.95f, 0.40f, 0.35f, 1.0f);
-            ImGui::TextColored(color, "%d", s.ping);
+        // Crisp 16:9 map preview thumbnail (no upscaling)
+        const ImVec2 t0(c0.x + pad, c0.y + pad);
+        const ImVec2 t1(t0.x + thumbW, t0.y + thumbH);
+        dl->AddRectFilled(t0, t1, IM_COL32(7, 12, 18, 255));
+        const std::string scenario = MapNames::ScenarioOf(s.mapName);
+        const std::string& artKey = scenario.empty() ? s.mapName : scenario;
+        UiTexture thumbTex = UiArt::MapPreview(artKey, true);
+        if (!thumbTex) thumbTex = UiArt::MapPhoto(artKey);
+        if (thumbTex) {
+            UiArt::DrawCoverCrisp(dl, thumbTex, t0, t1, IM_COL32(255, 255, 255, 255), 1.0f);
         } else {
-            ImGui::TextDisabled("-");
+            dl->AddLine(t0, t1, IM_COL32(34, 54, 74, 90), 1.0f);
+            dl->AddLine(ImVec2(t1.x, t0.y), ImVec2(t0.x, t1.y), IM_COL32(34, 54, 74, 90), 1.0f);
+            const char* noArt = s.isMod ? "MOD" : "MAP";
+            const ImVec2 nas = bodyFont->CalcTextSizeA(12.0f * sScale, FLT_MAX, 0.0f, noArt);
+            dl->AddText(bodyFont, 12.0f * sScale, ImVec2(t0.x + (thumbW - nas.x) * 0.5f, t0.y + (thumbH - nas.y) * 0.5f),
+                        IM_COL32(110, 138, 165, 200), noArt);
+        }
+        dl->AddRect(t0, t1, IM_COL32(90, 140, 180, 120), 0.0f, 0, 1.0f);
+
+        if (s.isOwn || s.isFavorite) {
+            const char* corner = s.isOwn ? "YOU" : "FAV";
+            const ImU32 cornerBg = s.isOwn ? IM_COL32(22, 130, 185, 235) : IM_COL32(195, 145, 22, 235);
+            const ImVec2 cs = bodyFont->CalcTextSizeA(11.0f * sScale, FLT_MAX, 0.0f, corner);
+            dl->AddRectFilled(ImVec2(t0.x + 3.0f * sScale, t0.y + 3.0f * sScale),
+                              ImVec2(t0.x + cs.x + 11.0f * sScale, t0.y + cs.y + 6.0f * sScale), cornerBg, 2.0f * sScale);
+            dl->AddText(bodyFont, 11.0f * sScale, ImVec2(t0.x + 7.0f * sScale, t0.y + 4.5f * sScale),
+                        IM_COL32(250, 252, 255, 255), corner);
         }
 
-        // Column 6: address
-        ImGui::TableNextColumn();
-        ImGui::TextDisabled("%s:%u", s.hostAddress.c_str(), s.port);
+        // Info column
+        const float textLeft = t1.x + U(14.0f);
+        const float textRight = c1.x - metricsW - U(12.0f);
+        const float infoW = std::max(U(120.0f), textRight - textLeft);
 
-        ++visibleIndex;
+        struct PillBadge { const char* text; ImU32 bg; ImU32 fg; };
+        std::vector<PillBadge> badges;
+        if (s.isMod) badges.push_back({ "MOD", IM_COL32(60, 195, 235, 240), IM_COL32(8, 22, 30, 255) });
+        if (s.isPasswordProtected) badges.push_back({ "LOCKED", IM_COL32(215, 165, 38, 235), IM_COL32(22, 16, 6, 255) });
+        if (s.inProgress) badges.push_back({ "LIVE", IM_COL32(225, 128, 35, 235), IM_COL32(255, 248, 238, 255) });
+        if (s.build.find("-dev") != std::string::npos) badges.push_back({ "DEV", IM_COL32(95, 78, 175, 230), IM_COL32(240, 238, 255, 255) });
+        const bool compatible = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
+        if (!compatible) badges.push_back({ "OLD/MISMATCH", IM_COL32(190, 52, 52, 235), IM_COL32(255, 242, 242, 255) });
+
+        float badgeBlockW = 0.0f;
+        const float badgeFontPx = 11.5f * sScale;
+        for (const auto& b : badges) {
+            badgeBlockW += bodyFont->CalcTextSizeA(badgeFontPx, FLT_MAX, 0.0f, b.text).x + 16.0f * sScale;
+        }
+
+        const float namePx = 17.5f * sScale;
+        const float maxNameW = std::max(U(80.0f), infoW - badgeBlockW - U(8.0f));
+        const std::string displayName = EllipsizeLabel(titleFont, namePx, s.name.empty() ? "Unnamed Halo: Reach Server" : s.name, maxNameW);
+        const ImVec2 nameSz = titleFont->CalcTextSizeA(namePx, FLT_MAX, 0.0f, displayName.c_str());
+        const float rowTopY = c0.y + U(13.0f);
+        dl->AddText(titleFont, namePx, ImVec2(textLeft, rowTopY),
+                    selected ? IM_COL32(255, 250, 238, 255) : IM_COL32(228, 238, 248, 255), displayName.c_str());
+
+        float bx = textLeft + nameSz.x + 8.0f * sScale;
+        for (const auto& b : badges) {
+            const ImVec2 bs = bodyFont->CalcTextSizeA(badgeFontPx, FLT_MAX, 0.0f, b.text);
+            const float bw = bs.x + 12.0f * sScale;
+            const float bh = bs.y + 4.0f * sScale;
+            const float by = rowTopY + (nameSz.y - bh) * 0.5f;
+            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), b.bg, 2.0f * sScale);
+            dl->AddText(bodyFont, badgeFontPx, ImVec2(bx + 6.0f * sScale, by + 2.0f * sScale), b.fg, b.text);
+            bx += bw + 5.0f * sScale;
+        }
+
+        // Subtitle line: Mode  ·  Map  ·  Game Type  ·  Region
+        const float subPx = 13.5f * sScale;
+        const float rowSubY = rowTopY + nameSz.y + U(6.0f);
+        std::string subLine = UpperAscii(s.gameMode.empty() ? "MULTIPLAYER" : s.gameMode);
+        subLine += "   |   " + (s.mapName.empty() ? std::string("Unknown Map") : MapNames::Display(s.mapName));
+        if (!s.variantName.empty()) subLine += "   |   " + s.variantName;
+        if (!s.region.empty() && s.region != "YOU") subLine += "   |   " + s.region;
+        else if (!s.source.empty()) subLine += "   |   " + s.source;
+
+        const std::string subClip = EllipsizeLabel(bodyFont, subPx, subLine, infoW);
+        dl->AddText(bodyFont, subPx, ImVec2(textLeft, rowSubY), IM_COL32(158, 182, 206, 230), subClip.c_str());
+
+        // Right metrics column: Players + capacity bar, Ping + signal bars
+        const float mx0 = c1.x - metricsW;
+        dl->AddLine(ImVec2(mx0, c0.y + U(10)), ImVec2(mx0, c1.y - U(10)), IM_COL32(60, 92, 120, 95), 1.0f);
+
+        char playerBuf[32];
+        std::snprintf(playerBuf, sizeof(playerBuf), "%d / %d", s.playerCount, s.maxPlayers);
+        const float plPx = 16.5f * sScale;
+        const ImVec2 plSz = titleFont->CalcTextSizeA(plPx, FLT_MAX, 0.0f, playerBuf);
+        const float plX = mx0 + U(16.0f);
+        const float plY = c0.y + U(15.0f);
+        dl->AddText(titleFont, plPx, ImVec2(plX, plY), IM_COL32(236, 244, 250, 255), playerBuf);
+
+        const float capW = U(62.0f);
+        const float capH = 4.0f * sScale;
+        const ImVec2 bar0(plX, plY + plSz.y + U(5.0f));
+        const ImVec2 bar1(plX + capW, bar0.y + capH);
+        dl->AddRectFilled(bar0, bar1, IM_COL32(30, 48, 66, 200), 1.0f * sScale);
+        if (s.maxPlayers > 0 && s.playerCount > 0) {
+            const float fillFrac = std::clamp(static_cast<float>(s.playerCount) / static_cast<float>(s.maxPlayers), 0.0f, 1.0f);
+            const ImU32 fillCol = (fillFrac >= 0.99f) ? IM_COL32(235, 110, 82, 255) : NobleUi::kAccent;
+            dl->AddRectFilled(bar0, ImVec2(bar0.x + capW * fillFrac, bar1.y), fillCol, 1.0f * sScale);
+        }
+
+        // Ping + signal strength on right edge of card
+        const float pingX = c1.x - U(20.0f);
+        const float midY = c0.y + cardH * 0.5f;
+        DrawSignalBars(dl, ImVec2(pingX - U(18.0f), midY - 7.0f * sScale), sScale, s.ping);
+        if (s.ping >= 0) {
+            char pBuf[24];
+            std::snprintf(pBuf, sizeof(pBuf), "%d ms", s.ping);
+            const ImU32 pCol = (s.ping <= 75) ? IM_COL32(82, 224, 128, 255)
+                             : (s.ping <= 145) ? IM_COL32(255, 198, 72, 255)
+                                               : IM_COL32(245, 95, 85, 255);
+            const ImVec2 pSz = bodyFont->CalcTextSizeA(13.5f * sScale, FLT_MAX, 0.0f, pBuf);
+            dl->AddText(bodyFont, 13.5f * sScale, ImVec2(pingX - U(26.0f) - pSz.x, midY - pSz.y * 0.5f), pCol, pBuf);
+        } else {
+            const ImVec2 pSz = bodyFont->CalcTextSizeA(13.5f * sScale, FLT_MAX, 0.0f, "-- ms");
+            dl->AddText(bodyFont, 13.5f * sScale, ImVec2(pingX - U(26.0f) - pSz.x, midY - pSz.y * 0.5f),
+                        IM_COL32(125, 145, 165, 180), "-- ms");
+        }
+
+        NobleUi::DrawTacticalFrame(dl, c0, c1, sScale, focusedCard, selected, hovered, focusedCard);
+        ImGui::Dummy(ImVec2(listAvailW, cardGap));
     }
-
-    if (visibleIndex == 0) {
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TableNextColumn();
-        ImGui::TextDisabled("No servers found matching current filters.");
-    }
-
-    ImGui::EndTable();
 }
 
 void ServerBrowser::RenderServerDetails() {
+    const float sScale = NobleUi::Scale();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont* titleFont = NobleStyle::TitleFont() ? NobleStyle::TitleFont() : ImGui::GetFont();
+    ImFont* bodyFont = ImGui::GetFont();
+
+    const float headerPx = 19.0f * sScale;
+    const ImVec2 h0 = ImGui::GetCursorScreenPos();
+    const float availW = ImGui::GetContentRegionAvail().x;
+    dl->AddText(titleFont, headerPx, h0, IM_COL32(236, 244, 252, 255), "GAME DETAILS");
+    if (s_browserPane == 1 && UiPad::HasGamepad()) {
+        const char* pHint = "[LEFT] LIST   [A] ACTIVATE";
+        const ImVec2 phSz = bodyFont->CalcTextSizeA(11.5f * sScale, FLT_MAX, 0.0f, pHint);
+        dl->AddText(bodyFont, 11.5f * sScale, ImVec2(h0.x + availW - phSz.x, h0.y + 4.0f * sScale),
+                    NobleUi::kAmber, pHint);
+    }
+    dl->AddLine(ImVec2(h0.x, h0.y + 26.0f * sScale), ImVec2(h0.x + availW, h0.y + 26.0f * sScale),
+                IM_COL32(78, 138, 185, 130), 1.0f * sScale);
+    ImGui::Dummy(ImVec2(availW, 32.0f * sScale));
+
     if (m_selectedServerIndex < 0 || m_selectedServerIndex >= static_cast<int>(m_servers.size())) {
-        NobleStyle::Header("GAME DETAILS");
-        ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-        ImGui::TextWrapped("Select a server from the list to see its map, players, ping and mods.");
+        ImGui::TextWrapped("Select a server from the list to inspect its map artwork, player count, ping, and mod requirements.");
         ImGui::Spacing();
-        ImGui::TextWrapped("Double-click a server to join it.");
+        ImGui::TextWrapped("Press [A] or Double-Click a session to join the pre-game lobby.");
         ImGui::Spacing();
-        ImGui::TextWrapped("%d server(s) in the list.", static_cast<int>(m_servers.size()));
+        ImGui::TextWrapped("%d session(s) currently tracked.", static_cast<int>(m_servers.size()));
         ImGui::PopStyleColor();
         return;
     }
 
     const ServerEntry& s = m_servers[m_selectedServerIndex];
-    NobleStyle::Header("GAME DETAILS");
-    ImGui::Spacing();
 
-    // Map picture: MCC's own preview for a vanilla map, or the photo the map/mod ship as
-    // data\ui\custom\loading\<map>.*. Modded maps without one get a named placeholder instead of a
-    // picture of a different map (2026-10-30).
+    const bool modalBlocking = ImGui::GetIO().WantTextInput || m_showDirectConnectModal || m_showMasterModal || ModDownloadPrompt::Get().IsActive();
+    bool triggerFocusedBtn = false;
+    if (!modalBlocking && s_browserPane == 1) {
+        if (UiPad::Left() || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
+            s_browserPane = 0;
+            MenuSounds::Scroll();
+        } else if (UiPad::Down() || ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) {
+            s_detailBtnIdx = (s_detailBtnIdx + 1) % 3;
+            MenuSounds::Scroll();
+        } else if (UiPad::Up() || ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) {
+            s_detailBtnIdx = (s_detailBtnIdx + 2) % 3;
+            MenuSounds::Scroll();
+        } else if (UiPad::Right() && s_detailBtnIdx == 1) {
+            s_detailBtnIdx = 2;
+            MenuSounds::Scroll();
+        } else if (UiPad::AcceptPressed() || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+            UiPad::ConsumeAccept();
+            triggerFocusedBtn = true;
+        }
+        if (UiPad::ActionY() || ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
+            ToggleFavorite(s.hostAddress, s.port);
+            RefreshServers();
+            MenuSounds::Click();
+        }
+    }
+
+    // Crisp 16:9 Map Artwork Header (never upscaled above native asset resolution)
     {
         const float photoW = ImGui::GetContentRegionAvail().x;
-        const float photoH = photoW * 9.0f / 16.0f;
+        const float photoH = std::min(photoW * 9.0f / 16.0f, U(195.0f));
         const ImVec2 p0 = ImGui::GetCursorScreenPos();
         const ImVec2 p1(p0.x + photoW, p0.y + photoH);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(p0, p1, IM_COL32(10, 15, 22, 255));
-        // Previews are keyed by scenario, so a stock map sent as a file ("forge_halo.map") needs its canonical name.
+        dl->AddRectFilled(p0, p1, IM_COL32(8, 13, 20, 255));
         const std::string scenario = MapNames::ScenarioOf(s.mapName);
-        if (const UiTexture photo = UiArt::MapPhoto(scenario.empty() ? s.mapName : scenario)) {
-            UiArt::DrawCover(dl, photo, p0, p1);
+        const std::string& artKey = scenario.empty() ? s.mapName : scenario;
+        UiTexture photo = UiArt::MapPhoto(artKey);
+        if (!photo) photo = UiArt::MapPreview(artKey, true);
+        if (photo) {
+            UiArt::DrawCoverCrisp(dl, photo, p0, p1, IM_COL32(255, 255, 255, 255), 1.0f);
         } else {
             const char* missing = s.isMod ? "NO PICTURE FROM THIS MOD" : "NO MAP PICTURE";
-            const ImVec2 ts = ImGui::CalcTextSize(missing);
-            dl->AddText(ImVec2(p0.x + (photoW - ts.x) * 0.5f, p0.y + (photoH - ts.y) * 0.5f),
-                        IM_COL32(120, 135, 150, 200), missing);
+            const ImVec2 ts = bodyFont->CalcTextSizeA(13.5f * sScale, FLT_MAX, 0.0f, missing);
+            dl->AddText(bodyFont, 13.5f * sScale, ImVec2(p0.x + (photoW - ts.x) * 0.5f, p0.y + (photoH - ts.y) * 0.5f),
+                        IM_COL32(120, 138, 158, 210), missing);
         }
-        // Scrim under the map name so it stays readable on a bright picture.
-        dl->AddRectFilledMultiColor(ImVec2(p0.x, p1.y - photoH * 0.5f), p1,
-                                    IM_COL32(4, 8, 12, 0), IM_COL32(4, 8, 12, 0),
-                                    IM_COL32(4, 8, 12, 230), IM_COL32(4, 8, 12, 230));
-        dl->AddRect(p0, p1, IM_COL32(150, 185, 215, 110), 0.0f, 0, 1.0f);
-        const std::string mapName = s.mapName.empty() ? std::string("Unknown map") : MapNames::Display(s.mapName);
-        const char* mapLabel = mapName.c_str();
-        dl->AddText(ImGui::GetFont(), 20.0f, ImVec2(p0.x + 10.0f, p1.y - 28.0f), IM_COL32(240, 244, 248, 255), mapLabel);
+        dl->AddRectFilledMultiColor(ImVec2(p0.x, p1.y - photoH * 0.55f), p1,
+                                    IM_COL32(4, 8, 14, 0), IM_COL32(4, 8, 14, 0),
+                                    IM_COL32(4, 8, 14, 240), IM_COL32(4, 8, 14, 240));
+        NobleUi::DrawTacticalFrame(dl, p0, p1, sScale, false, true, false, false);
+
+        const std::string mapTitle = UpperAscii(s.mapName.empty() ? std::string("Unknown map") : MapNames::Display(s.mapName));
+        const std::string clippedMap = EllipsizeLabel(titleFont, 18.0f * sScale, mapTitle, photoW - 20.0f * sScale);
+        dl->AddText(titleFont, 18.0f * sScale, ImVec2(p0.x + 10.0f * sScale, p1.y - 26.0f * sScale),
+                    IM_COL32(244, 248, 252, 255), clippedMap.c_str());
         ImGui::Dummy(ImVec2(photoW, photoH));
     }
 
-    ImGui::Spacing();
-    const float modsTextW = ImGui::CalcTextSize("Mods: 0").x;
-    const float availW = ImGui::GetContentRegionAvail().x;
-    ImGui::TextUnformatted(s.name.c_str());
-    ImGui::SameLine(std::max(140.0f, availW - modsTextW));
-    ImGui::TextDisabled("Mods: %d", s.isMod ? 1 : 0);
-    ImGui::TextDisabled("%s:%u%s", s.hostAddress.c_str(), s.port, s.isOwn ? " (YOU)" : "");
-    ImGui::Spacing();
+    ImGui::Dummy(ImVec2(0.0f, 8.0f * sScale));
 
-    ImGui::TextDisabled("Mode:");
-    ImGui::SameLine(U(100));
-    ImGui::TextUnformatted(s.gameMode.c_str());
+    // Server title & address header
+    const std::string srvTitle = s.name.empty() ? "Unnamed Session" : s.name;
+    const std::string srvClip = EllipsizeLabel(titleFont, 16.5f * sScale, srvTitle, availW - 4.0f * sScale);
+    const ImVec2 stPos = ImGui::GetCursorScreenPos();
+    dl->AddText(titleFont, 16.5f * sScale, stPos, IM_COL32(238, 245, 252, 255), srvClip.c_str());
+    ImGui::Dummy(ImVec2(availW, 20.0f * sScale));
 
+    char addrLine[128];
+    std::snprintf(addrLine, sizeof(addrLine), "%s:%u%s", s.hostAddress.c_str(), s.port, s.isOwn ? "  (HOSTING)" : "");
+    dl->AddText(bodyFont, 13.0f * sScale, ImGui::GetCursorScreenPos(), IM_COL32(142, 168, 192, 215), addrLine);
+    ImGui::Dummy(ImVec2(availW, 18.0f * sScale));
+    ImGui::Dummy(ImVec2(0.0f, 4.0f * sScale));
+
+    // Structured Telemetry Key-Value Table
+    int rowIdx = 0;
+    const float keyW = U(90.0f);
+    const float rowPadY = 4.0f * sScale;
+    const float rowTextPx = 14.0f * sScale;
+    auto drawInfoRow = [&](const char* key, const std::string& val, ImU32 valCol = IM_COL32(226, 236, 245, 255)) {
+        const ImVec2 r0 = ImGui::GetCursorScreenPos();
+        const float valMaxW = std::max(U(80.0f), availW - keyW - 12.0f * sScale);
+        const std::string vClip = EllipsizeLabel(bodyFont, rowTextPx, val, valMaxW);
+        const float rowH = 22.0f * sScale;
+        const ImVec2 r1(r0.x + availW, r0.y + rowH);
+        if ((rowIdx++ % 2) == 0) {
+            dl->AddRectFilled(r0, r1, IM_COL32(14, 24, 36, 150));
+        }
+        dl->AddText(bodyFont, rowTextPx, ImVec2(r0.x + 6.0f * sScale, r0.y + rowPadY), IM_COL32(138, 164, 188, 220), key);
+        dl->AddText(bodyFont, rowTextPx, ImVec2(r0.x + keyW, r0.y + rowPadY), valCol, vClip.c_str());
+        ImGui::Dummy(ImVec2(availW, rowH));
+    };
+
+    drawInfoRow("MODE", s.gameMode + (s.inProgress ? "  [LIVE]" : ""));
     if (!s.region.empty() && s.region != "YOU") {
-        ImGui::TextDisabled("Region:");
-        ImGui::SameLine(U(100));
         const char* regDesc = (s.region == "US East") ? "US East (Virginia)"
                             : (s.region == "US West") ? "US West (Oregon)"
                             : (s.region == "UK")      ? "UK (London)"
                             : s.region.c_str();
-        ImGui::TextUnformatted(regDesc);
+        drawInfoRow("REGION", regDesc);
     }
-
-    ImGui::TextDisabled("Map:");
-    ImGui::SameLine(U(100));
-    ImGui::TextWrapped("%s", MapNames::Display(s.mapName).c_str());
-
+    drawInfoRow("MAP", MapNames::Display(s.mapName));
     if (!s.variantName.empty()) {
-        ImGui::TextDisabled("Game type:");
-        ImGui::SameLine(U(100));
-        ImGui::TextUnformatted(s.variantName.c_str());
+        drawInfoRow("GAMETYPE", s.variantName);
+    }
+    {
+        char pl[32];
+        std::snprintf(pl, sizeof(pl), "%d / %d", s.playerCount, s.maxPlayers);
+        drawInfoRow("PLAYERS", pl);
+    }
+    {
+        const bool compat = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
+        std::string verStr = s.build.empty() ? "-" : s.build;
+        if (!s.build.empty() && !compat) verStr += " (Incompatible)";
+        const ImU32 verCol = !compat ? IM_COL32(245, 95, 85, 255)
+                           : (s.build.find("-dev") != std::string::npos) ? IM_COL32(255, 212, 72, 255)
+                                                                         : IM_COL32(226, 236, 245, 255);
+        drawInfoRow("VERSION", verStr, verCol);
+    }
+    {
+        std::string pingStr = s.ping >= 0 ? (std::to_string(s.ping) + " ms") : "-";
+        const ImU32 pingCol = s.ping < 0 ? IM_COL32(138, 164, 188, 220)
+                            : s.ping <= 75 ? IM_COL32(82, 224, 128, 255)
+                            : s.ping <= 145 ? IM_COL32(255, 198, 72, 255)
+                                            : IM_COL32(245, 95, 85, 255);
+        drawInfoRow("PING", pingStr, pingCol);
     }
 
-    ImGui::TextDisabled("Players:");
-    ImGui::SameLine(U(100));
-    ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
-
-    ImGui::TextDisabled("Version:");
-    ImGui::SameLine(U(100));
-    if (!s.build.empty()) {
-        if (s.build.find("-dev") != std::string::npos) {
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%s", s.build.c_str());
-        } else {
-            ImGui::TextUnformatted(s.build.c_str());
-        }
-        if (!noble::AreBuildsCompatible(s.build, noble::kBuildTag)) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "(Incompatible)");
-        }
-    } else {
-        ImGui::TextDisabled("-");
+    if (s.isPasswordProtected) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Password protected session");
     }
-
-    ImGui::TextDisabled("Ping:");
-    ImGui::SameLine(U(100));
-    if (s.ping >= 0) {
-        const ImVec4 color = s.ping <= 100 ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
-                           : s.ping <= 150 ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
-                                          : ImVec4(0.95f, 0.40f, 0.35f, 1.0f);
-        ImGui::TextColored(color, "%d ms", s.ping);
-    } else {
-        ImGui::TextDisabled("-");
-    }
-
-    // Status lines wrap: the details panel is only 300 px wide, so a long line used to be cut at the edge.
-    if (s.isPasswordProtected) ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Password protected");
     if (s.inProgress) {
+        ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-        ImGui::TextWrapped("Match in progress - joining in progress is allowed.");
+        ImGui::TextWrapped("Match in progress - join in progress is enabled.");
         ImGui::PopStyleColor();
     }
-    if (s.isMod) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom map / modded content");
-    if (!s.modId.empty()) {
-        ImGui::TextDisabled("Required Workshop mod:");
-        ImGui::SameLine(U(100));
-        ImGui::TextWrapped("%s", s.modTitle.empty() ? ("Workshop item " + s.modId).c_str() : s.modTitle.c_str());
-        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-        ImGui::TextWrapped("Noble checks for it before joining and can download it from Steam.");
-        ImGui::PopStyleColor();
+    if (s.isMod || !s.modId.empty()) {
+        ImGui::Spacing();
+        if (s.isMod) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom map / modded content");
+        if (!s.modId.empty()) {
+            const std::string modLabel = s.modTitle.empty() ? ("Workshop item " + s.modId) : s.modTitle;
+            ImGui::TextWrapped("Required Workshop mod: %s", modLabel.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+            ImGui::TextWrapped("Noble checks for it before joining and downloads missing files automatically.");
+            ImGui::PopStyleColor();
+        }
     }
 
-    NobleStyle::SectionGap();
+    ImGui::Dummy(ImVec2(0.0f, 10.0f * sScale));
+
+    auto focusOutline = [&](int btnIndex) {
+        if (s_browserPane == 1 && s_detailBtnIdx == btnIndex) {
+            NobleUi::DrawTacticalFrame(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale, true, true, false, true);
+        }
+    };
 
     if (s.isOwn) {
-        ImGui::TextDisabled("You are hosting this game.");
-        if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(-1, 34))) {
+        ImGui::TextDisabled("You are hosting this session.");
+        if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(-1, U(36))) || (triggerFocusedBtn && s_detailBtnIdx == 0)) {
             SessionManager::Get().StopHosting();
             MasterServerClient::Get().StopAdvertisingSync();
             m_status = "Session closed. Stopped hosting.";
             RefreshServers();
         }
+        focusOutline(0);
     } else {
         const bool compatible = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
         if (!compatible) {
-            const int rel = noble::CompareBuilds(noble::kBuildTag, s.build);   // -1: you are older than the host
+            const int rel = noble::CompareBuilds(noble::kBuildTag, s.build);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("VERSION MISMATCH: this game runs %s and you have %s. You can't join it.",
+            ImGui::TextWrapped("VERSION MISMATCH: host runs %s and you have %s.",
                                std::string(noble::ExtractBaseVersion(s.build)).c_str(),
                                std::string(noble::ExtractBaseVersion(noble::kBuildTag)).c_str());
             ImGui::PopStyleColor();
             if (rel < 0) {
-                // Older client: offer the update.
                 Updater& up = Updater::Get();
                 if (up.IsInitialized()) {
                     const Updater::Status us = up.Snapshot();
@@ -946,22 +1270,25 @@ void ServerBrowser::RenderServerDetails() {
                         if (us.state == Updater::State::Error && !us.error.empty()) {
                             ImGui::TextDisabled("Update check failed: %s", us.error.c_str());
                         }
-                        if (NobleStyle::PrimaryButton("CHECK FOR UPDATE", ImVec2(-1, 38))) {
+                        if (NobleStyle::PrimaryButton("CHECK FOR UPDATE", ImVec2(-1, U(38))) || (triggerFocusedBtn && s_detailBtnIdx == 0)) {
                             up.StartCheck();
                         }
+                        focusOutline(0);
                     } else if (us.state == Updater::State::Checking) {
                         ImGui::TextDisabled("Checking for an update...");
                     } else if (us.state == Updater::State::Available) {
                         const std::string lbl = "DOWNLOAD UPDATE  " + Updater::FormatBytes(us.assetSize);
-                        if (NobleStyle::PrimaryButton(lbl.c_str(), ImVec2(-1, 38))) {
+                        if (NobleStyle::PrimaryButton(lbl.c_str(), ImVec2(-1, U(38))) || (triggerFocusedBtn && s_detailBtnIdx == 0)) {
                             up.StartDownload();
                         }
+                        focusOutline(0);
                     } else if (us.state == Updater::State::Downloading) {
-                        ImGui::ProgressBar(us.progress, ImVec2(-1, 22));
+                        ImGui::ProgressBar(us.progress, ImVec2(-1, U(22)));
                     } else if (us.state == Updater::State::Ready) {
-                        if (NobleStyle::PrimaryButton("RESTART TO UPDATE", ImVec2(-1, 38))) {
+                        if (NobleStyle::PrimaryButton("RESTART TO UPDATE", ImVec2(-1, U(38))) || (triggerFocusedBtn && s_detailBtnIdx == 0)) {
                             if (up.ApplyAndRestart()) m_closeForUpdate = true;
                         }
+                        focusOutline(0);
                     }
                 } else {
                     ImGui::TextDisabled("Update the game from the main menu to join this match.");
@@ -970,23 +1297,26 @@ void ServerBrowser::RenderServerDetails() {
                 ImGui::TextDisabled("This host is on an older version. Ask them to update.");
             }
             ImGui::BeginDisabled();
-            NobleStyle::PrimaryButton("JOIN BLOCKED (VERSION)", ImVec2(-1, 38));
+            NobleStyle::PrimaryButton("JOIN BLOCKED (VERSION)", ImVec2(-1, U(38)));
             ImGui::EndDisabled();
         } else {
             const char* joinLabel = s.inProgress ? "JOIN IN PROGRESS" : "JOIN PRE-GAME LOBBY";
-            if (NobleStyle::PrimaryButton(joinLabel, ImVec2(-1, 38))) {
+            if (NobleStyle::PrimaryButton(joinLabel, ImVec2(-1, U(40))) || (triggerFocusedBtn && s_detailBtnIdx == 0)) {
                 AttemptJoin(s);
             }
+            focusOutline(0);
         }
     }
 
-    const float halfW = (ImGui::GetContentRegionAvail().x - 8.0f) * 0.5f;
-    if (ImGui::Button(s.isFavorite ? "UNFAVOURITE" : "FAVOURITE", ImVec2(halfW, 30))) {
+    ImGui::Dummy(ImVec2(0.0f, 4.0f * sScale));
+    const float halfW = (ImGui::GetContentRegionAvail().x - U(8.0f)) * 0.5f;
+    if (ImGui::Button(s.isFavorite ? "UNFAVOURITE" : "FAVOURITE", ImVec2(halfW, U(32))) || (triggerFocusedBtn && s_detailBtnIdx == 1)) {
         ToggleFavorite(s.hostAddress, s.port);
         RefreshServers();
     }
-    ImGui::SameLine();
-    if (ImGui::Button("COPY INVITE", ImVec2(halfW, 30))) {
+    focusOutline(1);
+    ImGui::SameLine(0.0f, U(8.0f));
+    if (ImGui::Button("COPY INVITE", ImVec2(halfW, U(32))) || (triggerFocusedBtn && s_detailBtnIdx == 2)) {
         std::string ipToCopy = s.hostAddress;
         if (s.isOwn) {
             std::string pubIp = UPnP::Get().GetExternalIP();
@@ -996,6 +1326,7 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::SetClipboardText(invite.c_str());
         m_status = "Copied invite address " + invite + " to clipboard.";
     }
+    focusOutline(2);
 }
 
 void ServerBrowser::ToggleFavorite(const std::string& address, uint16_t port) {
@@ -1026,8 +1357,14 @@ bool ServerBrowser::JoinBlockedByVersion(const ServerEntry& s) {
 
 void ServerBrowser::AttemptJoin(const ServerEntry& s) {
     if (JoinBlockedByVersion(s)) return;
-    if (m_joinLobbyHandler) m_joinLobbyHandler(s);
-    else TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+    if (!CanStartJoinNow(m_status)) return;
+    if (m_joinLobbyHandler) {
+        StampJoinAttemptNow();
+        UiPad::ConsumeAll();
+        m_joinLobbyHandler(s);
+    } else {
+        TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+    }
 }
 
 void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasPassword) {
@@ -1036,6 +1373,7 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
     for (const auto& known : m_servers) {
         if (known.hostAddress == address && known.port == port && JoinBlockedByVersion(known)) return;
     }
+    if (!CanStartJoinNow(m_status)) return;
 
     std::string map = "20_sword_slayer";
     std::string mode = "multiplayer";
@@ -1051,6 +1389,9 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
     }
 
     std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    StampJoinAttemptNow();
+    UiPad::ConsumeAll();
 
     if (m_directJoinHandler) {
         m_status = "Connecting to " + key + "...";
@@ -1077,13 +1418,25 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
 void ServerBrowser::RenderDirectConnectModal() {
     ImGui::OpenPopup("DIRECT CONNECT");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(U(420), 0));
+    ImGui::SetNextWindowSize(ImVec2(U(440), 0));
     if (ImGui::BeginPopupModal("DIRECT CONNECT", &m_showDirectConnectModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        const float sScale = NobleUi::Scale();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        if (UiPad::BackPressed() || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            UiPad::ConsumeBack();
+            m_showDirectConnectModal = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        static int s_dcBtn = 0;
+        if (ImGui::IsWindowAppearing()) s_dcBtn = 0;
+
         ImGui::Text("Address (IP or IP:port)");
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - U(75.0f));
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - U(78.0f));
         ImGui::InputTextWithHint("##Address", "IP or IP:port (e.g. 147.124.149.202:11774)", m_directConnectIp, IM_ARRAYSIZE(m_directConnectIp));
         ImGui::SameLine();
-        if (ImGui::Button("PASTE", ImVec2(U(65), 0))) {
+        if (ImGui::Button("PASTE", ImVec2(U(68), 0))) {
             if (const char* clip = ImGui::GetClipboardText()) std::snprintf(m_directConnectIp, sizeof(m_directConnectIp), "%s", clip);
         }
         ImGui::Text("Password");
@@ -1096,19 +1449,48 @@ void ServerBrowser::RenderDirectConnectModal() {
         uint16_t port = 0;
         const bool valid = ParseAddress(m_directConnectIp, address, port);
         if (!valid) ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "Enter an address such as 192.168.1.20:11774");
+
+        bool padActivate = false;
+        if (!ImGui::GetIO().WantTextInput) {
+            if (UiPad::Left() || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
+                s_dcBtn = (s_dcBtn + 2) % 3;
+                MenuSounds::Scroll();
+            } else if (UiPad::Right() || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+                s_dcBtn = (s_dcBtn + 1) % 3;
+                MenuSounds::Scroll();
+            } else if (UiPad::AcceptPressed()) {
+                UiPad::ConsumeAccept();
+                padActivate = true;
+            }
+        }
+
+        auto drawBtnFocus = [&](int idx) {
+            if (UiPad::HasGamepad() && s_dcBtn == idx) {
+                NobleUi::DrawTacticalFrame(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale, true, true, false, true);
+            }
+        };
+
+        ImGui::Spacing();
         ImGui::BeginDisabled(!valid);
-        if (NobleStyle::PrimaryButton("CONNECT", ImVec2(U(120), U(32)))) {
+        if (NobleStyle::PrimaryButton("CONNECT", ImVec2(U(120), U(34))) || (padActivate && valid && s_dcBtn == 0)) {
             TryJoin(address, port, m_directConnectPassword[0] != 0);
             m_showDirectConnectModal = false;
+            ImGui::CloseCurrentPopup();
         }
+        drawBtnFocus(0);
         ImGui::SameLine();
-        if (ImGui::Button("SAVE AS FAVOURITE", ImVec2(U(170), U(32)))) {
+        if (ImGui::Button("SAVE AS FAVOURITE", ImVec2(U(175), U(34))) || (padActivate && valid && s_dcBtn == 1)) {
             ToggleFavorite(address, port);
             m_lastRefresh = -100.0;
         }
+        drawBtnFocus(1);
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("CANCEL", ImVec2(U(90), U(32)))) m_showDirectConnectModal = false;
+        if (ImGui::Button("CANCEL", ImVec2(U(95), U(34))) || (padActivate && s_dcBtn == 2)) {
+            m_showDirectConnectModal = false;
+            ImGui::CloseCurrentPopup();
+        }
+        drawBtnFocus(2);
         ImGui::EndPopup();
     }
 }
@@ -1116,8 +1498,17 @@ void ServerBrowser::RenderDirectConnectModal() {
 void ServerBrowser::RenderMasterServerModal() {
     ImGui::OpenPopup("SELECT MATCHMAKING REGION");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(U(480), 0));
+    ImGui::SetNextWindowSize(ImVec2(U(490), 0));
     if (ImGui::BeginPopupModal("SELECT MATCHMAKING REGION", &m_showMasterModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        const float sScale = NobleUi::Scale();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        if (UiPad::BackPressed() || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            UiPad::ConsumeBack();
+            m_showMasterModal = false;
+            ImGui::CloseCurrentPopup();
+        }
+
         ImGui::TextWrapped("Select your preferred matchmaking region. Master servers synchronize federated sessions across regions so you can find games worldwide.");
         ImGui::Spacing();
         ImGui::Separator();
@@ -1127,18 +1518,42 @@ void ServerBrowser::RenderMasterServerModal() {
         int curRegion = curUrl.empty() ? 1 : 0;
 
         static int chosenRegion = 0;
-        if (ImGui::IsWindowAppearing()) chosenRegion = curRegion;
+        static int s_regBtn = 0;
+        if (ImGui::IsWindowAppearing()) {
+            chosenRegion = curRegion;
+            s_regBtn = 0;
+        }
+
+        if (UiPad::Up() || ImGui::IsKeyPressed(ImGuiKey_UpArrow, false) ||
+            UiPad::Down() || ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
+            chosenRegion = 1 - chosenRegion;
+            MenuSounds::Scroll();
+        }
+        if (UiPad::Left() || UiPad::Right() ||
+            ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+            s_regBtn = 1 - s_regBtn;
+            MenuSounds::Scroll();
+        }
+
+        bool padActivate = false;
+        if (UiPad::AcceptPressed() || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+            UiPad::ConsumeAccept();
+            padActivate = true;
+        }
 
         for (int i = 0; i < 2; ++i) {
             if (ImGui::RadioButton(kMasterRegions[i].label, chosenRegion == i)) {
                 chosenRegion = i;
             }
-            ImGui::SameLine(U(220));
+            if (UiPad::HasGamepad() && chosenRegion == i) {
+                NobleUi::DrawTacticalFrame(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale, true, true, false, true);
+            }
+            ImGui::SameLine(U(225));
             ImGui::TextDisabled("(%s)", kMasterRegions[i].location);
         }
 
         NobleStyle::SectionGap();
-        if (NobleStyle::PrimaryButton("SAVE & APPLY", ImVec2(U(140), U(32)))) {
+        if (NobleStyle::PrimaryButton("SAVE & APPLY", ImVec2(U(150), U(34))) || (padActivate && s_regBtn == 0)) {
             SettingsData d = Settings::Get().Snapshot();
             d.masterServerUrl = kMasterRegions[chosenRegion].url;
             Settings::Get().Update(d);
@@ -1146,10 +1561,20 @@ void ServerBrowser::RenderMasterServerModal() {
             m_lastMasterRequest = -100.0;
             m_status = std::string("Matchmaking region set to ") + kMasterRegions[chosenRegion].label;
             m_showMasterModal = false;
+            ImGui::CloseCurrentPopup();
             RefreshServers();
         }
+        if (UiPad::HasGamepad() && s_regBtn == 0) {
+            NobleUi::DrawTacticalFrame(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale, true, true, false, true);
+        }
         ImGui::SameLine();
-        if (ImGui::Button("CANCEL", ImVec2(U(100), U(32)))) m_showMasterModal = false;
+        if (ImGui::Button("CANCEL", ImVec2(U(105), U(34))) || (padActivate && s_regBtn == 1)) {
+            m_showMasterModal = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (UiPad::HasGamepad() && s_regBtn == 1) {
+            NobleUi::DrawTacticalFrame(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale, true, true, false, true);
+        }
         ImGui::EndPopup();
     }
 }

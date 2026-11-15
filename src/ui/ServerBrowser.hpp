@@ -54,6 +54,8 @@ public:
     // True once after the player chose "RESTART TO UPDATE" here; the front end then closes so the
     // update script can replace the install.
     bool ConsumeCloseForUpdate() { const bool r = m_closeForUpdate; m_closeForUpdate = false; return r; }
+    bool IsModalOpen() const { return m_showDirectConnectModal || m_showMasterModal; }
+    void CloseModals() { m_showDirectConnectModal = false; m_showMasterModal = false; }
 
 private:
     void RenderFilterBar();
@@ -77,9 +79,10 @@ private:
     std::string m_status;
     bool m_closeForUpdate = false;
 
-    // Filters
+    // Filters & sorting
     char m_searchQuery[128] = { 0 };
     int m_modeFilter = 0; // 0 = All, 1 = Multiplayer, 2 = Campaign, 3 = Firefight, 4 = Forge
+    int m_sortBy = 0;     // 0 = Players (High), 1 = Ping (Low), 2 = Name, 3 = Map
     bool m_hideFull = false;
     bool m_hideEmpty = false;
     bool m_hidePassworded = false;   // only show games without a password

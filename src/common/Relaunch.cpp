@@ -148,6 +148,20 @@ bool Start(const std::wstring& args, unsigned long* outPid) {
 }
 
 bool StartChildMatch(const std::wstring& args, void** outProcessHandle, unsigned long* outPid) {
+    static std::mutex s_childMutex;
+    static HANDLE s_activeChild = nullptr;
+
+    std::lock_guard<std::mutex> lock(s_childMutex);
+    if (s_activeChild) {
+        DWORD exitCode = 0;
+        if (GetExitCodeProcess(s_activeChild, &exitCode) && exitCode == STILL_ACTIVE) {
+            NOBLE_WARN("Relaunch: StartChildMatch ignored — a child match process is already running");
+            return false;
+        }
+        CloseHandle(s_activeChild);
+        s_activeChild = nullptr;
+    }
+
     const bool handsOnSession = (args.find(L"-host") != std::wstring::npos && args.find(L"-session-id") != std::wstring::npos) ||
                                args.find(L"-lobby-return host") != std::wstring::npos;
     MasterServerClient::Get().Shutdown(handsOnSession);
@@ -189,6 +203,8 @@ bool StartChildMatch(const std::wstring& args, void** outProcessHandle, unsigned
         return false;
     }
     CloseHandle(pi.hThread);
+    DuplicateHandle(GetCurrentProcess(), pi.hProcess, GetCurrentProcess(), &s_activeChild,
+                    SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, 0);
     if (outProcessHandle) *outProcessHandle = pi.hProcess;
     else CloseHandle(pi.hProcess);
     if (outPid) *outPid = pi.dwProcessId;

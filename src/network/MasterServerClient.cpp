@@ -55,6 +55,7 @@ struct HttpResult {
     bool ok = false;
     int status = 0;
     std::string body;
+    std::string etag;
     std::string error;
 };
 
@@ -64,7 +65,8 @@ HttpResult HttpRequest(const std::string& fullUrl,
                        const wchar_t* method,
                        const std::string& path,
                        const std::string& jsonBody,
-                       const std::string& sessionToken = {}) {
+                       const std::string& sessionToken = {},
+                       const std::string& ifNoneMatch = {}) {
     HttpResult result;
     if (fullUrl.empty()) {
         result.error = "no master server URL configured";
@@ -107,6 +109,10 @@ HttpResult HttpRequest(const std::string& fullUrl,
                                      WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     }
     if (request) {
+#ifdef WINHTTP_OPTION_DECOMPRESSION
+        DWORD decompFlags = WINHTTP_DECOMPRESSION_FLAG_GZIP | WINHTTP_DECOMPRESSION_FLAG_DEFLATE;
+        WinHttpSetOption(request, WINHTTP_OPTION_DECOMPRESSION, &decompFlags, sizeof(decompFlags));
+#endif
         std::wstring headers = L"Content-Type: application/json\r\nAccept: application/json\r\n";
         // Closed-source build identity. The cluster rejects requests that carry the
         // open-source build (or no build at all) with 403 client_outdated.
@@ -118,6 +124,9 @@ HttpResult HttpRequest(const std::string& fullUrl,
         }
         if (!sessionToken.empty()) {
             headers += L"X-Session-Token: " + Widen(sessionToken) + L"\r\n";
+        }
+        if (!ifNoneMatch.empty()) {
+            headers += L"If-None-Match: " + Widen(ifNoneMatch) + L"\r\n";
         }
 
         const void* postData = jsonBody.empty() ? nullptr : jsonBody.data();
@@ -131,15 +140,32 @@ HttpResult HttpRequest(const std::string& fullUrl,
                                 WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize, WINHTTP_NO_HEADER_INDEX);
             result.status = static_cast<int>(statusCode);
 
-            std::string body;
-            DWORD read = 0;
-            char buffer[2048];
-            while (WinHttpReadData(request, buffer, sizeof(buffer), &read) && read > 0) {
-                body.append(buffer, read);
-                if (body.size() > 256 * 1024) break;
+            wchar_t etagWide[256] = { 0 };
+            DWORD etagSize = sizeof(etagWide);
+            if (WinHttpQueryHeaders(request, WINHTTP_QUERY_ETAG, WINHTTP_HEADER_NAME_BY_INDEX,
+                                    etagWide, &etagSize, WINHTTP_NO_HEADER_INDEX)) {
+                const int wchars = static_cast<int>(etagSize / sizeof(wchar_t));
+                const int utfLen = WideCharToMultiByte(CP_UTF8, 0, etagWide, wchars, nullptr, 0, nullptr, nullptr);
+                if (utfLen > 0) {
+                    result.etag.resize(static_cast<size_t>(utfLen));
+                    WideCharToMultiByte(CP_UTF8, 0, etagWide, wchars, result.etag.data(), utfLen, nullptr, nullptr);
+                    while (!result.etag.empty() && result.etag.back() == '\0') result.etag.pop_back();
+                }
             }
-            result.body = std::move(body);
-            result.ok = (statusCode >= 200 && statusCode < 300);
+
+            if (statusCode == 304) {
+                result.ok = true;
+            } else {
+                std::string body;
+                DWORD read = 0;
+                char buffer[2048];
+                while (WinHttpReadData(request, buffer, sizeof(buffer), &read) && read > 0) {
+                    body.append(buffer, read);
+                    if (body.size() > 256 * 1024) break;
+                }
+                result.body = std::move(body);
+                result.ok = (statusCode >= 200 && statusCode < 300);
+            }
             if (!result.ok) {
                 result.error = "master server replied " + std::to_string(statusCode);
                 try {
@@ -456,8 +482,6 @@ void MasterServerClient::WorkerLoop() {
         if (doHeartbeat) {
             if (!registered) {
                 DoRegister();
-                // Immediately heartbeat after registering so the host receives relay_url and connects its WebSocket relay right away
-                DoHeartbeat();
             } else {
                 DoHeartbeat();
             }
@@ -466,7 +490,7 @@ void MasterServerClient::WorkerLoop() {
         if (doOnline) DoOnline();
 
         lock.lock();
-        if (doHeartbeat) m_nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        if (doHeartbeat) m_nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(15);
         if (stop) break;
     }
 }
@@ -523,24 +547,47 @@ void MasterServerClient::DoList() {
     // so cross-region lobbies (US East, US West, UK) are always discovered immediately and mapped to their home region.
     struct RegionFetch {
         std::string regionUrl;
+        std::string cacheKey;
         bool isPrimary = false;
+        bool notModified = false;
         HttpResult res;
     };
+    std::unordered_map<std::string, std::string> etagsSnapshot;
+    std::unordered_map<std::string, std::string> bodiesSnapshot;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        etagsSnapshot = m_browserEtags;
+        bodiesSnapshot = m_browserBodyCache;
+    }
+
     std::vector<std::future<RegionFetch>> futures;
     futures.reserve(candidateUrls.size());
     for (size_t i = 0; i < candidateUrls.size(); ++i) {
         const std::string regionUrl = candidateUrls[i];
         const bool isPrimary = (i == 0);
-        futures.push_back(std::async(std::launch::async, [regionUrl, isPrimary]() {
+        const std::string primaryPath = isPrimary ? "/api/browser" : "/api/sessions";
+        const std::string fallbackPath = isPrimary ? "/api/sessions" : "/api/browser";
+        const std::string keyPrimary = regionUrl + primaryPath;
+        std::string etagPrimary;
+        std::string cachedBodyPrimary;
+        if (auto itE = etagsSnapshot.find(keyPrimary); itE != etagsSnapshot.end()) {
+            if (auto itB = bodiesSnapshot.find(keyPrimary); itB != bodiesSnapshot.end() && !itB->second.empty()) {
+                etagPrimary = itE->second;
+                cachedBodyPrimary = itB->second;
+            }
+        }
+        futures.push_back(std::async(std::launch::async, [regionUrl, isPrimary, primaryPath, fallbackPath, keyPrimary, etagPrimary, cachedBodyPrimary]() {
             RegionFetch rf;
             rf.regionUrl = regionUrl;
             rf.isPrimary = isPrimary;
-            if (isPrimary) {
-                rf.res = HttpRequest(regionUrl, L"GET", "/api/browser", {});
-                if (!rf.res.ok) rf.res = HttpRequest(regionUrl, L"GET", "/api/sessions", {});
-            } else {
-                rf.res = HttpRequest(regionUrl, L"GET", "/api/sessions", {});
-                if (!rf.res.ok) rf.res = HttpRequest(regionUrl, L"GET", "/api/browser", {});
+            rf.cacheKey = keyPrimary;
+            rf.res = HttpRequest(regionUrl, L"GET", primaryPath, {}, {}, etagPrimary);
+            if (rf.res.status == 304) {
+                rf.res.body = cachedBodyPrimary;
+                rf.notModified = true;
+            } else if (!rf.res.ok) {
+                rf.cacheKey = regionUrl + fallbackPath;
+                rf.res = HttpRequest(regionUrl, L"GET", fallbackPath, {});
             }
             return rf;
         }));
@@ -549,16 +596,35 @@ void MasterServerClient::DoList() {
     std::vector<RegionFetch> results;
     results.reserve(futures.size());
     bool anyOk = false;
+    bool anyChanged = false;
     std::string firstError;
     for (auto& f : futures) {
         RegionFetch rf = f.get();
-        if (rf.res.ok) anyOk = true;
-        else if (firstError.empty()) firstError = rf.res.error;
+        if (rf.res.ok) {
+            anyOk = true;
+            if (!rf.notModified) anyChanged = true;
+        } else if (firstError.empty()) {
+            firstError = rf.res.error;
+        }
         results.push_back(std::move(rf));
     }
 
     if (!anyOk) {
         SetStatus(firstError.empty() ? "master server unreachable" : firstError);
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& rf : results) {
+            if (rf.res.ok && !rf.notModified && !rf.res.etag.empty()) {
+                m_browserEtags[rf.cacheKey] = rf.res.etag;
+                m_browserBodyCache[rf.cacheKey] = rf.res.body;
+            }
+        }
+    }
+
+    if (!anyChanged) {
         return;
     }
 
@@ -947,9 +1013,24 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
     if (sessionId.empty() || !Enabled()) return state;
     const std::string& resolvedId = sessionId;
 
+    std::string cachedEtag;
+    LobbyState cachedState;
+    bool haveCachedState = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto itE = m_lobbyEtags.find(sessionId);
+        auto itS = m_lobbyCache.find(sessionId);
+        if (itE != m_lobbyEtags.end() && itS != m_lobbyCache.end()) {
+            cachedEtag = itE->second;
+            cachedState = itS->second;
+            haveCachedState = true;
+        }
+    }
+
     HttpResult r;
     for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
-        r = HttpRequest(baseUrl, L"GET", "/api/sessions/" + sessionId + "/lobby", {});
+        r = HttpRequest(baseUrl, L"GET", "/api/sessions/" + sessionId + "/lobby", {}, {},
+                        haveCachedState ? cachedEtag : std::string());
         state.httpStatus = r.status;
         if (r.ok) {
             SetSessionRegionUrl(sessionId, baseUrl);
@@ -960,8 +1041,16 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
         if (r.status == 404) {
             state.isClosed = true;
             state.closeReason = "Session not found";
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_lobbyEtags.erase(sessionId);
+            m_lobbyCache.erase(sessionId);
         }
         return state;
+    }
+    if (r.status == 304 && haveCachedState) {
+        cachedState.ok = true;
+        cachedState.httpStatus = 304;
+        return cachedState;
     }
 
     try {
@@ -1055,6 +1144,16 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
             try { state.launchSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
         }
     } catch (...) {}
+
+    if (state.ok && !r.etag.empty()) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_lobbyEtags.size() > 8) {
+            m_lobbyEtags.clear();
+            m_lobbyCache.clear();
+        }
+        m_lobbyEtags[sessionId] = r.etag;
+        m_lobbyCache[sessionId] = state;
+    }
 
     return state;
 }

@@ -17,6 +17,7 @@ struct ModItem {
     bool isEnabled = true;
     bool isFromWorkshop = true;
     std::filesystem::path folderPath;
+    std::filesystem::path previewImage;
 };
 
 class WorkshopManager {

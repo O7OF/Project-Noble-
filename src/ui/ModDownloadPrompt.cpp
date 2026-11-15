@@ -1,6 +1,8 @@
 #include "ModDownloadPrompt.hpp"
 #include "NobleStyle.hpp"
+#include "NobleUi.hpp"
 #include "UiArt.hpp"
+#include "UiPad.hpp"
 #include "common/Logger.hpp"
 #include "vfs/VFS.hpp"
 
@@ -379,12 +381,26 @@ void ModDownloadPrompt::Render() {
         m_popupOpened = true;
     }
 
+    const float sScale = NobleUi::Scale();
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640.0f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(640.0f * sScale, 0.0f));
     bool joinAfterPopup = false;
     if (ImGui::BeginPopupModal(kPopupId, nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
         ImGui::Spacing();
         const bool canAct = m_state == State::Prompt || m_state == State::Failed;
+        static int s_promptBtn = 0;
+        if (ImGui::IsWindowAppearing()) s_promptBtn = 0;
+        if (canAct) {
+            if (UiPad::Left() || UiPad::Right() ||
+                ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+                s_promptBtn = 1 - s_promptBtn;
+            }
+        }
+        const bool padAccept = UiPad::AcceptPressed() || ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+        const bool padBack = UiPad::BackPressed() || ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+                             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+
         if (m_state == State::Prompt) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.95f, 0.98f, 1.0f));
             ImGui::TextWrapped("%s", kMissingMessage);
@@ -406,13 +422,17 @@ void ModDownloadPrompt::Render() {
                 preview = UiArt::ImageFile(std::filesystem::path(detailsPreview));
             }
             if (preview) {
-                const float imageW = 230.0f;
-                const float imageH = preview.width > 0 ? imageW * preview.height / preview.width : 130.0f;
+                const float maxImgW = preview.width > 0 ? std::min(230.0f * sScale, static_cast<float>(preview.width)) : (230.0f * sScale);
+                const float imageH = preview.width > 0 ? maxImgW * preview.height / preview.width : (130.0f * sScale);
                 ImGui::Spacing();
                 ImGui::BeginGroup();
-                ImGui::Image(preview.id, ImVec2(imageW, imageH));
+                const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                const ImVec2 p1(p0.x + maxImgW, p0.y + imageH);
+                UiArt::DrawCoverCrisp(dl, preview, p0, p1, IM_COL32(255, 255, 255, 255), 1.0f);
+                NobleUi::DrawTacticalFrame(dl, p0, p1, sScale, false, true, false, false);
+                ImGui::Dummy(ImVec2(maxImgW, imageH));
                 ImGui::EndGroup();
-                ImGui::SameLine();
+                ImGui::SameLine(0.0f, 12.0f * sScale);
                 ImGui::BeginGroup();
                 if (!detailsTitle.empty()) ImGui::TextWrapped("%s", detailsTitle.c_str());
                 if (detailsSize > 0) ImGui::TextDisabled("Download size: %s", FormatBytes(detailsSize).c_str());
@@ -439,69 +459,82 @@ void ModDownloadPrompt::Render() {
             ImGui::Spacing();
         }
 
+        auto drawFocus = [&](int btnIdx) {
+            if (UiPad::HasGamepad() && s_promptBtn == btnIdx) {
+                NobleUi::DrawTacticalFrame(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale, true, true, false, true);
+            }
+        };
+
         if (m_state == State::Prompt) {
             ImGui::TextDisabled("Noble can ask Steam to download it, then join the lobby once it is installed.");
             NobleStyle::SectionGap();
-            const bool downloadPressed = NobleStyle::PrimaryButton("DOWNLOAD & JOIN", ImVec2(230.0f, 38.0f));
-            if (!m_demo && (downloadPressed ||
-                (canAct && ImGui::IsKeyPressed(ImGuiKey_Enter, false)) ||
-                (canAct && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)))) {
+            const bool downloadPressed = NobleStyle::PrimaryButton("DOWNLOAD & JOIN", ImVec2(230.0f * sScale, 38.0f * sScale));
+            drawFocus(0);
+            if (!m_demo && (downloadPressed || (canAct && padAccept && s_promptBtn == 0))) {
+                UiPad::ConsumeAccept();
                 BeginDownload();
             }
             ImGui::SameLine();
-            if (ImGui::Button("CANCEL", ImVec2(130.0f, 38.0f)) ||
-                ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
-                ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            const bool cancelBtn = ImGui::Button("CANCEL", ImVec2(130.0f * sScale, 38.0f * sScale));
+            drawFocus(1);
+            if (cancelBtn || padBack || (canAct && padAccept && s_promptBtn == 1)) {
+                UiPad::ConsumeAccept();
+                UiPad::ConsumeBack();
                 Cancel();
                 ImGui::CloseCurrentPopup();
             }
         } else if (m_state == State::Downloading) {
             ImGui::TextWrapped("%s", m_download.Status().c_str());
             ImGui::Spacing();
-            ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), ImVec2(-1.0f, 8.0f), "");
+            ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), ImVec2(-1.0f, 8.0f * sScale), "");
             ImGui::Spacing();
             if (m_download.NeedsManualSubscribe()) {
                 ImGui::TextDisabled("The Steam window may be behind the game. Nothing else is needed here; Noble "
                                     "joins the lobby as soon as Steam finishes the download.");
             }
             NobleStyle::SectionGap();
-            if (m_download.NeedsManualSubscribe() && ImGui::Button("OPEN WORKSHOP PAGE", ImVec2(200.0f, 34.0f))) {
+            if (m_download.NeedsManualSubscribe() && ImGui::Button("OPEN WORKSHOP PAGE", ImVec2(200.0f * sScale, 34.0f * sScale))) {
                 SteamWorkshop::OpenWorkshopPage(m_modId);
             }
             if (m_download.NeedsManualSubscribe()) ImGui::SameLine();
-            if (ImGui::Button("CANCEL", ImVec2(130.0f, 34.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
-                ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            if (ImGui::Button("CANCEL", ImVec2(130.0f * sScale, 34.0f * sScale)) || padBack) {
+                UiPad::ConsumeBack();
                 Cancel();
                 ImGui::CloseCurrentPopup();
             }
         } else if (m_state == State::Finishing) {
             ImGui::TextWrapped("The mod is installed. Joining the lobby...");
             ImGui::Spacing();
-            ImGui::ProgressBar(1.0f, ImVec2(-1.0f, 8.0f), "");
+            ImGui::ProgressBar(1.0f, ImVec2(-1.0f, 8.0f * sScale), "");
             ImGui::CloseCurrentPopup();
             joinAfterPopup = true;
         } else if (m_state == State::Failed) {
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.42f, 1.0f), "%s", m_message.c_str());
             ImGui::Spacing();
             ImGui::TextDisabled("You can also subscribe on the item's Workshop page, then press RETRY.");
-            if (ImGui::Button("OPEN WORKSHOP PAGE", ImVec2(200.0f, 30.0f))) SteamWorkshop::OpenWorkshopPage(m_modId);
+            if (ImGui::Button("OPEN WORKSHOP PAGE", ImVec2(200.0f * sScale, 30.0f * sScale))) SteamWorkshop::OpenWorkshopPage(m_modId);
             NobleStyle::SectionGap();
-            const bool retry = NobleStyle::PrimaryButton("RETRY", ImVec2(160.0f, 38.0f));
-            if (!m_demo && (retry || ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
+            const bool retry = NobleStyle::PrimaryButton("RETRY", ImVec2(160.0f * sScale, 38.0f * sScale));
+            drawFocus(0);
+            if (!m_demo && (retry || (padAccept && s_promptBtn == 0))) {
+                UiPad::ConsumeAccept();
                 BeginDownload();
             }
             ImGui::SameLine();
-            if (ImGui::Button("CANCEL", ImVec2(130.0f, 38.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            const bool cancelFail = ImGui::Button("CANCEL", ImVec2(130.0f * sScale, 38.0f * sScale));
+            drawFocus(1);
+            if (cancelFail || padBack || (padAccept && s_promptBtn == 1)) {
+                UiPad::ConsumeAccept();
+                UiPad::ConsumeBack();
                 Cancel();
                 ImGui::CloseCurrentPopup();
             }
         }
 
         ImGui::Spacing();
-        if (m_state == State::Prompt) ImGui::TextDisabled("ENTER  Download & Join        ESC  Cancel");
-        else if (m_state == State::Failed) ImGui::TextDisabled("ENTER  Retry        ESC  Cancel");
-        else ImGui::TextDisabled("ESC  Cancel");
+        if (m_state == State::Prompt) ImGui::TextDisabled("[A] / ENTER  Confirm        [B] / ESC  Cancel");
+        else if (m_state == State::Failed) ImGui::TextDisabled("[A] / ENTER  Confirm        [B] / ESC  Cancel");
+        else ImGui::TextDisabled("[B] / ESC  Cancel");
         ImGui::EndPopup();
     }
 

@@ -271,6 +271,10 @@ private:
 
     std::string m_url = std::string(kMasterDefault);
     std::unordered_map<std::string, std::string> m_sessionRegionUrl;
+    std::unordered_map<std::string, std::string> m_browserEtags;
+    std::unordered_map<std::string, std::string> m_browserBodyCache;
+    std::unordered_map<std::string, std::string> m_lobbyEtags;
+    std::unordered_map<std::string, LobbyState> m_lobbyCache;
     std::string m_status;
     std::vector<MasterSession> m_sessions;
     std::atomic<int> m_onlinePlayers{0};

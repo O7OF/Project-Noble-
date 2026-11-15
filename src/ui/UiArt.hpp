@@ -181,5 +181,9 @@ void DrawContain(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, I
 // Draws `tex` to cover the rectangle (keeps the aspect ratio, crops the overflow).
 void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE);
 
+// Draws `tex` keeping exact aspect ratio, capping scale at `maxScale` (1.0 = no upscaling beyond native pixels).
+void DrawCoverCrisp(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE,
+                    float maxScale = 1.0f);
+
 } // namespace UiArt
 } // namespace noble

@@ -92,15 +92,15 @@ public:
 
     void StartRelay(const std::string& relayUrl, const std::string& sessionId, bool isHost, uint64_t machineId);
     void StopRelay();
-    void EnsureGlobalRelay();
 
-    // Voice frames share the relay socket but not the game packets' queues: they're dropped rather than ever delaying a
-    // game packet. The server recognises them by their "NVOX" start. See audio/VoiceChat.cpp for the layout.
+    // Voice frames: sent P2P directly over Host <-> Guest UDP whenever the match socket is active.
+    // The wire frame starts with "NVOX". See audio/VoiceChat.cpp for the layout.
     using VoiceFrameCallback = void(*)(const uint8_t* data, size_t size);
     void SetVoiceFrameCallback(VoiceFrameCallback cb);
     void SendVoiceFrame(const uint8_t* data, size_t size);
     bool IsRelayConnected() const { return m_relayConnected.load(); }
     uint64_t GetRelayMachineId() const { return m_relayMachineId.load(); }
+    bool IsDirectUdpActive() const;
 
     // Simulation Profiler & Network Telemetry
     struct NetworkProfile {
@@ -131,6 +131,8 @@ private:
     ~NetworkTransport();
 
     void RelayWorkerThread(std::string relayUrl, std::string sessionId, bool isHost, uint64_t machineId);
+    void HandleControlJson(const std::string& msgStr, uint64_t udpSenderPeerId = 0);
+    bool SendControlUdp(const char magic[4], const uint8_t* payload, size_t len, uint64_t onlyPeerId = 0, uint64_t excludePeerId = 0);
 
     // Received game packets, one queue per destination port (see OnNetSend / OnNetRecv).
     struct QueuedPacket {
@@ -175,6 +177,7 @@ private:
     std::atomic<VoiceFrameCallback> m_voiceFrameCb{ nullptr };
     std::deque<std::vector<uint8_t>> m_relayVoiceSendQueue;
     std::string m_relayUrl;
+    std::string m_relaySessionId;
     std::thread m_relayThread;
     std::mutex m_relayMutex;
     std::condition_variable m_relaySendCv;

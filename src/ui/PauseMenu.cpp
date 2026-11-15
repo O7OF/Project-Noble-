@@ -3995,7 +3995,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   // old non-pausing behaviour.
   const size_t peers = NetworkTransport::Get().GetGamePeerCount();
   SetLocalSimulationPaused(open && !loading && !gameOver && peers == 0);
-  SocialOverlay::Poll(!open && !loading);
+  SocialOverlay::Poll(!open && !loading && !noble::BlamEngine::IsSavedFilmPlayback());
   const bool showFps = Settings::Get().Snapshot().showFps;
   static const bool s_scoreboardTest =
       wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;

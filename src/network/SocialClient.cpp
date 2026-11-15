@@ -187,12 +187,15 @@ void SocialClient::Initialize() {
     }
 
     m_pollThread = std::thread([this]() {
+        int cycle = 0;
         while (m_running) {
             if (AuthClient::Get().IsLoggedIn()) {
-                RefreshFriendsAsync();
-                PollInvitesAsync();
+                // Poll invites every ~20 s (only if notifications enabled); refresh friends every ~40 s.
+                if (cycle % 2 == 0) RefreshFriendsAsync();
+                if (Settings::Get().Snapshot().inviteNotifications) PollInvitesAsync();
             }
-            for (int i = 0; i < 50 && m_running; ++i) {
+            ++cycle;
+            for (int i = 0; i < 100 && m_running; ++i) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
         }
@@ -274,8 +277,10 @@ void SocialClient::RefreshFriendsAsync() {
     if (!AuthClient::Get().IsLoggedIn()) return;
     const int userId = AuthClient::Get().GetUserId();
     if (userId <= 0) return;
+    if (m_friendsInFlight.exchange(true)) return;
 
     std::thread([this, userId]() {
+        struct Reset { std::atomic<bool>& f; ~Reset() { f.store(false); } } reset{m_friendsInFlight};
         const std::string url = ResolveMasterUrl();
         nlohmann::json req;
         req["userId"] = userId;
@@ -332,8 +337,10 @@ void SocialClient::PollInvitesAsync() {
     if (!AuthClient::Get().IsLoggedIn()) return;
     const std::string username = AuthClient::Get().GetUsername();
     if (username.empty()) return;
+    if (m_invitesInFlight.exchange(true)) return;
 
     std::thread([this, username]() {
+        struct Reset { std::atomic<bool>& f; ~Reset() { f.store(false); } } reset{m_invitesInFlight};
         const std::string url = ResolveMasterUrl();
         nlohmann::json req;
         req["username"] = username;

@@ -31,23 +31,19 @@ constexpr int kFeedLines = 6;
 constexpr int kVoiceRows = 8;
 constexpr float kLineGap = 4.0f;
 
-enum Channel { kGlobal = 0, kAll = 1, kTeam = 2, kParty = 3, kDirect = 4, kChannelCount = 5 };
+enum Channel { kAll = 0, kTeam = 1, kParty = 2, kChannelCount = 3 };
 
-const char* const kChannelIds[kChannelCount] = { "global", "all", "team", "party", "dm" };
-const char* const kChannelTags[kChannelCount] = { "GLOBAL", "LOBBY", "TEAM", "PARTY", "DM" };
+const char* const kChannelIds[kChannelCount] = { "all", "team", "party" };
+const char* const kChannelTags[kChannelCount] = { "LOBBY", "TEAM", "PARTY" };
 const char* const kAudience[kChannelCount] = {
-    "Everyone online (Global Chat)",
-    "Everyone in this lobby/session",
+    "Everyone in this lobby",
     "Your team",
-    "Your party",
-    "Direct Message (/w <player> <msg>)"
+    "Your party"
 };
 const ImU32 kChannelColors[kChannelCount] = {
-    IM_COL32(245, 200, 90, 255),  // Global (Gold)
     IM_COL32(236, 242, 248, 255), // Lobby / All (White)
     IM_COL32(120, 214, 150, 255), // Team (Green)
-    IM_COL32(196, 162, 255, 255), // Party (Purple)
-    IM_COL32(80, 220, 255, 255)   // DM (Cyan)
+    IM_COL32(196, 162, 255, 255)  // Party (Purple)
 };
 const ImU32 kSystemColor = IM_COL32(255, 196, 120, 255);
 const ImU32 kAccent = IM_COL32(120, 200, 255, 255);
@@ -57,7 +53,7 @@ struct Line {
     bool system = false;
     bool awaitingEcho = false;
     bool undelivered = false;
-    std::string time, from, text, target;
+    std::string time, from, text;
     uint64_t at = 0;
 };
 
@@ -67,8 +63,6 @@ std::map<uint64_t, std::string> s_names;
 
 bool s_typing = false;
 int s_channel = kAll;
-std::string s_dmTarget;
-std::string s_lastDmSender;
 std::wstring s_input;
 int s_swallowKey = 0;        // characters are dropped until the key that opened the line is released
 int s_scroll = 0;            // messages scrolled back from the newest
@@ -103,11 +97,10 @@ std::string Clean(std::string text, size_t limit) {
 }
 
 int ChannelFromId(const std::string& id) {
-    if (id == "global") return kGlobal;
+    if (id == "global" || id == "dm" || id == "whisper" || id.rfind("dm:", 0) == 0) return -1;
     if (id == "all" || id == "lobby") return kAll;
     if (id == "team") return kTeam;
     if (id == "party") return kParty;
-    if (id == "dm" || id == "whisper" || id.rfind("dm:", 0) == 0) return kDirect;
     for (int i = 0; i < kChannelCount; ++i) if (id == kChannelIds[i]) return i;
     return kAll;
 }
@@ -127,29 +120,17 @@ void AddSystem(const std::string& text) {
     AddLine(std::move(line));
 }
 
-// On the relay thread. A line we sent comes back from the server: that confirms it instead of showing it twice.
+// On the relay/UDP thread. A line we sent comes back from the host/relay: that confirms it instead of showing it twice.
 void OnChat(const NetworkTransport::ChatMessage& message) {
     const int channel = ChannelFromId(message.channel);
+    if (channel < 0) return;
     const std::string text = Clean(message.text, kInputLimit * 3);
     const std::string from = Clean(message.from, 32);
-    const std::string target = Clean(message.target, 32);
-    const std::string me = Settings::Get().Snapshot().playerName;
-
-    if (channel == kDirect) {
-        if (!target.empty() && _stricmp(target.c_str(), me.c_str()) != 0 && _stricmp(from.c_str(), me.c_str()) != 0) {
-            return; // Not for us
-        }
-        if (_stricmp(from.c_str(), me.c_str()) != 0) {
-            s_lastDmSender = from;
-            if (s_dmTarget.empty()) s_dmTarget = from;
-        }
-    }
 
     {
         std::lock_guard<std::mutex> lock(s_mutex);
         for (Line& line : s_log) {
-            if (line.awaitingEcho && line.channel == channel && line.text == text &&
-                (channel != kDirect || line.target == target)) {
+            if (line.awaitingEcho && line.channel == channel && line.text == text) {
                 line.awaitingEcho = false;
                 line.undelivered = false;
                 line.from = from;
@@ -161,7 +142,6 @@ void OnChat(const NetworkTransport::ChatMessage& message) {
     line.channel = channel;
     line.from = from;
     line.text = text;
-    line.target = target;
     AddLine(std::move(line));
 }
 
@@ -207,9 +187,8 @@ void SendLine() {
     if (text.find_first_not_of(' ') == std::string::npos) return;
 
     int channel = s_channel;
-    std::string target = s_dmTarget;
 
-    // Check for slash commands
+    // Check for lobby slash commands (/l, /all, /team, /party)
     if (text[0] == '/') {
         size_t firstSpace = text.find(' ');
         std::string cmd = (firstSpace == std::string::npos) ? text.substr(1) : text.substr(1, firstSpace - 1);
@@ -219,35 +198,10 @@ void SendLine() {
         std::string cmdLower = cmd;
         for (char& c : cmdLower) c = static_cast<char>(::tolower(c));
 
-        if (cmdLower == "w" || cmdLower == "dm" || cmdLower == "msg" || cmdLower == "whisper") {
-            size_t restSpace = rest.find(' ');
-            if (restSpace == std::string::npos || restSpace == 0) {
-                AddSystem("Usage: /w <player> <message>");
-                return;
-            }
-            target = rest.substr(0, restSpace);
-            text = rest.substr(restSpace + 1);
-            while (!text.empty() && text.front() == ' ') text.erase(text.begin());
-            if (text.empty()) return;
-            channel = kDirect;
-            s_dmTarget = target;
-        } else if (cmdLower == "r" || cmdLower == "reply") {
-            if (s_lastDmSender.empty()) {
-                AddSystem("No one has messaged you yet to reply to.");
-                return;
-            }
-            if (rest.empty()) {
-                AddSystem("Usage: /r <message>");
-                return;
-            }
-            target = s_lastDmSender;
-            text = rest;
-            channel = kDirect;
-            s_dmTarget = target;
-        } else if (cmdLower == "g" || cmdLower == "global") {
-            channel = kGlobal;
-            text = rest;
-            if (text.empty()) { s_channel = kGlobal; return; }
+        if (cmdLower == "w" || cmdLower == "dm" || cmdLower == "msg" || cmdLower == "whisper" ||
+            cmdLower == "r" || cmdLower == "reply" || cmdLower == "g" || cmdLower == "global") {
+            AddSystem("Global chat and direct messages are disabled; chat is lobby-only.");
+            return;
         } else if (cmdLower == "l" || cmdLower == "lobby" || cmdLower == "all" || cmdLower == "a") {
             channel = kAll;
             text = rest;
@@ -263,35 +217,24 @@ void SendLine() {
         }
     }
 
-    if (channel == kDirect && target.empty()) {
-        AddSystem("No recipient set. Use /w <player> <message> or select a friend from the Social menu to send a DM.");
-        return;
-    }
-
     const std::string me = Settings::Get().Snapshot().playerName;
     Line line;
     line.channel = channel;
     line.from = me;
     line.text = text;
-    line.target = target;
 
     if (s_demo) {
         AddLine(std::move(line));
         return;
     }
 
-    if (!NetworkTransport::Get().IsRelayConnected()) {
-        NetworkTransport::Get().EnsureGlobalRelay();
-    }
-
-    if (NetworkTransport::Get().IsRelayConnected()) {
+    NetworkTransport& nt = NetworkTransport::Get();
+    if (nt.IsActive() || nt.IsRelayConnected()) {
         line.awaitingEcho = true;
-        NetworkTransport::Get().SendChat(kChannelIds[channel], text, me, target);
+        nt.SendChat(kChannelIds[channel], text, me);
         AddLine(std::move(line));
     } else {
-        line.awaitingEcho = false;
-        line.undelivered = false;
-        AddLine(std::move(line));
+        AddSystem("Chat is only available while in a lobby or match.");
     }
 }
 
@@ -387,15 +330,8 @@ void DrawVoice(ImDrawList* dl, ImFont* font, float s, float top) {
 
 std::string LineText(const Line& line) {
     if (line.system) return line.time + "  " + line.text;
-    if (line.channel == kDirect) {
-        const std::string me = Settings::Get().Snapshot().playerName;
-        if (!line.target.empty() && _stricmp(line.from.c_str(), me.c_str()) == 0) {
-            return line.time + "  [DM to " + line.target + "] " + line.from + ": " + line.text;
-        } else {
-            return line.time + "  [DM from " + line.from + "] " + line.from + ": " + line.text;
-        }
-    }
-    return line.time + "  [" + kChannelTags[line.channel] + "] " + line.from + ": " + line.text;
+    const int ch = std::clamp(line.channel, 0, kChannelCount - 1);
+    return line.time + "  [" + kChannelTags[ch] + "] " + line.from + ": " + line.text;
 }
 
 ImU32 Faded(ImU32 color, float alpha) {
@@ -464,15 +400,14 @@ void DrawChat(ImDrawList* dl, ImFont* font, float s, float chatX, float chatBott
     const float top = bottom - height;
     dl->AddRectFilled(ImVec2(x, top), ImVec2(x + w, bottom), IM_COL32(7, 14, 22, 228), 4.0f * s);
     dl->AddRect(ImVec2(x, top), ImVec2(x + w, bottom), IM_COL32(120, 160, 190, 120), 4.0f * s);
-    const ImU32 color = kChannelColors[s_channel];
+    const int chIdx = std::clamp(s_channel, 0, kChannelCount - 1);
+    const ImU32 color = kChannelColors[chIdx];
     dl->AddRectFilled(ImVec2(x, top), ImVec2(x + w, top + headH), IM_COL32(16, 30, 44, 245), 4.0f * s);
     dl->AddRectFilled(ImVec2(x, top), ImVec2(x + 4.0f * s, top + headH), color);
-    std::string head = std::string("TO ") + kChannelTags[s_channel];
-    if (s_channel == kDirect && !s_dmTarget.empty()) head += " (" + s_dmTarget + ")";
+    std::string head = std::string("TO ") + kChannelTags[chIdx];
     dl->AddText(font, 17.0f * s, ImVec2(x + 14.0f * s, top + 6.0f * s), color, head.c_str());
     const float headW = font->CalcTextSizeA(17.0f * s, FLT_MAX, 0.0f, head.c_str()).x;
-    std::string aud = (s_channel == kDirect && !s_dmTarget.empty()) ? ("Direct Message to " + s_dmTarget) : kAudience[s_channel];
-    dl->AddText(font, 14.0f * s, ImVec2(x + 26.0f * s + headW, top + 8.0f * s), IM_COL32(190, 210, 225, 255), aud.c_str());
+    dl->AddText(font, 14.0f * s, ImVec2(x + 26.0f * s + headW, top + 8.0f * s), IM_COL32(190, 210, 225, 255), kAudience[chIdx]);
 
     const float inputTop = bottom - hintH - inputH;
     const float logBottom = inputTop - 6.0f * s;
@@ -544,6 +479,11 @@ void Poll(bool allowOpen) {
         }
     }
     if (s_typing) {
+        if (!allowOpen && !s_demoOpen) {
+            CloseLine();
+        }
+    }
+    if (s_typing) {
         if (s_swallowKey > 0 && (GetAsyncKeyState(s_swallowKey) & 0x8000) == 0) s_swallowKey = 0;
         const std::wstring typed = Window::TakeTypedChars();
         if (focus) {
@@ -588,13 +528,8 @@ void OpenChannel(int channel) {
     OpenLine(s_channel, 0);
 }
 
-void OpenDirectMessage(const std::string& friendName) {
-    if (!friendName.empty()) s_dmTarget = friendName;
-    s_channel = kDirect;
-    OpenLine(kDirect, 0);
-    if (!NetworkTransport::Get().IsRelayConnected()) {
-        NetworkTransport::Get().EnsureGlobalRelay();
-    }
+void Close() {
+    if (s_typing) CloseLine();
 }
 
 bool WantsFrame() { return s_wantsFrame; }

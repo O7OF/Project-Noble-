@@ -81,6 +81,8 @@ private:
     std::string m_lastStatusMsg;
 
     std::atomic<bool> m_running{false};
+    std::atomic<bool> m_friendsInFlight{false};
+    std::atomic<bool> m_invitesInFlight{false};
     std::thread m_pollThread;
 };
 

@@ -158,6 +158,44 @@ void DrawFocusHighlight(ImDrawList* dl, ImVec2 min, ImVec2 max, float scale, boo
     dl->AddRectFilled(min, ImVec2(min.x + 4.0f * s, max.y), kAccent);
 }
 
+void DrawTacticalFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, float scale, bool focused, bool selected,
+                       bool hovered, bool warmFocus) {
+    if (!dl) return;
+    const float s = scale > 0.0f ? scale : Scale();
+    const float pulse = focused ? (0.86f + 0.14f * static_cast<float>(std::sin(ImGui::GetTime() * 5.0))) : 1.0f;
+    const ImU32 focusCol = warmFocus
+        ? IM_COL32(255, 168, 62, static_cast<int>(250.0f * pulse))
+        : IM_COL32(143, 216, 255, static_cast<int>(250.0f * pulse));
+    const ImU32 border = focused ? focusCol
+                       : selected ? IM_COL32(143, 216, 255, 210)
+                       : hovered ? IM_COL32(160, 210, 240, 145)
+                       : IM_COL32(95, 130, 160, 82);
+    const float thickness = focused ? 2.0f * s : (selected ? 1.5f * s : 1.0f);
+    if (focused) {
+        const ImU32 outerGlow = warmFocus ? IM_COL32(255, 155, 45, 42) : IM_COL32(100, 190, 255, 42);
+        dl->AddRect(ImVec2(min.x - 2.0f * s, min.y - 2.0f * s), ImVec2(max.x + 2.0f * s, max.y + 2.0f * s),
+                    outerGlow, 2.0f * s, 0, 3.0f * s);
+    }
+    dl->AddRect(min, max, border, 1.0f * s, 0, thickness);
+
+    // Subtle L-shaped tactical corner brackets inside the card.
+    const float inset = 5.0f * s;
+    const float leg = 9.0f * s;
+    const ImU32 tickCol = focused ? focusCol : (selected ? kAccent : IM_COL32(190, 215, 235, hovered ? 190 : 120));
+    const float tw = focused ? 1.8f * s : 1.2f * s;
+    const float x0 = min.x + inset, y0 = min.y + inset, x1 = max.x - inset, y1 = max.y - inset;
+    if (x1 - x0 > leg * 2.5f && y1 - y0 > leg * 2.5f) {
+        dl->AddLine(ImVec2(x0, y0), ImVec2(x0 + leg, y0), tickCol, tw);
+        dl->AddLine(ImVec2(x0, y0), ImVec2(x0, y0 + leg), tickCol, tw);
+        dl->AddLine(ImVec2(x1, y0), ImVec2(x1 - leg, y0), tickCol, tw);
+        dl->AddLine(ImVec2(x1, y0), ImVec2(x1, y0 + leg), tickCol, tw);
+        dl->AddLine(ImVec2(x0, y1), ImVec2(x0 + leg, y1), tickCol, tw);
+        dl->AddLine(ImVec2(x0, y1), ImVec2(x0, y1 - leg), tickCol, tw);
+        dl->AddLine(ImVec2(x1, y1), ImVec2(x1 - leg, y1), tickCol, tw);
+        dl->AddLine(ImVec2(x1, y1), ImVec2(x1, y1 - leg), tickCol, tw);
+    }
+}
+
 bool DrawTile(ImDrawList* dl, const char* id, ImVec2 min, ImVec2 max, const char* title, const char* subtitle,
               bool focused, bool selected, bool enabled, const char* badge) {
     const float s = Scale();

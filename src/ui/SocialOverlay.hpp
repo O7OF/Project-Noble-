@@ -34,11 +34,9 @@ void Draw(float voiceTop, float chatX,
           float chatBottom); // into the current ImGui frame; positions are in
                              // 1080p units
 
-// Opens the chat line directly on a specific channel (0: All, 1: Team, 2:
-// Party, 3: Global, 4: DM)
+// Opens the chat line directly on a specific channel (0: Lobby, 1: Team, 2: Party)
 void OpenChannel(int channel);
-// Opens a direct message conversation with a specific friend/player
-void OpenDirectMessage(const std::string &friendName);
+void Close();
 
 // The icon on a player's row: nothing when quiet, a pulsing mic while talking,
 // a crossed-out mic when you've muted them.

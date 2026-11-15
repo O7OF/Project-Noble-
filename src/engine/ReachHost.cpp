@@ -749,7 +749,8 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     // Join handshake: while this host's match is running, tell the relay's guests (every couple of seconds, so a
     // guest joining mid-match gets it too) that the simulation is up. Guests time their start on this instead of a
     // fixed delay.
-    if (frames % 120 == 0) {
+    const uint64_t syncInterval = noble::NetworkTransport::Get().IsDirectUdpActive() ? 300ULL : 120ULL;
+    if (frames % syncInterval == 0) {
         int sessionState = -1;
         if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
             SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A118, &sessionState);

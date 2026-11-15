@@ -566,7 +566,8 @@ void VoiceThread() {
 
     const auto sendFrame = [&](const uint8_t* payload, int size, uint8_t flags, uint8_t channel) {
         std::memcpy(packet.data(), "NVOX", 4);
-        const uint64_t id = NetworkTransport::Get().GetRelayMachineId();
+        const uint64_t relayId = NetworkTransport::Get().GetRelayMachineId();
+        const uint64_t id = (relayId != 0) ? relayId : NetworkTransport::Get().GetLocalMachineId();
         std::memcpy(packet.data() + 4, &id, 8);
         std::memcpy(packet.data() + 12, &seq, 2);
         packet[14] = flags;
@@ -627,8 +628,9 @@ void VoiceThread() {
             s_outputs = std::move(outputs);
         }
 
-        // A relay reconnect (5 s grace) keeps the streams open, so a blip doesn't cut anyone off.
-        if (NetworkTransport::Get().IsRelayConnected()) lastConnectedMs = now;
+        // Voice runs P2P over direct match UDP (5 s grace across map loads); headless -voice-test keeps relay mode.
+        const auto& nt = NetworkTransport::Get();
+        if (nt.IsActive() || (s_test.active && nt.IsRelayConnected())) lastConnectedMs = now;
         const bool wanted = cfg.enabled && lastConnectedMs != 0 && now - lastConnectedMs < 5000;
         if (wanted != sessionOpen) {
             sessionOpen = wanted;

@@ -45,6 +45,10 @@ void DrawBox(ImDrawList* dl, ImVec2 min, ImVec2 max, const char* text, bool hove
 // Crisp Reach-styled focus ring & left accent bar for controller/keyboard navigation.
 void DrawFocusHighlight(ImDrawList* dl, ImVec2 min, ImVec2 max, float scale, bool active = true);
 
+// Reach tactical frame with L-shaped corner brackets; focused draws amber-gold highlight (or Reach cyan when subtle).
+void DrawTacticalFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, float scale, bool focused, bool selected,
+                       bool hovered = false, bool warmFocus = true);
+
 // Modern sleek tile with optional subtitle/badge and clear controller focus state. Returns true on click.
 bool DrawTile(ImDrawList* dl, const char* id, ImVec2 min, ImVec2 max, const char* title, const char* subtitle,
               bool focused, bool selected, bool enabled = true, const char* badge = nullptr);
