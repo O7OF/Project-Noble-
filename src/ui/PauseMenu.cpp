@@ -4076,12 +4076,44 @@ void PauseMenu::DrawLoading() {
   // Player rows, host first; slots that have not joined yet are dimmed placeholders.
   const SettingsData &settings = Settings::Get().Snapshot();
   const std::string localName = settings.playerName.empty() ? std::string("NobleSix") : settings.playerName;
-  const float rowW = (std::min)(0.30f * w, 560.0f * s);
-  const float rowH = 40.0f * s;
-  const float rowGap = 7.0f * s;
-  float rowY = barY + 38.0f * s;
-  const int rows = (std::min)(wanted, 8);
-  for (int i = 0; i < rows; ++i) {
+  // Roster grid. It follows the lobby size: one column for a normal lobby, two for 16 players, and a compact
+  // multi-column grid for 32 / 64 / 128-player lobbies so every player still fits above the corner logos.
+  const float gridTop = barY + 38.0f * s;
+  const float gridBottom = h - 230.0f * s;
+  const bool compactGrid = wanted > 18;
+  const bool denseGrid = wanted > 64;
+  const float cellH = (denseGrid ? 24.0f : compactGrid ? 26.0f : 40.0f) * s;
+  const float cellGap = (denseGrid ? 3.0f : compactGrid ? 4.0f : 7.0f) * s;
+  const float namePx = (denseGrid ? 12.0f : compactGrid ? 13.5f : rowNamePx / s) * s;
+  const float cellStatusPx = (denseGrid ? 9.5f : compactGrid ? 10.5f : rowStatusPx / s) * s;
+  const float rowWMax = (std::min)(0.30f * w, 560.0f * s);
+  const float colGap = 12.0f * s;
+  const float availGridW = w - 2.0f * margin;
+  int rowsPerCol = (std::max)(1, static_cast<int>((gridBottom - gridTop) / (cellH + cellGap)));
+  int cols = (std::max)(1, (wanted + rowsPerCol - 1) / rowsPerCol);
+  cols = (std::min)(cols, 6);
+  rowsPerCol = (wanted + cols - 1) / cols;
+  const int capacity = cols * rowsPerCol;
+  std::string moreText;
+  int visiblePlayers = wanted;
+  if (capacity < wanted) {
+    visiblePlayers = capacity - 1;   // the last cell becomes "+N MORE"
+    moreText = "+" + std::to_string(wanted - visiblePlayers) + " MORE";
+  }
+  const float colW = (std::min)(rowWMax, (availGridW - colGap * (cols - 1)) / cols);
+  for (int i = 0; i < visiblePlayers + (moreText.empty() ? 0 : 1); ++i) {
+    const int col = i / rowsPerCol;
+    const int rowInCol = i % rowsPerCol;
+    const ImVec2 r0(margin + col * (colW + colGap), gridTop + rowInCol * (cellH + cellGap));
+    const ImVec2 r1(r0.x + colW, r0.y + cellH);
+    if (!moreText.empty() && i == visiblePlayers) {
+      dl->AddRectFilled(r0, r1, IM_COL32(8, 14, 20, 190), 4.0f * s);
+      const float textPx = cellStatusPx + 1.0f * s;
+      const float textW = TrackedTextWidth(font, textPx, moreText, 1.5f * s);
+      AddTrackedText(dl, font, textPx, ImVec2(r0.x + (colW - textW) * 0.5f, r0.y + (cellH - textPx) * 0.5f - 1.0f * s),
+                     IM_COL32(160, 176, 190, 230), moreText, 1.5f * s);
+      continue;
+    }
     const bool isLocal = (i == 0 && players.empty()) ||
                          (i < static_cast<int>(players.size()) &&
                           players[static_cast<size_t>(i)] == localName);
@@ -4094,6 +4126,7 @@ void PauseMenu::DrawLoading() {
       name = "PLAYER " + std::to_string(i + 1);
     }
     if (isLocal) name += " (YOU)";
+    if (compactGrid && name.size() > 22) name = name.substr(0, 20) + "...";
     const bool present = isLocal || static_cast<size_t>(i) < joined;
     std::string rowStatus;
     ImU32 rowStatusCol = muted;
@@ -4104,31 +4137,31 @@ void PauseMenu::DrawLoading() {
       rowStatus = "READY";
       rowStatusCol = accent;
     } else {
-      rowStatus = "WAITING...";
+      rowStatus = compactGrid ? "WAIT" : "WAITING...";
       rowStatusCol = IM_COL32(120, 132, 145, 255);
     }
-    const ImVec2 r0(margin, rowY), r1(margin + rowW, rowY + rowH);
     dl->AddRectFilled(r0, r1, present ? IM_COL32(10, 16, 22, 224) : IM_COL32(8, 12, 18, 160), 4.0f * s);
     dl->AddRectFilled(ImVec2(r0.x, r0.y + 6.0f * s), ImVec2(r0.x + 3.0f * s, r1.y - 6.0f * s),
                       present ? accent : IM_COL32(90, 104, 118, 180), 1.5f * s);
     dl->AddRect(r0, r1, IM_COL32(255, 255, 255, present ? 30 : 16), 4.0f * s, 0, 1.0f);
-    AddTrackedText(dl, font, rowNamePx, ImVec2(r0.x + 16.0f * s, r0.y + (rowH - rowNamePx) * 0.5f - 2.0f * s),
-                   present ? white : IM_COL32(150, 162, 174, 235), name, 1.2f * s);
-    const float statusW = TrackedTextWidth(font, rowStatusPx, rowStatus, 2.0f * s);
-    AddTrackedText(dl, font, rowStatusPx,
-                   ImVec2(r1.x - 14.0f * s - statusW, r0.y + (rowH - rowStatusPx) * 0.5f - 1.0f * s),
-                   rowStatusCol, rowStatus, 2.0f * s);
-    rowY += rowH + rowGap;
+    AddTrackedText(dl, font, namePx,
+                   ImVec2(r0.x + 12.0f * s, r0.y + (cellH - namePx) * 0.5f - (compactGrid ? 1.0f : 2.0f) * s),
+                   present ? white : IM_COL32(150, 162, 174, 235), name, (compactGrid ? 0.8f : 1.2f) * s);
+    const float statusW = TrackedTextWidth(font, cellStatusPx, rowStatus, 1.5f * s);
+    AddTrackedText(dl, font, cellStatusPx,
+                   ImVec2(r1.x - 10.0f * s - statusW, r0.y + (cellH - cellStatusPx) * 0.5f - 1.0f * s),
+                   rowStatusCol, rowStatus, 1.5f * s);
   }
+  const float gridBottomY = gridTop + rowsPerCol * (cellH + cellGap);
   if (online) {
-    AddTrackedText(dl, font, 13.0f * s, ImVec2(margin, rowY + 6.0f * s),
+    AddTrackedText(dl, font, 13.0f * s, ImVec2(margin, gridBottomY + 6.0f * s),
                    IM_COL32(140, 154, 168, 230), "PRESS T FOR CHAT", 2.5f * s);
   }
 
   // The mod map's own description, under the roster block.
   if (!description.empty()) {
-    const float wrap = (std::max)(rowW * 1.4f, w * 0.30f);
-    const ImVec2 at(margin, rowY + (online ? 34.0f * s : 8.0f * s));
+    const float wrap = (std::max)(rowWMax * 1.4f, w * 0.30f);
+    const ImVec2 at(margin, gridBottomY + (online ? 34.0f * s : 8.0f * s));
     dl->AddText(font, 15.0f * s, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 190), description.c_str(),
                 nullptr, wrap);
     dl->AddText(font, 15.0f * s, at, IM_COL32(200, 212, 224, 225), description.c_str(), nullptr, wrap);

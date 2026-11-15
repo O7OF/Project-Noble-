@@ -26,6 +26,7 @@
 #include <cctype>
 #include <charconv>
 #include <cstring>
+#include <mutex>
 #include <chrono>
 #include <thread>
 #include <unordered_map>
@@ -39,18 +40,38 @@ namespace {
 float U(float px) { return px * NobleUi::Scale(); }
 
 // Design option switch for the list presentation: "-server-browser-style 1|2|3".
-//   1 = the shipped tactical cards (amber corner brackets),
-//   2 = larger picture cards on a blue-glass panel (cyan chrome),
+//   2 = large picture cards on a blue-glass panel (Tyler's pick, default),
+//   1 = the older tactical cards with amber corner brackets,
 //   3 = compact one-line table (dense, no thumbnails).
-// 1 is the default; the others exist so the layouts can be compared side by side in captures.
+// 1 and 3 exist so the layouts can still be compared in captures.
 int BrowserStyle() {
     static const int s_style = [] {
         const wchar_t* cmd = GetCommandLineW();
         const wchar_t* p = cmd ? wcsstr(cmd, L"-server-browser-style ") : nullptr;
-        const int style = p ? _wtoi(p + 22) : 1;
-        return (style >= 1 && style <= 3) ? style : 1;
+        const int style = p ? _wtoi(p + 22) : 2;
+        return (style >= 1 && style <= 3) ? style : 2;
     }();
     return s_style;
+}
+
+// Is the Workshop item installed? The check walks the Workshop cache and data\mods folders, so cache the answer for a
+// couple of seconds: the list draws up to a screenful of cards every frame and most of them share no mod at all.
+bool ModInstalledCached(const std::string& publishedFileId) {
+    if (publishedFileId.empty()) return true;
+    static std::mutex mutex;
+    static std::unordered_map<std::string, bool> cache;
+    static uint64_t stamp = 0;
+    const uint64_t now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(mutex);
+    if (stamp == 0 || now - stamp > 2000) {
+        cache.clear();
+        stamp = now;
+    }
+    const auto it = cache.find(publishedFileId);
+    if (it != cache.end()) return it->second;
+    const bool installed = ModDownloadPrompt::IsInstalled(publishedFileId);
+    cache.emplace(publishedFileId, installed);
+    return installed;
 }
 
 static std::atomic<uint64_t> s_lastJoinAttemptMs{ 0 };
@@ -417,19 +438,60 @@ void ServerBrowser::RefreshServers() {
         add(e);
     }
 
-    // Test option -server-browser-demo: a long list that can't be joined (marked as our own), to check moving and scrolling.
+    // Test option -server-browser-demo: a mixed list (modes, maps, modded sessions) that can't be joined (marked as
+    // our own), to check moving, scrolling, badges, the details pane and the mod-download state.
     static const bool s_demoRows = wcsstr(GetCommandLineW(), L"-server-browser-demo") != nullptr;
-    for (int n = 0; s_demoRows && n < 40; ++n) {
-        ServerEntry demo;
-        char name[32];
-        std::snprintf(name, sizeof(name), "Demo server %02d", 39 - n);   // reversed, so sorting really changes the order
-        demo.name = name;
-        demo.hostAddress = "demo";
-        demo.port = static_cast<decltype(demo.port)>(n + 1);
-        demo.gameMode = "multiplayer";
-        demo.mapName = "20_sword_slayer";
-        demo.isOwn = true;
-        list.push_back(demo);
+    if (s_demoRows) {
+        struct DemoRow {
+            const char* name;
+            const char* mode;
+            const char* map;
+            const char* variant;
+            int players;
+            int maxPlayers;
+            int ping;
+            const char* source;
+            const char* modId;
+            const char* modTitle;
+        };
+        static const DemoRow kDemoRows[] = {
+            {"Demo modded 12", "multiplayer", "20_sword_slayer", "Slayer", 16, 16, 51, "ONLINE", "1234567890",
+             "Noble Map Pack"},
+            {"Demo server 11", "forge", "forge_halo", "Forge", 5, 16, 68, "ONLINE", nullptr, nullptr},
+            {"Demo server 10", "campaign", "m10", "Campaign Co-op", 3, 4, 55, "ONLINE", nullptr, nullptr},
+            {"Demo server 09", "firefight", "ff50_park", "Firefight", 4, 4, 96, "ONLINE", nullptr, nullptr},
+            {"Demo modded 08", "multiplayer", "20_sword_slayer", "Slayer", 8, 16, 51, "ONLINE", "3127073871",
+             "Improved Trooper Campaign"},
+            {"Demo server 07", "multiplayer", "35_island", "CTF", 6, 16, 74, "ONLINE", nullptr, nullptr},
+            {"Demo modded 06", "firefight", "ff20_courtyard", "Firefight", 2, 4, 88, "ONLINE", "1234567890",
+             "Covenant Firefight Pack"},
+            {"Demo server 05", "multiplayer", "dlc_slayer", "Invasion", 10, 16, 112, "ONLINE", nullptr, nullptr},
+            {"Demo server 04", "forge", "forge_halo", "Forge", 3, 16, 132, "LAN", nullptr, nullptr},
+            {"Demo modded 03", "multiplayer", "50_panopticon", "Infection", 9, 16, 63, "ONLINE", "9876543210",
+             "Noble Map Pack"},
+        };
+        for (const DemoRow& d : kDemoRows) {
+            ServerEntry demo;
+            demo.name = d.name;
+            demo.hostAddress = "demo";
+            demo.port = static_cast<decltype(demo.port)>(list.size() + 1);
+            demo.gameMode = d.mode;
+            demo.mapName = d.map;
+            demo.variantName = d.variant;
+            demo.playerCount = d.players;
+            demo.maxPlayers = d.maxPlayers;
+            demo.ping = d.ping;
+            demo.source = d.source;
+            demo.region = d.source;
+            demo.isOwn = true;   // not joinable: the row exists for screenshots and UI tests only
+            demo.isMod = d.modId != nullptr;
+            if (d.modId) demo.modId = d.modId;
+            if (d.modTitle) demo.modTitle = d.modTitle;
+            demo.mapDescription = demo.isMod ? ("Custom map from " + demo.modTitle) : std::string();
+            demo.modDescription = demo.isMod ? demo.modTitle : std::string();
+            demo.build = kBuildTag;
+            list.push_back(std::move(demo));
+        }
     }
     // Keep the selection on the same server if it is still listed.
     std::string selectedKey;
@@ -846,6 +908,15 @@ void ServerBrowser::RenderServerList() {
         }
     });
 
+    // Keep the selection on something that is actually on screen: the default is m_servers[0], which sorting can move
+    // below the fold (the GAME DETAILS pane used to describe a server that was not visible at the top of the list).
+    if (!visible.empty()) {
+        const bool selectedVisible = m_selectedServerIndex >= 0 &&
+                                     m_selectedServerIndex < static_cast<int>(m_servers.size()) &&
+                                     std::find(visible.begin(), visible.end(), &m_servers[m_selectedServerIndex]) != visible.end();
+        if (!selectedVisible) m_selectedServerIndex = static_cast<int>(visible.front() - m_servers.data());
+    }
+
     const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal && !ModDownloadPrompt::Get().IsActive();
     bool scrollToSelected = false;
     if (padFree && s_browserPane == 0 && !visible.empty()) {
@@ -991,7 +1062,14 @@ void ServerBrowser::RenderServerList() {
         struct PillBadge { const char* text; ImU32 bg; ImU32 fg; };
         std::vector<PillBadge> badges;
         if (!compact) {
-            if (s.isMod) badges.push_back({ "MOD", IM_COL32(60, 195, 235, 240), IM_COL32(8, 22, 30, 255) });
+            if (s.isMod) {
+                const bool modReady = s.modId.empty() || ModInstalledCached(s.modId);
+                if (modReady) {
+                    badges.push_back({ "MOD", IM_COL32(60, 195, 235, 240), IM_COL32(8, 22, 30, 255) });
+                } else {
+                    badges.push_back({ "MOD - NOT INSTALLED", IM_COL32(255, 186, 74, 240), IM_COL32(34, 22, 4, 255) });
+                }
+            }
             if (s.isPasswordProtected) badges.push_back({ "LOCKED", IM_COL32(215, 165, 38, 235), IM_COL32(22, 16, 6, 255) });
             if (s.inProgress) badges.push_back({ "LIVE", IM_COL32(225, 128, 35, 235), IM_COL32(255, 248, 238, 255) });
             if (s.build.find("-dev") != std::string::npos) badges.push_back({ "DEV", IM_COL32(95, 78, 175, 230), IM_COL32(240, 238, 255, 255) });
@@ -1030,6 +1108,10 @@ void ServerBrowser::RenderServerList() {
         std::string subLine = UpperAscii(s.gameMode.empty() ? "MULTIPLAYER" : s.gameMode);
         subLine += "   |   " + (s.mapName.empty() ? std::string("Unknown Map") : MapNames::Display(s.mapName));
         if (!s.variantName.empty()) subLine += "   |   " + s.variantName;
+        if (s.isMod) {
+            subLine += "   |   ";
+            subLine += s.modTitle.empty() ? std::string("MODDED MAP") : ("MOD: " + s.modTitle);
+        }
         if (!s.region.empty() && s.region != "YOU") subLine += "   |   " + s.region;
         else if (!s.source.empty()) subLine += "   |   " + s.source;
 
@@ -1266,11 +1348,14 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::Spacing();
         if (s.isMod) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom map / modded content");
         if (!s.modId.empty()) {
+            const bool modReady = ModInstalledCached(s.modId);
             const std::string modLabel = s.modTitle.empty() ? ("Workshop item " + s.modId) : s.modTitle;
             ImGui::TextWrapped("Required Workshop mod: %s", modLabel.c_str());
-            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-            ImGui::TextWrapped("Noble checks for it before joining and downloads missing files automatically.");
-            ImGui::PopStyleColor();
+            if (modReady) {
+                ImGui::TextColored(ImVec4(0.45f, 0.86f, 0.55f, 1.0f), "Mod installed - ready to join.");
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.3f, 1.0f), "Mod NOT installed - DOWNLOAD MOD & JOIN fetches it first.");
+            }
         }
     }
 
@@ -1339,8 +1424,11 @@ void ServerBrowser::RenderServerDetails() {
             NobleStyle::PrimaryButton("JOIN BLOCKED (VERSION)", ImVec2(-1, U(38)));
             ImGui::EndDisabled();
         } else {
-            const char* joinLabel = s.inProgress ? "JOIN IN PROGRESS" : "JOIN PRE-GAME LOBBY";
-            if (NobleStyle::PrimaryButton(joinLabel, ImVec2(-1, U(40))) || (triggerFocusedBtn && s_detailBtnIdx == 0)) {
+            const bool modMissing = !s.modId.empty() && !ModInstalledCached(s.modId);
+            const std::string joinLabel = modMissing ? "DOWNLOAD MOD & JOIN"
+                                         : s.inProgress ? "JOIN IN PROGRESS"
+                                                        : "JOIN PRE-GAME LOBBY";
+            if (NobleStyle::PrimaryButton(joinLabel.c_str(), ImVec2(-1, U(40))) || (triggerFocusedBtn && s_detailBtnIdx == 0)) {
                 AttemptJoin(s);
             }
             focusOutline(0);
