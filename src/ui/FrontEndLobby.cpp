@@ -809,6 +809,11 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     DrawLobbyMapPickerModal(ctx, ui, left, top, back);
     return;
   }
+  if (st.optionsOpen) {
+    DrawTacticalGameOptions(ctx, ui, left, top, st.lobbyMode == "firefight",
+                            st.lobbyMode == "forge", back);
+    return;
+  }
 
   if (st.isLobbyHost) {
     const std::string curId = MasterServerClient::Get().GetCurrentSessionId();
@@ -1501,10 +1506,17 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
          st.isLobbyHost, "Select Firefight game variant."});
     optRows.push_back({"MAP", mapDisplay, false, st.isLobbyHost,
                        "Choose which Firefight map to play."});
-    if (st.isLobbyHost)
+    if (st.isLobbyHost) {
+      const std::string ffModeValue =
+          st.lobbyModeChanges > 0
+              ? std::to_string(st.lobbyModeChanges) + " CHANGED"
+              : std::string("DEFAULTS");
+      const std::string ffModeTip = st.lobbyModeChanges > 0
+                                        ? st.lobbyModeSummary
+                                        : std::string(kOptionsTip);
       optRows.push_back(
-          {"GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip});
-    else
+          {"GAME OPTIONS", ffModeValue, false, st.isLobbyHost, ffModeTip});
+    } else
       optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
                          false, false, hostModeTip});
     if (st.isLobbyHost)
@@ -1568,7 +1580,8 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
                : "Press to let everyone vote on what to play next from this "
                  "playlist."});
     else if (st.isLobbyHost)
-      optRows.push_back({"GAME OPTIONS", modeValue, false, false, modeTip});
+      optRows.push_back(
+          {"GAME OPTIONS", modeValue, false, st.isLobbyHost, modeTip});
     else
       optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
                          false, false, hostModeTip});

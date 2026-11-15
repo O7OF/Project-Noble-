@@ -2340,9 +2340,12 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
             select.empty() ? ctx.forgeVariant.string() : select.string();
         st.lobbyVariantName =
             select.empty() ? "Basic Editing" : std::string(st.optionsName);
+        st.lobbyModeKey.clear();
+        RefreshLobbyMode(ctx);
+        AssignLobbyTeams(st);
         MasterServerClient::Get().UpdateLobbyAdvert(
-            st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
-            st.lobbySkulls);
+            st.lobbyMap, st.lobbyMode, st.lobbyVariantName,
+            st.lobbyDifficulty, st.lobbySkulls);
       }
       return;
     }
@@ -2351,9 +2354,10 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
     ctx.forgeMaps = ScanForgeMaps();
     ctx.forgeMapsScanned = true;
     int &index = ff ? st.ffVariant : st.variant;
-    const std::vector<MenuVariant> &modes = ff ? ctx.ffVariants : ctx.variants;
-    index =
-        FindVariant(modes, ff ? L"hr_ff_standard_1set.bin" : L"slayer_054.bin");
+    const std::vector<MenuVariant> &modes =
+        ff ? ctx.ffVariants : ctx.variants;
+    index = FindVariant(modes, ff ? L"hr_ff_standard_1set.bin"
+                                  : L"slayer_054.bin");
     for (size_t i = 0; i < modes.size(); ++i)
       if (modes[i].path == select)
         index = static_cast<int>(i);
@@ -2361,9 +2365,12 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
         index < static_cast<int>(modes.size())) {
       st.lobbyVariantPath = modes[static_cast<size_t>(index)].path.string();
       st.lobbyVariantName = modes[static_cast<size_t>(index)].label;
+      st.lobbyModeKey.clear();
+      RefreshLobbyMode(ctx);
+      AssignLobbyTeams(st);
       MasterServerClient::Get().UpdateLobbyAdvert(
-          st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
-          st.lobbySkulls);
+          st.lobbyMap, st.lobbyMode, st.lobbyVariantName,
+          st.lobbyDifficulty, st.lobbySkulls);
     }
   };
   if (reset) {
@@ -2390,8 +2397,8 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
   if (save) {
     std::string file;
     for (const char c : std::string(st.optionsName)) {
-      if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '-' ||
-          c == '_')
+      if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' ||
+          c == '-' || c == '_')
         file.push_back(c);
     }
     while (!file.empty() && file.back() == ' ')
@@ -2408,10 +2415,12 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
           VariantRules::Directory() / (file + ".json");
       std::error_code existsError;
       const bool wouldReplace =
-          std::filesystem::exists(path, existsError) && path != st.optionsFile;
+          std::filesystem::exists(path, existsError) &&
+          path != st.optionsFile;
       if (wouldReplace && st.confirmAction != "replace") {
         st.confirmAction = "replace";
-        st.optionsMessage = "Name exists — press SAVE again to overwrite.";
+        st.optionsMessage =
+            "Name exists — press SAVE again to overwrite.";
         MenuSounds::Error();
       } else if (VariantRules::Save(path, preset)) {
         NOBLE_INFO("FrontEndMenu: game mode saved: '{}' on '{}' with "
@@ -2427,6 +2436,41 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
     }
   }
   if (back) {
+    if (!st.optionsValues.empty()) {
+      VariantRules::Preset preset;
+      preset.name = st.optionsName[0] ? std::string(st.optionsName)
+                                      : std::string("Custom Rules");
+      preset.base = st.optionsBase;
+      preset.values = st.optionsValues;
+      const std::filesystem::path targetPath =
+          !st.optionsFile.empty()
+              ? st.optionsFile
+              : (VariantRules::Directory() /
+                 (ff ? "_active_firefight.json"
+                     : (forge ? "_active_forge.json"
+                              : "_active_custom.json")));
+      if (VariantRules::Save(targetPath, preset)) {
+        NOBLE_INFO("FrontEndMenu: auto-applied game options '{}' on "
+                   "'{}' with {} change(s)",
+                   preset.name, preset.base, preset.values.size());
+        reloadModes(targetPath);
+      }
+    } else if (!st.optionsFile.empty()) {
+      const std::string fname = st.optionsFile.filename().string();
+      if (!fname.empty() && fname[0] == '_') {
+        std::error_code removeError;
+        std::filesystem::remove(st.optionsFile, removeError);
+        reloadModes(VariantBasePath(ctx.reachDir, st.optionsBase));
+      } else {
+        VariantRules::Preset preset;
+        preset.name = st.optionsName[0] ? std::string(st.optionsName)
+                                        : st.optionsFile.stem().string();
+        preset.base = st.optionsBase;
+        preset.values = st.optionsValues;
+        if (VariantRules::Save(st.optionsFile, preset))
+          reloadModes(st.optionsFile);
+      }
+    }
     st.optionsOpen = false;
     MenuSounds::Back();
   }

@@ -144,9 +144,28 @@ std::filesystem::path VariantBasePath(const std::filesystem::path &reachDir,
                                       const std::string &base) {
   std::error_code ec;
   const std::filesystem::path name = std::filesystem::path(base).filename();
-  for (const std::filesystem::path &folder :
-       {reachDir / "game_variants",
-        VFS::GetUserStoragePath() / "game_variants"}) {
+  std::vector<std::filesystem::path> folders = {
+      reachDir / "game_variants",
+      VFS::GetUserStoragePath() / "game_variants",
+      ReachHost::Get().GetDataDir() / "game_variants",
+  };
+  wchar_t userProfile[MAX_PATH] = {};
+  if (GetEnvironmentVariableW(L"USERPROFILE", userProfile, MAX_PATH) > 0) {
+    const std::filesystem::path uProf(userProfile);
+    folders.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "Temporary" /
+                      "UserContent" / "HaloReach" / "GameType");
+    const std::filesystem::path localVariants =
+        uProf / "AppData" / "LocalLow" / "MCC" / "LocalFiles";
+    if (std::filesystem::is_directory(localVariants, ec)) {
+      for (const auto &sub :
+           std::filesystem::directory_iterator(localVariants, ec)) {
+        if (sub.is_directory())
+          folders.push_back(sub.path() / "HaloReach" / "GameType");
+      }
+    }
+    ec.clear();
+  }
+  for (const std::filesystem::path &folder : folders) {
     const std::filesystem::path candidate = folder / name;
     if (std::filesystem::is_regular_file(candidate, ec))
       return candidate;
@@ -6843,8 +6862,11 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
             const auto describe = [](uint32_t id) {
               const auto profile =
                   noble::limits::ProfileFromInt(static_cast<int>(id >> 24));
+              const uint32_t generation = (id >> 16) & 0xFF;
               const uint32_t actors = id & 0xFFFF;
               return std::string(noble::limits::ProfileName(profile)) +
+                     (generation ? ", layout " + std::to_string(generation)
+                                 : std::string()) +
                      (actors ? ", AI actors " + std::to_string(actors)
                              : std::string());
             };
@@ -6852,7 +6874,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
                 "Can't join: this game uses engine limits " +
                 describe(static_cast<uint32_t>(peek.limitsId)) + "; you have " +
                 describe(mine) +
-                ". Change SETTINGS > ENGINE to match and restart Noble.";
+                ". Both players must run the same Noble build.";
             NOBLE_WARN("ServerBrowser join refused: {}", msg);
             UIManager::GetServerBrowser().SetStatus(msg);
             return;

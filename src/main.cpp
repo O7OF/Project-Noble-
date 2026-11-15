@@ -1647,15 +1647,17 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     }
 
     // 8. Load and bootstrap haloreach.dll directly in process memory
-    // Extended engine limits (LIMITS-HANDOFF.md): with a profile picked, Noble prepares its own patched copy of
-    // Reach's DLL and loads that one; the installed file is never modified. Any mismatch (another DLL build, a
+    // Extended engine limits (LIMITS-HANDOFF.md): Noble prepares its own patched copy of Reach's DLL from the
+    // installed stock file and loads that one; the installed file is never modified. The profile is PINNED for
+    // every install (limits::kShippedProfile / kShippedAiActors, Tyler 2026-11-15) instead of being a user
+    // setting, so every player and the server run the same game-state layout. Any mismatch (another DLL build, a
     // bad or missing patch) falls back to the stock DLL with the reason logged, so the game always starts.
-    // AI ACTORS (C7d): the pool hook lives in Loader and only sees environment variables, so publish the saved
-    // setting here. SetEnvironmentVariableW in this process is inherited by the relaunched match process.
-    // Only an explicit -ai-actors command-line override takes precedence over the saved setting.
+    // AI ACTORS (C7d): the pool hook lives in Loader and only sees environment variables, so publish the pinned
+    // count here. SetEnvironmentVariableW in this process is inherited by the relaunched match process. Only an
+    // explicit -ai-actors command-line override (dev builds) takes precedence over the pinned count.
+    bool hasCmdAiActors = false;
     {
         const wchar_t* cmdLine = GetCommandLineW();
-        bool hasCmdAiActors = false;
         if (cmdLine) {
             for (const wchar_t* p = cmdLine; *p; ++p) {
                 if (_wcsnicmp(p, L"-ai-actors", 10) == 0 && (p == cmdLine || p[-1] == L' ' || p[-1] == L'\t') &&
@@ -1663,14 +1665,6 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
                     hasCmdAiActors = true;
                     break;
                 }
-            }
-        }
-        if (!hasCmdAiActors) {
-            if (startupSettings.aiActors > 0 && startupSettings.extendedLimits != 0) {
-                const std::wstring actors = std::to_wstring(startupSettings.aiActors);
-                SetEnvironmentVariableW(L"NOBLE_AI_ACTORS", actors.c_str());
-            } else {
-                SetEnvironmentVariableW(L"NOBLE_AI_ACTORS", nullptr);
             }
         }
     }
@@ -1705,24 +1699,56 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
             }
         }
     }
-    noble::limits::Profile requestedLimits = noble::limits::ProfileFromInt(startupSettings.extendedLimits);
-    // Extended engine limits (V16, V16Particles, Full) currently cause infinite blackscreen loads in Campaign
-    // and network kicks in Firefight/Multiplayer. Only Forge mode functions with extended limits.
-    // Force Stock for all non-Forge launches and menu sessions until limits patches are updated.
-    if (_stricmp(launchMode.c_str(), "forge") != 0 && requestedLimits != noble::limits::Profile::Stock) {
-        requestedLimits = noble::limits::Profile::Stock;
-        NOBLE_WARN("main: Engine limits {} are disabled for mode '{}' (only Forge supports extended limits until stability patches land); using Stock",
-                   noble::limits::ProfileName(noble::limits::ProfileFromInt(startupSettings.extendedLimits)),
-                   launchMode.empty() ? (showMenu ? "menu" : "match") : launchMode.c_str());
+    noble::limits::Profile requestedLimits = noble::limits::kShippedProfile;
+#ifdef NOBLE_DEV_BUILD
+    // Test-only probe (2026-11-15, top-10 item #1): activate an engine-limit profile in any mode so the campaign
+    // black-screen and Firefight/multiplayer kick reports can be reproduced and bisected. The saved setting is
+    // untouched and release builds (no NOBLE_DEV_BUILD) cannot reach this. Remove once the profiles ship again.
+    {
+        wchar_t probe[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_ENGINE_LIMITS_PROBE", probe, 8) > 0) {
+            const int value = _wtoi(probe);
+            if (value > 0 && value <= static_cast<int>(noble::limits::Profile::Full)) {
+                requestedLimits = noble::limits::ProfileFromInt(value);
+                NOBLE_WARN("main: DEV PROBE NOBLE_ENGINE_LIMITS_PROBE={} bypasses the mode gate for '{}'; requested engine limits {}",
+                           value, launchMode.empty() ? (showMenu ? "menu" : "match") : launchMode.c_str(),
+                           noble::limits::ProfileName(requestedLimits));
+            }
+        }
+    }
+#endif
+    // Publish the pinned actor count for PoolResize (dev builds keep the -ai-actors / NOBLE_AI_ACTORS override).
+    if (!hasCmdAiActors) {
+        if (requestedLimits != noble::limits::Profile::Stock) {
+            const std::wstring actors = std::to_wstring(noble::limits::kShippedAiActors);
+            SetEnvironmentVariableW(L"NOBLE_AI_ACTORS", actors.c_str());
+        } else {
+            SetEnvironmentVariableW(L"NOBLE_AI_ACTORS", nullptr);
+        }
+    }
+    int appliedActors = noble::limits::kShippedAiActors;
+    {
+        wchar_t env[16] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_AI_ACTORS", env, 16) > 0) appliedActors = _wtoi(env);
     }
     const noble::limits::PrepareResult engineDll =
         noble::limits::PrepareEngineDll(reachInstall->reachDllPath, requestedLimits);
     NOBLE_INFO("Engine limits: requested {}, active {}, reason {}", noble::limits::ProfileName(requestedLimits),
                noble::limits::ProfileName(engineDll.active), engineDll.reason.empty() ? "none" : engineDll.reason.c_str());
-    // AI ACTORS (C7d) is applied by the pool-resize hook once the game-state exists; log what was asked for.
-    if (startupSettings.aiActors > 0 && engineDll.active != noble::limits::Profile::Stock)
-        NOBLE_INFO("Engine limits: AI actors {} (network id 0x{:08X})", startupSettings.aiActors,
-                   noble::limits::ProfileNetworkId(engineDll.active, startupSettings.aiActors));
+    // The pin is what keeps peers compatible, so say loudly when it could not be applied exactly.
+    if (requestedLimits == noble::limits::kShippedProfile && engineDll.active != requestedLimits) {
+        NOBLE_ERROR("Engine limits: the pinned profile {} could not be applied (running {}); this client may not "
+                    "match other players", noble::limits::ProfileName(requestedLimits),
+                    noble::limits::ProfileName(engineDll.active));
+    } else if (requestedLimits != noble::limits::Profile::Stock &&
+               engineDll.dllPath == reachInstall->reachDllPath) {
+        NOBLE_WARN("Engine limits: {} is running in memory on the installed DLL (data/limits patch missing or not "
+                   "applicable); other players may be on the patched layout", noble::limits::ProfileName(requestedLimits));
+    }
+    // AI ACTORS (C7d) is applied by the pool-resize hook once the game-state exists; log the pinned/overridden value.
+    if (engineDll.active != noble::limits::Profile::Stock)
+        NOBLE_INFO("Engine limits: AI actors {} (network id 0x{:08X})", appliedActors,
+                   noble::limits::ProfileNetworkId(engineDll.active, appliedActors));
     auto loader = std::make_unique<noble::Loader>();
     // The second path is the installed DLL: its folder is where the engine's own dependencies (xaudio2, MCC
     // binaries) are found. Pass both even for a fallback, so the copy never becomes the dependency root.

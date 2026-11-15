@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "BuildIdentity.hpp"
+#include "host/EngineLimits.hpp"   // limits::kShippedProfile / kShippedAiActors (pinned engine profile)
 
 namespace noble {
 
@@ -103,12 +104,12 @@ struct SettingsData {
     uint64_t campaignSkulls = 0;   // MCC skull bits chosen on the SKULLS screen (launch block +0x48)
     // Extended engine limits (LIMITS-HANDOFF.md): the limits::Profile Noble prepares its own patched copy of
     // haloreach.dll for. 0 = Stock (the installed DLL, untouched), 1 = V16 (object pool 2,048 -> 32,767).
-    // Read once at start-up; every player and the server in a match must use the same value.
-    int extendedLimits = 0;
-    // AI actor pool (LIMITS-TODO C7d): 0 = stock 96, otherwise the actor count (256 / 512 / 1024). Only used
-    // with an Extended engine profile; every player and the server in a match must use the same value.
-    // Takes effect after a restart. The -ai-actors / NOBLE_AI_ACTORS dev override still wins.
-    int aiActors = 0;
+    // PINNED for every install since 2026-11-15 (limits::kShippedProfile / kShippedAiActors): these are kept in
+    // the settings file for compatibility and diagnostics, but Settings::Clamp overwrites them on every load.
+    int extendedLimits = static_cast<int>(limits::kShippedProfile);
+    // AI actor pool (LIMITS-TODO C7d): 0 = stock 96, otherwise the actor count (256 / 512 / 1024). Pinned with the
+    // engine profile so every peer matches. Dev builds can still override with -ai-actors / NOBLE_AI_ACTORS.
+    int aiActors = limits::kShippedAiActors;
 
     // Menus
     std::string menuBackground = "random"; // "random", "noble" (own art), "reach" (from the MCC install)
