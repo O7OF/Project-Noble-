@@ -496,6 +496,22 @@ void ApplyThirdPersonCameraTuning(float /*dt*/, void* observerCommand) {
     }
 }
 
+// Test-only "-third-person-front": mirror the third-person camera through its focus point so the player model
+// (visor/armour) can be captured from the front. Runs after the engine camera update, never touches focus or mouse.
+static void ApplyFrontTest(void* observerCommand) {
+    static const bool s_frontTest = wcsstr(GetCommandLineW(), L"-third-person-front") != nullptr;
+    if (!s_frontTest || !observerCommand) return;
+    auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
+    auto* fwd = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x2C);
+    const float* focusDistance = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x24);
+    float d = focusDistance[0];
+    if (!std::isfinite(d) || d < 0.1f || d > 10.0f) d = 2.5f;
+    for (int i = 0; i < 3; ++i) {
+        pos[i] += 2.0f * d * fwd[i];
+        fwd[i] = -fwd[i];
+    }
+}
+
 void __fastcall Hook_CameraFollow(void* camera, int32_t userIndex, float dt, void* observerCommand) {
     CameraHookDepthGuard guard(s_cameraHookDepth);
     if (s_originalFollow) s_originalFollow(camera, userIndex, dt, observerCommand);
@@ -507,6 +523,7 @@ void __fastcall Hook_CameraFollow(void* camera, int32_t userIndex, float dt, voi
         return;
     }
     ApplyThirdPersonCameraTuning(dt, observerCommand);
+    ApplyFrontTest(observerCommand);
 }
 
 void __fastcall Hook_CameraFollowingUpdate(void* camera, int32_t userIndex, float dt, void* observerCommand) {
@@ -520,6 +537,7 @@ void __fastcall Hook_CameraFollowingUpdate(void* camera, int32_t userIndex, floa
         return;
     }
     ApplyThirdPersonCameraTuning(dt, observerCommand);
+    ApplyFrontTest(observerCommand);
 }
 
 int32_t __fastcall Hook_CameraModeCheck(int32_t unitDatumIndex) {
