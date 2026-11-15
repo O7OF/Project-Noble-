@@ -2,6 +2,7 @@
 #include "HookManager.hpp"
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
+#include "career/Career.hpp"
 #include "engine/BlamEngine.hpp"
 #include "engine/ReachHost.hpp"
 #include "network/NetworkTransport.hpp"
@@ -368,8 +369,12 @@ void EnginePatches::RecoverFromCutsceneSkip() {
   // black
   ClearRasterizerScreenFade(reachBase);
 
-  // 2. Dismiss any false GameOver screen
-  PauseMenu::CancelGameOver();
+  // 2. Dismiss a *false* game over (the intro-cutscene skip case this was written for). A real one
+  //    must stay up: a campaign mission's ending cutscene runs through this detour, and cancelling
+  //    the panel there was one of the ways a completed mission ended on a black screen with no
+  //    after-action report. A settled match means the match really ended, so the panel is real.
+  if (!noble::Career::IsMatchSettled())
+    PauseMenu::CancelGameOver();
 }
 
 // The 0.19.82 merge added a "cutscene recovery" detour on cinematic_skip_stop_internal. It also fires while a
@@ -435,8 +440,21 @@ bool EnginePatches::ShouldBlockPrematureGameOver() {
   // A cinematic-only mission has no gameplay to protect: its finish IS the cutscene ending.
   if (s_cinematicOnlyMission.load())
     return false;
-  // If cinematic is playing, or cutscene skip occurred in the last 15 seconds,
-  // block GameOver
+  // Only the match's startup window is guarded. Reach plays a cutscene *after* a campaign
+  // mission's last objective, and guarding "a cinematic is playing" alone swallowed that real
+  // mission end: the game finished nowhere and the mission sat on a black screen with no
+  // after-action report. A cutscene after the startup window is part of the mission, not a
+  // premature end.
+  // Once a match has been settled the engine must be allowed to finish it: blocking its
+  // game_finish after the results would leave the session half torn down (the other black screen).
+  if (noble::Career::IsMatchSettled())
+    return false;
+  constexpr double kStartupGraceSeconds = 120.0;
+  const bool startingUp =
+      !noble::Career::IsMatchActive() ||
+      noble::Career::SecondsSinceMatchBegin() < kStartupGraceSeconds;
+  if (!startingUp)
+    return false;
   if (CinematicInProgress())
     return true;
   const ULONGLONG lastSkip = s_lastCutsceneSkipTick.load();

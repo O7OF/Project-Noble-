@@ -924,6 +924,62 @@ static uint64_t __fastcall HostSlot18_AssetLookup(void* thisPtr, uint64_t a1, ui
 static std::atomic<uint32_t> s_loadPhases{0};
 static std::atomic<float> s_loadFraction{0.0f};
 
+// Broadcasts the settled award to guests. Sent after every settlement (host slot 6, or the match
+// end watcher when the engine never produced results), so a client whose match just ended can pay
+// its own cR/challenges/commendations from the host's authoritative numbers and show the
+// after-action report.
+static void BroadcastMatchOver() {
+    if (!NetworkTransport::Get().IsActive() || !NetworkTransport::Get().IsHost())
+        return;
+    try {
+        const Career::Award award = Career::LastAward();
+        if (!award.valid) return;
+        nlohmann::json j;
+        j["type"] = "match_over";
+        j["map"] = award.map;
+        j["mode"] = award.type;
+        j["minutes"] = award.minutes;
+        j["difficulty"] = award.difficulty;
+        j["skulls"] = award.skulls;
+        j["provisional"] = award.provisional;
+        j["players"] = nlohmann::json::array();
+        for (const auto& p : award.players) {
+            j["players"].push_back({
+                { "name", p.name },
+                { "tag", p.tag },
+                { "slot", p.slot },
+                { "local", p.local },
+                { "score", p.score },
+                { "kills", p.kills },
+                { "assists", p.assists },
+                { "deaths", p.deaths },
+                { "medals", p.medals }
+            });
+        }
+        NetworkTransport::Get().SendLobbyControlJson(j.dump());
+        NOBLE_INFO("ReachHost: sent match_over JSON to all connected clients ({} row(s), {} cR)",
+                   award.players.size(), award.total);
+    } catch (...) {}
+}
+
+void ReachHost::BroadcastMatchAward() { BroadcastMatchOver(); }
+
+int ReachHost::GetMapState() {
+    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    if (!reach) return -1;
+    int mapState = -1;
+    if (!SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A118, &mapState)) return -1;
+    return mapState;
+}
+
+int ReachHost::GetLaunchState() {
+    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    if (!reach) return -1;
+    int launchState = -1;
+    if (!SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState)) return -1;
+    return launchState;
+}
+
 // Slot 6: match over. haloreach+0xF95CB builds MCC's game-results record (0x5D138 bytes, filled
 // from the engine's own results by haloreach+0x39128) and calls host slot 6 with a pointer to it
 // (a1). a2 isn't a size: it is whatever r8 held after the conversion loop (0xD5A8).
@@ -960,40 +1016,22 @@ static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uin
         s_record.assign(Career::kResultsSize, 0);
         if (SafeCopyMemory(s_record.data(), reinterpret_cast<const void*>(a1), s_record.size())) {
             Career::OnGameResults(s_record.data(), s_record.size());
-
-            // Broadcast match_over to connected peers
-            if (NetworkTransport::Get().IsActive() && NetworkTransport::Get().IsHost()) {
-                try {
-                    const Career::Award award = Career::LastAward();
-                    nlohmann::json j;
-                    j["type"] = "match_over";
-                    j["map"] = award.map;
-                    j["mode"] = award.type;
-                    j["minutes"] = award.minutes;
-                    j["difficulty"] = award.difficulty;
-                    j["players"] = nlohmann::json::array();
-                    for (const auto& p : award.players) {
-                        j["players"].push_back({
-                            { "name", p.name },
-                            { "score", p.score },
-                            { "kills", p.kills },
-                            { "assists", p.assists },
-                            { "deaths", p.deaths },
-                            { "medals", p.medals }
-                        });
-                    }
-                    NetworkTransport::Get().SendLobbyControlJson(j.dump());
-                    NOBLE_INFO("ReachHost: sent match_over JSON to all connected clients");
-                } catch (...) {}
-            }
         } else {
             NOBLE_WARN("ReachHost [Slot 6 - GameResults]: results record not readable");
-            Career::EnsureMatchSaved("slot6_unreadable");
+            Career::OnEngineReportedMatchEnd("slot6_unreadable");
         }
     } else {
-        Career::EnsureMatchSaved("slot6_null");
+        Career::OnEngineReportedMatchEnd("slot6_null");
     }
-    PauseMenu::ShowGameOver();
+    // The host is authoritative: every guest pays the same credits, challenge progress and
+    // commendations for the award the host just settled.
+    BroadcastMatchOver();
+    // The game-over/game-finish hooks may already have opened the panel from live numbers: the real
+    // results replace them, so replay the reveal instead of leaving the provisional figures up.
+    if (PauseMenu::IsGameOver())
+        PauseMenu::RefreshGameOverAward();
+    else
+        PauseMenu::ShowGameOver();
     return 0;
 }
 

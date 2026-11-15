@@ -486,7 +486,7 @@ static uint8_t __fastcall Hook_GameFinishImpl(uintptr_t callerAddr) {
         return 0;
     }
 #ifndef NOBLE_DEDICATED   // client only: career save + game-over screen
-    Career::EnsureMatchSaved("game_finish");
+    Career::OnEngineReportedMatchEnd("game_finish");
     PauseMenu::ShowGameOver();
 #endif
     if (s_gameFinishStub && s_gameFinishStub->originalFn) {
@@ -593,7 +593,7 @@ static void __fastcall Hook_GameOver(int32_t reason) {
         return;
     }
 #ifndef NOBLE_DEDICATED   // client only: career save + game-over screen
-    Career::EnsureMatchSaved("game_over");
+    Career::OnEngineReportedMatchEnd("game_over");
     PauseMenu::ShowGameOver();
 #endif
     if (s_originalGameOver) s_originalGameOver(reason);

@@ -251,6 +251,31 @@ int s_difficulty = 1;
 uint64_t s_skulls = 0;
 std::chrono::steady_clock::time_point s_matchStart = std::chrono::steady_clock::now();
 
+// One match pays once (see SettleLocked). s_matchActive is true between BeginMatch and the
+// settlement; s_matchSettled says this match's cR/challenges/commendations are already saved, and
+// s_settleProvisional that they came from live engine memory rather than the engine's own results.
+bool s_matchActive = false;
+bool s_matchSettled = false;
+bool s_settleProvisional = false;
+bool s_snapshotValid = false;
+Totals s_snapshotTotals;
+Extra s_snapshotExtra;
+AwardLine s_bonusLine;
+
+// The career as it was when the match started, so a provisional settlement can be replaced by the
+// engine's real results without paying the match twice.
+void SnapshotLocked() {
+    s_snapshotTotals = s_totals;
+    s_snapshotExtra = s_extra;
+    s_snapshotValid = true;
+}
+
+void RestoreLocked() {
+    if (!s_snapshotValid) return;
+    s_totals = s_snapshotTotals;
+    s_extra = s_snapshotExtra;
+}
+
 std::filesystem::path UserDir() {
     return DeviceIdentityStore::UserDir();
 }
@@ -898,12 +923,35 @@ const char* BaseTypeName(BaseType t) {
 
 void BeginMatch(BaseType type, const std::string& map, int difficulty, uint64_t skulls) {
     std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    LoadLocked();
     s_type = type;
     s_map = map;
     s_difficulty = difficulty;
     s_skulls = skulls;
     s_matchStart = std::chrono::steady_clock::now();
-    LoadLocked();
+    // A new match arms the settlement; the previous match's award must not leak into this one.
+    s_matchActive = true;
+    s_matchSettled = false;
+    s_settleProvisional = false;
+    s_lastAward = Award{};
+    SnapshotLocked();
+    NOBLE_INFO("Career: match started ({} on {}, difficulty {}, skulls 0x{:X})",
+               BaseTypeName(type), map, difficulty, skulls);
+}
+
+bool IsMatchActive() {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    return s_matchActive;
+}
+
+bool IsMatchSettled() {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    return s_matchSettled;
+}
+
+double SecondsSinceMatchBegin() {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - s_matchStart).count();
 }
 
 // Stock Noble Actual (m05) and Lone Wolf (m70_bonus) pay nothing: no cR, no challenge or commendation
@@ -918,85 +966,137 @@ bool UnpaidMission(BaseType type, const std::string& map) {
     return m == "m05" || m == "m70_bonus";
 }
 
-void OnGameResults(const uint8_t* record, size_t size) {
-    if (!record || size < kResultsSize) return;
+// ---------------------------------------------------------------------------------------------
+// One settlement per match
+//
+// Every path that knows a match is over builds a MatchInput and calls SettleLocked:
+//   - the host, from the engine's MCC game-results record (host slot 6): authoritative
+//   - a guest, from the host's match_over packet: authoritative
+//   - any client, from live engine memory when the real results never came: provisional
+// SettleLocked is idempotent per match: the career is snapshotted just before a match settles, so an
+// authoritative settlement that arrives after a provisional one replaces it instead of paying the
+// match twice. Every client pays from the same match stats, so challenge progress and commendation
+// tiers come out the same everywhere; the cR total still differs per player because the per-minute
+// part scales with that player's own rank (and every client rolls its own random bonus once).
+// ---------------------------------------------------------------------------------------------
+namespace {
 
-    // Keep the last record for decoding work (local only: it holds player names and ids, so it
-    // must never be committed or shared).
-    {
-        std::error_code ec;
-        std::filesystem::create_directories(UserDir() / "results", ec);
-        std::ofstream out(UserDir() / "results" / "last_game.bin", std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(record), static_cast<std::streamsize>(size));
+struct MatchInput {
+    BaseType type = BaseType::Multiplayer;
+    std::string map;
+    int difficulty = -1;
+    uint64_t skulls = 0;
+    double minutes = 0.0;
+    std::vector<ScoreRow> players;
+    int64_t kills = 0;
+    int64_t assists = 0;
+    int64_t deaths = 0;
+    int64_t medals = 0;
+    int64_t score = 0;
+};
+
+BaseType TypeFromName(const std::string& name) {
+    if (_stricmp(name.c_str(), "campaign") == 0) return BaseType::Campaign;
+    if (_stricmp(name.c_str(), "firefight") == 0) return BaseType::Firefight;
+    return BaseType::Multiplayer;
+}
+
+// The random end-of-match bonus is rolled once per match, so a later authoritative settlement
+// does not reroll (and change) cR the player has already been shown.
+AwardLine RollBonus() {
+    static std::mt19937 rng{ std::random_device{}() };
+    if (std::uniform_int_distribution<int>(1, kRandomBonusOneIn)(rng) != 1) return {};
+    if (std::uniform_int_distribution<int>(1, kJackpotOneIn)(rng) == 1) return { "Jackpot!", kJackpot };
+    const int64_t bonus =
+        std::uniform_int_distribution<int64_t>(kRandomBonusMin / 10, kRandomBonusMax / 10)(rng) * 10;
+    return { "Random bonus", bonus };
+}
+
+// Marks the scoreboard row that belongs to this machine. Returns its index, or -1 when none of
+// the rows can be identified (a guest with no name/tag match and no engine player table).
+int MarkLocalRow(std::vector<ScoreRow>& rows, const SettingsData& settings, int localSlot) {
+    // Rows can arrive with a peer's own "local" flag (the host marks its row, not this machine's):
+    // start from nothing highlighted, and only ever mark a row this machine can prove is its own.
+    for (auto& r : rows) r.local = false;
+    const auto mark = [&](int index) {
+        if (index >= 0 && index < static_cast<int>(rows.size())) {
+            rows[static_cast<size_t>(index)].local = true;
+            return index;
+        }
+        return -1;
+    };
+    if (localSlot >= 0) {
+        for (size_t i = 0; i < rows.size(); ++i)
+            if (rows[i].slot == localSlot) return mark(static_cast<int>(i));
     }
-    LogRecord(record);
+    // The name part of a "Name  [TAG]" row, for an exact comparison: a prefix match ("Tyler" vs
+    // "Tyler2") would hand this player somebody else's stats.
+    const auto namePart = [](const std::string& rowName) {
+        const size_t bracket = rowName.find("  [");
+        return bracket == std::string::npos ? rowName : rowName.substr(0, bracket);
+    };
+    if (!settings.playerName.empty()) {
+        for (size_t i = 0; i < rows.size(); ++i)
+            if (_stricmp(namePart(rows[i].name).c_str(), settings.playerName.c_str()) == 0)
+                return mark(static_cast<int>(i));
+    }
+    if (!settings.serviceTag.empty()) {
+        for (size_t i = 0; i < rows.size(); ++i)
+            if (!rows[i].tag.empty() && _stricmp(rows[i].tag.c_str(), settings.serviceTag.c_str()) == 0)
+                return mark(static_cast<int>(i));
+    }
+    if (rows.size() == 1) return mark(0);
+    return -1;
+}
 
-    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+// Copies the local player's numbers out of the scoreboard rows.
+void TakeLocalStats(const std::vector<ScoreRow>& rows, int localIndex, MatchInput& in) {
+    if (localIndex < 0 || localIndex >= static_cast<int>(rows.size())) return;
+    const ScoreRow& row = rows[static_cast<size_t>(localIndex)];
+    in.kills = row.kills;
+    in.assists = row.assists;
+    in.deaths = row.deaths;
+    in.medals = row.medals;
+    in.score = row.score;
+}
+
+// Pays one match. Called with s_mutex held. provisional = computed from live engine memory
+// before the engine's own results arrived; a later authoritative settlement replaces it.
+void SettleLocked(const MatchInput& in, const char* reason, bool provisional) {
     LoadLocked();
+    if (s_matchSettled) {
+        RestoreLocked();          // replace this match's earlier (provisional) settlement
+    } else {
+        SnapshotLocked();         // remember the state this match started from
+        s_bonusLine = RollBonus();
+    }
 
+    const BaseType type = in.type;
+    const std::string map = !in.map.empty() ? in.map : s_map;
     const double minutes =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - s_matchStart).count() / 60.0;
-    const int local = LocalPlayer(record);
-    int64_t kills = 0, deaths = 0, assists = 0, medals = 0, score = 0;
+        in.minutes > 0.0
+            ? in.minutes
+            : std::chrono::duration<double>(std::chrono::steady_clock::now() - s_matchStart).count() / 60.0;
+    const int difficulty =
+        type == BaseType::Multiplayer ? -1 : (in.difficulty >= 0 ? in.difficulty : s_difficulty);
+    const uint64_t skulls = in.skulls != 0 ? in.skulls : s_skulls;
+    const int64_t kills = std::max<int64_t>(0, in.kills);
+    const int64_t assists = std::max<int64_t>(0, in.assists);
+    const int64_t deaths = std::max<int64_t>(0, in.deaths);
+    const int64_t medals = std::max<int64_t>(0, in.medals);
+    const int64_t score = std::max<int64_t>(0, in.score);
+
     Award a;
     a.valid = true;
-    a.type = BaseTypeName(s_type);
-    a.map = s_map;
+    a.provisional = provisional;
+    a.type = BaseTypeName(type);
+    a.map = map;
     a.minutes = minutes;
-    a.difficulty = s_type == BaseType::Multiplayer ? -1 : s_difficulty;
-
-    // Scoreboard rows for everyone present. The record has no player names, so only the local
-    // player is named (from SETTINGS). Stat slots are provisional: implausible values show as 0.
-    const SettingsData settings = Settings::Get().Snapshot();
-    for (int i = 0; i < kMaxPlayers; ++i) {
-        const uint8_t* pr = record + kPlayerRecords + i * kPlayerRecordSize;
-        if (pr[0] == 0 && U64(pr, 0x08) == 0) continue;
-        const uint8_t* st = record + kStatBlocks + i * kStatBlockSize;
-        ScoreRow row;
-        row.local = i == local;
-        LogRecordBytes(i, pr);
-        if (row.local) {
-            row.name = settings.playerName + "  [" + settings.serviceTag + "]";
-        }
-        else {
-            std::string name = RecordName(pr, 0x4C), tag;
-            const auto known = s_playerNames.find(U64(pr, 0x08));
-            if (known != s_playerNames.end() && !known->second.first.empty()) {
-                name = known->second.first;
-                tag = known->second.second;
-            }
-            if (name.empty()) {
-                const auto bySlot = s_playerSlots.find(i);
-                if (bySlot != s_playerSlots.end() && !bySlot->second.first.empty()) {
-                    name = bySlot->second.first;
-                    tag = bySlot->second.second;
-                }
-            }
-            if (name.empty()) name = "Player " + std::to_string(i + 1);
-            row.name = tag.empty() ? name : name + "  [" + tag + "]";
-        }
-        row.score = static_cast<int32_t>(U32(pr, 0x34));
-        row.kills = U32(st, kStatKills * 4);
-        row.assists = U32(st, kStatAssists * 4);
-        row.deaths = U32(st, kStatDeaths * 4);
-        for (size_t m = 0; m < kMedalCount; ++m) row.medals += U32(st, kMedalOffset + m * 4);
-        if (row.kills > 1000 || row.assists > 1000 || row.deaths > 1000) row.kills = row.assists = row.deaths = 0;
-        if (row.medals > 2000) row.medals = 0;
-        if (row.score < -100000 || row.score > 1000000) row.score = 0;
-        if (row.local) {
-            // The stat slots are provisional: this shows whether deaths really land in slot 11.
-            std::string slots;
-            for (size_t k = 0; k < kGeneralStats; ++k) slots += std::to_string(U32(st, k * 4)) + " ";
-            NOBLE_INFO("Career: local general stats 0..{}: {}", kGeneralStats - 1, slots);
-            kills = row.kills;
-            assists = row.assists;
-            deaths = row.deaths;
-            medals = row.medals;
-            score = row.score;
-        }
-        a.players.push_back(row);
-    }
-    std::stable_sort(a.players.begin(), a.players.end(), [](const ScoreRow& x, const ScoreRow& y) { return x.score > y.score; });
+    a.difficulty = difficulty;
+    a.skulls = skulls;
+    a.players = in.players;
+    std::stable_sort(a.players.begin(), a.players.end(),
+                     [](const ScoreRow& x, const ScoreRow& y) { return x.score > y.score; });
 
     const std::string today = Today();
     if (s_totals.day != today) {
@@ -1007,7 +1107,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
     a.creditsBefore = s_totals.credits;
     a.rankBefore = RankIndex(s_totals.credits);
 
-    const bool unpaid = UnpaidMission(s_type, s_map);
+    const bool unpaid = UnpaidMission(type, map);
 
     // One reward structure per base type (see BaseType); modded content pays as its base type.
     const double paidMinutes = std::clamp(minutes, 0.0, kMinuteCap);
@@ -1019,31 +1119,23 @@ void OnGameResults(const uint8_t* record, size_t size) {
     if (performance > 0) a.lines.push_back({ "Performance", performance });
 
     // Campaign scoring: a bonus for finishing the mission by difficulty, more with skulls on.
-    if (s_type == BaseType::Campaign) {
-        const int d = std::clamp(s_difficulty, 0, 3);
+    if (type == BaseType::Campaign) {
+        const int d = std::clamp(difficulty, 0, 3);
         const int64_t bonus = kMissionBonus[d];
         a.lines.push_back({ std::string("Mission complete (") + DifficultyName(d) + ")", bonus });
         int skullCount = 0;
-        for (uint64_t bits = s_skulls; bits; bits &= bits - 1) ++skullCount;
+        for (uint64_t bits = skulls; bits; bits &= bits - 1) ++skullCount;
         if (skullCount > 0) {
             const int64_t skullBonus = bonus * std::min(skullCount, 10) / 10;
             a.lines.push_back({ "Skulls (" + std::to_string(skullCount) + " on)", skullBonus });
         }
-        if (!s_map.empty()) {
-            auto it = s_extra.campaignBest.find(s_map);
-            if (it == s_extra.campaignBest.end() || it->second < d) s_extra.campaignBest[s_map] = d;
+        if (!map.empty()) {
+            auto it = s_extra.campaignBest.find(map);
+            if (it == s_extra.campaignBest.end() || it->second < d) s_extra.campaignBest[map] = d;
         }
     }
 
-    static std::mt19937 rng{ std::random_device{}() };
-    if (std::uniform_int_distribution<int>(1, kRandomBonusOneIn)(rng) == 1) {
-        if (std::uniform_int_distribution<int>(1, kJackpotOneIn)(rng) == 1) {
-            a.lines.push_back({ "Jackpot!", kJackpot });
-        } else {
-            const int64_t bonus = std::uniform_int_distribution<int64_t>(kRandomBonusMin / 10, kRandomBonusMax / 10)(rng) * 10;
-            a.lines.push_back({ "Random bonus", bonus });
-        }
-    }
+    if (!s_bonusLine.label.empty()) a.lines.push_back(s_bonusLine);
 
     if (unpaid) {
         a.lines.clear();
@@ -1051,7 +1143,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
     }
 
     // Lifetime numbers first (commendations read them).
-    const int typeIndex = static_cast<int>(s_type);
+    const int typeIndex = static_cast<int>(type);
     s_extra.games[typeIndex] += 1;
     s_extra.minutes[typeIndex] += minutes;
     s_totals.gamesPlayed += 1;
@@ -1063,10 +1155,11 @@ void OnGameResults(const uint8_t* record, size_t size) {
 
     // Challenges: add this match's progress, pay the ones it completes.
     PruneChallengesLocked();
-    const MatchFacts facts{ s_type, s_difficulty, s_skulls, minutes, kills, assists, deaths, score, s_map };
+    const MatchFacts facts{ type, difficulty, skulls, minutes, kills, assists, deaths, score, map };
     const std::vector<ActiveChallenge> active = ActiveChallenges();   // dailies first, then weeklies
+    const std::vector<ActiveChallenge> none;
     int newDailies = 0, dailiesDone = 0, dailyCount = 0;
-    for (const ActiveChallenge& c : unpaid ? std::vector<ActiveChallenge>{} : active) {
+    for (const ActiveChallenge& c : unpaid ? none : active) {
         if (!c.weekly) ++dailyCount;
         if (s_extra.challengeClaimed[c.key]) {
             if (!c.weekly) ++dailiesDone;
@@ -1090,7 +1183,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
             a.lines.push_back({ std::string(c.weekly ? "Weekly challenge: " : "Challenge: ") + c.def->title, c.def->reward });
         }
         if (progress != progressBefore) {
-            Career::ProgressLine p;
+            ProgressLine p;
             p.kind = c.weekly ? 1 : 0;
             p.mode = c.def->mode;
             p.title = c.def->title;
@@ -1105,13 +1198,13 @@ void OnGameResults(const uint8_t* record, size_t size) {
     // Commendations: count this game, then pay every tier reached since the last match.
     for (size_t i = 0; i < std::size(kCommendations); ++i) {
         const CommendationDef& c = kCommendations[i];
-        const int64_t add = unpaid ? 0 : CommendationAmount(c, s_type, s_map, kills, assists, deaths, medals);
+        const int64_t add = unpaid ? 0 : CommendationAmount(c, type, map, kills, assists, deaths, medals);
         const int64_t valueBefore = CommendationValue(i);
         if (add > 0) s_extra.commendationCount[CommendationKey(c)] += add;
         const int reached = TierFor(c, CommendationValue(i));
         int& paid = s_extra.commendationTier[CommendationKey(c)];
         if (add > 0) {
-            Career::ProgressLine p;
+            ProgressLine p;
             p.kind = 2;
             p.mode = c.mode;
             p.title = c.title;
@@ -1146,9 +1239,9 @@ void OnGameResults(const uint8_t* record, size_t size) {
         std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
         m.date = buf;
     }
-    m.type = BaseTypeName(s_type);
-    m.map = s_map;
-    m.difficulty = s_type == BaseType::Multiplayer ? -1 : s_difficulty;
+    m.type = BaseTypeName(type);
+    m.map = map;
+    m.difficulty = difficulty;
     m.minutes = minutes;
     m.kills = kills;
     m.deaths = deaths;
@@ -1164,303 +1257,327 @@ void OnGameResults(const uint8_t* record, size_t size) {
     s_lastAward = a;
     SaveLocked();
 
-    NOBLE_INFO("Career: {} on {} took {:.1f} min; local player {} kills {} assists {} deaths {} medals {}; paid {} cR "
-               "(today {}), total {} cR, rank {}",
-               BaseTypeName(s_type), s_map, minutes, local, kills, assists, deaths, medals, total, s_totals.creditsToday,
-               s_totals.credits, kRanks[a.rankAfter].name);
+    s_matchSettled = true;
+    s_settleProvisional = provisional;
+    s_matchActive = false;
+
+    NOBLE_INFO("Career: settled match ({}{}) {} on {} (difficulty {}) after {:.1f} min; local player {} kills "
+               "{} assists {} deaths {} medals {} score; paid {} cR (today {}), total {} cR, rank {}; {} "
+               "challenge/commendation line(s)",
+               reason ? reason : "match_end", provisional ? ", provisional" : "", BaseTypeName(type), map,
+               difficulty, minutes, kills, assists, deaths, medals, score, total, s_totals.creditsToday,
+               s_totals.credits, kRanks[a.rankAfter].name, a.progress.size());
+}
+
+} // namespace
+
+void OnGameResults(const uint8_t* record, size_t size) {
+    if (!record || size < kResultsSize) return;
+
+    // Keep the last record for decoding work (local only: it holds player names and ids, so it
+    // must never be committed or shared).
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(UserDir() / "results", ec);
+        std::ofstream out(UserDir() / "results" / "last_game.bin", std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(record), static_cast<std::streamsize>(size));
+    }
+    LogRecord(record);
+
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    LoadLocked();
+
+    // Real results replace a provisional settlement, but a second record for the same match is
+    // ignored: a match pays once.
+    if (s_matchSettled && !s_settleProvisional) {
+        NOBLE_WARN("Career: ignoring a second game-results record for the same match");
+        return;
+    }
+
+    MatchInput in;
+    in.type = s_type;
+    in.map = s_map;
+    in.difficulty = s_difficulty;
+    in.skulls = s_skulls;
+    in.minutes = std::chrono::duration<double>(std::chrono::steady_clock::now() - s_matchStart).count() / 60.0;
+
+    // Scoreboard rows for everyone present. The record has no player names, so only the local
+    // player is named (from SETTINGS). Stat slots are provisional: implausible values show as 0.
+    const SettingsData settings = Settings::Get().Snapshot();
+    const int local = LocalPlayer(record);
+    for (int i = 0; i < kMaxPlayers; ++i) {
+        const uint8_t* pr = record + kPlayerRecords + i * kPlayerRecordSize;
+        if (pr[0] == 0 && U64(pr, 0x08) == 0) continue;
+        const uint8_t* st = record + kStatBlocks + i * kStatBlockSize;
+        ScoreRow row;
+        row.slot = i;
+        row.local = i == local;
+        LogRecordBytes(i, pr);
+        if (row.local) {
+            row.name = settings.playerName + "  [" + settings.serviceTag + "]";
+            row.tag = settings.serviceTag;
+        }
+        else {
+            std::string name = RecordName(pr, 0x4C), tag;
+            const auto known = s_playerNames.find(U64(pr, 0x08));
+            if (known != s_playerNames.end() && !known->second.first.empty()) {
+                name = known->second.first;
+                tag = known->second.second;
+            }
+            if (name.empty()) {
+                const auto bySlot = s_playerSlots.find(i);
+                if (bySlot != s_playerSlots.end() && !bySlot->second.first.empty()) {
+                    name = bySlot->second.first;
+                    tag = bySlot->second.second;
+                }
+            }
+            if (name.empty()) name = "Player " + std::to_string(i + 1);
+            row.tag = tag;
+            row.name = tag.empty() ? name : name + "  [" + tag + "]";
+        }
+        row.score = static_cast<int32_t>(U32(pr, 0x34));
+        row.kills = U32(st, kStatKills * 4);
+        row.assists = U32(st, kStatAssists * 4);
+        row.deaths = U32(st, kStatDeaths * 4);
+        for (size_t m = 0; m < kMedalCount; ++m) row.medals += U32(st, kMedalOffset + m * 4);
+        if (row.kills > 1000 || row.assists > 1000 || row.deaths > 1000) row.kills = row.assists = row.deaths = 0;
+        if (row.medals > 2000) row.medals = 0;
+        if (row.score < -100000 || row.score > 1000000) row.score = 0;
+        if (row.local) {
+            // The stat slots are provisional: this shows whether deaths really land in slot 11.
+            std::string slots;
+            for (size_t k = 0; k < kGeneralStats; ++k) slots += std::to_string(U32(st, k * 4)) + " ";
+            NOBLE_INFO("Career: local general stats 0..{}: {}", kGeneralStats - 1, slots);
+            in.kills = row.kills;
+            in.assists = row.assists;
+            in.deaths = row.deaths;
+            in.medals = row.medals;
+            in.score = row.score;
+        }
+        in.players.push_back(row);
+    }
+
+    if (in.players.empty()) {
+        ScoreRow row;
+        row.local = true;
+        row.name = settings.playerName + "  [" + settings.serviceTag + "]";
+        row.tag = settings.serviceTag;
+        in.players.push_back(row);
+    } else {
+        // The record's own local-slot guess can miss (a name that does not match, or a record without
+        // the present bit): fall back to the engine's local slot / the settings name so the local
+        // player is never paid for nobody.
+        const bool haveLocal = std::any_of(in.players.begin(), in.players.end(),
+                                           [](const ScoreRow& r) { return r.local; });
+        if (!haveLocal) {
+            const int index = MarkLocalRow(in.players, settings, local);
+            TakeLocalStats(in.players, index, in);
+        }
+    }
+
+    try {
+        SettleLocked(in, "game_results", false);
+    } catch (const std::exception& e) {
+        NOBLE_ERROR("Career: could not settle the game results: {}", e.what());
+    } catch (...) {
+        NOBLE_ERROR("Career: could not settle the game results (unknown error)");
+    }
 }
 
 void OnMatchOverJson(const std::string& jsonStr) {
     if (jsonStr.empty()) return;
+
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    LoadLocked();
+
+    nlohmann::json j;
     try {
-        const auto j = nlohmann::json::parse(jsonStr);
-        if (j.value("type", "") != "match_over") return;
-
-        std::lock_guard<std::recursive_mutex> lock(s_mutex);
-        if (s_lastAward.valid) return;
-
-        LoadLocked();
-
-        Award a;
-        a.valid = true;
-        a.type = j.value("mode", BaseTypeName(s_type));
-        a.map = j.value("map", s_map);
-        a.minutes = j.value("minutes", 0.0);
-        a.difficulty = j.value("difficulty", -1);
-
-        const SettingsData settings = Settings::Get().Snapshot();
-        int64_t kills = 0, deaths = 0, assists = 0, medals = 0, score = 0;
-
-        if (j.contains("players") && j["players"].is_array()) {
-            for (const auto& pj : j["players"]) {
-                ScoreRow row;
-                row.name = pj.value("name", "Player");
-                row.score = pj.value("score", 0);
-                row.kills = pj.value("kills", 0);
-                row.assists = pj.value("assists", 0);
-                row.deaths = pj.value("deaths", 0);
-                row.medals = pj.value("medals", 0);
-
-                bool isLocal = false;
-                if (!settings.playerName.empty() && row.name.find(settings.playerName) != std::string::npos) {
-                    isLocal = true;
-                }
-                row.local = isLocal;
-                if (isLocal) {
-                    kills = row.kills;
-                    assists = row.assists;
-                    deaths = row.deaths;
-                    medals = row.medals;
-                    score = row.score;
-                }
-                a.players.push_back(row);
-            }
-        }
-
-        if (kills == 0 && assists == 0 && deaths == 0) {
-            HMODULE reach = GetModuleHandleW(L"haloreach.dll");
-            if (reach) {
-                LivePlayerInfo live[16];
-                int n = ProbeLiveEngineScores(reinterpret_cast<const uint8_t*>(reach), live, 16);
-                for (int i = 0; i < 16; ++i) {
-                    if (!live[i].valid) continue;
-                    if ((!settings.playerName.empty() && _stricmp(live[i].name, settings.playerName.c_str()) == 0) || live[i].isLocalMachine) {
-                        kills = live[i].kills;
-                        assists = live[i].assists;
-                        deaths = live[i].deaths;
-                        score = live[i].score;
-                        medals = live[i].medals;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (a.players.empty()) {
-            ScoreRow row;
-            row.name = settings.playerName + "  [" + settings.serviceTag + "]";
-            row.kills = static_cast<int32_t>(kills);
-            row.assists = static_cast<int32_t>(assists);
-            row.deaths = static_cast<int32_t>(deaths);
-            row.score = static_cast<int32_t>(score);
-            row.local = true;
-            a.players.push_back(row);
-        }
-
-        const std::string today = Today();
-        if (s_totals.day != today) {
-            s_totals.day = today;
-            s_totals.creditsToday = 0;
-        }
-
-        a.creditsBefore = s_totals.credits;
-        a.rankBefore = RankIndex(s_totals.credits);
-
-        const double paidMinutes = std::clamp(a.minutes, 0.0, kMinuteCap);
-        const double perMinute = kPayPerMinuteBase + kPayPerMinutePerRank * a.rankBefore;
-        const int64_t complete = static_cast<int64_t>(paidMinutes * perMinute + 0.5);
-        a.lines.push_back({ "Game complete", complete });
-
-        const int64_t performance = kills * kPerKill + assists * kPerAssist + medals * kPerMedal;
-        if (performance > 0) a.lines.push_back({ "Performance", performance });
-
-        if (s_type == BaseType::Campaign) {
-            const int d = std::clamp(s_difficulty, 0, 3);
-            const int64_t bonus = kMissionBonus[d];
-            a.lines.push_back({ std::string("Mission complete (") + DifficultyName(d) + ")", bonus });
-        }
-
-        const int typeIndex = static_cast<int>(s_type);
-        s_extra.games[typeIndex] += 1;
-        s_extra.minutes[typeIndex] += a.minutes;
-        s_totals.gamesPlayed += 1;
-        s_totals.kills += kills;
-        s_totals.deaths += deaths;
-        s_totals.assists += assists;
-        s_totals.medals += medals;
-        s_totals.minutesPlayed += a.minutes;
-
-        int64_t total = 0;
-        for (const AwardLine& l : a.lines) total += l.credits;
-        a.total = total;
-
-        s_totals.credits += total;
-        s_totals.creditsToday += total;
-        s_extra.bestMatch = std::max(s_extra.bestMatch, total);
-
-        MatchSummary m;
-        {
-            std::tm tm = LocalNow();
-            char buf[32];
-            std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
-            m.date = buf;
-        }
-        m.type = a.type;
-        m.map = a.map;
-        m.difficulty = a.difficulty;
-        m.minutes = a.minutes;
-        m.kills = kills;
-        m.deaths = deaths;
-        m.assists = assists;
-        m.medals = medals;
-        m.score = score;
-        m.credits = total;
-        s_extra.history.insert(s_extra.history.begin(), m);
-        if (s_extra.history.size() > 20) s_extra.history.resize(20);
-
-        a.creditsAfter = s_totals.credits;
-        a.rankAfter = RankIndex(s_totals.credits);
-        s_lastAward = a;
-        SaveLocked();
-
-        NOBLE_INFO("Career [OnMatchOverJson]: {} on {} took {:.1f} min; local player kills {} assists {} deaths {} medals {}; paid {} cR (total {} cR, rank {})",
-                   a.type, a.map, a.minutes, kills, assists, deaths, medals, total, s_totals.credits, kRanks[a.rankAfter].name);
+        j = nlohmann::json::parse(jsonStr);
     } catch (const std::exception& e) {
-        NOBLE_WARN("Career: OnMatchOverJson parse error: {}", e.what());
+        NOBLE_WARN("Career: match_over parse error: {}", e.what());
+        return;
+    }
+    if (!j.is_object() || j.value("type", std::string()) != "match_over") return;
+    if (s_matchSettled && !s_settleProvisional) return;
+
+    const SettingsData settings = Settings::Get().Snapshot();
+
+    MatchInput in;
+    in.type = TypeFromName(j.value("mode", std::string(BaseTypeName(s_type))));
+    in.map = j.value("map", s_map);
+    in.minutes = j.value("minutes", 0.0);
+    in.difficulty = j.value("difficulty", in.type == BaseType::Multiplayer ? -1 : s_difficulty);
+    in.skulls = s_skulls;
+    if (j.contains("skulls") && j["skulls"].is_number_unsigned())
+        in.skulls = j["skulls"].get<uint64_t>();
+
+    if (j.contains("players") && j["players"].is_array()) {
+        for (const auto& pj : j["players"]) {
+            if (!pj.is_object()) continue;
+            ScoreRow row;
+            row.slot = pj.value("slot", -1);
+            row.name = pj.value("name", std::string("Player"));
+            row.tag = pj.value("tag", std::string());
+            row.score = pj.value("score", 0);
+            row.kills = pj.value("kills", 0);
+            row.assists = pj.value("assists", 0);
+            row.deaths = pj.value("deaths", 0);
+            row.medals = pj.value("medals", 0);
+            row.local = pj.value("local", false);
+            in.players.push_back(row);
+        }
+    }
+
+    // Which row is this machine? The engine's player table knows the local slot; otherwise the
+    // player name / service tag from SETTINGS. Never guess more than that: a wrong row would pay
+    // the wrong player's stats.
+    int localSlot = -1;
+    LivePlayerInfo liveLocal{};
+    bool haveLiveLocal = false;
+    {
+        HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+        if (reach) {
+            LivePlayerInfo live[16];
+            ProbeLiveEngineScores(reinterpret_cast<const uint8_t*>(reach), live, 16);
+            // The table is slot-indexed with holes: never stop at the number of valid entries.
+            for (int i = 0; i < 16; ++i) {
+                if (!live[i].valid || !live[i].isLocalMachine) continue;
+                localSlot = i;
+                liveLocal = live[i];
+                haveLiveLocal = true;
+                break;
+            }
+        }
+    }
+    const int localIndex = MarkLocalRow(in.players, settings, localSlot);
+    TakeLocalStats(in.players, localIndex, in);
+    if (localIndex < 0 && haveLiveLocal) {
+        // No row could be identified: the engine's own table still knows this machine's numbers.
+        in.kills = liveLocal.kills;
+        in.assists = liveLocal.assists;
+        in.deaths = liveLocal.deaths;
+        in.medals = liveLocal.medals;
+        in.score = liveLocal.score;
+    }
+
+    if (in.players.empty()) {
+        ScoreRow row;
+        row.local = true;
+        row.name = settings.playerName + "  [" + settings.serviceTag + "]";
+        row.tag = settings.serviceTag;
+        row.kills = static_cast<int32_t>(in.kills);
+        row.assists = static_cast<int32_t>(in.assists);
+        row.deaths = static_cast<int32_t>(in.deaths);
+        row.medals = static_cast<int32_t>(in.medals);
+        row.score = static_cast<int32_t>(in.score);
+        in.players.push_back(row);
+    }
+
+    if (localIndex < 0)
+        NOBLE_WARN("Career: match_over from the host has no row for this player (name '{}', tag '{}'); "
+                   "settling with zero personal stats",
+                   settings.playerName, settings.serviceTag);
+
+    // The host's own award may itself be provisional (its engine never produced results); then this
+    // client keeps accepting a later, authoritative copy.
+    const bool provisional = j.value("provisional", false);
+    try {
+        SettleLocked(in, "match_over", provisional);
+    } catch (const std::exception& e) {
+        NOBLE_ERROR("Career: could not settle the host's match_over: {}", e.what());
+    } catch (...) {
+        NOBLE_ERROR("Career: could not settle the host's match_over (unknown error)");
     }
 }
 
-void EnsureMatchSaved(const char* reason) {
-    std::lock_guard<std::recursive_mutex> lock(s_mutex);
-    if (s_lastAward.valid) return;
-    if (s_matchStart.time_since_epoch().count() == 0) return;
+namespace {
 
-    const double elapsedSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - s_matchStart).count();
+// The fallback settlement. engineReportedEnd = the engine itself said the match is over (game_over /
+// game_finish / host slot 6), which is trusted even when BeginMatch never armed this process (a
+// mode Noble classified as "menu", a join path that never reached LaunchMap). A menu exit without
+// one of those never settles anything.
+void EnsureMatchSavedImpl(const char* reason, bool engineReportedEnd) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    if (s_matchSettled) return;      // this match already paid
+    if (!s_matchActive && !engineReportedEnd) {
+        NOBLE_WARN("Career: not settling ({}): no match was begun in this process",
+                   reason ? reason : "match_end");
+        return;
+    }
+    if (!s_matchActive) {
+        NOBLE_WARN("Career: the engine reports this match over ({}), but no match was armed; "
+                   "settling from live memory", reason ? reason : "match_end");
+    }
+
+    const double elapsedSec =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - s_matchStart).count();
     const double minutes = elapsedSec / 60.0;
     if (minutes < 0.05) return;
 
     LoadLocked();
 
-    int64_t kills = 0, deaths = 0, assists = 0, medals = 0, score = 0;
-    Award a;
-    a.valid = true;
-    a.type = BaseTypeName(s_type);
-    a.map = s_map;
-    a.minutes = minutes;
-    a.difficulty = s_type == BaseType::Multiplayer ? -1 : s_difficulty;
+    MatchInput in;
+    in.type = s_type;
+    in.map = s_map;
+    in.difficulty = s_difficulty;
+    in.skulls = s_skulls;
+    in.minutes = minutes;
 
     const SettingsData settings = Settings::Get().Snapshot();
 
+    int localSlot = -1;
     HMODULE reach = GetModuleHandleW(L"haloreach.dll");
     if (reach) {
         LivePlayerInfo live[16];
-        int count = ProbeLiveEngineScores(reinterpret_cast<const uint8_t*>(reach), live, 16);
+        ProbeLiveEngineScores(reinterpret_cast<const uint8_t*>(reach), live, 16);
+        // Slot-indexed with holes: scan every slot, not just the first N valid ones.
         for (int i = 0; i < 16; ++i) {
             if (!live[i].valid) continue;
 
             ScoreRow row;
+            row.slot = i;
             row.kills = live[i].kills;
             row.assists = live[i].assists;
             row.deaths = live[i].deaths;
             row.score = live[i].score;
             row.medals = live[i].medals;
+            row.local = live[i].isLocalMachine;
+            if (live[i].tag[0]) row.tag = live[i].tag;
+            std::string nameStr =
+                live[i].name[0] ? live[i].name
+                                : (live[i].isLocalMachine ? settings.playerName : ("Player " + std::to_string(i + 1)));
+            row.name = live[i].tag[0] ? nameStr + "  [" + std::string(live[i].tag) + "]" : nameStr;
 
-            bool isLocal = live[i].isLocalMachine;
-            if (!settings.playerName.empty() && _stricmp(live[i].name, settings.playerName.c_str()) == 0) {
-                isLocal = true;
-            }
-            row.local = isLocal;
-            std::string nameStr = live[i].name[0] ? live[i].name : (isLocal ? settings.playerName : ("Player " + std::to_string(i + 1)));
-            if (live[i].tag[0]) nameStr += "  [" + std::string(live[i].tag) + "]";
-            row.name = nameStr;
-
-            if (isLocal) {
-                kills = row.kills;
-                assists = row.assists;
-                deaths = row.deaths;
-                medals = row.medals;
-                score = row.score;
-            }
-            a.players.push_back(row);
+            if (live[i].isLocalMachine && localSlot < 0) localSlot = i;
+            in.players.push_back(row);
         }
     }
 
-    if (a.players.empty()) {
+    const int localIndex = MarkLocalRow(in.players, settings, localSlot);
+    TakeLocalStats(in.players, localIndex, in);
+
+    if (in.players.empty()) {
         ScoreRow row;
         row.local = true;
         row.name = settings.playerName + "  [" + settings.serviceTag + "]";
-        row.kills = static_cast<int32_t>(kills);
-        row.assists = static_cast<int32_t>(assists);
-        row.deaths = static_cast<int32_t>(deaths);
-        row.score = static_cast<int32_t>(score);
-        a.players.push_back(row);
+        row.tag = settings.serviceTag;
+        in.players.push_back(row);
     }
 
-    const std::string today = Today();
-    if (s_totals.day != today) {
-        s_totals.day = today;
-        s_totals.creditsToday = 0;
+    try {
+        SettleLocked(in, reason ? reason : "match_end", true);
+    } catch (const std::exception& e) {
+        NOBLE_ERROR("Career: could not settle the match ({}): {}", reason ? reason : "match_end", e.what());
+    } catch (...) {
+        NOBLE_ERROR("Career: could not settle the match ({}), unknown error", reason ? reason : "match_end");
     }
-
-    a.creditsBefore = s_totals.credits;
-    a.rankBefore = RankIndex(s_totals.credits);
-
-    const bool unpaid = UnpaidMission(s_type, s_map);
-    const double paidMinutes = std::clamp(minutes, 0.0, kMinuteCap);
-    const double perMinute = kPayPerMinuteBase + kPayPerMinutePerRank * a.rankBefore;
-    const int64_t complete = static_cast<int64_t>(paidMinutes * perMinute + 0.5);
-    a.lines.push_back({ "Game complete", complete });
-
-    const int64_t performance = kills * kPerKill + assists * kPerAssist + medals * kPerMedal;
-    if (performance > 0) a.lines.push_back({ "Performance", performance });
-
-    if (s_type == BaseType::Campaign) {
-        const int d = std::clamp(s_difficulty, 0, 3);
-        const int64_t bonus = kMissionBonus[d];
-        a.lines.push_back({ std::string("Mission complete (") + DifficultyName(d) + ")", bonus });
-    }
-
-    if (unpaid) {
-        a.lines.clear();
-        a.lines.push_back({ "No cR, challenges or commendations in Noble Actual or Lone Wolf", 0 });
-    }
-
-    const int typeIndex = static_cast<int>(s_type);
-    s_extra.games[typeIndex] += 1;
-    s_extra.minutes[typeIndex] += minutes;
-    s_totals.gamesPlayed += 1;
-    s_totals.kills += kills;
-    s_totals.deaths += deaths;
-    s_totals.assists += assists;
-    s_totals.medals += medals;
-    s_totals.minutesPlayed += minutes;
-
-    int64_t total = 0;
-    for (const AwardLine& l : a.lines) total += l.credits;
-    a.total = total;
-
-    s_totals.credits += total;
-    s_totals.creditsToday += total;
-    s_extra.bestMatch = std::max(s_extra.bestMatch, total);
-
-    MatchSummary m;
-    {
-        std::tm tm = LocalNow();
-        char buf[32];
-        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
-        m.date = buf;
-    }
-    m.type = BaseTypeName(s_type);
-    m.map = s_map;
-    m.difficulty = s_type == BaseType::Multiplayer ? -1 : s_difficulty;
-    m.minutes = minutes;
-    m.kills = kills;
-    m.deaths = deaths;
-    m.assists = assists;
-    m.medals = medals;
-    m.score = score;
-    m.credits = total;
-    s_extra.history.insert(s_extra.history.begin(), m);
-    if (s_extra.history.size() > 20) s_extra.history.resize(20);
-
-    a.creditsAfter = s_totals.credits;
-    a.rankAfter = RankIndex(s_totals.credits);
-    s_lastAward = a;
-    SaveLocked();
-
-    NOBLE_INFO("Career: saved match ({}) took {:.1f} min; local player kills {} assists {} deaths {} medals {}; paid {} cR (total {} cR, rank {})",
-               reason, minutes, kills, assists, deaths, medals, total, s_totals.credits, kRanks[a.rankAfter].name);
 }
+
+} // namespace
+
+void EnsureMatchSaved(const char* reason) { EnsureMatchSavedImpl(reason, false); }
+
+void OnEngineReportedMatchEnd(const char* reason) { EnsureMatchSavedImpl(reason, true); }
 
 Record GetRecord() {
     std::lock_guard<std::recursive_mutex> lock(s_mutex);

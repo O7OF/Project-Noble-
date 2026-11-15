@@ -36,6 +36,8 @@ struct AwardLine {
 // One row of the post-game scoreboard (from the results record).
 struct ScoreRow {
     std::string name;      // "You (NobleSix)" for the local player, "Player N" for others (no names in the record)
+    std::string tag;       // service tag, when the source knows it (SETTINGS, or the host's match_over)
+    int slot = -1;         // engine player slot, -1 when unknown
     bool local = false;
     int team = -1;         // -1 when the game has no teams
     int64_t score = 0;
@@ -60,6 +62,7 @@ struct ProgressLine {
 
 struct Award {
     bool valid = false;
+    bool provisional = false;   // computed from live engine memory, not the engine's own results
     std::string type;      // "campaign", "firefight", "multiplayer"
     std::string map;
     double minutes = 0.0;
@@ -67,6 +70,7 @@ struct Award {
     std::vector<AwardLine> lines;
     std::vector<ProgressLine> progress;
     int difficulty = -1;   // campaign / Firefight
+    uint64_t skulls = 0;   // MCC skull bits the match was played with
     int64_t total = 0;
     int64_t creditsBefore = 0;
     int64_t creditsAfter = 0;
@@ -166,7 +170,19 @@ void OnMatchOverJson(const std::string& jsonStr);
 
 // Fallback / client match end: ensures stats, credits, challenges, and commendations
 // are computed from live engine memory/scoreboard and saved to career.dat if slot 6 didn't run.
+// Does nothing once this match has been settled (no double pay) or when no match began.
 void EnsureMatchSaved(const char* reason = "match_ended");
+
+// Same fallback, for a match the ENGINE itself declared over (game_over / game_finish / host slot 6).
+// Trusted even when BeginMatch never armed this process, so those ends always pay.
+void OnEngineReportedMatchEnd(const char* reason);
+
+// A match is armed by BeginMatch and settled once (by host slot 6, the host's match_over packet
+// or EnsureMatchSaved). These let the overlay/engine code decide whether a match still needs its
+// after-action report and whether it is safe to advance to the lobby.
+bool IsMatchActive();
+bool IsMatchSettled();
+double SecondsSinceMatchBegin();
 
 Award LastAward();
 Totals Get();

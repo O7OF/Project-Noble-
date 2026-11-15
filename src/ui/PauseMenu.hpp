@@ -36,6 +36,14 @@ public:
     // Post-game panel. Once shown it stays up (the engine has nothing more to play).
     static void ShowGameOver();
     static void CancelGameOver();
+    // The award behind an already-open post-game panel changed (a provisional settlement was
+    // replaced by the host's real numbers): replay the reveal with the new lines.
+    static void RefreshGameOverAward();
+    // Guest only: handles the host's match_over packet and its "returned to lobby"/"disbanded"
+    // notices. Called from the render thread while the engine still draws and from the main thread
+    // (HoldFrame) afterwards, because a match that ends the engine's frame loop would otherwise never
+    // see the host's results and the guest would sit on a black screen.
+    static void PollHostMatchState();
     // In-match scoreboard overlay (drawn while the scoreboard key is held).
     struct ScoreboardEntry {
         std::string name;

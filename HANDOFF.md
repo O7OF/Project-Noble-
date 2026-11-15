@@ -5,6 +5,7 @@
 # Project Noble: handoff (2026-10-29, 03:45 ET)
 Dominus join the team 20261028! -
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
+
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
 Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C++ developer, so give him exact commands
 (one command per code block, so each can be pasted on its own).
@@ -14,6 +15,71 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 --
+
+## Post-game / after-action report fixes (2026-11-15)
+
+**What was broken.** Finishing a match or campaign mission did not reliably open the after-action report, and what
+happened next differed between host and guests:
+
+1. **A match could pay twice.** `LobbyPatches` calls `Career::EnsureMatchSaved` from the `game_over` / `game_finish`
+   detours (before the engine writes its results) and `HostSlot6_GameResults` called `Career::OnGameResults` a moment
+   later. Both built a full award, so one match paid "Game complete" + "Performance" twice and counted two games.
+   `s_lastAward.valid` was also never reset per match, so the second match in a process silently paid nothing.
+2. **Guests got no challenges or commendations.** `Career::OnMatchOverJson` (the host's `match_over` packet) built its
+   own reduced award: no challenge progress, no challenge payouts, no commendation tiers, no unpaid-mission rule, no
+   skulls. Guests also matched their scoreboard row by a name substring, so a name mismatch paid them 0 stat cR.
+3. **The panel was skipped or dismissed in campaign.** `EnginePatches::ShouldBlockPrematureGameOver` blocked any
+   game-over while a cinematic was in progress, and Reach plays a cutscene *after* a campaign mission's last
+   objective, so the real mission end was swallowed (nothing settled, nothing shown). `RecoverFromCutsceneSkip`
+   (installed unconditionally) then called `PauseMenu::CancelGameOver()` when that cutscene was skipped, which
+   dismissed a real post-game panel. Result: a black screen after a completed mission.
+4. **Nothing reopened the panel when the engine never reported the end** (campaign, or an engine that stops pumping
+   frames). No slot 6, no game_over hook -> no panel, black screen forever.
+
+**What changed.**
+
+- `src/career/Career.cpp/.hpp`: **one settlement path**. `OnGameResults` (host slot 6), `OnMatchOverJson` (guest) and
+  `EnsureMatchSaved` (fallback / watchdog) all build a `MatchInput` and call `SettleLocked`, which now also runs the
+  challenge and commendation passes for guests. The career state is snapshotted just before a match settles, so an
+  authoritative settlement that arrives after a provisional one **replaces** it instead of paying twice (and the random
+  bonus is rolled once per match). Per-match state: `IsMatchActive()`, `IsMatchSettled()`, `SecondsSinceMatchBegin()`;
+  `BeginMatch` clears the previous award. `ScoreRow` gained `slot`/`tag`, `Award` gained `skulls`/`provisional` so a
+  guest can pick its own row (engine local-slot bit, then exact name, then service tag) and only accepts a later
+  authoritative copy over a provisional one.
+- `src/engine/ReachHost.cpp`: `BroadcastMatchOver()` / `ReachHost::BroadcastMatchAward()` send the settled award
+  (with slot, tag, local flag, skulls, provisional flag) after **every** settlement, not just when slot 6 could read
+  the record. Slot 6 refreshes an already-open panel (`PauseMenu::RefreshGameOverAward`) instead of re-showing it.
+- `src/hooks/LobbyPatches.cpp` + `Career::OnEngineReportedMatchEnd`: the game_over / game_finish / slot-6 paths settle
+  even if `BeginMatch` never armed the process (a match Noble classified as "menu"), while a plain menu exit still
+  never pays anything.
+- `src/main.cpp`: `WatchForUnreportedMatchEnd()` in the message loop. Once a match has really been running (map state
+  2 + launch state 11), a map state that leaves "running" or an engine that has not drawn for 4 s means the match is
+  over: after a 2.5 s grace for the engine's own results, it settles from live memory, broadcasts the award and opens
+  the panel. This is the campaign black-screen fix.
+- `src/hooks/EnginePatches.cpp`: the premature-end guard now only covers the match's startup window (120 s); a
+  cutscene later in a mission is part of the mission, not a premature end. `RecoverFromCutsceneSkip` no longer cancels
+  a settled match's panel.
+- `src/ui/PauseMenu.cpp/.hpp`: the post-game panel's second button is **DISBAND LOBBY** for a host, **LEAVE LOBBY** for a
+  guest and **RETURN TO MENU** for a local match (same behaviour as before: `lobby_disband` + `DisbandSessionSync` for
+  a host, `LeaveLobbySync` for a guest). A guest now always consumes the host's `match_over` packet even when its own
+  panel is already up, so the provisional numbers are replaced by the host's. Commendation art/kind are clamped, and
+  the host sends `host_return_to_lobby` when it leaves for the lobby, so the guests' RETURN TO LOBBY unlocks at once.
+
+**Tyler's test list (short):**
+
+1. Custom game (any MP map), play to the time limit, host. Expect the GAME OVER panel with cR lines, then
+   RETURN TO LOBBY -> the lobby comes back with the same map. With a second PC: the guest sees the same panel with its
+   own CREDITS EARNED (same match stats, so the same kills/deaths, challenge progress and commendation tiers; the
+   per-minute part scales with that guest's own rank), and its career.json is updated.
+2. Campaign mission (m10, any difficulty), host, finish the mission. Expect the panel (not a black screen) with
+   "MISSION COMPLETE (<difficulty>)" and **NEXT MISSION**; NEXT MISSION goes to the lobby with m20 selected (co-op) or
+   starts m20 directly (solo).
+3. Campaign co-op with a guest: the guest's panel must show the panel too, with credits, and its career.json must be
+   updated (log line `Career: settled match (match_over)`).
+4. Host leaves with DISBAND LOBBY: the guest's button becomes HOST LEFT and it can LEAVE LOBBY to the main menu.
+5. Check `noble-client.log` for exactly one `Career: settled match` per player per match (`(, provisional)` is fine and
+   is followed by an authoritative one).
+
 
 ## O7OF Changes for game version patch 0.19.37 (2026-11-09, 09:00 ET) - Project Noble v0.19.37 Release
 

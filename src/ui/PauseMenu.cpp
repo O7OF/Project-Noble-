@@ -71,7 +71,10 @@ std::atomic<bool> s_boardPointer{false}; // scoreboard actions own the pointer
 std::atomic<bool> s_boardReport{false};  // the Report window is up
 std::atomic<bool> s_showSettings{
     false};               // the SETTINGS page opened from the pause menu
-std::mutex s_renderMutex; // Render (engine thread) vs HoldFrame (main thread)
+// Render (engine thread) vs HoldFrame (main thread). Recursive because the post-game state is also
+// touched from inside RenderImpl (guest match_over handling) and by ShowGameOver /
+// RefreshGameOverAward, which must not interleave with a frame being drawn.
+std::recursive_mutex s_renderMutex;
 std::mutex s_rtvMutex;    // protects cached DX11 RTV / back buffer across ResizeBuffers & Shutdown
 IDXGISwapChain *s_cachedSwapChain = nullptr;
 ID3D11Texture2D *s_cachedBackBuffer = nullptr;
@@ -89,6 +92,12 @@ ULONGLONG s_gameOverSettleUntil = 0;
 int s_gameOverPadButton = -1;
 double s_gameOverPadArmedAt = 0.0;
 bool s_guestAutoReturned = false;
+// Set by the transport callbacks (relay thread) and handled on the render thread or, once the engine
+// has stopped drawing, on the main thread (PauseMenu::PollHostMatchState).
+std::atomic<bool> s_guestShouldReturnLobby{false};
+std::atomic<bool> s_guestShouldDisband{false};
+std::atomic<bool> s_lobbyCallbacksRegistered{false};
+std::atomic<bool> s_guestReturnedToLobby{false};   // PollHostMatchState started a relaunch
 bool s_gameOverWaitRelease = false;
 bool s_autoCancelled = false;
 double s_autoAt = 0.0;
@@ -455,6 +464,14 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   const bool keepHostSession =
       args.find(L"-lobby-return host") != std::wstring::npos;
   const bool isMainMenu = (args == L"-main-menu");
+  // A host going back to the lobby (or on to the next mission) tells the party right away, so the
+  // guests' post-game panels unlock RETURN TO LOBBY instead of waiting for the master server to
+  // notice the session is out of its match.
+  if (keepHostSession && NetworkTransport::Get().IsActive() &&
+      NetworkTransport::Get().IsHost()) {
+    NetworkTransport::Get().SendLobbyControlJson(
+        "{\"type\":\"host_return_to_lobby\"}");
+  }
   if (args.empty() || isMainMenu) {
     // Leaving match to menu: notify master server and peers immediately without
     // blocking the UI thread.
@@ -1014,6 +1031,9 @@ void PauseMenu::Close() {
 }
 
 void PauseMenu::ShowGameOver() {
+  // May be called from the engine thread (hooks / slot 6) or the main thread (guest match_over while
+  // the engine no longer draws): serialise against the frame that reads this state.
+  std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
   if (noble::BlamEngine::IsSavedFilmPlayback()) {
     NOBLE_INFO(
         "PauseMenu: suppressing game over during Theater saved film playback");
@@ -1042,6 +1062,7 @@ void PauseMenu::ShowGameOver() {
 }
 
 void PauseMenu::CancelGameOver() {
+  std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
   if (s_gameOver.exchange(false)) {
     s_autoAt = 0.0;
     s_autoCancelled = true;
@@ -1052,6 +1073,67 @@ void PauseMenu::CancelGameOver() {
     s_gameOverWaitRelease = false;
     s_gameOverSettleUntil = 0;
     NOBLE_INFO("PauseMenu: game over dismissed - gameplay resumed");
+  }
+}
+
+void PauseMenu::RefreshGameOverAward() {
+  std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
+  if (!s_gameOver.load())
+    return;
+  s_gameOverAt.store(GetTickCount64());
+  s_gameOverPadButton = -1;
+  s_gameOverPadArmedAt = 0.0;
+  s_gameOverWaitRelease = true;
+  s_resetGameOverImGui.store(true);
+  NOBLE_INFO("PauseMenu: post-game award refreshed (host results replaced the live numbers)");
+}
+
+void PauseMenu::PollHostMatchState() {
+  if (!NetworkTransport::Get().IsActive() || NetworkTransport::Get().IsHost())
+    return;
+  if (NetworkTransport::Get().TakeMatchOverRequest()) {
+    // The relay thread only flags it: career/UI work happens here, after the match stopped touching
+    // the session. Always consume the packet, even when the panel is already up: the host's numbers
+    // replace this client's provisional settlement.
+    const bool panelOpen = s_gameOver.load();
+    const std::string matchOverJson = NetworkTransport::Get().TakeMatchOverJson();
+    NOBLE_INFO("PauseMenu: host match_over received; {} the post-game panel",
+               panelOpen ? "refreshing" : "showing");
+    try {
+      if (!matchOverJson.empty())
+        Career::OnMatchOverJson(matchOverJson);
+      else
+        Career::EnsureMatchSaved("match_over");
+    } catch (...) {
+      NOBLE_ERROR("PauseMenu: could not settle the host's match_over");
+    }
+    if (panelOpen)
+      RefreshGameOverAward();
+    else
+      ShowGameOver();
+  }
+  if (s_guestShouldReturnLobby.exchange(false)) {
+    NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to "
+               "pre-game lobby");
+    Career::EnsureMatchSaved("host_returned_to_lobby");
+    SetHostBackInLobby(1);
+    if (!s_gameOver.load()) {
+      s_guestReturnedToLobby.store(true);
+      RelaunchAndClose(Window::ActiveHwnd(), LobbyReturnArgs(false),
+                       "host returned to pre-game lobby");
+      return;
+    }
+  }
+  if (s_guestShouldDisband.exchange(false)) {
+    NOBLE_INFO("PauseMenu: host disbanded lobby / quit game, returning guest "
+               "to main menu");
+    Career::EnsureMatchSaved("host_disbanded_lobby");
+    SetHostBackInLobby(2);
+    if (!s_gameOver.load()) {
+      s_guestReturnedToLobby.store(true);
+      RelaunchAndClose(Window::ActiveHwnd(), L"-main-menu",
+                       "host disbanded lobby");
+    }
   }
 }
 
@@ -3706,13 +3788,14 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       }
       const float k = Ease((t - (0.6f + i * 0.25f)) / 0.9f);
       const ImVec2 r0(margin, y), r1(margin + leftW, y + rowH - 6.0f * s);
+      const int kind = std::clamp(p.kind, 0, 2);
       const bool done = p.completed && k >= 1.0f;
       const ImU32 green = IM_COL32(140, 217, 140, 255);
       dl->AddRectFilled(
           r0, r1, done ? IM_COL32(30, 52, 36, 200) : IM_COL32(22, 30, 40, 200),
           3.0f * s);
       float x = margin + 12.0f * s;
-      if (p.kind == 2) {
+      if (kind == 2 && !p.art.empty()) {
         const UiTexture art = UiArt::ReachArt("commendations", p.art);
         if (art) {
           const float bh = rowH - 16.0f * s, bw = bh * (287.0f / 90.0f);
@@ -3723,12 +3806,12 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       }
       const float chipPx = 13.0f * s;
       const float chipW =
-          TextWidth(smallFont, chipPx, kKind[p.kind]) + 10.0f * s;
+          TextWidth(smallFont, chipPx, kKind[kind]) + 10.0f * s;
       dl->AddRect(ImVec2(x, y + 8.0f * s),
                   ImVec2(x + chipW, y + 12.0f * s + chipPx), kTextDim,
                   2.0f * s);
       Text(dl, smallFont, chipPx, ImVec2(x + 5.0f * s, y + 10.0f * s), kTextDim,
-           kKind[p.kind]);
+           kKind[kind]);
       Text(dl, body, 18.0f * s, ImVec2(x + chipW + 10.0f * s, y + 6.0f * s),
            done ? green : kText, p.title.c_str());
       // Bar from the old value to the new one (old part blue-grey, this game's
@@ -3741,7 +3824,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       const float f = fBefore + (fAfter - fBefore) * k;
       std::string label;
       if (done)
-        label = p.kind == 2
+        label = kind == 2
                     ? Upper(Career::CommendationTierName(p.tier)) + " REACHED"
                     : "COMPLETE";
       else
@@ -4024,9 +4107,17 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   syncButtonFocus(kPadQuit);
   bx -= bw + gap;
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
-  if ((ImGui::Button("RETURN TO MENU", ImVec2(bw, bh)) && interactive) ||
+  // The label says what the button really does: a host that leaves takes the party's session with
+  // it (disband), a guest only leaves, and a local match simply goes back to the menu.
+  const char *const menuLabel = hostRole ? "DISBAND LOBBY"
+                                  : guestRole ? "LEAVE LOBBY"
+                                              : "RETURN TO MENU";
+  const char *const menuReason = hostRole ? "host disband lobby from the after-action report"
+                                  : guestRole ? "guest leave lobby from the after-action report"
+                                              : "return to menu";
+  if ((ImGui::Button(menuLabel, ImVec2(bw, bh)) && interactive) ||
       (padPress && s_gameOverPadButton == kPadMenu))
-    RelaunchAndClose(hwnd, L"-main-menu", "return to menu");
+    RelaunchAndClose(hwnd, L"-main-menu", menuReason);
   syncButtonFocus(kPadMenu);
   if (canPlayAgain) {
     bx -= bw + gap;
@@ -4648,13 +4739,16 @@ void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading,
   if (swapChain)
     s_swapChain.store(swapChain);
   s_lastEngineFrame.store(GetTickCount64());
-  std::lock_guard<std::mutex> lock(s_renderMutex);
+  std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
   RenderImpl(swapChain, loading, false, extraOverlay);
   if (s_scoreboardShotRequest.exchange(false) && swapChain)
     FrameCapture::SaveNow(swapChain, 888888);
 }
 
 bool PauseMenu::HoldFrame() {
+  // The engine may stop pumping frames at the exact moment the host sends the results: handle the
+  // packet here so a guest always gets its after-action report and never argues with a dead session.
+  PollHostMatchState();
   if (!s_gameOver.load())
     return false;
   const ULONGLONG now = GetTickCount64();
@@ -4675,7 +4769,7 @@ bool PauseMenu::HoldFrame() {
   static unsigned long long s_holdFrames = 0;
   ++s_holdFrames;
   {
-    std::lock_guard<std::mutex> lock(s_renderMutex);
+    std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
     RenderImpl(swapChain, false, true, {});
     // Test runs: one screenshot of the held panel, and -quit-after keeps
     // working (it is normally checked from slot 1, which no longer runs).
@@ -4750,11 +4844,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   // frames but the session is dead. Show a panel instead of freezing in the
   // mission.
   static bool s_connectionLost = false;
-  static std::atomic<bool> s_guestShouldReturnLobby{false};
-  static std::atomic<bool> s_guestShouldDisband{false};
-  static bool s_callbacksRegistered = false;
-  if (!s_callbacksRegistered) {
-    s_callbacksRegistered = true;
+  if (!s_lobbyCallbacksRegistered.exchange(true)) {
     NetworkTransport::Get().SetLobbyReturnCallback([]() {
       NOBLE_INFO("PauseMenu: received host_return_to_lobby");
       s_guestShouldReturnLobby.store(true);
@@ -4769,38 +4859,9 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   const bool guest =
       NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
   if (guest) {
-    if (NetworkTransport::Get().TakeMatchOverRequest() && !s_gameOver.load()) {
-      // The relay thread only flags it now: career/UI work happens here, on the render thread,
-      // after the match has stopped touching the session.
-      NOBLE_INFO("PauseMenu: host match_over received; showing the post-game panel");
-      const std::string matchOverJson = NetworkTransport::Get().TakeMatchOverJson();
-      if (!matchOverJson.empty())
-        Career::OnMatchOverJson(matchOverJson);
-      else
-        Career::EnsureMatchSaved("match_over");
-      ShowGameOver();
-    }
-    if (s_guestShouldReturnLobby.exchange(false)) {
-      NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to "
-                 "pre-game lobby");
-      Career::EnsureMatchSaved("host_returned_to_lobby");
-      SetHostBackInLobby(1);
-      if (!s_gameOver.load()) {
-        std::wstring returnArgs = LobbyReturnArgs(false);
-        RelaunchAndClose(hwnd, returnArgs, "host returned to pre-game lobby");
-        return;
-      }
-    }
-    if (s_guestShouldDisband.exchange(false)) {
-      NOBLE_INFO("PauseMenu: host disbanded lobby / quit game, returning guest "
-                 "to main menu");
-      Career::EnsureMatchSaved("host_disbanded_lobby");
-      SetHostBackInLobby(2);
-      if (!s_gameOver.load()) {
-        RelaunchAndClose(hwnd, L"-main-menu", "host disbanded lobby");
-        return;
-      }
-    }
+    PollHostMatchState();
+    if (s_guestReturnedToLobby.exchange(false))
+      return;
   }
 
   const double hostSilence =

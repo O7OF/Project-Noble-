@@ -44,6 +44,7 @@
 #include "common/Updater.hpp"
 #include "common/Relaunch.hpp"
 #include "ui/PauseMenu.hpp"
+#include "career/Career.hpp"
 #include "ui/ModCatalog.hpp"
 #include "ui/UiArt.hpp"
 #include "audio/ReachAudio.hpp"
@@ -713,6 +714,74 @@ void DumpAllThreadStacks() {
     }
     CloseHandle(snap);
     if (auto logger = spdlog::default_logger()) logger->flush();
+}
+
+// Ends a match the engine never reported. A completed campaign mission (or any match whose engine
+// simply stops pumping frames) used to leave the process on a black screen: no host slot 6, no
+// game_over hook, so the overlay had nothing to draw. Once the match has really been running, a map
+// state of "ending" or an engine that stopped drawing for a few seconds means the match is over:
+// settle it once from live memory, tell the guests, and open the after-action report.
+void WatchForUnreportedMatchEnd() {
+    using namespace noble;
+    if (!Career::IsMatchActive() || Career::IsMatchSettled())
+        return;
+    if (PauseMenu::IsGameOver())
+        return;
+
+    static ULONGLONG sEndSeenAt = 0;
+    static double sSawRunningAge = -1.0;   // match age when gameplay was seen; -1 = not yet
+
+    const int mapState = ReachHost::GetMapState();
+    const int launchState = ReachHost::GetLaunchState();
+    const double matchAge = Career::SecondsSinceMatchBegin();
+    // A newer match (a smaller age) re-arms the detection: never settle a match that just started
+    // because the previous one ended.
+    if (sSawRunningAge >= 0.0 && matchAge + 1.0 < sSawRunningAge) {
+        sSawRunningAge = -1.0;
+        sEndSeenAt = 0;
+    }
+    if (mapState == 2 && launchState == 11)
+        sSawRunningAge = matchAge;
+    if (sSawRunningAge < 0.0)
+        return;
+
+    const uint64_t lastFrame = ReachHost::GetLastFrameTickMs();
+    const ULONGLONG now = GetTickCount64();
+    // A quiet engine only counts when the window is in front and it has been quiet for a long time:
+    // an alt-tabbed or minimised window is throttled, and a long hitch must not end the match. A
+    // real match end always shows up as the map state leaving "running" anyway; this covers the
+    // case where the engine wedges after the mission-complete cutscene.
+    const bool engineQuiet = lastFrame != 0 && now > lastFrame && (now - lastFrame) > 15000 &&
+                             Window::IsForeground(Window::ActiveHwnd());
+    // The map state machine leaves "running" when the match is over (3 ending, 1 loading the next
+    // map, 0 unloaded), which is also what happens when a campaign mission completes and the next
+    // map is not shipped at all. -1 means the read failed, not that the match ended.
+    const bool ending = mapState == 3 || mapState == 1 || mapState == 0;
+    if (!ending && !engineQuiet) {
+        sEndSeenAt = 0;
+        return;
+    }
+
+    if (sEndSeenAt == 0) {
+        sEndSeenAt = now;
+        NOBLE_WARN("main: match looks over (map state {}, engine quiet {}) but the engine sent no results; "
+                   "giving it a moment", mapState, engineQuiet);
+        return;
+    }
+    // The engine's own results/panel may still be on their way; only step in when they are not.
+    if (now - sEndSeenAt < 2500)
+        return;
+    if (!Career::IsMatchActive() || Career::IsMatchSettled()) {
+        sEndSeenAt = 0;
+        return;
+    }
+
+    NOBLE_WARN("main: the engine never reported the end of this match; settling from live memory and "
+               "opening the after-action report");
+    Career::EnsureMatchSaved("match_end_watchdog");
+    ReachHost::BroadcastMatchAward();
+    PauseMenu::ShowGameOver();
+    sEndSeenAt = 0;
 }
 
 } // namespace
@@ -2153,6 +2222,10 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         }
 
         blamEngine->Update(0.016f);
+
+        // A mission that completed without the engine reporting it would otherwise leave the black
+        // screen with no after-action report.
+        WatchForUnreportedMatchEnd();
 
         // haloreach.dll's engine thread presents (host slot 1). After a match it stops drawing; then the
         // post-game panel is drawn and presented from here (PauseMenu::HoldFrame, as the engine does).

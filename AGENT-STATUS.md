@@ -841,3 +841,21 @@ a data_array_new pool; see `docs\limits-ai.md`).
   tables (list in the doc). Block copies and the network encoding are not handled yet.
 - **Ask (whoever has the shell):** build all three targets, then the two regression runs at the end of
   `docs/limits-players-loops.md`. Report the SlotPatch log lines and any FATAL RVA.
+
+### 2026-11-15 (lead agent): post-game after-action report - match end, guest awards, campaign black screen
+- **Files:** `src/career/Career.cpp/.hpp`, `src/engine/ReachHost.cpp/.hpp`, `src/main.cpp`,
+  `src/hooks/EnginePatches.cpp`, `src/ui/PauseMenu.cpp/.hpp`, `HANDOFF.md` (new section at the top).
+- **One settlement per match:** `OnGameResults` (host slot 6), `OnMatchOverJson` (guest) and `EnsureMatchSaved`
+  (fallback/watchdog) now all go through `Career::SettleLocked` with a career snapshot taken just before the first
+  settlement, so an authoritative settlement replaces a provisional one instead of paying twice. The guest path now
+  runs the challenge and commendation passes too (it used to pay credits only), and picks its own scoreboard row by
+  engine local slot / exact name / service tag instead of a name substring.
+- **Broadcast:** `BroadcastMatchOver` runs after *every* settlement (also when slot 6 could not read the record); the
+  packet carries `slot`, `tag`, `local`, `skulls` and `provisional`.
+- **Campaign black screen:** `ShouldBlockPrematureGameOver` only guards the first 120 s of a match (and never blocks once
+  the match is settled), `RecoverFromCutsceneSkip` no longer cancels a settled panel, and a new main-loop watchdog
+  (`WatchForUnreportedMatchEnd`) settles + broadcasts + opens the panel when the engine ends a match without reporting it.
+- **Panel:** second button is DISBAND LOBBY (host) / LEAVE LOBBY (guest) / RETURN TO MENU (local); a guest consumes the
+  host's `match_over` even when its own panel is already up, and the reveal replays with the host's numbers.
+- **Build:** all three targets built Release with MSVC on 2026-11-15. **Not run in game** (no MCC on this machine); the
+  test list is in `HANDOFF.md` under "Post-game / after-action report fixes".
