@@ -87,6 +87,19 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Includes the v0.19.100 work: jitter-free third-person and vehicle first-person cameras, smooth QPC zoom blending, controller zoom, and stable post-match focus/cursor handling."},
     };
 
+    const std::vector<ChangeItem> v019102Items = {
+        {"UI", "Collapsed Mod Sections & Fold in Map Pickers",
+         "The MODDED tabs (Campaign, Custom Game, Firefight, lobby map select) list one compact section per mod with its map count; click to expand, click the mod heading (FOLD) to collapse. Search still expands and filters everything."},
+        {"UI", "Campaign MAX PLAYERS & Search Fix",
+         "Campaign now has a MAX PLAYERS row (4/8/12/16) wired into HOST CO-OP instead of a hard-coded 16, the campaign search box is clamped on-screen, and the expanded-map header no longer shows a '?' placeholder for the missing em-dash glyph."},
+        {"FIX", "Extended Visor Finishes No Longer White",
+         "haloreach.dll only has five real visor slots; the extra Armory finishes were stored as out-of-range slots and drew white. Every finish now maps to a valid stock slot (nearest colour) - the Armory still previews the exact finish."},
+        {"FIX", "Game Options Sliders Aligned",
+         "All camera sliders in SETTINGS > GAME OPTIONS share one start, length and value column (they used to shrink by their value text width), and long labels are ellipsised instead of running under the track."},
+        {"FIX", "Front-End FOV No Longer Zooms the Armory",
+         "Saving a FOV change from the front-end no longer writes the match FOV into the Armory's engine camera; it is applied when a match starts, and in-match changes still apply live."},
+    };
+
     const std::vector<ChangeItem> v01999Items = {
         {"NETCODE", "All-Mode Netcode & Sync Hardening",
          "Verified bidirectional UDP routes before skipping relay, added Blam! membership handshake waits before host launch, SHA-256 verified preset JSON/binary game variants and .mvar map variants, and fixed join-in-progress kicks across Campaign, Firefight, Forge, and Custom Games."},
@@ -102,9 +115,9 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
         if (currentVer != "v0.19.99") {
             notes.push_back(ReleaseNotes{
                 currentVer,
-                "LOADING SCREENS, SERVER BROWSER & ROSTERS",
-                "In-Match Waiting Screen, Blue-Glass Server Browser, Workshop Downloads & Smooth Cameras",
-                v019101Items,
+                "MAP PICKERS, VISOR & GAME OPTIONS FIXES",
+                "Collapsed Mod Sections, Campaign MAX PLAYERS, Visor Slots, Aligned Options Sliders",
+                v019102Items,
             });
         }
         notes.push_back(ReleaseNotes{
