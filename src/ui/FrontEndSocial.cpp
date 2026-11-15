@@ -87,6 +87,28 @@ void DrawSocialScreen(OverlayContext &ctx, const Ui &ui, float left,
     }
   }
 
+  // Prominent join-by-code entry on the Social screen as well: same modal the Main Menu / Server Browser use.
+  {
+    const float joinW = 184.0f * ui.s;
+    const ImVec2 jc0(statP0.x - actBtnW - 10.0f * ui.s - joinW - 10.0f * ui.s, topY);
+    const ImVec2 jc1(jc0.x + joinW, topY + topBtnH);
+    ImGui::SetCursorScreenPos(jc0);
+    const bool joinClicked = ImGui::InvisibleButton("##social_join_code_btn", ImVec2(joinW, topBtnH));
+    const bool joinHovered = ImGui::IsItemHovered();
+    ui.dl->AddRectFilled(jc0, jc1,
+                         joinHovered ? IM_COL32(42, 74, 108, 235) : IM_COL32(18, 30, 44, 225), 2.0f * ui.s);
+    NobleUi::DrawTacticalFrame(ui.dl, jc0, jc1, ui.s, false, true, joinHovered, false);
+    const char *joinLbl = "JOIN WITH CODE";
+    const float jlw = TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, joinLbl);
+    Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2((jc0.x + jc1.x - jlw) * 0.5f, topY + 7.0f * ui.s),
+         NobleUi::kAmber, joinLbl);
+    if (joinClicked && !modalBlocked && !typing) {
+      st.screen = Screen::Servers;
+      UIManager::GetServerBrowser().OpenJoinCodeModal();
+      MenuSounds::Click();
+    }
+  }
+
   // Main Tactical Panel Container
   const ImVec2 pc0(px, py), pc1(px + panelW, py + panelH);
   ui.dl->AddRectFilled(pc0, pc1, IM_COL32(8, 14, 22, 195), 2.0f * ui.s);
