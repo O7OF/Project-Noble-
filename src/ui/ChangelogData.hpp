@@ -100,6 +100,19 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Saving a FOV change from the front-end no longer writes the match FOV into the Armory's engine camera; it is applied when a match starts, and in-match changes still apply live."},
     };
 
+    const std::vector<ChangeItem> v019103Items = {
+        {"FEATURE", "Lobby Share Codes & Join with Code",
+         "Hosts of public and private lobbies get a 23-character NB1-XXXX-XXXX-XXXX-XXXX code with COPY CODE in the HOSTING panel; join from Main Menu, the Server Browser, or the Social screen. Private lobbies stay unlisted but the code still joins them."},
+        {"UI", "Variant Drawer Search & Category Filters",
+         "The expanded base-map/variant drawer now has a search box and a category cycler with an N OF M VARIANTS count, so 353-variant Forge World AI Battlegrounds collapses to the matching entries instead of a long scroll."},
+        {"FIX", "Server Browser Refresh & Pinned Actions",
+         "Refresh shows its working status again, and FAVOURITE / COPY INVITE are pinned in a footer under the details pane so they stay visible and clickable."},
+        {"FIX", "Click Fixes in Menus & Options",
+         "Game Options rows are clickable anywhere on the row again, and the main-menu What's New hint is clickable."},
+        {"CONTROLLER", "Toggle Crouch & Toggle Zoom Bindings",
+         "Controller toggle crouch and mouse/keyboard toggle zoom are now available in Settings > Controls."},
+    };
+
     const std::vector<ChangeItem> v01999Items = {
         {"NETCODE", "All-Mode Netcode & Sync Hardening",
          "Verified bidirectional UDP routes before skipping relay, added Blam! membership handshake waits before host launch, SHA-256 verified preset JSON/binary game variants and .mvar map variants, and fixed join-in-progress kicks across Campaign, Firefight, Forge, and Custom Games."},
@@ -113,8 +126,16 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
+            if (noble::VERSION_MINOR == 19 && noble::VERSION_PATCH >= 103) {
+                notes.push_back(ReleaseNotes{
+                    currentVer,
+                    "LOBBY SHARE CODES, CLICK FIXES & INPUT TOGGLES",
+                    "Shareable Lobby Codes, Variant Drawer Filters, Pinned Server Actions, Toggle Crouch/Zoom",
+                    v019103Items,
+                });
+            }
             notes.push_back(ReleaseNotes{
-                currentVer,
+                "v0.19.102",
                 "MAP PICKERS, VISOR & GAME OPTIONS FIXES",
                 "Collapsed Mod Sections, Campaign MAX PLAYERS, Visor Slots, Aligned Options Sliders",
                 v019102Items,
