@@ -21,7 +21,9 @@ namespace noble {
 namespace {
 
 constexpr const wchar_t kUserAgent[] = L"ProjectNoble";
-constexpr const char kReleaseApi[] = "https://api.github.com/repos/O7OF/Project-Noble-/releases/latest";
+// Newest-first list. Looking past the newest release matters: a maintainer can publish a base-only release (v0.19.90
+// was one), and the optional pack must still be found in an older release instead of leaving the row broken.
+constexpr const char kReleaseApi[] = "https://api.github.com/repos/O7OF/Project-Noble-/releases?per_page=10";
 
 std::wstring Widen(const std::string& s) {
     if (s.empty()) return L"";
@@ -239,6 +241,55 @@ std::string Trim(std::string text) {
     return start == std::string::npos ? std::string() : text.substr(start);
 }
 
+struct ReleaseAsset {
+    std::string name;
+    std::string url;
+    std::string shaUrl;
+    std::string tag;
+};
+
+// Picks the newest release that carries a `<assetPrefix>*.zip` asset (plus its optional `.sha256` sibling). The release
+// list is newest-first, so a base-only release at the top does not hide the pack shipped with the previous one. A single
+// release object is accepted too (in case the URL is ever pointed at a /latest endpoint).
+bool FindReleaseAsset(const std::string& body, const std::string& assetPrefix, ReleaseAsset& found, std::string& error) {
+    const nlohmann::json root = nlohmann::json::parse(body, nullptr, false);
+    nlohmann::json releases = nlohmann::json::array();
+    if (root.is_array()) {
+        releases = root;
+    } else if (root.is_object()) {
+        releases.push_back(root);
+    } else {
+        error = "GitHub release JSON could not be parsed";
+        return false;
+    }
+    for (const auto& release : releases) {
+        if (!release.is_object() || !release.contains("assets") || !release["assets"].is_array()) continue;
+        std::string name, url;
+        for (const auto& asset : release["assets"]) {
+            const std::string candidate = asset.value("name", "");
+            if (candidate.rfind(assetPrefix, 0) == 0 && candidate.size() > 4 &&
+                candidate.compare(candidate.size() - 4, 4, ".zip") == 0) {
+                name = candidate;
+                url = asset.value("browser_download_url", "");
+                break;
+            }
+        }
+        if (name.empty() || url.empty()) continue;
+        std::string sha;
+        const std::string shaName = name + ".sha256";
+        for (const auto& asset : release["assets"]) {
+            if (asset.value("name", "") == shaName) {
+                sha = asset.value("browser_download_url", "");
+                break;
+            }
+        }
+        found = ReleaseAsset{name, url, sha, release.value("tag_name", "")};
+        return true;
+    }
+    error = "no " + assetPrefix + "* asset in the latest releases";
+    return false;
+}
+
 } // namespace
 
 RecommendedMaps& RecommendedMaps::Get() {
@@ -345,39 +396,32 @@ void RecommendedMaps::Worker(const std::string& id) {
             shaUrl = assetUrl + ".sha256";
         }
     } else {
+        // Test hook: point the release lookup at a local JSON document so the fallback can be exercised without a real
+        // GitHub release. NOBLE_RECOMMENDED_ASSET_URL (above) skips the lookup entirely.
+        std::string releaseApi = kReleaseApi;
+        if (const char* overrideApi = std::getenv("NOBLE_RECOMMENDED_API_URL"); overrideApi && *overrideApi) {
+            releaseApi = overrideApi;
+        }
         std::string body;
-        if (!HttpGetText(kReleaseApi, body, error)) {
+        if (!HttpGetText(releaseApi, body, error)) {
             status.state = State::Error;
             status.error = error;
             SetStatus(id, status);
             NOBLE_WARN("RecommendedMaps: release lookup failed: {}", error);
             return;
         }
-        const nlohmann::json release = nlohmann::json::parse(body, nullptr, false);
-        if (!release.is_object() || !release.contains("assets") || !release["assets"].is_array()) {
+        ReleaseAsset asset;
+        if (!FindReleaseAsset(body, item.assetPrefix, asset, error)) {
             status.state = State::Error;
-            status.error = "GitHub release JSON could not be parsed";
+            status.error = error;
             SetStatus(id, status);
             NOBLE_WARN("RecommendedMaps: {}", status.error);
             return;
         }
-        for (const auto& asset : release["assets"]) {
-            const std::string name = asset.value("name", "");
-            if (assetUrl.empty() && name.rfind(item.assetPrefix, 0) == 0 &&
-                name.size() > 4 && name.compare(name.size() - 4, 4, ".zip") == 0) {
-                assetName = name;
-                assetUrl = asset.value("browser_download_url", "");
-            } else if (shaUrl.empty() && !assetName.empty() && name == assetName + ".sha256") {
-                shaUrl = asset.value("browser_download_url", "");
-            }
-        }
-        if (assetUrl.empty()) {
-            status.state = State::Error;
-            status.error = "no " + item.assetPrefix + "* asset in the latest release";
-            SetStatus(id, status);
-            NOBLE_WARN("RecommendedMaps: {}", status.error);
-            return;
-        }
+        assetName = asset.name;
+        assetUrl = asset.url;
+        shaUrl = asset.shaUrl;
+        NOBLE_INFO("RecommendedMaps: {} from release {}", assetName, asset.tag);
     }
 
     status.assetName = assetName;
