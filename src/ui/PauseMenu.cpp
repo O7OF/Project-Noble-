@@ -1,42 +1,41 @@
-#include "audio/VoiceChat.hpp"
+#include "PauseMenu.hpp"
 #include "../engine/DevCheats.hpp"
 #include "FrontEndMenu.hpp"
+#include "InputPrompts.hpp"
 #include "LoadScreen.hpp"
-#include "SocialOverlay.hpp"
-#include "PauseMenu.hpp"
 #include "MenuSounds.hpp"
 #include "NobleStyle.hpp"
 #include "NobleUi.hpp"
 #include "SettingsPanel.hpp"
-#include "InputPrompts.hpp"
+#include "SocialOverlay.hpp"
 #include "UiArt.hpp"
 #include "UiPad.hpp"
 #include "audio/ReachAudio.hpp"
+#include "audio/VoiceChat.hpp"
 #include "career/Career.hpp"
 #include "common/Logger.hpp"
 #include "common/MapNames.hpp"
 #include "common/Relaunch.hpp"
-#include "network/MasterServerClient.hpp"
-#include "network/SessionManager.hpp"
-#include "network/NetworkTransport.hpp"
 #include "common/Settings.hpp"
-#include "engine/FrameCapture.hpp"
-#include "engine/ReachHost.hpp"
 #include "engine/BlamEngine.hpp"
-#include "engine/SessionVariant.hpp"
+#include "engine/CameraThirdPerson.hpp"
 #include "engine/ForgePlacement.hpp"
+#include "engine/FrameCapture.hpp"
+#include "engine/KeyBindings.hpp"
+#include "engine/ReachHost.hpp"
+#include "engine/SessionVariant.hpp"
+#include "host/Window.hpp"
 #include "mvar/ForgePlacementApply.hpp"
+#include "mvar/MapVariant.hpp"
 #include "mvar/MapVariantLibrary.hpp"
 #include "mvar/MapVariantWriter.hpp"
-#include "mvar/MapVariant.hpp"
-#include "engine/CameraThirdPerson.hpp"
-#include "engine/CameraThirdPerson.hpp"
-#include "engine/KeyBindings.hpp"
-#include "host/Window.hpp"
+#include "network/MasterServerClient.hpp"
+#include "network/NetworkTransport.hpp"
+#include "network/SessionManager.hpp"
 
-#include <chrono>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -44,11 +43,11 @@
 #include <dxgi.h>
 #include <filesystem>
 #include <fstream>
-#include <set>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <shellapi.h>
 #include <string>
 #include <thread>
@@ -58,8 +57,9 @@ namespace noble {
 namespace {
 
 std::atomic<bool> s_open{false};
-// The challenge list shown on the pause menu is built once when the menu opens and then every two seconds,
-// not on every frame (building it takes the career lock and may read the career file).
+// The challenge list shown on the pause menu is built once when the menu opens
+// and then every two seconds, not on every frame (building it takes the career
+// lock and may read the career file).
 std::atomic<bool> s_challengesStale{true};
 std::atomic<bool> s_gameOver{false};
 std::atomic<bool> s_scoreboardShotRequest{false};
@@ -82,7 +82,8 @@ std::string s_loadingMapName;
 std::string s_displayMapName;
 std::filesystem::path s_loadingImage;
 std::filesystem::path s_loadingThumb;
-std::string s_loadingDescription;   // mod map blurb for the loading screen (plain text)
+std::string
+    s_loadingDescription; // mod map blurb for the loading screen (plain text)
 
 struct MapName {
   const char *scenario;
@@ -155,21 +156,28 @@ std::wstring ArgValue(const std::wstring &args, const wchar_t *name) {
   int argc = 0;
   LPWSTR *argv = CommandLineToArgvW((L"x " + args).c_str(), &argc);
   for (int i = 1; argv && i + 1 < argc; ++i) {
-    if (_wcsicmp(argv[i], name) == 0) value = argv[i + 1];
+    if (_wcsicmp(argv[i], name) == 0)
+      value = argv[i + 1];
   }
-  if (argv) LocalFree(argv);
+  if (argv)
+    LocalFree(argv);
   return value;
 }
 
-// The arguments that bring this match's lobby back in a new process (FrontEndMenu reads the -lobby-* set).
+// The arguments that bring this match's lobby back in a new process
+// (FrontEndMenu reads the -lobby-* set).
 std::wstring LobbyReturnArgs(bool host, bool advance = false) {
   const std::wstring game = Relaunch::CurrentGameArgs();
-  const auto quoted = [](const std::wstring &value) { return L"\"" + value + L"\""; };
+  const auto quoted = [](const std::wstring &value) {
+    return L"\"" + value + L"\"";
+  };
   std::wstring out = host ? L"-lobby-return host" : L"-lobby-return guest";
   const auto copy = [&](const wchar_t *from, const wchar_t *to) {
     std::wstring value = ArgValue(game, from);
-    if (value.empty()) value = ArgValue(GetCommandLineW(), from);
-    if (!value.empty()) out += std::wstring(L" ") + to + L" " + quoted(value);
+    if (value.empty())
+      value = ArgValue(GetCommandLineW(), from);
+    if (!value.empty())
+      out += std::wstring(L" ") + to + L" " + quoted(value);
   };
   copy(L"-map", L"-lobby-map");
   copy(L"-mode", L"-lobby-mode");
@@ -182,58 +190,73 @@ std::wstring LobbyReturnArgs(bool host, bool advance = false) {
   copy(L"-map-image", L"-lobby-map-image");
   copy(L"-map-thumb", L"-lobby-map-thumb");
 
-  // Keep session id and token for both host and guest so the session is preserved!
+  // Keep session id and token for both host and guest so the session is
+  // preserved!
   copy(L"-session-id", L"-lobby-session");
   copy(L"-session-token", L"-lobby-session-token");
 
   if (host) {
     copy(L"-max-players", L"-lobby-max-players");
     const std::wstring own = GetCommandLineW();
-    out += (game.find(L" -lan") != std::wstring::npos || own.find(L" -lan") != std::wstring::npos) ? L" -lobby-net lan" : L" -lobby-net online";
-    out += (game.find(L" -private") != std::wstring::npos || own.find(L" -private") != std::wstring::npos) ? L" -lobby-privacy private" : L" -lobby-privacy public";
-    // Only the menu that started this match knows the playlist, so it's on this process's own command line.
+    out += (game.find(L" -lan") != std::wstring::npos ||
+            own.find(L" -lan") != std::wstring::npos)
+               ? L" -lobby-net lan"
+               : L" -lobby-net online";
+    out += (game.find(L" -private") != std::wstring::npos ||
+            own.find(L" -private") != std::wstring::npos)
+               ? L" -lobby-privacy private"
+               : L" -lobby-privacy public";
+    // Only the menu that started this match knows the playlist, so it's on this
+    // process's own command line.
     const std::wstring list = ArgValue(own, L"-lobby-playlist");
     if (!list.empty()) {
-      out += L" -lobby-playlist " + quoted(list) + L" -lobby-playlist-pos " + quoted(ArgValue(own, L"-lobby-playlist-pos"));
-      if (advance) out += L" -lobby-advance 1";
+      out += L" -lobby-playlist " + quoted(list) + L" -lobby-playlist-pos " +
+             quoted(ArgValue(own, L"-lobby-playlist-pos"));
+      if (advance)
+        out += L" -lobby-advance 1";
     }
   } else {
     std::wstring endpoint = ArgValue(game, L"-connect");
-    if (endpoint.empty()) endpoint = ArgValue(GetCommandLineW(), L"-connect");
-    if (!endpoint.empty()) out += L" -lobby-endpoint " + quoted(endpoint);
+    if (endpoint.empty())
+      endpoint = ArgValue(GetCommandLineW(), L"-connect");
+    if (!endpoint.empty())
+      out += L" -lobby-endpoint " + quoted(endpoint);
   }
   return out;
 }
 
 static std::atomic<int> s_hostLobbyState{0};
 
-void SetHostBackInLobby(int st) {
-  s_hostLobbyState.store(st);
-}
+void SetHostBackInLobby(int st) { s_hostLobbyState.store(st); }
 
-// For a guest on the post-game panel: 0 still waiting, 1 the host is back in the lobby, 2 the session has gone. The server
-// says the match is running until the host's new process registers again.
+// For a guest on the post-game panel: 0 still waiting, 1 the host is back in
+// the lobby, 2 the session has gone. The server says the match is running until
+// the host's new process registers again.
 int PollHostBackInLobby() {
-  if (s_hostLobbyState.load() != 0) return s_hostLobbyState.load();
+  if (s_hostLobbyState.load() != 0)
+    return s_hostLobbyState.load();
   static bool s_started = false;
   if (!s_started) {
     s_started = true;
     const std::string session = [] {
       std::wstring wide = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
-      if (wide.empty()) wide = ArgValue(GetCommandLineW(), L"-session-id");
+      if (wide.empty())
+        wide = ArgValue(GetCommandLineW(), L"-session-id");
       char text[128] = {};
-      WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, text, sizeof(text) - 1, nullptr, nullptr);
+      WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, text, sizeof(text) - 1,
+                          nullptr, nullptr);
       return std::string(text);
     }();
     if (session.empty()) {
-      // In LAN / direct connect mode where no master server session was created:
-      // poll LAN discovery to see when host has returned to lobby
+      // In LAN / direct connect mode where no master server session was
+      // created: poll LAN discovery to see when host has returned to lobby
       std::thread([] {
         for (int i = 0; i < 25; ++i) {
           std::this_thread::sleep_for(std::chrono::milliseconds(1000));
           auto sessions = SessionManager::Get().GetDiscoveredSessions();
           if (!sessions.empty()) {
-            NOBLE_INFO("PauseMenu: detected host LAN lobby, pulling back to lobby");
+            NOBLE_INFO(
+                "PauseMenu: detected host LAN lobby, pulling back to lobby");
             s_hostLobbyState = 1;
             return;
           }
@@ -245,10 +268,13 @@ int PollHostBackInLobby() {
         int missing = 0;
         while (true) {
           std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-          const LobbyState state = MasterServerClient::Get().FetchLobbyStateSync(session);
+          const LobbyState state =
+              MasterServerClient::Get().FetchLobbyStateSync(session);
           if (!state.ok || state.isClosed) {
             if (++missing >= 25) {
-              NOBLE_WARN("PauseMenu: host lobby closed or timed out (missing: {})", missing);
+              NOBLE_WARN(
+                  "PauseMenu: host lobby closed or timed out (missing: {})",
+                  missing);
               s_hostLobbyState = 2;
               return;
             }
@@ -256,7 +282,8 @@ int PollHostBackInLobby() {
           }
           missing = 0;
           if (!state.inProgress) {
-            NOBLE_INFO("PauseMenu: the host is back in the lobby (session: {})", session);
+            NOBLE_INFO("PauseMenu: the host is back in the lobby (session: {})",
+                       session);
             s_hostLobbyState = 1;
             return;
           }
@@ -267,12 +294,17 @@ int PollHostBackInLobby() {
   return s_hostLobbyState.load();
 }
 
-// Finds " -name value" in a built command line. Returns false if it is not there; [begin, end) covers the separator,
-// the name and the value (quoted or not).
-bool FindArgSpan(const std::wstring &args, const std::wstring &name, size_t &begin, size_t &end) {
-  for (size_t at = args.find(name); at != std::wstring::npos; at = args.find(name, at + 1)) {
+// Finds " -name value" in a built command line. Returns false if it is not
+// there; [begin, end) covers the separator, the name and the value (quoted or
+// not).
+bool FindArgSpan(const std::wstring &args, const std::wstring &name,
+                 size_t &begin, size_t &end) {
+  for (size_t at = args.find(name); at != std::wstring::npos;
+       at = args.find(name, at + 1)) {
     const size_t after = at + name.size();
-    if ((at != 0 && args[at - 1] != L' ') || after >= args.size() || args[after] != L' ') continue;
+    if ((at != 0 && args[at - 1] != L' ') || after >= args.size() ||
+        args[after] != L' ')
+      continue;
     size_t value = after + 1;
     if (value < args.size() && args[value] == L'"') {
       const size_t close = args.find(L'"', value + 1);
@@ -289,51 +321,74 @@ bool FindArgSpan(const std::wstring &args, const std::wstring &name, size_t &beg
 
 void RemoveArg(std::wstring &args, const std::wstring &name) {
   size_t begin = 0, end = 0;
-  if (FindArgSpan(args, name, begin, end)) args.erase(begin, end - begin);
+  if (FindArgSpan(args, name, begin, end))
+    args.erase(begin, end - begin);
 }
 
-void SetArg(std::wstring &args, const std::wstring &name, const std::wstring &value) {
+void SetArg(std::wstring &args, const std::wstring &name,
+            const std::wstring &value) {
   RemoveArg(args, name);
-  if (!args.empty() && args.front() == L' ') args.erase(0, 1);
+  if (!args.empty() && args.front() == L' ')
+    args.erase(0, 1);
   args += (args.empty() ? L"" : L" ") + name + L" \"" + value + L"\"";
 }
 
-// The mission after this one in campaign order, or "" at the end of the campaign or for anything that isn't a stock
-// mission. Missions can be named with a scene suffix ("m10_b").
+// The mission after this one in campaign order, or "" at the end of the
+// campaign or for anything that isn't a stock mission. Missions can be named
+// with a scene suffix ("m10_b").
 std::wstring NextCampaignMission(const std::wstring &game) {
-  static const wchar_t *const kOrder[] = {L"m05", L"m10", L"m20", L"m30", L"m35", L"m45",
-                                          L"m50", L"m52", L"m60", L"m70", L"m70_bonus"};
+  static const wchar_t *const kOrder[] = {L"m05", L"m10", L"m20",      L"m30",
+                                          L"m35", L"m45", L"m50",      L"m52",
+                                          L"m60", L"m70", L"m70_bonus"};
   std::wstring mode = ArgValue(game, L"-mode");
-  if (mode.empty()) mode = ArgValue(GetCommandLineW(), L"-mode");
-  if (mode.empty()) mode = ArgValue(GetCommandLineW(), L"-lobby-mode");
-  if (_wcsicmp(mode.c_str(), L"campaign") != 0 && wcsstr(GetCommandLineW(), L"-campaign") == nullptr && game.find(L"-campaign") == std::wstring::npos) return {};
-  if (!ArgValue(game, L"-mod").empty() || !ArgValue(game, L"-map-override").empty()) return {};
+  if (mode.empty())
+    mode = ArgValue(GetCommandLineW(), L"-mode");
+  if (mode.empty())
+    mode = ArgValue(GetCommandLineW(), L"-lobby-mode");
+  if (_wcsicmp(mode.c_str(), L"campaign") != 0 &&
+      wcsstr(GetCommandLineW(), L"-campaign") == nullptr &&
+      game.find(L"-campaign") == std::wstring::npos)
+    return {};
+  if (!ArgValue(game, L"-mod").empty() ||
+      !ArgValue(game, L"-map-override").empty())
+    return {};
   std::wstring map = ArgValue(game, L"-map");
-  if (map.empty()) map = ArgValue(GetCommandLineW(), L"-map");
-  if (map.empty()) map = ArgValue(GetCommandLineW(), L"-lobby-map");
-  std::transform(map.begin(), map.end(), map.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
+  if (map.empty())
+    map = ArgValue(GetCommandLineW(), L"-map");
+  if (map.empty())
+    map = ArgValue(GetCommandLineW(), L"-lobby-map");
+  std::transform(map.begin(), map.end(), map.begin(),
+                 [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
   constexpr int kCount = static_cast<int>(sizeof(kOrder) / sizeof(kOrder[0]));
   int at = -1;
-  for (int i = 0; i < kCount; ++i) if (map == kOrder[i]) at = i;
+  for (int i = 0; i < kCount; ++i)
+    if (map == kOrder[i])
+      at = i;
   if (at < 0) {
-    for (int i = 0; i < kCount; ++i) if (map.rfind(std::wstring(kOrder[i]) + L"_", 0) == 0) at = i;
+    for (int i = 0; i < kCount; ++i)
+      if (map.rfind(std::wstring(kOrder[i]) + L"_", 0) == 0)
+        at = i;
   }
   return at >= 0 && at + 1 < kCount ? kOrder[at + 1] : L"";
 }
 
 std::wstring MissionTitle(const std::wstring &mission) {
   char narrow[64] = {};
-  WideCharToMultiByte(CP_UTF8, 0, mission.c_str(), -1, narrow, sizeof(narrow) - 1, nullptr, nullptr);
+  WideCharToMultiByte(CP_UTF8, 0, mission.c_str(), -1, narrow,
+                      sizeof(narrow) - 1, nullptr, nullptr);
   const std::string title = MapNames::Display(narrow);
   wchar_t wide[128] = {};
   MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, wide, 127);
   return wide;
 }
 
-// Arguments that start the next mission, or "" if there is none. A hosted game goes back to its lobby with the next
-// mission selected, so guests stay together; a solo game starts it straight away. Difficulty and skulls carry over.
+// Arguments that start the next mission, or "" if there is none. A hosted game
+// goes back to its lobby with the next mission selected, so guests stay
+// together; a solo game starts it straight away. Difficulty and skulls carry
+// over.
 std::wstring NextMissionArgs(const std::wstring &next, std::wstring lobbyArgs) {
-  if (next.empty()) return {};
+  if (next.empty())
+    return {};
   const std::wstring title = MissionTitle(next);
   std::wstring game = Relaunch::CurrentGameArgs();
   if (game.find(L" -host") != std::wstring::npos) {
@@ -354,26 +409,39 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
   Career::EnsureMatchSaved(what);
   const bool isLobbyReturn = args.find(L"-lobby-return") != std::wstring::npos;
-  const bool keepHostSession = args.find(L"-lobby-return host") != std::wstring::npos;
+  const bool keepHostSession =
+      args.find(L"-lobby-return host") != std::wstring::npos;
   const bool isMainMenu = (args == L"-main-menu");
   if (args.empty() || isMainMenu) {
-    // Leaving match to menu: notify master server and peers immediately without blocking the UI thread.
-    std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
-    if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
-    const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
-                            Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+    // Leaving match to menu: notify master server and peers immediately without
+    // blocking the UI thread.
+    std::wstring wSession =
+        ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+    if (wSession.empty())
+      wSession = ArgValue(GetCommandLineW(), L"-session-id");
+    const bool isHostCmd =
+        (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
+         Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
     if (!wSession.empty()) {
       char sessUtf8[128] = {};
-      WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+      WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8,
+                          sizeof(sessUtf8) - 1, nullptr, nullptr);
       const std::string sId(sessUtf8);
       if (isHostCmd) {
-        NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
-        std::thread([sId]() { MasterServerClient::Get().DisbandSessionSync(sId); }).detach();
+        NetworkTransport::Get().SendLobbyControlJson(
+            "{\"type\":\"lobby_disband\"}");
+        std::thread([sId]() {
+          MasterServerClient::Get().DisbandSessionSync(sId);
+        }).detach();
       } else {
-        uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-        if (fallbackId < 2ULL) fallbackId = 2ULL;
+        uint64_t fallbackId =
+            (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+        if (fallbackId < 2ULL)
+          fallbackId = 2ULL;
         NetworkTransport::Get().SendDisconnectPacket();
-        std::thread([sId, fallbackId]() { MasterServerClient::Get().LeaveLobbySync(sId, fallbackId); }).detach();
+        std::thread([sId, fallbackId]() {
+          MasterServerClient::Get().LeaveLobbySync(sId, fallbackId);
+        }).detach();
       }
     } else if (!isHostCmd) {
       NetworkTransport::Get().SendDisconnectPacket();
@@ -382,41 +450,51 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
 
   std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
   if (!containerVal.empty()) {
-      MasterServerClient::Get().Shutdown(keepHostSession);
-      SessionManager::Get().Shutdown();
-      if (isMainMenu || args.empty()) {
-          Relaunch::RequestContainerRelaunch(L"-main-menu");
-          NOBLE_INFO("PauseMenu: {} in container mode - returning to main menu in container launcher window", what);
-          TerminateProcess(GetCurrentProcess(), 0);
-          return;
-      } else if (isLobbyReturn) {
-          Relaunch::RequestContainerRelaunch(args);
-          NOBLE_INFO("PauseMenu: {} in container mode - returning to lobby in container launcher window", what);
-          TerminateProcess(GetCurrentProcess(), 0);
-          return;
-      } else {
-          // PLAY AGAIN / NEXT MISSION / RESTART MATCH: a hosted match cannot start its own successor (the launcher tracks
-          // one match process and would bring its menu back over the new game), so record what to start and
-          // let the launcher window start it once this process is gone.
-          std::wstring childArgs = args;
-          if (childArgs.find(L"-container-hwnd") == std::wstring::npos) {
-              childArgs += L" -container-hwnd " + containerVal;
-          }
-          if (Relaunch::RequestContainerRelaunch(childArgs)) {
-              NOBLE_INFO("PauseMenu: {} in container mode - the launcher window starts the next match", what);
-              TerminateProcess(GetCurrentProcess(), 0);
-          } else {
-              NOBLE_WARN("PauseMenu: {} in container mode - could not hand the relaunch to the launcher", what);
-              PostMessageW(hwnd, WM_CLOSE, 0, 0);
-          }
-          return;
+    MasterServerClient::Get().Shutdown(keepHostSession);
+    SessionManager::Get().Shutdown();
+    if (isMainMenu || args.empty()) {
+      Relaunch::RequestContainerRelaunch(L"-main-menu");
+      NOBLE_INFO("PauseMenu: {} in container mode - returning to main menu in "
+                 "container launcher window",
+                 what);
+      TerminateProcess(GetCurrentProcess(), 0);
+      return;
+    } else if (isLobbyReturn) {
+      Relaunch::RequestContainerRelaunch(args);
+      NOBLE_INFO("PauseMenu: {} in container mode - returning to lobby in "
+                 "container launcher window",
+                 what);
+      TerminateProcess(GetCurrentProcess(), 0);
+      return;
+    } else {
+      // PLAY AGAIN / NEXT MISSION / RESTART MATCH: a hosted match cannot start
+      // its own successor (the launcher tracks one match process and would
+      // bring its menu back over the new game), so record what to start and let
+      // the launcher window start it once this process is gone.
+      std::wstring childArgs = args;
+      if (childArgs.find(L"-container-hwnd") == std::wstring::npos) {
+        childArgs += L" -container-hwnd " + containerVal;
       }
+      if (Relaunch::RequestContainerRelaunch(childArgs)) {
+        NOBLE_INFO("PauseMenu: {} in container mode - the launcher window "
+                   "starts the next match",
+                   what);
+        TerminateProcess(GetCurrentProcess(), 0);
+      } else {
+        NOBLE_WARN("PauseMenu: {} in container mode - could not hand the "
+                   "relaunch to the launcher",
+                   what);
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+      }
+      return;
+    }
   }
 
   MasterServerClient::Get().Shutdown(keepHostSession);
   SessionManager::Get().Shutdown();
   NetworkTransport::Get().Shutdown();
-  Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
+  Relaunch::HandOff(
+      args); // ends this process; returns only if the new one could not start
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }
 
@@ -424,21 +502,31 @@ void QuitFromMatch(HWND hwnd, const char *what) {
   NOBLE_INFO("PauseMenu: {}", what);
   Career::EnsureMatchSaved(what);
   std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
-  if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
-  const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
-                          Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+  if (wSession.empty())
+    wSession = ArgValue(GetCommandLineW(), L"-session-id");
+  const bool isHostCmd =
+      (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
+       Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
   if (!wSession.empty()) {
     char sessUtf8[128] = {};
-    WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8,
+                        sizeof(sessUtf8) - 1, nullptr, nullptr);
     const std::string sId(sessUtf8);
     if (isHostCmd) {
-      NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
-      std::thread([sId]() { MasterServerClient::Get().DisbandSessionSync(sId); }).detach();
+      NetworkTransport::Get().SendLobbyControlJson(
+          "{\"type\":\"lobby_disband\"}");
+      std::thread([sId]() {
+        MasterServerClient::Get().DisbandSessionSync(sId);
+      }).detach();
     } else {
-      uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-      if (fallbackId < 2ULL) fallbackId = 2ULL;
+      uint64_t fallbackId =
+          (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+      if (fallbackId < 2ULL)
+        fallbackId = 2ULL;
       NetworkTransport::Get().SendDisconnectPacket();
-      std::thread([sId, fallbackId]() { MasterServerClient::Get().LeaveLobbySync(sId, fallbackId); }).detach();
+      std::thread([sId, fallbackId]() {
+        MasterServerClient::Get().LeaveLobbySync(sId, fallbackId);
+      }).detach();
     }
   } else if (!isHostCmd) {
     NetworkTransport::Get().SendDisconnectPacket();
@@ -489,15 +577,19 @@ void DrawSettingsPage(HWND hwnd);
 } // namespace
 
 namespace {
-// The engine has no pause API, but it does expose its game_speed console global. Zero freezes the
-// simulation while the render/input thread keeps pumping, which is exactly what a local pause needs.
-// Only used when the session has no remote players; an online match must keep running.
+// The engine has no pause API, but it does expose its game_speed console
+// global. Zero freezes the simulation while the render/input thread keeps
+// pumping, which is exactly what a local pause needs. Only used when the
+// session has no remote players; an online match must keep running.
 void SetLocalSimulationPaused(bool paused) {
   static bool s_applied = false;
-  if (paused == s_applied) return;
-  if (paused && NetworkTransport::Get().GetGamePeerCount() > 0) return;
-  BlamEngine* engine = BlamEngine::Active();
-  if (!engine) return;
+  if (paused == s_applied)
+    return;
+  if (paused && NetworkTransport::Get().GetGamePeerCount() > 0)
+    return;
+  BlamEngine *engine = BlamEngine::Active();
+  if (!engine)
+    return;
   if (engine->ExecuteCommand(paused ? "game_speed 0" : "game_speed 1")) {
     s_applied = paused;
     NOBLE_INFO("PauseMenu: local simulation {}", paused ? "paused" : "resumed");
@@ -508,8 +600,9 @@ static ULONGLONG s_openedAt = 0;
 static int s_focus = 0;
 static bool s_waitForRelease = true;
 static bool s_confirmRestart = false;
-static std::string s_saveMapVariantResult;   // shown under the SAVE MAP VARIANT row after a save
-static bool s_saveVariantOpen = false;      // the "name this map variant" box is up
+static std::string
+    s_saveMapVariantResult; // shown under the SAVE MAP VARIANT row after a save
+static bool s_saveVariantOpen = false; // the "name this map variant" box is up
 static bool s_saveVariantJustOpened = false;
 static bool s_saveVariantNeedsFocus = false;
 static char s_saveVariantName[64] = "My Forge Map";
@@ -517,223 +610,290 @@ static char s_saveVariantName[64] = "My Forge Map";
 
 // Forge: save the map being edited as a map variant.
 //
-// The engine owns the save. Its Forge save writes a map variant file into the player's profile
-// (<userdata>/<id>/saves/HaloReach/autosave/asq*.map), in the same BLF/"mvar" container as MCC's .mvar files - which
-// is exactly what BlamEngine's parse_map_variant takes on the way in. Noble asks for the save with the engine's own
-// "save_map" command, waits for the new file, and copies it into data\map_variants so it appears in the maps menu
-// under the map it was built on.
-// Forge: save the map being edited as a map variant.
+// The engine owns the save. Its Forge save writes a map variant file into the
+// player's profile
+// (<userdata>/<id>/saves/HaloReach/autosave/asq*.map), in the same BLF/"mvar"
+// container as MCC's .mvar files - which is exactly what BlamEngine's
+// parse_map_variant takes on the way in. Noble asks for the save with the
+// engine's own "save_map" command, waits for the new file, and copies it into
+// data\map_variants so it appears in the maps menu under the map it was built
+// on. Forge: save the map being edited as a map variant.
 //
-// The engine owns the map data; its Forge save writes a map variant into the player's profile
-// (<userdata>/<id>/saves/HaloReach/autosave/asq*.map) in the same BLF/"mvar" container MCC's .mvar files use, which
-// is exactly what BlamEngine's parse_map_variant takes on the way in. Noble asks for that save with the engine's own
-// "save_map" command, waits for the file on a background thread (waiting here froze the render thread for seconds),
-// and stores it as JSON: {"version","name","base_map","mode","data"} with the variant base64-encoded - the same idea
-// as Project Reclaimer's Halo 3 map files, so a saved map is one small readable file that can be shared.
+// The engine owns the map data; its Forge save writes a map variant into the
+// player's profile
+// (<userdata>/<id>/saves/HaloReach/autosave/asq*.map) in the same BLF/"mvar"
+// container MCC's .mvar files use, which is exactly what BlamEngine's
+// parse_map_variant takes on the way in. Noble asks for that save with the
+// engine's own "save_map" command, waits for the file on a background thread
+// (waiting here froze the render thread for seconds), and stores it as JSON:
+// {"version","name","base_map","mode","data"} with the variant base64-encoded -
+// the same idea as Project Reclaimer's Halo 3 map files, so a saved map is one
+// small readable file that can be shared.
 namespace {
-// The container around a captured engine chunk comes from an existing variant: BLF header + chdr + trailing chunks.
-// The session's own .mvar is preferred; otherwise any shipped variant works, because the engine reads the map and
+// The container around a captured engine chunk comes from an existing variant:
+// BLF header + chdr + trailing chunks. The session's own .mvar is preferred;
+// otherwise any shipped variant works, because the engine reads the map and
 // objects from the mvar chunk that is being replaced.
-// "Save as copy" never silently replaces an existing variant: append (2), (3), ... until the name is free.
-std::string UniqueVariantName(const std::filesystem::path& library, const std::string& requested) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    const std::string base = noble::mvar::SanitizeVariantName(requested);
-    std::string candidate = base;
-    for (int n = 2; n < 100; ++n) {
-        if (!fs::exists(library / (candidate + ".json"), ec)) return candidate;
-        candidate = base + " (" + std::to_string(n) + ")";
-    }
-    return candidate;
+// "Save as copy" never silently replaces an existing variant: append (2), (3),
+// ... until the name is free.
+std::string UniqueVariantName(const std::filesystem::path &library,
+                              const std::string &requested) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const std::string base = noble::mvar::SanitizeVariantName(requested);
+  std::string candidate = base;
+  for (int n = 2; n < 100; ++n) {
+    if (!fs::exists(library / (candidate + ".json"), ec))
+      return candidate;
+    candidate = base + " (" + std::to_string(n) + ")";
+  }
+  return candidate;
 }
 
-// The map's build palette, harvested from variants that contain the definitions (tag -> variant/quota index).
-noble::mvar::TagPalette LoadMapPalette(const std::filesystem::path& dataDir, uint32_t mapId) {
-    noble::mvar::TagPalette palette;
-    std::ifstream file(dataDir / "mvar_palette" / (std::to_string(mapId) + ".json"), std::ios::binary);
-    if (!file) return palette;
-    nlohmann::json json;
-    try {
-        json = nlohmann::json::parse(file);
-    } catch (...) {
-        return palette;
-    }
-    if (!json.contains("tags")) return palette;
-    for (auto it = json["tags"].begin(); it != json["tags"].end(); ++it) {
-        const std::string value = it.value().get<std::string>();
-        const size_t comma = value.find(',');
-        if (comma == std::string::npos) continue;
-        palette[static_cast<uint32_t>(std::stoul(it.key(), nullptr, 16))] = {
-            std::stoi(value.substr(0, comma)), std::stoi(value.substr(comma + 1)) };
-    }
+// The map's build palette, harvested from variants that contain the definitions
+// (tag -> variant/quota index).
+noble::mvar::TagPalette LoadMapPalette(const std::filesystem::path &dataDir,
+                                       uint32_t mapId) {
+  noble::mvar::TagPalette palette;
+  std::ifstream file(dataDir / "mvar_palette" /
+                         (std::to_string(mapId) + ".json"),
+                     std::ios::binary);
+  if (!file)
     return palette;
+  nlohmann::json json;
+  try {
+    json = nlohmann::json::parse(file);
+  } catch (...) {
+    return palette;
+  }
+  if (!json.contains("tags"))
+    return palette;
+  for (auto it = json["tags"].begin(); it != json["tags"].end(); ++it) {
+    const std::string value = it.value().get<std::string>();
+    const size_t comma = value.find(',');
+    if (comma == std::string::npos)
+      continue;
+    palette[static_cast<uint32_t>(std::stoul(it.key(), nullptr, 16))] = {
+        std::stoi(value.substr(0, comma)), std::stoi(value.substr(comma + 1))};
+  }
+  return palette;
 }
 
-std::filesystem::path FindVariantTemplate(const std::filesystem::path& dataDir) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    const fs::path session = noble::SessionMapVariantPath();
-    if (!session.empty() && fs::exists(session, ec)) return session;
-    const fs::path candidates[] = { dataDir / "map_variants", noble::ReachHost::Get().GetReachDir() / "map_variants",
-                                    noble::ReachHost::Get().GetReachDir() / "hopper_map_variants" };
-    for (const fs::path& dir : candidates) {
-        for (const auto& entry : fs::directory_iterator(dir, ec)) {
-            if (!entry.is_regular_file(ec)) continue;
-            if (entry.path().extension() != ".mvar") continue;
-            return entry.path();
-        }
+std::filesystem::path
+FindVariantTemplate(const std::filesystem::path &dataDir) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path session = noble::SessionMapVariantPath();
+  if (!session.empty() && fs::exists(session, ec))
+    return session;
+  const fs::path candidates[] = {
+      dataDir / "map_variants",
+      noble::ReachHost::Get().GetReachDir() / "map_variants",
+      noble::ReachHost::Get().GetReachDir() / "hopper_map_variants"};
+  for (const fs::path &dir : candidates) {
+    for (const auto &entry : fs::directory_iterator(dir, ec)) {
+      if (!entry.is_regular_file(ec))
+        continue;
+      if (entry.path().extension() != ".mvar")
+        continue;
+      return entry.path();
     }
-    return {};
+  }
+  return {};
 }
 } // namespace
 
-std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    const fs::path dataDir = ReachHost::Get().GetDataDir();
-    const fs::path library = dataDir / "map_variants";
+std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string &name) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path dataDir = ReachHost::Get().GetDataDir();
+  const fs::path library = dataDir / "map_variants";
 
-    // The engine owns the map data, so ask it to write the variant first and give it a short window: when the hosted
-    // engine's save does run, those bytes are the edited map. In this build it usually writes nothing at all
-    // ("save_map" needs the engine's own save UI), so fall back to the variant this session was launched with. That
-    // keeps SAVE working from Noble's own pause menu instead of failing silently.
-    // MvarDump's WriteFile watch keeps every buffer the engine hands to a save file under data/mvar_write; a fresh
-    // one that parses as a variant is the edited map even when the file itself ends up empty.
-    const fs::path captureDir = fs::current_path() / "data" / "mvar_write";
-    std::set<std::wstring> beforeCaptures;
-    for (const auto& entry : fs::directory_iterator(captureDir, ec)) {
-        if (entry.is_regular_file(ec)) beforeCaptures.insert(entry.path().filename().wstring());
-    }
-    ec.clear();
+  // The engine owns the map data, so ask it to write the variant first and give
+  // it a short window: when the hosted engine's save does run, those bytes are
+  // the edited map. In this build it usually writes nothing at all
+  // ("save_map" needs the engine's own save UI), so fall back to the variant
+  // this session was launched with. That keeps SAVE working from Noble's own
+  // pause menu instead of failing silently. MvarDump's WriteFile watch keeps
+  // every buffer the engine hands to a save file under data/mvar_write; a fresh
+  // one that parses as a variant is the edited map even when the file itself
+  // ends up empty.
+  const fs::path captureDir = fs::current_path() / "data" / "mvar_write";
+  std::set<std::wstring> beforeCaptures;
+  for (const auto &entry : fs::directory_iterator(captureDir, ec)) {
+    if (entry.is_regular_file(ec))
+      beforeCaptures.insert(entry.path().filename().wstring());
+  }
+  ec.clear();
 
-    // Direct path first: serialize the live session variant ourselves. It does not touch the save UI or the save
-    // device, so it is the only source that works while the game is paused, and it carries the Forge edits.
-    {
-        // Forge commits placements on simulation ticks, and the pause menu freezes the sim (game_speed 0). Let it run
-        // for a few frames so the live variant contains anything placed since the last tick, then freeze again.
-        if (BlamEngine::Active()) {
-            BlamEngine::Active()->ExecuteCommand("game_speed 1");
-            Sleep(150);
-        }
-        std::vector<uint8_t> liveChunk;
-        const bool captured = BlamEngine::Active() && BlamEngine::Active()->TrySerializeLiveMapVariant(liveChunk);
-        if (BlamEngine::Active()) BlamEngine::Active()->ExecuteCommand("game_speed 0");
-        if (captured) {
-            (void)noble::TakeForgePlacements();
-            const fs::path tmpl = FindVariantTemplate(dataDir);
-            if (!tmpl.empty()) {
-                std::string detail;
-                const fs::path out = noble::mvar::SaveVariantChunkToLibrary(liveChunk, tmpl, name, library, detail);
-                if (!out.empty()) {
-                    if (out.extension() == ".json") {
-                        fs::path staleMvar = out;
-                        staleMvar.replace_extension(".mvar");
-                        fs::remove(staleMvar, ec);
-                    }
-                    noble::SetSessionMapVariantPath(out);
-                    NOBLE_INFO("PauseMenu: map variant '{}' saved from the live variant to '{}' (template '{}')", name,
-                               out.string(), tmpl.string());
-                    FrontEndMenu::InvalidateForgeMaps();
-                    return out;
-                }
-                NOBLE_WARN("PauseMenu: live variant chunk could not be saved: {}", detail);
-            } else {
-                NOBLE_WARN("PauseMenu: no template .mvar to wrap the live variant in");
-            }
-        }
-    }
-
-    fs::path source;
+  // Direct path first: serialize the live session variant ourselves. It does
+  // not touch the save UI or the save device, so it is the only source that
+  // works while the game is paused, and it carries the Forge edits.
+  {
+    // Forge commits placements on simulation ticks, and the pause menu freezes
+    // the sim (game_speed 0). Let it run for a few frames so the live variant
+    // contains anything placed since the last tick, then freeze again.
     if (BlamEngine::Active()) {
-        fs::path autosaveDir;
-        for (const auto& entry : fs::directory_iterator(dataDir / "userdata", ec)) {
-            if (!entry.is_directory(ec)) continue;
-            const fs::path candidate = entry.path() / "saves" / "HaloReach" / "autosave";
-            if (fs::is_directory(candidate, ec)) { autosaveDir = candidate; break; }
-        }
-        std::set<std::wstring> before;
-        if (!autosaveDir.empty()) {
-            for (const auto& entry : fs::directory_iterator(autosaveDir, ec)) {
-                if (entry.is_regular_file(ec)) before.insert(entry.path().filename().wstring());
-            }
-        }
-
-        const bool engineSave = BlamEngine::Active()->TriggerMapVariantSave();
-        NOBLE_INFO("PauseMenu: engine map-variant save {}", engineSave ? "invoked" : "faulted");
-        if (!engineSave) BlamEngine::Active()->ExecuteCommand("save_map");
-        for (int attempt = 0; attempt < 20 && source.empty() && !autosaveDir.empty(); ++attempt) {
-            Sleep(50);
-            for (const auto& entry : fs::directory_iterator(autosaveDir, ec)) {
-                if (!entry.is_regular_file(ec)) continue;
-                if (before.count(entry.path().filename().wstring())) continue;
-                std::wstring ext = entry.path().extension().wstring();
-                for (wchar_t& c : ext) c = static_cast<wchar_t>(::towlower(c));
-                if (ext != L".map") continue;
-                if (fs::file_size(entry.path(), ec) < 0x7329) continue;
-                source = entry.path();
-                NOBLE_INFO("PauseMenu: the engine wrote map variant '{}'", entry.path().string());
-                break;
-            }
-            ec.clear();
-        }
-        if (source.empty()) NOBLE_WARN("PauseMenu: the engine wrote no map variant; using this session's variant");
+      BlamEngine::Active()->ExecuteCommand("game_speed 1");
+      Sleep(150);
     }
-
-    // Best source: the chunk the engine's serializer produced. Its save routine builds that chunk from the live
-    // variant before handing it to the save device, so it holds the edits even when the device write fails.
-    std::vector<uint8_t> capturedChunk;
-    if (source.empty() && BlamEngine::Active() && BlamEngine::Active()->TakeCapturedMapVariantChunk(capturedChunk)) {
-        const fs::path tmpl = FindVariantTemplate(dataDir);
-        if (!tmpl.empty()) {
-            std::string detail;
-            const fs::path out = noble::mvar::SaveVariantChunkToLibrary(capturedChunk, tmpl, name, library, detail);
-            if (!out.empty()) {
-                NOBLE_INFO("PauseMenu: map variant '{}' saved from the engine serializer to '{}' (template '{}')", name,
-                           out.string(), tmpl.string());
-                FrontEndMenu::InvalidateForgeMaps();
-                return out;
-            }
-            NOBLE_WARN("PauseMenu: captured variant chunk could not be saved: {}", detail);
+    std::vector<uint8_t> liveChunk;
+    const bool captured =
+        BlamEngine::Active() &&
+        BlamEngine::Active()->TrySerializeLiveMapVariant(liveChunk);
+    if (BlamEngine::Active())
+      BlamEngine::Active()->ExecuteCommand("game_speed 0");
+    if (captured) {
+      (void)noble::TakeForgePlacements();
+      const fs::path tmpl = FindVariantTemplate(dataDir);
+      if (!tmpl.empty()) {
+        std::string detail;
+        const fs::path out = noble::mvar::SaveVariantChunkToLibrary(
+            liveChunk, tmpl, name, library, detail);
+        if (!out.empty()) {
+          if (out.extension() == ".json") {
+            fs::path staleMvar = out;
+            staleMvar.replace_extension(".mvar");
+            fs::remove(staleMvar, ec);
+          }
+          noble::SetSessionMapVariantPath(out);
+          NOBLE_INFO("PauseMenu: map variant '{}' saved from the live variant "
+                     "to '{}' (template '{}')",
+                     name, out.string(), tmpl.string());
+          FrontEndMenu::InvalidateForgeMaps();
+          return out;
         }
+        NOBLE_WARN("PauseMenu: live variant chunk could not be saved: {}",
+                   detail);
+      } else {
+        NOBLE_WARN("PauseMenu: no template .mvar to wrap the live variant in");
+      }
     }
+  }
 
-    if (source.empty()) {
-        std::vector<fs::path> fresh;
-        for (const auto& entry : fs::directory_iterator(captureDir, ec)) {
-            if (!entry.is_regular_file(ec)) continue;
-            if (beforeCaptures.count(entry.path().filename().wstring())) continue;
-            fresh.push_back(entry.path());
-        }
-        for (const fs::path& candidate : fresh) {
-            const noble::mvar::MapVariant captured = noble::mvar::ReadMapVariant(candidate);
-            if (!captured.valid) continue;
-            source = candidate;
-            NOBLE_INFO("PauseMenu: using captured engine save '{}'", candidate.string());
-            break;
-        }
+  fs::path source;
+  if (BlamEngine::Active()) {
+    fs::path autosaveDir;
+    for (const auto &entry : fs::directory_iterator(dataDir / "userdata", ec)) {
+      if (!entry.is_directory(ec))
+        continue;
+      const fs::path candidate =
+          entry.path() / "saves" / "HaloReach" / "autosave";
+      if (fs::is_directory(candidate, ec)) {
+        autosaveDir = candidate;
+        break;
+      }
     }
-    if (source.empty()) source = noble::SessionMapVariantPath();
-    if (source.empty()) {
-        NOBLE_WARN("PauseMenu: no variant to save (the session was not launched with -mvar)");
-        return {};
+    std::set<std::wstring> before;
+    if (!autosaveDir.empty()) {
+      for (const auto &entry : fs::directory_iterator(autosaveDir, ec)) {
+        if (entry.is_regular_file(ec))
+          before.insert(entry.path().filename().wstring());
+      }
     }
 
-    std::string detail;
-    const fs::path out = noble::mvar::SaveVariantToLibrary(source, name, library, detail);
-    if (out.empty()) {
-        NOBLE_WARN("PauseMenu: could not save map variant '{}': {}", name, detail);
-        return {};
+    const bool engineSave = BlamEngine::Active()->TriggerMapVariantSave();
+    NOBLE_INFO("PauseMenu: engine map-variant save {}",
+               engineSave ? "invoked" : "faulted");
+    if (!engineSave)
+      BlamEngine::Active()->ExecuteCommand("save_map");
+    for (int attempt = 0;
+         attempt < 20 && source.empty() && !autosaveDir.empty(); ++attempt) {
+      Sleep(50);
+      for (const auto &entry : fs::directory_iterator(autosaveDir, ec)) {
+        if (!entry.is_regular_file(ec))
+          continue;
+        if (before.count(entry.path().filename().wstring()))
+          continue;
+        std::wstring ext = entry.path().extension().wstring();
+        for (wchar_t &c : ext)
+          c = static_cast<wchar_t>(::towlower(c));
+        if (ext != L".map")
+          continue;
+        if (fs::file_size(entry.path(), ec) < 0x7329)
+          continue;
+        source = entry.path();
+        NOBLE_INFO("PauseMenu: the engine wrote map variant '{}'",
+                   entry.path().string());
+        break;
+      }
+      ec.clear();
     }
-    NOBLE_INFO("PauseMenu: map variant '{}' saved to '{}' (source '{}')", name, out.string(), source.string());
-    FrontEndMenu::InvalidateForgeMaps();
-    return out;
+    if (source.empty())
+      NOBLE_WARN("PauseMenu: the engine wrote no map variant; using this "
+                 "session's variant");
+  }
+
+  // Best source: the chunk the engine's serializer produced. Its save routine
+  // builds that chunk from the live variant before handing it to the save
+  // device, so it holds the edits even when the device write fails.
+  std::vector<uint8_t> capturedChunk;
+  if (source.empty() && BlamEngine::Active() &&
+      BlamEngine::Active()->TakeCapturedMapVariantChunk(capturedChunk)) {
+    const fs::path tmpl = FindVariantTemplate(dataDir);
+    if (!tmpl.empty()) {
+      std::string detail;
+      const fs::path out = noble::mvar::SaveVariantChunkToLibrary(
+          capturedChunk, tmpl, name, library, detail);
+      if (!out.empty()) {
+        NOBLE_INFO("PauseMenu: map variant '{}' saved from the engine "
+                   "serializer to '{}' (template '{}')",
+                   name, out.string(), tmpl.string());
+        FrontEndMenu::InvalidateForgeMaps();
+        return out;
+      }
+      NOBLE_WARN("PauseMenu: captured variant chunk could not be saved: {}",
+                 detail);
+    }
+  }
+
+  if (source.empty()) {
+    std::vector<fs::path> fresh;
+    for (const auto &entry : fs::directory_iterator(captureDir, ec)) {
+      if (!entry.is_regular_file(ec))
+        continue;
+      if (beforeCaptures.count(entry.path().filename().wstring()))
+        continue;
+      fresh.push_back(entry.path());
+    }
+    for (const fs::path &candidate : fresh) {
+      const noble::mvar::MapVariant captured =
+          noble::mvar::ReadMapVariant(candidate);
+      if (!captured.valid)
+        continue;
+      source = candidate;
+      NOBLE_INFO("PauseMenu: using captured engine save '{}'",
+                 candidate.string());
+      break;
+    }
+  }
+  if (source.empty())
+    source = noble::SessionMapVariantPath();
+  if (source.empty()) {
+    NOBLE_WARN("PauseMenu: no variant to save (the session was not launched "
+               "with -mvar)");
+    return {};
+  }
+
+  std::string detail;
+  const fs::path out =
+      noble::mvar::SaveVariantToLibrary(source, name, library, detail);
+  if (out.empty()) {
+    NOBLE_WARN("PauseMenu: could not save map variant '{}': {}", name, detail);
+    return {};
+  }
+  NOBLE_INFO("PauseMenu: map variant '{}' saved to '{}' (source '{}')", name,
+             out.string(), source.string());
+  FrontEndMenu::InvalidateForgeMaps();
+  return out;
 }
 bool PauseMenu::IsOpen() { return s_open.load(); }
 
 void PauseMenu::Toggle() {
   if (s_gameOver.load())
     return; // the post-game panel replaces the pause menu
-  // Esc steps back out of the scoreboard actions instead of opening the pause menu.
+  // Esc steps back out of the scoreboard actions instead of opening the pause
+  // menu.
   if (s_boardPointer.load()) {
     if (!s_boardReport.exchange(false))
       s_boardPointer.store(false);
@@ -744,7 +904,8 @@ void PauseMenu::Toggle() {
   // While a key rebind is waiting for a key, Esc belongs to the rebind
   // (SettingsPanel::PollRebind cancels it).
   if (s_open.load() && s_showSettings.load()) {
-    if (!PauseSettings().IsCapturingKey() && !PauseSettings().DiscardOnEscape()) {
+    if (!PauseSettings().IsCapturingKey() &&
+        !PauseSettings().DiscardOnEscape()) {
       s_showSettings.store(false);
       MenuSounds::Back();
       NOBLE_INFO("PauseMenu: settings closed");
@@ -779,6 +940,11 @@ void PauseMenu::Close() {
 }
 
 void PauseMenu::ShowGameOver() {
+  if (noble::BlamEngine::IsSavedFilmPlayback()) {
+    NOBLE_INFO(
+        "PauseMenu: suppressing game over during Theater saved film playback");
+    return;
+  }
   if (!s_gameOver.exchange(true)) {
     s_open.store(false);
     s_showSettings.store(false);
@@ -807,70 +973,84 @@ std::string s_boardMap;
 std::string s_boardMode;
 bool s_boardLogged = false;
 
-std::atomic<int> s_localTeam{1};   // from the lobby launch; the engine's own sides start at red
-std::atomic<bool> s_localTeamFromLobby{false};   // true once -lobby-teams told us the player's side
+std::atomic<int> s_localTeam{
+    1}; // from the lobby launch; the engine's own sides start at red
+std::atomic<bool> s_localTeamFromLobby{
+    false}; // true once -lobby-teams told us the player's side
 
 int LocalTeamFromBoard() {
-    std::lock_guard<std::mutex> lock(s_boardMutex);
-    for (const auto& row : s_boardRows) if (row.local) return row.team;
-    return s_localTeam.load();   // a solo launch has no roster yet: use the team the lobby assigned
+  std::lock_guard<std::mutex> lock(s_boardMutex);
+  for (const auto &row : s_boardRows)
+    if (row.local)
+      return row.team;
+  return s_localTeam.load(); // a solo launch has no roster yet: use the team
+                             // the lobby assigned
 }
 
-
-
 void ChangeLocalTeam() {
-    const int from = LocalTeamFromBoard() == 2 ? 2 : 1;
-    const int to = from == 1 ? 2 : 1;
-    // HaloScript's team enum is 0-based (0 red, 1 blue); this is the same override the game's own
-    // team-switch path uses. If the game type does not allow it, the engine ignores it.
-    if (BlamEngine* engine = BlamEngine::Active()) {
-        engine->ExecuteCommand("player_override_team 0 " + std::to_string(to - 1));
-    }
-    // Update local scoreboard row and voice chat team without forcibly destroying the player entity
-    // or spawning controllable puppet clones.
-    {
-        std::lock_guard<std::mutex> lock(s_boardMutex);
-        for (auto& row : s_boardRows) if (row.local) row.team = to;
-    }
-    VoiceChat::SetLocalTeam(to);
-    MenuSounds::Click();
-    NOBLE_INFO("PauseMenu: CHANGE TEAM requested ({} -> {})", from == 1 ? "red" : "blue", to == 1 ? "red" : "blue");
+  const int from = LocalTeamFromBoard() == 2 ? 2 : 1;
+  const int to = from == 1 ? 2 : 1;
+  // HaloScript's team enum is 0-based (0 red, 1 blue); this is the same
+  // override the game's own team-switch path uses. If the game type does not
+  // allow it, the engine ignores it.
+  if (BlamEngine *engine = BlamEngine::Active()) {
+    engine->ExecuteCommand("player_override_team 0 " + std::to_string(to - 1));
+  }
+  // Update local scoreboard row and voice chat team without forcibly destroying
+  // the player entity or spawning controllable puppet clones.
+  {
+    std::lock_guard<std::mutex> lock(s_boardMutex);
+    for (auto &row : s_boardRows)
+      if (row.local)
+        row.team = to;
+  }
+  VoiceChat::SetLocalTeam(to);
+  MenuSounds::Click();
+  NOBLE_INFO("PauseMenu: CHANGE TEAM requested ({} -> {})",
+             from == 1 ? "red" : "blue", to == 1 ? "red" : "blue");
 }
 } // namespace
 
 static std::string s_boardSession;
 
 void PauseMenu::SetLocalTeam(int team) {
-    s_localTeam.store(std::clamp(team, 1, 8));
-    s_localTeamFromLobby.store(true);
+  s_localTeam.store(std::clamp(team, 1, 8));
+  s_localTeamFromLobby.store(true);
 }
 
-void PauseMenu::SetScoreboardSession(const std::string& sessionId) {
+void PauseMenu::SetScoreboardSession(const std::string &sessionId) {
   std::lock_guard<std::mutex> lock(s_boardMutex);
   s_boardSession = sessionId;
 }
 
-void PauseMenu::SetScoreboardRoster(std::vector<ScoreboardEntry> entries, const std::string& mapName, const std::string& modeName) {
-    // The session roster can lag the lobby's team choice (the push may not have landed yet, or a guest's copy is
-    // stale), and the panel then shows a side the player is not on. The launch's own team wins for our row.
-    if (s_localTeamFromLobby.load()) {
-        for (auto& row : entries) {
-            if (!row.local) continue;
-            row.team = s_localTeam.load();
-            break;
-        }
+void PauseMenu::SetScoreboardRoster(std::vector<ScoreboardEntry> entries,
+                                    const std::string &mapName,
+                                    const std::string &modeName) {
+  // The session roster can lag the lobby's team choice (the push may not have
+  // landed yet, or a guest's copy is stale), and the panel then shows a side
+  // the player is not on. The launch's own team wins for our row.
+  if (s_localTeamFromLobby.load()) {
+    for (auto &row : entries) {
+      if (!row.local)
+        continue;
+      row.team = s_localTeam.load();
+      break;
     }
-    std::lock_guard<std::mutex> lock(s_boardMutex);
-    s_boardRows = std::move(entries);
-    s_boardMap = mapName;
-    s_boardMode = modeName;
-    if (!s_boardLogged) {
-        s_boardLogged = true;
-        NOBLE_INFO("PauseMenu: scoreboard roster set ({} player(s), {} on {})", s_boardRows.size(), s_boardMode, s_boardMap);
-    }
+  }
+  std::lock_guard<std::mutex> lock(s_boardMutex);
+  s_boardRows = std::move(entries);
+  s_boardMap = mapName;
+  s_boardMode = modeName;
+  if (!s_boardLogged) {
+    s_boardLogged = true;
+    NOBLE_INFO("PauseMenu: scoreboard roster set ({} player(s), {} on {})",
+               s_boardRows.size(), s_boardMode, s_boardMap);
+  }
 }
 
-bool PauseMenu::WantsPointer() { return s_open.load() || s_gameOver.load() || s_boardPointer.load(); }
+bool PauseMenu::WantsPointer() {
+  return s_open.load() || s_gameOver.load() || s_boardPointer.load();
+}
 
 void PauseMenu::EnterScoreboardPointer() {
   if (s_open.load() || s_gameOver.load() || s_boardPointer.exchange(true))
@@ -887,12 +1067,14 @@ void PauseMenu::SetLoadingMap(const std::string &scenario) {
   s_loadingImage.clear();
   s_loadingThumb.clear();
   s_loadingDescription.clear();
-  // Read the career file and build today's challenge list now, off the render thread, so the first time the
-  // pause menu opens it does not stall on that work.
+  // Read the career file and build today's challenge list now, off the render
+  // thread, so the first time the pause menu opens it does not stall on that
+  // work.
   std::thread([] { (void)Career::Challenges(); }).detach();
 }
 
-void PauseMenu::SetLoadingMapInfo(const std::string &title, const std::filesystem::path &image,
+void PauseMenu::SetLoadingMapInfo(const std::string &title,
+                                  const std::filesystem::path &image,
                                   const std::filesystem::path &thumbnail) {
   std::lock_guard<std::mutex> lock(s_mapMutex);
   if (!title.empty()) {
@@ -904,7 +1086,8 @@ void PauseMenu::SetLoadingMapInfo(const std::string &title, const std::filesyste
 }
 
 void PauseMenu::SetLoadingMapDescription(const std::string &description) {
-  // Workshop text is written for a Steam page: drop [tags], collapse whitespace, cap the length.
+  // Workshop text is written for a Steam page: drop [tags], collapse
+  // whitespace, cap the length.
   std::string out;
   bool pendingSpace = false;
   constexpr size_t kMax = 260;
@@ -930,7 +1113,8 @@ void PauseMenu::SetLoadingMapDescription(const std::string &description) {
   }
   if (out.size() >= kMax) {
     const size_t cut = out.find_last_of(' ');
-    if (cut != std::string::npos && cut > kMax / 2) out.resize(cut);
+    if (cut != std::string::npos && cut > kMax / 2)
+      out.resize(cut);
     out += "...";
   }
   std::lock_guard<std::mutex> lock(s_mapMutex);
@@ -938,383 +1122,476 @@ void PauseMenu::SetLoadingMapDescription(const std::string &description) {
 }
 
 void PauseMenu::DrawMenu(HWND hwnd) {
-    ImGuiIO& io = ImGui::GetIO();
+  ImGuiIO &io = ImGui::GetIO();
 
-    // Dim the game behind the menu.
-    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 150));
+  // Dim the game behind the menu.
+  ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
+                                                IM_COL32(0, 0, 0, 150));
 
-    if (s_showSettings.load()) {
-        DrawSettingsPage(hwnd);
-        return;
+  if (s_showSettings.load()) {
+    DrawSettingsPage(hwnd);
+    return;
+  }
+
+  // A held game pauses; a match with other players in it must not - MCC reaches
+  // the same conclusion and just shows the menu. Noble cannot stop the engine's
+  // simulation itself (no pause command has been found), so the header says
+  // which of the two this is instead of pretending.
+  if (s_openedAt == 0)
+    s_openedAt = GetTickCount64();
+  const bool timeReady =
+      (GetTickCount64() - s_openedAt) > 250; // ignore the opening frames
+  if (s_waitForRelease && timeReady) {
+    const bool anyHeld = ImGui::IsMouseDown(0) ||
+                         (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 ||
+                         ImGui::IsKeyDown(ImGuiKey_Enter) ||
+                         ImGui::IsKeyDown(ImGuiKey_KeypadEnter) ||
+                         ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown);
+    if (!anyHeld)
+      s_waitForRelease = false;
+  }
+  const bool interactive = timeReady && !s_waitForRelease;
+
+  const size_t peers = NetworkTransport::Get().GetGamePeerCount();
+  const bool solo = peers == 0;
+  const bool isGuest =
+      NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
+  const std::wstring restartArgs = Relaunch::CurrentGameArgs();
+
+  // ImGui works in a logical space (1280x720 here even on a 1920x1080 buffer),
+  // so scale from 720 to keep the panel the size the reference screens suggest
+  // (about 84% of the width). No 2.0 cap: a 2160p back buffer needs 3.0, and
+  // the cap left the panel at two-thirds size on 4K. Also keep the 1080-wide
+  // panel on screen when the window is narrower than 3:2. The player's UI SCALE
+  // setting applies here too, as long as the panel still fits on screen.
+  const float s =
+      std::clamp(std::min(io.DisplaySize.y / 720.0f * Settings::UiScale(),
+                          io.DisplaySize.x * 0.96f / 1080.0f),
+                 0.8f, 4.0f);
+  const ImVec2 size(1080.0f * s, 560.0f * s);
+  ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+  ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - size.x) * 0.5f,
+                                 (io.DisplaySize.y - size.y) * 0.5f),
+                          ImGuiCond_Always);
+  if (!ImGui::Begin("##NoblePauseMenu", nullptr, kPanelFlags)) {
+    ImGui::End();
+    return;
+  }
+
+  // Header: the match type and map, like MCC's pause header.
+  NobleStyle::Header(solo ? "PAUSED" : "MENU");
+  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+  if (solo) {
+    SetLocalSimulationPaused(true);
+    ImGui::TextUnformatted("The game is paused.");
+  } else {
+    ImGui::Text("The match keeps running for the other %zu player%s.", peers,
+                peers == 1 ? "" : "s");
+  }
+  ImGui::PopStyleColor();
+  ImGui::Spacing();
+
+  const float availW = ImGui::GetContentRegionAvail().x;
+  const float listW = 330.0f * s;
+  const float gap = 18.0f * s;
+  const float contentH = 420.0f * s;
+
+  // ---- Left: the action list (selection + description, like Reach's pause
+  // menu) ----
+  ImGui::BeginGroup();
+  struct Entry {
+    const char *label;
+    const char *description;
+    bool danger;
+    bool enabled;
+  };
+  const bool canRestart = !restartArgs.empty() && !isGuest;
+  std::vector<Entry> entries = {
+      {"RESUME", "Resume the game.", false, true},
+      {s_confirmRestart ? "CONFIRM RESTART?" : "RESTART MATCH",
+       canRestart
+           ? (s_confirmRestart ? "Select again to confirm restarting the match "
+                                 "from the beginning."
+                               : "Starts this match again from the beginning.")
+           : (isGuest ? "Only the host can restart a multiplayer match."
+                      : "Needs the match arguments (only available in a "
+                        "launched match)."),
+       s_confirmRestart, canRestart},
+      {"SETTINGS", "Change any setting without leaving the match.", false,
+       true},
+      {"CONTROLS",
+       "Change key, mouse and controller bindings and look speed without "
+       "leaving the match.",
+       false, true},
+  };
+  int teamEntry = -1;
+  std::string currentMode = s_boardMode;
+  if (currentMode.empty()) {
+    std::wstring wmode = ArgValue(Relaunch::CurrentGameArgs(), L"-mode");
+    if (wmode.empty())
+      wmode = ArgValue(GetCommandLineW(), L"-mode");
+    char mb[64] = {};
+    WideCharToMultiByte(CP_UTF8, 0, wmode.c_str(), -1, mb, sizeof(mb) - 1,
+                        nullptr, nullptr);
+    currentMode = mb;
+  }
+  int saveMapVariantEntry = -1;
+  if (_stricmp(currentMode.c_str(), "forge") == 0) {
+    saveMapVariantEntry = static_cast<int>(entries.size());
+    entries.push_back({"SAVE MAP VARIANT",
+                       "Saves the Forge map you have built as a map variant, "
+                       "under its base map in the maps menu.",
+                       false, true});
+  }
+  const bool isMultiOrForge = (currentMode == "multiplayer" ||
+                               currentMode == "forge" || currentMode.empty());
+  if (BlamEngine::GameTeamsEnabled() || isMultiOrForge) {
+    teamEntry = static_cast<int>(entries.size());
+    entries.push_back(
+        {"CHANGE TEAM", "Switch between red and blue team.", false, true});
+  }
+  const int leaveEntry = static_cast<int>(entries.size());
+  if (noble::BlamEngine::IsSavedFilmPlayback()) {
+    entries.push_back({"LEAVE THEATER",
+                       "Stop watching the film and return to the Theater menu.",
+                       false, true});
+  } else {
+    entries.push_back({"LEAVE GAME",
+                       "Close this match and go back to the front-end menu.",
+                       false, true});
+  }
+  const int quitEntry = static_cast<int>(entries.size());
+  entries.push_back({"QUIT", "Close Noble and end the match.", true, true});
+  const int entryCount = static_cast<int>(entries.size());
+
+  static ULONGLONG s_lastMove = 0;
+  const ULONGLONG now = GetTickCount64();
+  const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up();
+  const bool down =
+      ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down();
+  if (interactive && (up || down) && now - s_lastMove > 120) {
+    s_lastMove = now;
+    s_focus = (s_focus + (down ? 1 : entryCount - 1)) % entryCount;
+    if (s_focus != 1)
+      s_confirmRestart = false;
+    MenuSounds::Scroll();
+  }
+  s_focus = std::clamp(s_focus, 0, entryCount - 1);
+  if (s_focus != 1)
+    s_confirmRestart = false;
+
+  const float rowH = 46.0f * s;
+  int activated = -1;
+  // Centre each label in its row (ImGui's default puts it at the top of the
+  // tall row).
+  ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
+  for (int i = 0; i < entryCount; ++i) {
+    ImGui::PushID(i);
+    const bool focused = i == s_focus;
+    const bool enabled = entries[i].enabled;
+    ImGui::PushStyleColor(
+        ImGuiCol_Text, enabled ? (focused ? NobleStyle::Accent()
+                                          : ImVec4(0.86f, 0.90f, 0.94f, 1.0f))
+                               : NobleStyle::TextMuted());
+    if (ImGui::Selectable(entries[i].label, focused, ImGuiSelectableFlags_None,
+                          ImVec2(listW, rowH + 6.0f * s)) &&
+        enabled && interactive) {
+      s_focus = i;
+      activated = i;
     }
-
-    // A held game pauses; a match with other players in it must not - MCC reaches the same conclusion and just shows
-    // the menu. Noble cannot stop the engine's simulation itself (no pause command has been found), so the header
-    // says which of the two this is instead of pretending.
-    if (s_openedAt == 0) s_openedAt = GetTickCount64();
-    const bool timeReady = (GetTickCount64() - s_openedAt) > 250; // ignore the opening frames
-    if (s_waitForRelease && timeReady) {
-        const bool anyHeld = ImGui::IsMouseDown(0) ||
-                             (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 ||
-                             ImGui::IsKeyDown(ImGuiKey_Enter) ||
-                             ImGui::IsKeyDown(ImGuiKey_KeypadEnter) ||
-                             ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown);
-        if (!anyHeld) s_waitForRelease = false;
-    }
-    const bool interactive = timeReady && !s_waitForRelease;
-
-    const size_t peers = NetworkTransport::Get().GetGamePeerCount();
-    const bool solo = peers == 0;
-    const bool isGuest = NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
-    const std::wstring restartArgs = Relaunch::CurrentGameArgs();
-
-    // ImGui works in a logical space (1280x720 here even on a 1920x1080 buffer), so scale from 720 to keep the
-    // panel the size the reference screens suggest (about 84% of the width).
-    // No 2.0 cap: a 2160p back buffer needs 3.0, and the cap left the panel at two-thirds size on 4K. Also keep the
-    // 1080-wide panel on screen when the window is narrower than 3:2.
-    // The player's UI SCALE setting applies here too, as long as the panel still fits on screen.
-    const float s = std::clamp(std::min(io.DisplaySize.y / 720.0f * Settings::UiScale(), io.DisplaySize.x * 0.96f / 1080.0f), 0.8f, 4.0f);
-    const ImVec2 size(1080.0f * s, 560.0f * s);
-    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - size.x) * 0.5f, (io.DisplaySize.y - size.y) * 0.5f),
-                            ImGuiCond_Always);
-    if (!ImGui::Begin("##NoblePauseMenu", nullptr, kPanelFlags)) {
-        ImGui::End();
-        return;
-    }
-
-    // Header: the match type and map, like MCC's pause header.
-    NobleStyle::Header(solo ? "PAUSED" : "MENU");
-    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-    if (solo) {
-        SetLocalSimulationPaused(true);
-        ImGui::TextUnformatted("The game is paused.");
-    } else {
-        ImGui::Text("The match keeps running for the other %zu player%s.", peers, peers == 1 ? "" : "s");
-    }
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
-
-    const float availW = ImGui::GetContentRegionAvail().x;
-    const float listW = 330.0f * s;
-    const float gap = 18.0f * s;
-    const float contentH = 420.0f * s;
-
-    // ---- Left: the action list (selection + description, like Reach's pause menu) ----
-    ImGui::BeginGroup();
-    struct Entry {
-        const char* label;
-        const char* description;
-        bool danger;
-        bool enabled;
-    };
-    const bool canRestart = !restartArgs.empty() && !isGuest;
-    std::vector<Entry> entries = {
-        { "RESUME", "Resume the game.", false, true },
-        { s_confirmRestart ? "CONFIRM RESTART?" : "RESTART MATCH",
-          canRestart ? (s_confirmRestart ? "Select again to confirm restarting the match from the beginning."
-                                         : "Starts this match again from the beginning.")
-                     : (isGuest ? "Only the host can restart a multiplayer match."
-                                : "Needs the match arguments (only available in a launched match)."),
-          s_confirmRestart, canRestart },
-        { "SETTINGS", "Change any setting without leaving the match.", false, true },
-        { "CONTROLS", "Change key, mouse and controller bindings and look speed without leaving the match.", false, true },
-    };
-    int teamEntry = -1;
-    std::string currentMode = s_boardMode;
-    if (currentMode.empty()) {
-        std::wstring wmode = ArgValue(Relaunch::CurrentGameArgs(), L"-mode");
-        if (wmode.empty()) wmode = ArgValue(GetCommandLineW(), L"-mode");
-        char mb[64] = {};
-        WideCharToMultiByte(CP_UTF8, 0, wmode.c_str(), -1, mb, sizeof(mb) - 1, nullptr, nullptr);
-        currentMode = mb;
-    }
-    int saveMapVariantEntry = -1;
-    if (_stricmp(currentMode.c_str(), "forge") == 0) {
-        saveMapVariantEntry = static_cast<int>(entries.size());
-        entries.push_back({ "SAVE MAP VARIANT",
-                            "Saves the Forge map you have built as a map variant, under its base map in the maps menu.",
-                            false, true });
-    }
-    const bool isMultiOrForge = (currentMode == "multiplayer" || currentMode == "forge" || currentMode.empty());
-    if (BlamEngine::GameTeamsEnabled() || isMultiOrForge) {
-        teamEntry = static_cast<int>(entries.size());
-        entries.push_back({ "CHANGE TEAM", "Switch between red and blue team.", false, true });
-    }
-    const int leaveEntry = static_cast<int>(entries.size());
-    entries.push_back({ "LEAVE GAME", "Close this match and go back to the front-end menu.", false, true });
-    const int quitEntry = static_cast<int>(entries.size());
-    entries.push_back({ "QUIT", "Close Noble and end the match.", true, true });
-    const int entryCount = static_cast<int>(entries.size());
-
-    static ULONGLONG s_lastMove = 0;
-    const ULONGLONG now = GetTickCount64();
-    const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up();
-    const bool down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down();
-    if (interactive && (up || down) && now - s_lastMove > 120) {
-        s_lastMove = now;
-        s_focus = (s_focus + (down ? 1 : entryCount - 1)) % entryCount;
-        if (s_focus != 1) s_confirmRestart = false;
-        MenuSounds::Scroll();
-    }
-    s_focus = std::clamp(s_focus, 0, entryCount - 1);
-    if (s_focus != 1) s_confirmRestart = false;
-
-    const float rowH = 46.0f * s;
-    int activated = -1;
-    // Centre each label in its row (ImGui's default puts it at the top of the tall row).
-    ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
-    for (int i = 0; i < entryCount; ++i) {
-        ImGui::PushID(i);
-        const bool focused = i == s_focus;
-        const bool enabled = entries[i].enabled;
-        ImGui::PushStyleColor(ImGuiCol_Text, enabled ? (focused ? NobleStyle::Accent() : ImVec4(0.86f, 0.90f, 0.94f, 1.0f))
-                                                     : NobleStyle::TextMuted());
-        if (ImGui::Selectable(entries[i].label, focused, ImGuiSelectableFlags_None,
-                              ImVec2(listW, rowH + 6.0f * s)) && enabled && interactive) {
-            s_focus = i;
-            activated = i;
-        }
-        if (ImGui::IsItemHovered()) {
-            MenuSounds::Hover(ImGui::GetItemID());
-            // Only a moving mouse takes the focus: a pointer resting here used to pin the row against the D-pad.
-            if (interactive && enabled && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) {
-                s_focus = i;
-                if (s_focus != 1) s_confirmRestart = false;
-            }
-        }
-        ImGui::PopStyleColor();
-        // Underline, like the reference screens.
-        const ImVec2 p = ImGui::GetItemRectMin();
-        const ImVec2 q = ImGui::GetItemRectMax();
-        ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + 8.0f * s, q.y - 4.0f * s), ImVec2(p.x + listW - 8.0f * s, q.y - 4.0f * s),
-                                            focused ? IM_COL32(140, 200, 255, 200) : IM_COL32(90, 105, 120, 120), 1.0f);
-        ImGui::PopID();
-    }
-    ImGui::PopStyleVar();
-    if (interactive && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
-        if (entries[s_focus].enabled) activated = s_focus;
-    }
-    ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + listW);
-    ImGui::TextWrapped("%s", entries[s_focus].description);
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-    ImGui::EndGroup();
-
-    // ---- Right: daily and weekly challenges, scrollable (the reference screens' sidebar) ----
-    ImGui::SameLine(0.0f, gap);
-    ImGui::BeginGroup();
-    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-    ImGui::TextUnformatted(("Daily challenges - " + Career::DailyResetText()).c_str());
-    ImGui::PopStyleColor();
-    const float sideW = availW - listW - gap;
-    ImGui::BeginChild("##pausechallenges", ImVec2(sideW, contentH), ImGuiChildFlags_Borders);
-    if (interactive) UiPad::ScrollWindow(false, true);
-    static std::vector<Career::Challenge> s_cachedChallenges;
-    static ULONGLONG s_cachedChallengesAt = 0;
-    {
-      const ULONGLONG tick = GetTickCount64();
-      if (s_challengesStale.exchange(false) || tick - s_cachedChallengesAt > 2000) {
-        s_cachedChallenges = Career::Challenges();
-        s_cachedChallengesAt = tick;
+    if (ImGui::IsItemHovered()) {
+      MenuSounds::Hover(ImGui::GetItemID());
+      // Only a moving mouse takes the focus: a pointer resting here used to pin
+      // the row against the D-pad.
+      if (interactive && enabled &&
+          (ImGui::GetIO().MouseDelta.x != 0.0f ||
+           ImGui::GetIO().MouseDelta.y != 0.0f)) {
+        s_focus = i;
+        if (s_focus != 1)
+          s_confirmRestart = false;
       }
     }
-    const std::vector<Career::Challenge> &challenges = s_cachedChallenges;
-    int shown = 0;
-    for (int weekly = 0; weekly <= 1; ++weekly) {
-        bool heading = false;
-        for (const Career::Challenge& c : challenges) {
-            if (static_cast<int>(c.weekly) != weekly) continue;
-            if (!heading) {
-                heading = true;
-                ImGui::Spacing();
-                ImGui::PushStyleColor(ImGuiCol_Text, weekly ? ImVec4(1.0f, 0.75f, 0.47f, 1.0f) : NobleStyle::Accent());
-                ImGui::TextUnformatted(weekly ? "WEEKLY" : "DAILY");
-                ImGui::PopStyleColor();
-            }
-            ImGui::PushID(shown++);
-            const ImVec4 accent = c.done ? ImVec4(0.55f, 0.85f, 0.55f, 1.0f) : NobleStyle::Accent();
-            ImGui::PushStyleColor(ImGuiCol_Text, accent);
-            ImGui::TextUnformatted(c.title.c_str());
-            ImGui::PopStyleColor();
-            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-            ImGui::TextWrapped("%s", c.description.c_str());
-            const float fraction = c.target > 0 ? std::clamp(static_cast<float>(c.progress) / c.target, 0.0f, 1.0f) : 0.0f;
-            char bar[64];
-            std::snprintf(bar, sizeof(bar), "%lld / %lld   %lld XP", static_cast<long long>(c.progress),
-                          static_cast<long long>(c.target), static_cast<long long>(c.reward));
-            ImGui::ProgressBar(fraction, ImVec2(-1.0f, 4.0f * s), "");
-            ImGui::TextUnformatted(bar);
-            ImGui::PopStyleColor();
-            ImGui::Separator();
-            ImGui::PopID();
-        }
-    }
-    if (shown == 0) ImGui::TextDisabled("No challenges yet - finish a match to start them.");
-    ImGui::EndChild();
-    ImGui::EndGroup();
-
-    // ---- Act on the selection ----
-    if (activated == 0) {
-        Close();
-    } else if (activated == 1) {
-        if (!canRestart) return;
-        MenuSounds::Click();
-        if (!s_confirmRestart) {
-            s_confirmRestart = true;
-        } else {
-            Close();
-            RelaunchAndClose(hwnd, restartArgs, "restart match");
-        }
-    } else if (activated == 2) {
-        MenuSounds::Click();
-        Window::TakeLeftClicks();
-        s_showSettings.store(true);
-        NOBLE_INFO("PauseMenu: settings opened from the pause menu");
-    } else if (activated == 3) {
-        MenuSounds::Click();
-        Window::TakeLeftClicks();
-        PauseSettings().SetTab(InputPrompts::Current() == InputPrompts::Device::Gamepad ? 5 : 4);   // Controller, or Keyboard & Mouse
-        s_showSettings.store(true);
-        NOBLE_INFO("PauseMenu: controls opened from the pause menu");
-    } else if (saveMapVariantEntry >= 0 && activated == saveMapVariantEntry) {
-        // Ask for a name first: it becomes the variant's title in the maps menu and its file name.
-        MenuSounds::Click();
-        s_saveMapVariantResult.clear();
-        {
-            std::string suggested = noble::mvar::VariantTitle(noble::SessionMapVariantPath());
-            if (suggested.empty()) suggested = "My Forge Map";
-            std::snprintf(s_saveVariantName, sizeof(s_saveVariantName), "%s", suggested.c_str());
-        }
-        s_saveVariantOpen = true;
-        s_saveVariantJustOpened = true;
-        s_saveVariantNeedsFocus = true;
-        ImGui::OpenPopup("##save_map_variant");
-    } else if (teamEntry >= 0 && activated == teamEntry) {
-        ChangeLocalTeam();
-    } else if (activated == leaveEntry) {
-        // The engine can't switch maps once started, so start a fresh Noble with no -map: that opens the menu.
-        MenuSounds::Click();
-        Close();
-        const bool isHost = NetworkTransport::Get().IsHost() ||
-                            (wcsstr(GetCommandLineW(), L"-host") != nullptr) ||
-                            (Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
-        std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
-        if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
-        if (isHost && (!wSession.empty() || MasterServerClient::Get().IsAdvertising())) {
-            // Host leaving match returns the entire party to the Pre-Game Lobby
-            char sessUtf8[128] = {};
-            if (!wSession.empty()) {
-                WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
-            } else {
-                std::string curSid = MasterServerClient::Get().GetCurrentSessionId();
-                std::snprintf(sessUtf8, sizeof(sessUtf8), "%s", curSid.c_str());
-            }
-            NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"host_return_to_lobby\"}");
-            MasterServerClient::Get().ReturnLobbySync(sessUtf8);
-            std::wstring returnArgs = LobbyReturnArgs(true);
-            RelaunchAndClose(hwnd, returnArgs, "host leave match to pre-game lobby");
-        } else {
-            RelaunchAndClose(hwnd, L"", "leave game");
-        }
-    } else if (activated == quitEntry) {
-        Close();
-        QuitFromMatch(hwnd, "quit requested");
-    } else if (interactive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
-        // B resumes. Esc is not read here: the input poll already toggles on Esc, and closing here as well reopened the
-        // menu when both saw the same press.
-        Close();
-    }
-
-    // ---- Name this map variant (SAVE MAP VARIANT, Forge only) ----
-    // A small box over the pause menu: type the name, SAVE writes the variant under it. The name is also written into
-    // the variant's title, which is what the maps menu shows under the base map.
-    ImGui::SetNextWindowSize(ImVec2(520.0f * s, 0.0f), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("##save_map_variant", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
-                               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
-        ImGui::TextUnformatted("MAP VARIANT NAME");
-        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-        ImGui::TextWrapped("Shown under its base map in the maps menu, for Custom Game and Forge.");
-        ImGui::PopStyleColor();
-        ImGui::Spacing();
-        if (s_saveVariantNeedsFocus) {
-            ImGui::SetKeyboardFocusHere(0);
-            s_saveVariantNeedsFocus = false;
-        }
-        ImGui::InputText("##variant_name", s_saveVariantName, sizeof(s_saveVariantName));
-        ImGui::Spacing();
-        const bool typed = s_saveVariantName[0] != 0;
-        const std::filesystem::path library = ReachHost::Get().GetDataDir() / "map_variants";
-        // Only variants inside the user's map_variants library can be overwritten; stock MCC variants
-        // must be saved as a new copy.
-        const std::filesystem::path sessionPath = noble::SessionMapVariantPath();
-        std::error_code overEc;
-        const bool inUserLibrary = !sessionPath.empty() && std::filesystem::exists(sessionPath, overEc) &&
-            std::filesystem::equivalent(sessionPath.parent_path(), library, overEc);
-        std::string currentName = inUserLibrary ? noble::mvar::VariantTitle(sessionPath) : std::string{};
-        if (inUserLibrary && currentName.empty()) {
-            currentName = sessionPath.stem().string();
-        }
-        const bool canOverwrite = inUserLibrary && !currentName.empty();
-        const auto finishSave = [](const std::filesystem::path& saved) {
-            s_saveMapVariantResult = saved.empty() ? "Could not save the map variant (see the log)."
-                                                   : "Saved: " + saved.filename().string();
-            s_saveVariantOpen = false;
-            ImGui::CloseCurrentPopup();
-        };
-        if (s_saveVariantJustOpened) {
-            s_saveVariantJustOpened = false;
-        } else if (typed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
-            MenuSounds::Click();
-            finishSave(SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
-        }
-        if (!canOverwrite) {
-            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-            ImGui::TextWrapped("This map was not opened from a saved variant; use SAVE AS COPY.");
-            ImGui::PopStyleColor();
-        }
-        ImGui::BeginDisabled(!canOverwrite);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
-        if (ImGui::Button("OVERWRITE", ImVec2(150.0f * s, 34.0f * s)) && canOverwrite) {
-            MenuSounds::Click();
-            finishSave(SaveForgeMapVariant(sessionPath.stem().string()));
-        }
-        ImGui::PopStyleColor();
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!typed);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
-        if (ImGui::Button("SAVE AS COPY", ImVec2(170.0f * s, 34.0f * s)) && typed) {
-            MenuSounds::Click();
-            finishSave(SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
-        }
-        ImGui::PopStyleColor();
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("CANCEL", ImVec2(120.0f * s, 34.0f * s)) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-            MenuSounds::Back();
-            s_saveVariantOpen = false;
-            ImGui::CloseCurrentPopup();
-        }
-        if (!s_saveMapVariantResult.empty()) {
-            ImGui::Spacing();
-            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-            ImGui::TextWrapped("%s", s_saveMapVariantResult.c_str());
-            ImGui::PopStyleColor();
-        }
-        ImGui::EndPopup();
-    }
-
-    ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-    ImGui::TextUnformatted("Esc resumes");
     ImGui::PopStyleColor();
-    ImGui::End();
+    // Underline, like the reference screens.
+    const ImVec2 p = ImGui::GetItemRectMin();
+    const ImVec2 q = ImGui::GetItemRectMax();
+    ImGui::GetWindowDrawList()->AddLine(
+        ImVec2(p.x + 8.0f * s, q.y - 4.0f * s),
+        ImVec2(p.x + listW - 8.0f * s, q.y - 4.0f * s),
+        focused ? IM_COL32(140, 200, 255, 200) : IM_COL32(90, 105, 120, 120),
+        1.0f);
+    ImGui::PopID();
+  }
+  ImGui::PopStyleVar();
+  if (interactive && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                      ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
+    if (entries[s_focus].enabled)
+      activated = s_focus;
+  }
+  ImGui::Spacing();
+  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + listW);
+  ImGui::TextWrapped("%s", entries[s_focus].description);
+  ImGui::PopTextWrapPos();
+  ImGui::PopStyleColor();
+  ImGui::EndGroup();
+
+  // ---- Right: daily and weekly challenges, scrollable (the reference screens'
+  // sidebar) ----
+  ImGui::SameLine(0.0f, gap);
+  ImGui::BeginGroup();
+  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+  ImGui::TextUnformatted(
+      ("Daily challenges - " + Career::DailyResetText()).c_str());
+  ImGui::PopStyleColor();
+  const float sideW = availW - listW - gap;
+  ImGui::BeginChild("##pausechallenges", ImVec2(sideW, contentH),
+                    ImGuiChildFlags_Borders);
+  if (interactive)
+    UiPad::ScrollWindow(false, true);
+  static std::vector<Career::Challenge> s_cachedChallenges;
+  static ULONGLONG s_cachedChallengesAt = 0;
+  {
+    const ULONGLONG tick = GetTickCount64();
+    if (s_challengesStale.exchange(false) ||
+        tick - s_cachedChallengesAt > 2000) {
+      s_cachedChallenges = Career::Challenges();
+      s_cachedChallengesAt = tick;
+    }
+  }
+  const std::vector<Career::Challenge> &challenges = s_cachedChallenges;
+  int shown = 0;
+  for (int weekly = 0; weekly <= 1; ++weekly) {
+    bool heading = false;
+    for (const Career::Challenge &c : challenges) {
+      if (static_cast<int>(c.weekly) != weekly)
+        continue;
+      if (!heading) {
+        heading = true;
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              weekly ? ImVec4(1.0f, 0.75f, 0.47f, 1.0f)
+                                     : NobleStyle::Accent());
+        ImGui::TextUnformatted(weekly ? "WEEKLY" : "DAILY");
+        ImGui::PopStyleColor();
+      }
+      ImGui::PushID(shown++);
+      const ImVec4 accent =
+          c.done ? ImVec4(0.55f, 0.85f, 0.55f, 1.0f) : NobleStyle::Accent();
+      ImGui::PushStyleColor(ImGuiCol_Text, accent);
+      ImGui::TextUnformatted(c.title.c_str());
+      ImGui::PopStyleColor();
+      ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+      ImGui::TextWrapped("%s", c.description.c_str());
+      const float fraction =
+          c.target > 0 ? std::clamp(static_cast<float>(c.progress) / c.target,
+                                    0.0f, 1.0f)
+                       : 0.0f;
+      char bar[64];
+      std::snprintf(bar, sizeof(bar), "%lld / %lld   %lld XP",
+                    static_cast<long long>(c.progress),
+                    static_cast<long long>(c.target),
+                    static_cast<long long>(c.reward));
+      ImGui::ProgressBar(fraction, ImVec2(-1.0f, 4.0f * s), "");
+      ImGui::TextUnformatted(bar);
+      ImGui::PopStyleColor();
+      ImGui::Separator();
+      ImGui::PopID();
+    }
+  }
+  if (shown == 0)
+    ImGui::TextDisabled("No challenges yet - finish a match to start them.");
+  ImGui::EndChild();
+  ImGui::EndGroup();
+
+  // ---- Act on the selection ----
+  if (activated == 0) {
+    Close();
+  } else if (activated == 1) {
+    if (!canRestart)
+      return;
+    MenuSounds::Click();
+    if (!s_confirmRestart) {
+      s_confirmRestart = true;
+    } else {
+      Close();
+      RelaunchAndClose(hwnd, restartArgs, "restart match");
+    }
+  } else if (activated == 2) {
+    MenuSounds::Click();
+    Window::TakeLeftClicks();
+    s_showSettings.store(true);
+    NOBLE_INFO("PauseMenu: settings opened from the pause menu");
+  } else if (activated == 3) {
+    MenuSounds::Click();
+    Window::TakeLeftClicks();
+    PauseSettings().SetTab(InputPrompts::Current() ==
+                                   InputPrompts::Device::Gamepad
+                               ? 5
+                               : 4); // Controller, or Keyboard & Mouse
+    s_showSettings.store(true);
+    NOBLE_INFO("PauseMenu: controls opened from the pause menu");
+  } else if (saveMapVariantEntry >= 0 && activated == saveMapVariantEntry) {
+    // Ask for a name first: it becomes the variant's title in the maps menu and
+    // its file name.
+    MenuSounds::Click();
+    s_saveMapVariantResult.clear();
+    {
+      std::string suggested =
+          noble::mvar::VariantTitle(noble::SessionMapVariantPath());
+      if (suggested.empty())
+        suggested = "My Forge Map";
+      std::snprintf(s_saveVariantName, sizeof(s_saveVariantName), "%s",
+                    suggested.c_str());
+    }
+    s_saveVariantOpen = true;
+    s_saveVariantJustOpened = true;
+    s_saveVariantNeedsFocus = true;
+    ImGui::OpenPopup("##save_map_variant");
+  } else if (teamEntry >= 0 && activated == teamEntry) {
+    ChangeLocalTeam();
+  } else if (activated == leaveEntry) {
+    // The engine can't switch maps once started, so start a fresh Noble with no
+    // -map: that opens the menu.
+    MenuSounds::Click();
+    Close();
+    const bool isHost =
+        NetworkTransport::Get().IsHost() ||
+        (wcsstr(GetCommandLineW(), L"-host") != nullptr) ||
+        (Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+    std::wstring wSession =
+        ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+    if (wSession.empty())
+      wSession = ArgValue(GetCommandLineW(), L"-session-id");
+    if (isHost &&
+        (!wSession.empty() || MasterServerClient::Get().IsAdvertising())) {
+      // Host leaving match returns the entire party to the Pre-Game Lobby
+      char sessUtf8[128] = {};
+      if (!wSession.empty()) {
+        WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8,
+                            sizeof(sessUtf8) - 1, nullptr, nullptr);
+      } else {
+        std::string curSid = MasterServerClient::Get().GetCurrentSessionId();
+        std::snprintf(sessUtf8, sizeof(sessUtf8), "%s", curSid.c_str());
+      }
+      NetworkTransport::Get().SendLobbyControlJson(
+          "{\"type\":\"host_return_to_lobby\"}");
+      MasterServerClient::Get().ReturnLobbySync(sessUtf8);
+      std::wstring returnArgs = LobbyReturnArgs(true);
+      RelaunchAndClose(hwnd, returnArgs, "host leave match to pre-game lobby");
+    } else {
+      RelaunchAndClose(hwnd, L"", "leave game");
+    }
+  } else if (activated == quitEntry) {
+    Close();
+    QuitFromMatch(hwnd, "quit requested");
+  } else if (interactive &&
+             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+    // B resumes. Esc is not read here: the input poll already toggles on Esc,
+    // and closing here as well reopened the menu when both saw the same press.
+    Close();
+  }
+
+  // ---- Name this map variant (SAVE MAP VARIANT, Forge only) ----
+  // A small box over the pause menu: type the name, SAVE writes the variant
+  // under it. The name is also written into the variant's title, which is what
+  // the maps menu shows under the base map.
+  ImGui::SetNextWindowSize(ImVec2(520.0f * s, 0.0f), ImGuiCond_Appearing);
+  if (ImGui::BeginPopupModal(
+          "##save_map_variant", nullptr,
+          ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+              ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
+    ImGui::TextUnformatted("MAP VARIANT NAME");
+    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+    ImGui::TextWrapped("Shown under its base map in the maps menu, for Custom "
+                       "Game and Forge.");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+    if (s_saveVariantNeedsFocus) {
+      ImGui::SetKeyboardFocusHere(0);
+      s_saveVariantNeedsFocus = false;
+    }
+    ImGui::InputText("##variant_name", s_saveVariantName,
+                     sizeof(s_saveVariantName));
+    ImGui::Spacing();
+    const bool typed = s_saveVariantName[0] != 0;
+    const std::filesystem::path library =
+        ReachHost::Get().GetDataDir() / "map_variants";
+    // Only variants inside the user's map_variants library can be overwritten;
+    // stock MCC variants must be saved as a new copy.
+    const std::filesystem::path sessionPath = noble::SessionMapVariantPath();
+    std::error_code overEc;
+    const bool inUserLibrary =
+        !sessionPath.empty() && std::filesystem::exists(sessionPath, overEc) &&
+        std::filesystem::equivalent(sessionPath.parent_path(), library, overEc);
+    std::string currentName =
+        inUserLibrary ? noble::mvar::VariantTitle(sessionPath) : std::string{};
+    if (inUserLibrary && currentName.empty()) {
+      currentName = sessionPath.stem().string();
+    }
+    const bool canOverwrite = inUserLibrary && !currentName.empty();
+    const auto finishSave = [](const std::filesystem::path &saved) {
+      s_saveMapVariantResult =
+          saved.empty() ? "Could not save the map variant (see the log)."
+                        : "Saved: " + saved.filename().string();
+      s_saveVariantOpen = false;
+      ImGui::CloseCurrentPopup();
+    };
+    if (s_saveVariantJustOpened) {
+      s_saveVariantJustOpened = false;
+    } else if (typed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                         ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
+      MenuSounds::Click();
+      finishSave(
+          SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
+    }
+    if (!canOverwrite) {
+      ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+      ImGui::TextWrapped(
+          "This map was not opened from a saved variant; use SAVE AS COPY.");
+      ImGui::PopStyleColor();
+    }
+    ImGui::BeginDisabled(!canOverwrite);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
+    if (ImGui::Button("OVERWRITE", ImVec2(150.0f * s, 34.0f * s)) &&
+        canOverwrite) {
+      MenuSounds::Click();
+      finishSave(SaveForgeMapVariant(sessionPath.stem().string()));
+    }
+    ImGui::PopStyleColor();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!typed);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
+    if (ImGui::Button("SAVE AS COPY", ImVec2(170.0f * s, 34.0f * s)) && typed) {
+      MenuSounds::Click();
+      finishSave(
+          SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
+    }
+    ImGui::PopStyleColor();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("CANCEL", ImVec2(120.0f * s, 34.0f * s)) ||
+        ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      MenuSounds::Back();
+      s_saveVariantOpen = false;
+      ImGui::CloseCurrentPopup();
+    }
+    if (!s_saveMapVariantResult.empty()) {
+      ImGui::Spacing();
+      ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+      ImGui::TextWrapped("%s", s_saveMapVariantResult.c_str());
+      ImGui::PopStyleColor();
+    }
+    ImGui::EndPopup();
+  }
+
+  ImGui::Spacing();
+  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+  ImGui::TextUnformatted("Esc resumes");
+  ImGui::PopStyleColor();
+  ImGui::End();
 }
 
 // The front-end SETTINGS panel, reused while paused so settings can be changed
@@ -1347,8 +1624,8 @@ void DrawSettingsPage(HWND hwnd) {
     ImGui::TextDisabled("Applied changes also reach this match. B goes back to "
                         "the pause menu.");
     ImGui::Separator();
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) && !PauseSettings().IsCapturingKey() &&
-        !ImGui::GetIO().WantTextInput) {
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) &&
+        !PauseSettings().IsCapturingKey() && !ImGui::GetIO().WantTextInput) {
       s_showSettings.store(false);
       MenuSounds::Back();
     }
@@ -1391,7 +1668,8 @@ bool IsSlotLine(const Career::AwardLine &l) {
   return l.label == "Random bonus" || l.label == "Jackpot!";
 }
 
-// The credit count and bar sounds repeat several times in a few seconds and sat well above the rest of the UI.
+// The credit count and bar sounds repeat several times in a few seconds and sat
+// well above the rest of the UI.
 constexpr float kCountSfxVolume = 0.25f;
 
 // Follows the Other volume slider, like the menu sounds.
@@ -1433,9 +1711,9 @@ void Heading(ImDrawList *dl, ImVec2 pos, float width, float s,
 
 } // namespace
 
-
-// Test option "-scoreboard-demo N": draws the panel with a sample roster as the host, without needing a real session.
-// 1 = as seen while the key is held, 2 = pointer free with a player selected, 3 = the Report window as well.
+// Test option "-scoreboard-demo N": draws the panel with a sample roster as the
+// host, without needing a real session. 1 = as seen while the key is held, 2 =
+// pointer free with a player selected, 3 = the Report window as well.
 static int ScoreboardDemo() {
   static const int s_demo = [] {
     int value = 0, argc = 0;
@@ -1451,23 +1729,33 @@ static int ScoreboardDemo() {
   return s_demo;
 }
 
-// A report that could not reach the master server stays on this PC (one JSON object per line).
-static bool SaveReport(const std::string &player, const char *reason, const std::string &map, const std::string &mode) {
+// A report that could not reach the master server stays on this PC (one JSON
+// object per line).
+static bool SaveReport(const std::string &player, const char *reason,
+                       const std::string &map, const std::string &mode) {
   wchar_t exe[MAX_PATH] = {};
   GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  const std::filesystem::path file = std::filesystem::path(exe).parent_path() / "data" / "userdata" / "reports.jsonl";
+  const std::filesystem::path file = std::filesystem::path(exe).parent_path() /
+                                     "data" / "userdata" / "reports.jsonl";
   std::error_code ec;
   std::filesystem::create_directories(file.parent_path(), ec);
   std::ofstream out(file, std::ios::app);
   if (!out)
     return false;
-  const nlohmann::json line = {{"time", static_cast<long long>(std::time(nullptr))}, {"player", player}, {"reason", reason}, {"map", map}, {"mode", mode}};
-  out << line.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) << "\n";
+  const nlohmann::json line = {
+      {"time", static_cast<long long>(std::time(nullptr))},
+      {"player", player},
+      {"reason", reason},
+      {"map", map},
+      {"mode", mode}};
+  out << line.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)
+      << "\n";
   return out.good();
 }
 
 // A button that cannot work yet still shows, greyed, and says why when hovered.
-static void UnavailableButton(const char *label, const ImVec2 &size, const char *why) {
+static void UnavailableButton(const char *label, const ImVec2 &size,
+                              const char *why) {
   ImGui::BeginDisabled();
   ImGui::Button(label, size);
   ImGui::EndDisabled();
@@ -1475,10 +1763,11 @@ static void UnavailableButton(const char *label, const ImVec2 &size, const char 
     ImGui::SetTooltip("%s", why);
 }
 
-// In-match scoreboard. Noble's panel replaces Reach's own scoreboard (ReachHost keeps the key from the engine) and lists
-// the session roster with rank badges, service tags and team colours. A click while the key is held frees the pointer for
-// the player actions.
-// Static sets for individual and global voice mutes across the match.
+// In-match scoreboard. Noble's panel replaces Reach's own scoreboard (ReachHost
+// keeps the key from the engine) and lists the session roster with rank badges,
+// service tags and team colours. A click while the key is held frees the
+// pointer for the player actions. Static sets for individual and global voice
+// mutes across the match.
 static std::set<std::string> s_mutedNames;
 static bool s_muteAllActive = false;
 static bool s_showPlayerModal = false;
@@ -1495,8 +1784,9 @@ struct RawScore {
   bool valid = false;
 };
 
-// POD SEH reader to avoid MSVC C2712 (no C++ objects requiring destruction inside __try).
-// Reads haloreach.dll's g_game_results structure (haloreach+0x28B83B0):
+// POD SEH reader to avoid MSVC C2712 (no C++ objects requiring destruction
+// inside __try). Reads haloreach.dll's g_game_results structure
+// (haloreach+0x28B83B0):
 //   - Player entries (16 slots, stride 0xD8) at base + 0xFEF8:
 //       +0x00 (u8): player_valid
 //       +0x10 (wchar_t[16]): player_name
@@ -1504,34 +1794,41 @@ struct RawScore {
 //       +0x6C (wchar_t[5]): service_tag
 //       +0xBA (i16): live player score (base + 0xFFB2 + slot * 0xD8)
 //   - Live in_game_statistics array (16 slots, stride 0x708) at base + 0x10E50:
-//       Each stat is a 15-bit uint16_t bitfield at base + 0x10E50 + slot * 0x708 + stat_id * 2
-//       (bits 0..14 hold the value, read via raw & 0x7FFFu):
-//       stat_id 6 = in_round_score, 7 = in_game_total_score, 8 = kills, 9 = assists, 10 = deaths.
-//   - Also reads the TLS players datum array (tlsBase + 0x18, stride 0x490) for player
-//     presence, local-player flag (_player_is_local_machine_bit = 0x08), name, team (+0xAD),
-//     and service tag (+0x10C), plus TLS game_engine_globals (tlsBase + 0x20, +0x3270 + slot * 8)
-//     for live round/total score.
-static void ReadRawScoresSEH(const uint8_t* reachBase, RawScore* outScores, size_t count) {
+//       Each stat is a 15-bit uint16_t bitfield at base + 0x10E50 + slot *
+//       0x708 + stat_id * 2 (bits 0..14 hold the value, read via raw &
+//       0x7FFFu): stat_id 6 = in_round_score, 7 = in_game_total_score, 8 =
+//       kills, 9 = assists, 10 = deaths.
+//   - Also reads the TLS players datum array (tlsBase + 0x18, stride 0x490) for
+//   player
+//     presence, local-player flag (_player_is_local_machine_bit = 0x08), name,
+//     team (+0xAD), and service tag (+0x10C), plus TLS game_engine_globals
+//     (tlsBase + 0x20, +0x3270 + slot * 8) for live round/total score.
+static void ReadRawScoresSEH(const uint8_t *reachBase, RawScore *outScores,
+                             size_t count) {
   __try {
-    const uint8_t* table = reachBase + 0x28B83B0;
+    const uint8_t *table = reachBase + 0x28B83B0;
     for (size_t i = 0; i < count && i < 16; ++i) {
-      const uint8_t* p = table + 0xFEF8 + (i * 0xD8);
+      const uint8_t *p = table + 0xFEF8 + (i * 0xD8);
       if (p[0] != 0) {
         outScores[i].valid = true;
-        const wchar_t* wname = reinterpret_cast<const wchar_t*>(p + 0x10);
-        for (size_t c = 0; c < 16 && wname[c] != 0; ++c) outScores[i].name[c] = wname[c];
+        const wchar_t *wname = reinterpret_cast<const wchar_t *>(p + 0x10);
+        for (size_t c = 0; c < 16 && wname[c] != 0; ++c)
+          outScores[i].name[c] = wname[c];
         outScores[i].name[16] = 0;
-        const int8_t rawTeam = *reinterpret_cast<const int8_t*>(p + 0x62);
+        const int8_t rawTeam = *reinterpret_cast<const int8_t *>(p + 0x62);
         outScores[i].team = (rawTeam >= 0 && rawTeam < 8) ? (rawTeam + 1) : 0;
-        const wchar_t* wtag = reinterpret_cast<const wchar_t*>(p + 0x6C);
-        for (size_t c = 0; c < 5 && wtag[c] != 0; ++c) outScores[i].tag[c] = wtag[c];
+        const wchar_t *wtag = reinterpret_cast<const wchar_t *>(p + 0x6C);
+        for (size_t c = 0; c < 5 && wtag[c] != 0; ++c)
+          outScores[i].tag[c] = wtag[c];
         outScores[i].tag[5] = 0;
       }
 
-      const uint8_t* statsBase = table + 0x10E50 + (i * 0x708);
+      const uint8_t *statsBase = table + 0x10E50 + (i * 0x708);
       auto readStat = [statsBase](size_t statId) -> int32_t {
-        const uint16_t raw = *reinterpret_cast<const uint16_t*>(statsBase + statId * 2);
-        if (raw == 0xFFFFu) return 0;
+        const uint16_t raw =
+            *reinterpret_cast<const uint16_t *>(statsBase + statId * 2);
+        if (raw == 0xFFFFu)
+          return 0;
         return static_cast<int32_t>(raw & 0x7FFFu);
       };
 
@@ -1540,7 +1837,7 @@ static void ReadRawScoresSEH(const uint8_t* reachBase, RawScore* outScores, size
       const int32_t d = readStat(10);
       const int32_t roundScore = readStat(6);
       const int32_t totalScore = readStat(7);
-      const int16_t liveScore16 = *reinterpret_cast<const int16_t*>(p + 0xBA);
+      const int16_t liveScore16 = *reinterpret_cast<const int16_t *>(p + 0xBA);
 
       outScores[i].kills = (k >= 0 && k < 32768) ? k : 0;
       outScores[i].assists = (a >= 0 && a < 32768) ? a : 0;
@@ -1554,43 +1851,61 @@ static void ReadRawScoresSEH(const uint8_t* reachBase, RawScore* outScores, size
       }
     }
 
-    // Supplement with live TLS players datum array (stride 0x490) and TLS game_engine_globals
-    // score array so player identity, local flag, team, and score are always populated in real time.
-    const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(reachBase + 0xC17B18);
+    // Supplement with live TLS players datum array (stride 0x490) and TLS
+    // game_engine_globals score array so player identity, local flag, team, and
+    // score are always populated in real time.
+    const uint32_t tlsIdx =
+        *reinterpret_cast<const uint32_t *>(reachBase + 0xC17B18);
     if (tlsIdx < 64) {
       const uintptr_t tlsVec = __readgsqword(0x58);
       if (tlsVec) {
-        const uintptr_t tlsBase = *reinterpret_cast<const uintptr_t*>(tlsVec + static_cast<uintptr_t>(tlsIdx) * 8);
+        const uintptr_t tlsBase = *reinterpret_cast<const uintptr_t *>(
+            tlsVec + static_cast<uintptr_t>(tlsIdx) * 8);
         if (tlsBase) {
-          const uint8_t* playersTable = *reinterpret_cast<const uint8_t* const*>(tlsBase + 0x18);
+          const uint8_t *playersTable =
+              *reinterpret_cast<const uint8_t *const *>(tlsBase + 0x18);
           if (playersTable) {
-            const int32_t maxP = *reinterpret_cast<const int32_t*>(playersTable + 0x44);
-            const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(playersTable + 0x50);
+            const int32_t maxP =
+                *reinterpret_cast<const int32_t *>(playersTable + 0x44);
+            const uint8_t *entries =
+                *reinterpret_cast<const uint8_t *const *>(playersTable + 0x50);
             if (entries && maxP > 0 && maxP <= 16) {
-              for (int32_t i = 0; i < maxP && static_cast<size_t>(i) < count; ++i) {
-                const uint8_t* entry = entries + static_cast<size_t>(i) * 0x490;
-                const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry);
-                if (salt == 0) continue;
-                const uint32_t flags = *reinterpret_cast<const uint32_t*>(entry + 0x04);
-                if ((flags & 0x01u) != 0) continue; // skip _player_left_game_bit
-                const wchar_t* wname = reinterpret_cast<const wchar_t*>(entry + 0xB0);
-                if (wname[0] == 0) continue;
+              for (int32_t i = 0; i < maxP && static_cast<size_t>(i) < count;
+                   ++i) {
+                const uint8_t *entry = entries + static_cast<size_t>(i) * 0x490;
+                const uint16_t salt =
+                    *reinterpret_cast<const uint16_t *>(entry);
+                if (salt == 0)
+                  continue;
+                const uint32_t flags =
+                    *reinterpret_cast<const uint32_t *>(entry + 0x04);
+                if ((flags & 0x01u) != 0)
+                  continue; // skip _player_left_game_bit
+                const wchar_t *wname =
+                    reinterpret_cast<const wchar_t *>(entry + 0xB0);
+                if (wname[0] == 0)
+                  continue;
                 outScores[i].valid = true;
                 if (outScores[i].name[0] == 0) {
-                  for (size_t c = 0; c < 16 && wname[c] != 0; ++c) outScores[i].name[c] = wname[c];
+                  for (size_t c = 0; c < 16 && wname[c] != 0; ++c)
+                    outScores[i].name[c] = wname[c];
                   outScores[i].name[16] = 0;
                 }
                 if (outScores[i].tag[0] == 0) {
-                  const wchar_t* wtag = reinterpret_cast<const wchar_t*>(entry + 0x10C);
-                  for (size_t c = 0; c < 5 && wtag[c] != 0; ++c) outScores[i].tag[c] = wtag[c];
+                  const wchar_t *wtag =
+                      reinterpret_cast<const wchar_t *>(entry + 0x10C);
+                  for (size_t c = 0; c < 5 && wtag[c] != 0; ++c)
+                    outScores[i].tag[c] = wtag[c];
                   outScores[i].tag[5] = 0;
                 }
                 if (outScores[i].team <= 0) {
-                  int8_t rawTeam = *reinterpret_cast<const int8_t*>(entry + 0xAD);
+                  int8_t rawTeam =
+                      *reinterpret_cast<const int8_t *>(entry + 0xAD);
                   if (rawTeam < 0 || rawTeam >= 8) {
-                    rawTeam = *reinterpret_cast<const int8_t*>(entry + 0x102);
+                    rawTeam = *reinterpret_cast<const int8_t *>(entry + 0x102);
                   }
-                  outScores[i].team = (rawTeam >= 0 && rawTeam < 8) ? (rawTeam + 1) : 0;
+                  outScores[i].team =
+                      (rawTeam >= 0 && rawTeam < 8) ? (rawTeam + 1) : 0;
                 }
                 if ((flags & 0x08u) != 0) {
                   outScores[i].local = true;
@@ -1599,13 +1914,17 @@ static void ReadRawScoresSEH(const uint8_t* reachBase, RawScore* outScores, size
             }
           }
 
-          // Live score fallback from TLS game_engine_globals (+0x3270 + slot * 8)
-          const uint8_t* geGlobals = *reinterpret_cast<const uint8_t* const*>(tlsBase + 0x20);
+          // Live score fallback from TLS game_engine_globals (+0x3270 + slot *
+          // 8)
+          const uint8_t *geGlobals =
+              *reinterpret_cast<const uint8_t *const *>(tlsBase + 0x20);
           if (geGlobals) {
             for (size_t i = 0; i < count && i < 16; ++i) {
               if (outScores[i].score == 0) {
-                const int16_t geTotalScore = *reinterpret_cast<const int16_t*>(geGlobals + 0x3272 + i * 8);
-                const int16_t geRoundScore = *reinterpret_cast<const int16_t*>(geGlobals + 0x3270 + i * 8);
+                const int16_t geTotalScore = *reinterpret_cast<const int16_t *>(
+                    geGlobals + 0x3272 + i * 8);
+                const int16_t geRoundScore = *reinterpret_cast<const int16_t *>(
+                    geGlobals + 0x3270 + i * 8);
                 if (geTotalScore != 0) {
                   outScores[i].score = geTotalScore;
                 } else if (geRoundScore != 0) {
@@ -1617,23 +1936,27 @@ static void ReadRawScoresSEH(const uint8_t* reachBase, RawScore* outScores, size
         }
       }
     }
-  } __except (EXCEPTION_EXECUTE_HANDLER) {}
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
 }
 
-static std::string WideToUtf8Short(const wchar_t* w) {
-  if (!w || w[0] == 0) return {};
+static std::string WideToUtf8Short(const wchar_t *w) {
+  if (!w || w[0] == 0)
+    return {};
   char buf[64] = {};
-  WideCharToMultiByte(CP_UTF8, 0, w, -1, buf, static_cast<int>(sizeof(buf) - 1), nullptr, nullptr);
+  WideCharToMultiByte(CP_UTF8, 0, w, -1, buf, static_cast<int>(sizeof(buf) - 1),
+                      nullptr, nullptr);
   return buf;
 }
 
-// Polls active game engine results table (haloreach+0x28B83B0) and TLS players table so that
-// player roster, kills, assists, deaths, scores, and ping update live in real time across
-// Firefight, Custom Games, Campaign, and Forge.
+// Polls active game engine results table (haloreach+0x28B83B0) and TLS players
+// table so that player roster, kills, assists, deaths, scores, and ping update
+// live in real time across Firefight, Custom Games, Campaign, and Forge.
 static void UpdateLiveScoreboard() {
   HMODULE reach = GetModuleHandleW(L"haloreach.dll");
-  if (!reach) return;
-  const uint8_t* reachBase = reinterpret_cast<const uint8_t*>(reach);
+  if (!reach)
+    return;
+  const uint8_t *reachBase = reinterpret_cast<const uint8_t *>(reach);
   RawScore scores[16] = {};
   ReadRawScoresSEH(reachBase, scores, 16);
 
@@ -1641,12 +1964,13 @@ static void UpdateLiveScoreboard() {
   const int localRank = Career::RankIndex(Career::Get().credits);
   const bool netActive = NetworkTransport::Get().IsActive();
   const bool netHost = netActive && NetworkTransport::Get().IsHost();
-  const int fallbackPing = netActive ? NetworkTransport::Get().GetPeerPingMs(0) : -1;
+  const int fallbackPing =
+      netActive ? NetworkTransport::Get().GetPeerPingMs(0) : -1;
   std::vector<int> peerPingList;
   if (netActive) {
     const auto peerPingMap = NetworkTransport::Get().GetAllPeerPingsMs();
     peerPingList.reserve(peerPingMap.size());
-    for (const auto& kv : peerPingMap) {
+    for (const auto &kv : peerPingMap) {
       if (kv.second >= 0) {
         peerPingList.push_back(kv.second);
       }
@@ -1667,15 +1991,19 @@ static void UpdateLiveScoreboard() {
 
   if (anyValid) {
     for (size_t i = 0; i < 16; ++i) {
-      if (!scores[i].valid || scores[i].name[0] == 0) continue;
+      if (!scores[i].valid || scores[i].name[0] == 0)
+        continue;
       const std::string nameUtf8 = WideToUtf8Short(scores[i].name);
       const std::string tagUtf8 = WideToUtf8Short(scores[i].tag);
-      if (nameUtf8.empty()) continue;
-      const bool isLocalPlayer = scores[i].local ||
-                                 (!anyTlsLocal && (_stricmp(nameUtf8.c_str(), snap.playerName.c_str()) == 0));
+      if (nameUtf8.empty())
+        continue;
+      const bool isLocalPlayer =
+          scores[i].local ||
+          (!anyTlsLocal &&
+           (_stricmp(nameUtf8.c_str(), snap.playerName.c_str()) == 0));
 
-      PauseMenu::ScoreboardEntry* matched = nullptr;
-      for (auto& existing : s_boardRows) {
+      PauseMenu::ScoreboardEntry *matched = nullptr;
+      for (auto &existing : s_boardRows) {
         if (_stricmp(existing.name.c_str(), nameUtf8.c_str()) == 0) {
           matched = &existing;
           break;
@@ -1689,7 +2017,8 @@ static void UpdateLiveScoreboard() {
         PauseMenu::ScoreboardEntry entry;
         entry.name = nameUtf8;
         entry.local = isLocalPlayer;
-        entry.tag = entry.local && !snap.serviceTag.empty() ? snap.serviceTag : tagUtf8;
+        entry.tag =
+            entry.local && !snap.serviceTag.empty() ? snap.serviceTag : tagUtf8;
         entry.team = scores[i].team >= 0 ? scores[i].team : 1;
         entry.rank = entry.local ? localRank : 0;
         entry.ping = entry.local ? 0 : (fallbackPing > 0 ? fallbackPing : 0);
@@ -1715,9 +2044,10 @@ static void UpdateLiveScoreboard() {
       matched->score = scores[i].score;
     }
   } else {
-    // Fallback if player names aren't in g_game_results yet: update by slot index
+    // Fallback if player names aren't in g_game_results yet: update by slot
+    // index
     for (size_t i = 0; i < s_boardRows.size() && i < 16; ++i) {
-      auto& row = s_boardRows[i];
+      auto &row = s_boardRows[i];
       row.kills = scores[i].kills;
       row.assists = scores[i].assists;
       row.deaths = scores[i].deaths;
@@ -1726,7 +2056,7 @@ static void UpdateLiveScoreboard() {
   }
 
   size_t peerPingCursor = 0;
-  for (auto& row : s_boardRows) {
+  for (auto &row : s_boardRows) {
     if (row.local) {
       row.ping = (netActive && !netHost && fallbackPing > 0) ? fallbackPing : 0;
     } else if (netActive) {
@@ -1748,16 +2078,18 @@ static void UpdateLiveScoreboard() {
   }
 }
 
-// Modernized in-match scoreboard overlay replicating the 2-column layout from Halo: Reach MCC.
-// Supports mouse and gamepad navigation, individual and all-player mute toggles, live ping RTT,
-// team score aggregate bars, emblem / mute icon badges, rank insignias, and player options.
+// Modernized in-match scoreboard overlay replicating the 2-column layout from
+// Halo: Reach MCC. Supports mouse and gamepad navigation, individual and
+// all-player mute toggles, live ping RTT, team score aggregate bars, emblem /
+// mute icon badges, rank insignias, and player options.
 static void DrawScoreboardPanel() {
   UpdateLiveScoreboard();
 
   using namespace NobleUi;
   const int demo = ScoreboardDemo();
   const bool pointer = s_boardPointer.load();
-  const bool isHost = demo > 0 || (NetworkTransport::Get().IsActive() && NetworkTransport::Get().IsHost());
+  const bool isHost = demo > 0 || (NetworkTransport::Get().IsActive() &&
+                                   NetworkTransport::Get().IsHost());
   static std::string s_selected;
   static std::string s_status;
   static int s_reportReason = 0;
@@ -1791,21 +2123,32 @@ static void DrawScoreboardPanel() {
   if (demo > 0) {
     rows.clear();
     // Red Team roster matching the reference layout
-    const struct MockPlayer { const char* name; const char* tag; int rank; int team; int score; int k; int d; int a; int ping; bool muted; } kMockRed[] = {
-      { "ItsMeAdam", "ADAM", 28, 1, 18, 27, 4, 2, 51, false },
-      { "Player 3", "", 14, 1, 11, 14, 6, 0, 100, false },
-      { "EmberPrimeMain", "KING", 22, 1, 5, 6, 8, 2, 108, false },
-      { "Dinoextremo29", "DINO", 18, 1, 5, 5, 7, 2, 101, true },
-      { "gzhouse", "GZHO", 8, 1, 4, 4, 9, 1, 44, true },
-      { "PR Glazer", "A062", 16, 1, 4, 4, 12, 2, 41, false },
-      { "A Fellow Ape", "APE1", 6, 1, 3, 4, 8, 1, 101, false },
-      { "LIOX", "LIOX", 10, 1, 2, 3, 6, 1, 111, false },
-      { "Goppy", "EZPZ", 10, 1, 2, 2, 2, 0, 31, false },
-      { "Commando414", "A414", 12, 1, 1, 1, 8, 2, 46, false },
-      { "Steven Reed", "STEV", 14, 1, 1, 1, 1, 0, 83, false },
-      { "NobleHalo", "NOBL", 26, 1, 0, 0, 8, 4, 95, false },
-      { "PROJECT RYAN", "", 4, 1, 0, 0, 1, 0, 22, false },
-      { "DANIMALS", "BF3", 10, 1, 0, 0, 1, 0, 47, false },
+    const struct MockPlayer {
+      const char *name;
+      const char *tag;
+      int rank;
+      int team;
+      int score;
+      int k;
+      int d;
+      int a;
+      int ping;
+      bool muted;
+    } kMockRed[] = {
+        {"ItsMeAdam", "ADAM", 28, 1, 18, 27, 4, 2, 51, false},
+        {"Player 3", "", 14, 1, 11, 14, 6, 0, 100, false},
+        {"EmberPrimeMain", "KING", 22, 1, 5, 6, 8, 2, 108, false},
+        {"Dinoextremo29", "DINO", 18, 1, 5, 5, 7, 2, 101, true},
+        {"gzhouse", "GZHO", 8, 1, 4, 4, 9, 1, 44, true},
+        {"PR Glazer", "A062", 16, 1, 4, 4, 12, 2, 41, false},
+        {"A Fellow Ape", "APE1", 6, 1, 3, 4, 8, 1, 101, false},
+        {"LIOX", "LIOX", 10, 1, 2, 3, 6, 1, 111, false},
+        {"Goppy", "EZPZ", 10, 1, 2, 2, 2, 0, 31, false},
+        {"Commando414", "A414", 12, 1, 1, 1, 8, 2, 46, false},
+        {"Steven Reed", "STEV", 14, 1, 1, 1, 1, 0, 83, false},
+        {"NobleHalo", "NOBL", 26, 1, 0, 0, 8, 4, 95, false},
+        {"PROJECT RYAN", "", 4, 1, 0, 0, 1, 0, 22, false},
+        {"DANIMALS", "BF3", 10, 1, 0, 0, 1, 0, 47, false},
     };
     for (size_t i = 0; i < sizeof(kMockRed) / sizeof(kMockRed[0]); ++i) {
       PauseMenu::ScoreboardEntry e;
@@ -1820,26 +2163,27 @@ static void DrawScoreboardPanel() {
       e.ping = kMockRed[i].ping;
       e.muted = kMockRed[i].muted;
       e.machine = 1000ULL + i;
-      if (i == 0) e.local = true;
+      if (i == 0)
+        e.local = true;
       rows.push_back(e);
     }
 
     // Blue Team roster matching the reference layout
     const MockPlayer kMockBlue[] = {
-      { "PhosTheFloss", "PHOS", 20, 2, 14, 15, 2, 1, 91, false },
-      { "Daniel Orrin", "ORRN", 16, 2, 13, 15, 9, 2, 48, false },
-      { "M DooMknight", "DOOM", 12, 2, 7, 8, 5, 0, 101, false },
-      { "Raka Zodam", "RAKA", 8, 2, 6, 8, 5, 1, 56, false },
-      { "JP", "N64", 16, 2, 6, 8, 9, 1, 55, false },
-      { "hitler", "HITL", 18, 2, 5, 6, 5, 3, 17, false },
-      { "RaptorGunner13", "R13", 14, 2, 5, 6, 8, 1, 50, false },
-      { "Sakuya Izayoi", "2HU", 24, 2, 5, 5, 7, 1, 99, false },
-      { "Lexa Varomaii", "VKAI", 16, 2, 4, 5, 3, 0, 56, false },
-      { "Connor", "K488", 20, 2, 4, 4, 2, 0, 49, false },
-      { "Stop Shooting", "STOP", 6, 2, 3, 3, 5, 1, 55, false },
-      { "RainZaphkiel", "DΣV", 22, 2, 2, 2, 3, 0, 48, false },
-      { "RED", "RED", 10, 2, 1, 1, 0, 0, 43, false },
-      { "HighImCasual", "0408", 16, 2, 1, 1, 1, 0, 64, false },
+        {"PhosTheFloss", "PHOS", 20, 2, 14, 15, 2, 1, 91, false},
+        {"Daniel Orrin", "ORRN", 16, 2, 13, 15, 9, 2, 48, false},
+        {"M DooMknight", "DOOM", 12, 2, 7, 8, 5, 0, 101, false},
+        {"Raka Zodam", "RAKA", 8, 2, 6, 8, 5, 1, 56, false},
+        {"JP", "N64", 16, 2, 6, 8, 9, 1, 55, false},
+        {"hitler", "HITL", 18, 2, 5, 6, 5, 3, 17, false},
+        {"RaptorGunner13", "R13", 14, 2, 5, 6, 8, 1, 50, false},
+        {"Sakuya Izayoi", "2HU", 24, 2, 5, 5, 7, 1, 99, false},
+        {"Lexa Varomaii", "VKAI", 16, 2, 4, 5, 3, 0, 56, false},
+        {"Connor", "K488", 20, 2, 4, 4, 2, 0, 49, false},
+        {"Stop Shooting", "STOP", 6, 2, 3, 3, 5, 1, 55, false},
+        {"RainZaphkiel", "DΣV", 22, 2, 2, 2, 3, 0, 48, false},
+        {"RED", "RED", 10, 2, 1, 1, 0, 0, 43, false},
+        {"HighImCasual", "0408", 16, 2, 1, 1, 1, 0, 64, false},
     };
     for (size_t i = 0; i < sizeof(kMockBlue) / sizeof(kMockBlue[0]); ++i) {
       PauseMenu::ScoreboardEntry e;
@@ -1857,57 +2201,81 @@ static void DrawScoreboardPanel() {
       rows.push_back(e);
     }
 
-    if (mapName.empty()) { mapName = "Global Battles v40"; modeName = "Team Slayer"; }
-    if (s_selected.empty() && demo >= 2) s_selected = "Player 3";
+    if (mapName.empty()) {
+      mapName = "Global Battles v40";
+      modeName = "Team Slayer";
+    }
+    if (s_selected.empty() && demo >= 2)
+      s_selected = "Player 3";
     if ((demo == 3 || demo == 5) && s_boardPointer.load()) {
       static bool s_once = false;
-      if (!s_once) { s_once = true; s_boardReport.store(true); }
+      if (!s_once) {
+        s_once = true;
+        s_boardReport.store(true);
+      }
     }
   }
 
-  // Determine mode category: Campaign and Firefight are unified co-op (allied UNSC team)
+  // Determine mode category: Campaign and Firefight are unified co-op (allied
+  // UNSC team)
   std::string lowerMode = modeName;
-  for (char &c : lowerMode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  for (char &c : lowerMode)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   const bool isCoopMode = (lowerMode == "campaign" || lowerMode == "firefight");
 
-  // Sort: by team first (if competitive), then by score descending, kills descending, deaths ascending
-  std::sort(rows.begin(), rows.end(), [isCoopMode](const PauseMenu::ScoreboardEntry &a, const PauseMenu::ScoreboardEntry &b) {
-    if (!isCoopMode && a.team != b.team) return a.team < b.team;
-    if (a.score != b.score) return a.score > b.score;
-    if (a.kills != b.kills) return a.kills > b.kills;
-    return a.deaths < b.deaths;
-  });
+  // Sort: by team first (if competitive), then by score descending, kills
+  // descending, deaths ascending
+  std::sort(rows.begin(), rows.end(),
+            [isCoopMode](const PauseMenu::ScoreboardEntry &a,
+                         const PauseMenu::ScoreboardEntry &b) {
+              if (!isCoopMode && a.team != b.team)
+                return a.team < b.team;
+              if (a.score != b.score)
+                return a.score > b.score;
+              if (a.kills != b.kills)
+                return a.kills > b.kills;
+              return a.deaths < b.deaths;
+            });
 
   bool hasTeams = false;
   if (!isCoopMode) {
-    for (const auto &r : rows) hasTeams = hasTeams || r.team > 0;
+    for (const auto &r : rows)
+      hasTeams = hasTeams || r.team > 0;
   }
 
   // Multi-team colors and names (supporting all 8 Reach multiplayer teams)
   struct TeamStyle {
-    const char* name;
+    const char *name;
     ImU32 headerCol;
     ImU32 rowBaseCol;
     ImU32 rowAltCol;
   };
   static const TeamStyle kTeamStyles[8] = {
-    { "RED TEAM",    IM_COL32(195, 42, 42, 245),   IM_COL32(145, 30, 30, 150),  IM_COL32(130, 25, 25, 150) },
-    { "BLUE TEAM",   IM_COL32(38, 92, 185, 245),   IM_COL32(28, 62, 145, 150),  IM_COL32(24, 52, 130, 150) },
-    { "GREEN TEAM",  IM_COL32(38, 160, 68, 245),   IM_COL32(28, 120, 52, 150),  IM_COL32(24, 105, 45, 150) },
-    { "ORANGE TEAM", IM_COL32(220, 115, 28, 245),  IM_COL32(165, 85, 20, 150),  IM_COL32(145, 75, 18, 150) },
-    { "PURPLE TEAM", IM_COL32(150, 48, 195, 245),  IM_COL32(110, 35, 145, 150), IM_COL32(95, 30, 130, 150) },
-    { "YELLOW TEAM", IM_COL32(215, 180, 30, 245),  IM_COL32(160, 135, 22, 150), IM_COL32(140, 118, 18, 150) },
-    { "BROWN TEAM",  IM_COL32(140, 85, 45, 245),   IM_COL32(105, 62, 32, 150),  IM_COL32(90, 54, 28, 150) },
-    { "PINK TEAM",   IM_COL32(225, 80, 150, 245),  IM_COL32(165, 58, 110, 150), IM_COL32(145, 50, 96, 150) }
-  };
+      {"RED TEAM", IM_COL32(195, 42, 42, 245), IM_COL32(145, 30, 30, 150),
+       IM_COL32(130, 25, 25, 150)},
+      {"BLUE TEAM", IM_COL32(38, 92, 185, 245), IM_COL32(28, 62, 145, 150),
+       IM_COL32(24, 52, 130, 150)},
+      {"GREEN TEAM", IM_COL32(38, 160, 68, 245), IM_COL32(28, 120, 52, 150),
+       IM_COL32(24, 105, 45, 150)},
+      {"ORANGE TEAM", IM_COL32(220, 115, 28, 245), IM_COL32(165, 85, 20, 150),
+       IM_COL32(145, 75, 18, 150)},
+      {"PURPLE TEAM", IM_COL32(150, 48, 195, 245), IM_COL32(110, 35, 145, 150),
+       IM_COL32(95, 30, 130, 150)},
+      {"YELLOW TEAM", IM_COL32(215, 180, 30, 245), IM_COL32(160, 135, 22, 150),
+       IM_COL32(140, 118, 18, 150)},
+      {"BROWN TEAM", IM_COL32(140, 85, 45, 245), IM_COL32(105, 62, 32, 150),
+       IM_COL32(90, 54, 28, 150)},
+      {"PINK TEAM", IM_COL32(225, 80, 150, 245), IM_COL32(165, 58, 110, 150),
+       IM_COL32(145, 50, 96, 150)}};
 
   std::vector<int> columnRows[2];
-  int teamScores[2] = { 0, 0 };
-  int teamKills[2] = { 0, 0 };
-  int teamDeaths[2] = { 0, 0 };
-  int teamAssists[2] = { 0, 0 };
-  int activeTeamIndices[2] = { 0, 1 };
-  int presentTeamCount = 1;   // how many teams the match really has: one team is one column, not red-vs-blue
+  int teamScores[2] = {0, 0};
+  int teamKills[2] = {0, 0};
+  int teamDeaths[2] = {0, 0};
+  int teamAssists[2] = {0, 0};
+  int activeTeamIndices[2] = {0, 1};
+  int presentTeamCount = 1; // how many teams the match really has: one team is
+                            // one column, not red-vs-blue
 
   if (isCoopMode) {
     // Campaign & Firefight: Unified UNSC Team in a single column
@@ -1923,21 +2291,25 @@ static void DrawScoreboardPanel() {
     std::vector<int> presentTeams;
     for (const auto &r : rows) {
       const int t = std::clamp(r.team, 1, 8);
-      if (std::find(presentTeams.begin(), presentTeams.end(), t) == presentTeams.end()) {
+      if (std::find(presentTeams.begin(), presentTeams.end(), t) ==
+          presentTeams.end()) {
         presentTeams.push_back(t);
       }
     }
     std::sort(presentTeams.begin(), presentTeams.end());
-    // Follow the teams that are actually in the match. A solo gold-team session used to be drawn as
-    // "RED TEAM" with the gold row inside it, because the headers were always teams 1 and 2.
+    // Follow the teams that are actually in the match. A solo gold-team session
+    // used to be drawn as "RED TEAM" with the gold row inside it, because the
+    // headers were always teams 1 and 2.
     if (!presentTeams.empty()) {
       presentTeamCount = static_cast<int>(presentTeams.size());
       activeTeamIndices[0] = presentTeams[0] - 1;
-      activeTeamIndices[1] = presentTeams.size() > 1 ? presentTeams[1] - 1 : presentTeams[0] - 1;
+      activeTeamIndices[1] =
+          presentTeams.size() > 1 ? presentTeams[1] - 1 : presentTeams[0] - 1;
     }
     for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
       const int t = std::clamp(rows[i].team, 1, 8);
-      const int col = (presentTeamCount > 1 && t == (activeTeamIndices[1] + 1)) ? 1 : 0;
+      const int col =
+          (presentTeamCount > 1 && t == (activeTeamIndices[1] + 1)) ? 1 : 0;
       columnRows[col].push_back(i);
       teamScores[col] += rows[i].score;
       teamKills[col] += rows[i].kills;
@@ -1954,12 +2326,17 @@ static void DrawScoreboardPanel() {
     }
   }
 
-  // In demo mode or if scores are unconfigured in real match, align totals with the reference
+  // In demo mode or if scores are unconfigured in real match, align totals with
+  // the reference
   if (demo > 0) {
-    teamScores[0] = 2; teamScores[1] = 0;
-    teamKills[0] = 71; teamKills[1] = 87;
-    teamDeaths[0] = 81; teamDeaths[1] = 64;
-    teamAssists[0] = 17; teamAssists[1] = 11;
+    teamScores[0] = 2;
+    teamScores[1] = 0;
+    teamKills[0] = 71;
+    teamKills[1] = 87;
+    teamDeaths[0] = 81;
+    teamDeaths[1] = 64;
+    teamAssists[0] = 17;
+    teamAssists[1] = 11;
   }
 
   const int columnCount = (hasTeams && presentTeamCount > 1) ? 2 : 1;
@@ -1972,8 +2349,11 @@ static void DrawScoreboardPanel() {
   const float footerH = 42.0f * s;
   const float top = 56.0f * s;
 
-  const int maxVisible = std::max(6, static_cast<int>((H - top - headerH - subHeaderH - footerH - 40.0f * s) / rowH));
-  const int tallest = static_cast<int>(std::max(columnRows[0].size(), columnRows[1].size()));
+  const int maxVisible = std::max(
+      6, static_cast<int>(
+             (H - top - headerH - subHeaderH - footerH - 40.0f * s) / rowH));
+  const int tallest =
+      static_cast<int>(std::max(columnRows[0].size(), columnRows[1].size()));
   const int visibleRows = std::min(maxVisible, std::max(14, tallest));
   const float totalListH = visibleRows * rowH;
   const float panelH = headerH + subHeaderH + totalListH + footerH;
@@ -1984,10 +2364,12 @@ static void DrawScoreboardPanel() {
   if (pointer) {
     ImGui::SetNextWindowPos(p0, ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
-    ImGui::Begin("##scoreboard", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus |
-                 ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
+    ImGui::Begin(
+        "##scoreboard", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
+            ImGuiWindowFlags_NoBringToFrontOnFocus |
+            ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
   }
 
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
@@ -1995,18 +2377,25 @@ static void DrawScoreboardPanel() {
   // Dim the background behind the scoreboard cleanly
   dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), IM_COL32(0, 0, 0, 110));
 
-  static const ImU32 kTeamHeaderCol[2] = { IM_COL32(195, 42, 42, 245), IM_COL32(38, 92, 185, 245) };
-  static const ImU32 kTeamRowBaseCol[2] = { IM_COL32(145, 30, 30, 150), IM_COL32(28, 62, 145, 150) };
-  static const ImU32 kTeamRowAltCol[2]  = { IM_COL32(130, 25, 25, 150), IM_COL32(24, 52, 130, 150) };
+  static const ImU32 kTeamHeaderCol[2] = {IM_COL32(195, 42, 42, 245),
+                                          IM_COL32(38, 92, 185, 245)};
+  static const ImU32 kTeamRowBaseCol[2] = {IM_COL32(145, 30, 30, 150),
+                                           IM_COL32(28, 62, 145, 150)};
+  static const ImU32 kTeamRowAltCol[2] = {IM_COL32(130, 25, 25, 150),
+                                          IM_COL32(24, 52, 130, 150)};
 
-  static int s_boardScroll[2] = { 0, 0 };
+  static int s_boardScroll[2] = {0, 0};
   bool selectedIsListed = false;
   for (const auto &r : rows) {
-    if (!r.local && r.name == s_selected) selectedIsListed = true;
+    if (!r.local && r.name == s_selected)
+      selectedIsListed = true;
   }
 
-  const auto padPressed = [](ImGuiKey dpad, ImGuiKey stick) { return ImGui::IsKeyPressed(dpad) || ImGui::IsKeyPressed(stick); };
-  if (!pointer && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
+  const auto padPressed = [](ImGuiKey dpad, ImGuiKey stick) {
+    return ImGui::IsKeyPressed(dpad) || ImGui::IsKeyPressed(stick);
+  };
+  if (!pointer && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) ||
+                   ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
     PauseMenu::EnterScoreboardPointer();
   }
 
@@ -2015,32 +2404,43 @@ static void DrawScoreboardPanel() {
     int column = 0, row = -1;
     for (int c = 0; c < columnCount; ++c) {
       for (int k = 0; k < static_cast<int>(columnRows[c].size()); ++k) {
-        if (rows[columnRows[c][k]].name == s_selected) { column = c; row = k; }
+        if (rows[columnRows[c][k]].name == s_selected) {
+          column = c;
+          row = k;
+        }
       }
     }
     const auto pick = [&](int c, int from, int step) {
       const std::vector<int> &list = columnRows[c];
       const int count = static_cast<int>(list.size());
-      for (int k = std::clamp(from, 0, std::max(count - 1, 0)), tries = 0; count > 0 && k >= 0 && k < count && tries <= count; k += step, ++tries) {
+      for (int k = std::clamp(from, 0, std::max(count - 1, 0)), tries = 0;
+           count > 0 && k >= 0 && k < count && tries <= count;
+           k += step, ++tries) {
         s_selected = rows[list[k]].name;
         s_status.clear();
         selectedIsListed = true;
-        s_boardScroll[c] = std::clamp(s_boardScroll[c], k - std::max(visibleRows - 1, 0), k);
+        s_boardScroll[c] =
+            std::clamp(s_boardScroll[c], k - std::max(visibleRows - 1, 0), k);
         MenuSounds::Scroll();
         return true;
       }
       return false;
     };
     if (padPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) {
-      if (!pick(column, row + 1, 1) && columnCount > 1) pick(1 - column, 0, 1);
+      if (!pick(column, row + 1, 1) && columnCount > 1)
+        pick(1 - column, 0, 1);
     }
-    if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp) && row > 0) {
+    if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp) &&
+        row > 0) {
       pick(column, row - 1, -1);
     }
-    if (columnCount > 1 && (padPressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft) || padPressed(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight))) {
+    if (columnCount > 1 &&
+        (padPressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft) ||
+         padPressed(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight))) {
       pick(1 - column, std::max(row, 0), 1);
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !s_selected.empty()) {
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) &&
+        !s_selected.empty()) {
       s_showPlayerModal = true;
       MenuSounds::Click();
     }
@@ -2054,32 +2454,50 @@ static void DrawScoreboardPanel() {
     const bool overflow = count > visibleRows;
 
     if (overflow && pointer && !s_boardReport.load() && !s_showPlayerModal &&
-        ImGui::IsMouseHoveringRect(ImVec2(cx, p0.y), ImVec2(cx + colW, p0.y + headerH + subHeaderH + totalListH), false) && io.MouseWheel != 0.0f) {
+        ImGui::IsMouseHoveringRect(
+            ImVec2(cx, p0.y),
+            ImVec2(cx + colW, p0.y + headerH + subHeaderH + totalListH),
+            false) &&
+        io.MouseWheel != 0.0f) {
       s_boardScroll[col] -= static_cast<int>(io.MouseWheel);
     }
-    s_boardScroll[col] = std::clamp(s_boardScroll[col], 0, std::max(0, count - visibleRows));
+    s_boardScroll[col] =
+        std::clamp(s_boardScroll[col], 0, std::max(0, count - visibleRows));
     const int scroll = s_boardScroll[col];
 
-  // 1. Solid Team Header Banner
-  const ImVec2 h0(cx, p0.y);
-  const ImVec2 h1(cx + colW, p0.y + headerH);
-  const ImU32 bannerColor = isCoopMode ? IM_COL32(32, 64, 105, 250)
-                          : (hasTeams ? kTeamStyles[activeTeamIndices[col]].headerCol : IM_COL32(36, 68, 102, 245));
-  dl->AddRectFilled(h0, h1, bannerColor, 2.0f * s);
+    // 1. Solid Team Header Banner
+    const ImVec2 h0(cx, p0.y);
+    const ImVec2 h1(cx + colW, p0.y + headerH);
+    const ImU32 bannerColor =
+        isCoopMode ? IM_COL32(32, 64, 105, 250)
+                   : (hasTeams ? kTeamStyles[activeTeamIndices[col]].headerCol
+                               : IM_COL32(36, 68, 102, 245));
+    dl->AddRectFilled(h0, h1, bannerColor, 2.0f * s);
 
-  // Subtle bright top accent line
-  dl->AddLine(ImVec2(h0.x, h0.y), ImVec2(h1.x, h0.y), IM_COL32(255, 255, 255, 90), 1.0f * s);
+    // Subtle bright top accent line
+    dl->AddLine(ImVec2(h0.x, h0.y), ImVec2(h1.x, h0.y),
+                IM_COL32(255, 255, 255, 90), 1.0f * s);
 
-  // Left rank / placement badge on banner
-  const int teamRank = isCoopMode ? 1 : ((col == 0) ? (teamScores[0] >= teamScores[1] ? 1 : 2) : (teamScores[1] > teamScores[0] ? 1 : 2));
-  char rankStr[8];
-  std::snprintf(rankStr, sizeof(rankStr), "%d", teamRank);
-  const float rankColW = 28.0f * s;
-  Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + 8.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), rankStr);
+    // Left rank / placement badge on banner
+    const int teamRank =
+        isCoopMode ? 1
+                   : ((col == 0) ? (teamScores[0] >= teamScores[1] ? 1 : 2)
+                                 : (teamScores[1] > teamScores[0] ? 1 : 2));
+    char rankStr[8];
+    std::snprintf(rankStr, sizeof(rankStr), "%d", teamRank);
+    const float rankColW = 28.0f * s;
+    Text(dl, NobleStyle::TitleFont(), 20.0f * s,
+         ImVec2(cx + 8.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255),
+         rankStr);
 
-  // Team Name
-  const char* teamTitle = isCoopMode ? "UNSC ALLIES" : (hasTeams ? kTeamStyles[activeTeamIndices[col]].name : "MATCH ROSTER");
-  Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + rankColW + 6.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), teamTitle);
+    // Team Name
+    const char *teamTitle =
+        isCoopMode ? "UNSC ALLIES"
+                   : (hasTeams ? kTeamStyles[activeTeamIndices[col]].name
+                               : "MATCH ROSTER");
+    Text(dl, NobleStyle::TitleFont(), 20.0f * s,
+         ImVec2(cx + rankColW + 6.0f * s, p0.y + 7.0f * s),
+         IM_COL32(255, 255, 255, 255), teamTitle);
 
     // Column positions for stats on the right (matching headers & rows exactly)
     const float pingColW = 48.0f * s;
@@ -2097,56 +2515,112 @@ static void DrawScoreboardPanel() {
     // Header aggregate totals on the banner
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%d", teamScores[col]);
-    Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(scoreX + (scoreColW - TextWidth(NobleStyle::TitleFont(), 20.0f * s, buf)) * 0.5f, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), buf);
+    Text(dl, NobleStyle::TitleFont(), 20.0f * s,
+         ImVec2(scoreX + (scoreColW -
+                          TextWidth(NobleStyle::TitleFont(), 20.0f * s, buf)) *
+                             0.5f,
+                p0.y + 7.0f * s),
+         IM_COL32(255, 255, 255, 255), buf);
 
     std::snprintf(buf, sizeof(buf), "%d", teamKills[col]);
-    Text(dl, NobleStyle::TitleFont(), 19.0f * s, ImVec2(kX + (kColW - TextWidth(NobleStyle::TitleFont(), 19.0f * s, buf)) * 0.5f, p0.y + 8.0f * s), IM_COL32(255, 255, 255, 235), buf);
+    Text(dl, NobleStyle::TitleFont(), 19.0f * s,
+         ImVec2(
+             kX + (kColW - TextWidth(NobleStyle::TitleFont(), 19.0f * s, buf)) *
+                      0.5f,
+             p0.y + 8.0f * s),
+         IM_COL32(255, 255, 255, 235), buf);
 
     std::snprintf(buf, sizeof(buf), "%d", teamDeaths[col]);
-    Text(dl, NobleStyle::TitleFont(), 19.0f * s, ImVec2(dX + (dColW - TextWidth(NobleStyle::TitleFont(), 19.0f * s, buf)) * 0.5f, p0.y + 8.0f * s), IM_COL32(255, 255, 255, 235), buf);
+    Text(dl, NobleStyle::TitleFont(), 19.0f * s,
+         ImVec2(
+             dX + (dColW - TextWidth(NobleStyle::TitleFont(), 19.0f * s, buf)) *
+                      0.5f,
+             p0.y + 8.0f * s),
+         IM_COL32(255, 255, 255, 235), buf);
 
     std::snprintf(buf, sizeof(buf), "%d", teamAssists[col]);
-    Text(dl, NobleStyle::TitleFont(), 19.0f * s, ImVec2(aX + (aColW - TextWidth(NobleStyle::TitleFont(), 19.0f * s, buf)) * 0.5f, p0.y + 8.0f * s), IM_COL32(255, 255, 255, 235), buf);
+    Text(dl, NobleStyle::TitleFont(), 19.0f * s,
+         ImVec2(
+             aX + (aColW - TextWidth(NobleStyle::TitleFont(), 19.0f * s, buf)) *
+                      0.5f,
+             p0.y + 8.0f * s),
+         IM_COL32(255, 255, 255, 235), buf);
 
     // 2. Sub-header Labels Row ("PLAYERS", "SCORE", "K", "D", "A", "PING")
     const float subY = p0.y + headerH;
-    dl->AddRectFilled(ImVec2(cx, subY), ImVec2(cx + colW, subY + subHeaderH), IM_COL32(8, 12, 18, 220));
+    dl->AddRectFilled(ImVec2(cx, subY), ImVec2(cx + colW, subY + subHeaderH),
+                      IM_COL32(8, 12, 18, 220));
 
-    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(cx + 8.0f * s, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "PLAYERS");
-    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(scoreX + (scoreColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "SCORE")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "SCORE");
-    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(kX + (kColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "K")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "K");
-    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(dX + (dColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "D")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "D");
-    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(aX + (aColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "A")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "A");
-    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(pingX + (pingColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "PING")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "PING");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s,
+         ImVec2(cx + 8.0f * s, subY + 3.0f * s), IM_COL32(185, 205, 225, 255),
+         "PLAYERS");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s,
+         ImVec2(scoreX + (scoreColW - TextWidth(NobleStyle::SmallFont(),
+                                                13.0f * s, "SCORE")) *
+                             0.5f,
+                subY + 3.0f * s),
+         IM_COL32(185, 205, 225, 255), "SCORE");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s,
+         ImVec2(
+             kX + (kColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "K")) *
+                      0.5f,
+             subY + 3.0f * s),
+         IM_COL32(185, 205, 225, 255), "K");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s,
+         ImVec2(
+             dX + (dColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "D")) *
+                      0.5f,
+             subY + 3.0f * s),
+         IM_COL32(185, 205, 225, 255), "D");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s,
+         ImVec2(
+             aX + (aColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "A")) *
+                      0.5f,
+             subY + 3.0f * s),
+         IM_COL32(185, 205, 225, 255), "A");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s,
+         ImVec2(pingX + (pingColW - TextWidth(NobleStyle::SmallFont(),
+                                              13.0f * s, "PING")) *
+                            0.5f,
+                subY + 3.0f * s),
+         IM_COL32(185, 205, 225, 255), "PING");
 
     // 3. Player Rows
     const float listY = subY + subHeaderH;
     int localRow = -1;
     for (int k = 0; k < count; ++k) {
-      if (rows[list[k]].local) localRow = k;
+      if (rows[list[k]].local)
+        localRow = k;
     }
-    const bool pinLocal = localRow >= 0 && (localRow < scroll || localRow >= scroll + visibleRows);
+    const bool pinLocal = localRow >= 0 && (localRow < scroll ||
+                                            localRow >= scroll + visibleRows);
 
     for (int v = 0; v < visibleRows; ++v) {
-      const int rowIdx = (pinLocal && v == visibleRows - 1) ? localRow : (scroll + v);
+      const int rowIdx =
+          (pinLocal && v == visibleRows - 1) ? localRow : (scroll + v);
       const float y = listY + v * rowH;
       const ImVec2 r0(cx, y);
       const ImVec2 r1(cx + colW - (overflow ? 4.0f * s : 0.0f), y + rowH);
 
       if (rowIdx >= count) {
         // Empty filler row with subtle background
-        dl->AddRectFilled(r0, r1, (v % 2 == 0) ? IM_COL32(15, 20, 28, 120) : IM_COL32(12, 16, 22, 120));
+        dl->AddRectFilled(r0, r1,
+                          (v % 2 == 0) ? IM_COL32(15, 20, 28, 120)
+                                       : IM_COL32(12, 16, 22, 120));
         continue;
       }
 
       const auto &r = rows[list[rowIdx]];
-      const bool isMuted = s_muteAllActive || r.muted || s_mutedNames.count(r.name) > 0 || (r.machine != 0 && VoiceChat::IsPeerMuted(r.machine));
+      const bool isMuted =
+          s_muteAllActive || r.muted || s_mutedNames.count(r.name) > 0 ||
+          (r.machine != 0 && VoiceChat::IsPeerMuted(r.machine));
       bool hovered = false;
 
       if (pointer) {
         ImGui::SetCursorScreenPos(r0);
         ImGui::BeginDisabled(s_boardReport.load() || s_showPlayerModal);
-        if (ImGui::InvisibleButton(r.name.c_str(), ImVec2(r1.x - r0.x, r1.y - r0.y))) {
+        if (ImGui::InvisibleButton(r.name.c_str(),
+                                   ImVec2(r1.x - r0.x, r1.y - r0.y))) {
           s_selected = r.name;
           s_status.clear();
           selectedIsListed = true;
@@ -2158,10 +2632,20 @@ static void DrawScoreboardPanel() {
       }
 
       const bool selected = (r.name == s_selected);
-      const ImU32 baseBg = isCoopMode ? ((v % 2 == 0) ? IM_COL32(24, 42, 65, 160) : IM_COL32(20, 36, 56, 160))
-                         : (hasTeams ? ((v % 2 == 0) ? kTeamStyles[activeTeamIndices[col]].rowBaseCol : kTeamStyles[activeTeamIndices[col]].rowAltCol)
-                                     : ((v % 2 == 0) ? IM_COL32(24, 38, 54, 150) : IM_COL32(20, 32, 46, 150)));
-      const ImU32 rowBg = r.local ? IM_COL32(32, 80, 120, 220) : selected ? IM_COL32(65, 115, 165, 190) : hovered ? IM_COL32(255, 255, 255, 38) : baseBg;
+      const ImU32 baseBg =
+          isCoopMode
+              ? ((v % 2 == 0) ? IM_COL32(24, 42, 65, 160)
+                              : IM_COL32(20, 36, 56, 160))
+              : (hasTeams
+                     ? ((v % 2 == 0)
+                            ? kTeamStyles[activeTeamIndices[col]].rowBaseCol
+                            : kTeamStyles[activeTeamIndices[col]].rowAltCol)
+                     : ((v % 2 == 0) ? IM_COL32(24, 38, 54, 150)
+                                     : IM_COL32(20, 32, 46, 150)));
+      const ImU32 rowBg = r.local    ? IM_COL32(32, 80, 120, 220)
+                          : selected ? IM_COL32(65, 115, 165, 190)
+                          : hovered  ? IM_COL32(255, 255, 255, 38)
+                                     : baseBg;
 
       dl->AddRectFilled(r0, r1, rowBg);
 
@@ -2175,41 +2659,66 @@ static void DrawScoreboardPanel() {
       // 1. Placement Rank Number
       char pRank[8];
       std::snprintf(pRank, sizeof(pRank), "%d", rowIdx + 1);
-      Text(dl, NobleStyle::TitleFont(), 17.0f * s, ImVec2(cx + 6.0f * s, y + 7.0f * s), IM_COL32(240, 244, 250, 255), pRank);
+      Text(dl, NobleStyle::TitleFont(), 17.0f * s,
+           ImVec2(cx + 6.0f * s, y + 7.0f * s), IM_COL32(240, 244, 250, 255),
+           pRank);
 
       // 2. Emblem or Mute Icon
       const float iconSize = 22.0f * s;
-      const ImVec2 iconPos(cx + rankColW + 2.0f * s, y + (rowH - iconSize) * 0.5f);
+      const ImVec2 iconPos(cx + rankColW + 2.0f * s,
+                           y + (rowH - iconSize) * 0.5f);
 
       if (isMuted) {
-        // Red crossed box for muted players (matches Dinoextremo29 & gzhouse in reference)
-        dl->AddRectFilled(iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize), IM_COL32(195, 38, 38, 240), 2.0f * s);
-        dl->AddRect(iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize), IM_COL32(255, 180, 180, 200), 2.0f * s, 0, 1.0f * s);
-        dl->AddLine(ImVec2(iconPos.x + 4.0f * s, iconPos.y + 4.0f * s), ImVec2(iconPos.x + iconSize - 4.0f * s, iconPos.y + iconSize - 4.0f * s), IM_COL32(255, 255, 255, 255), 2.0f * s);
-        dl->AddLine(ImVec2(iconPos.x + iconSize - 4.0f * s, iconPos.y + 4.0f * s), ImVec2(iconPos.x + 4.0f * s, iconPos.y + iconSize - 4.0f * s), IM_COL32(255, 255, 255, 255), 2.0f * s);
+        // Red crossed box for muted players (matches Dinoextremo29 & gzhouse in
+        // reference)
+        dl->AddRectFilled(iconPos,
+                          ImVec2(iconPos.x + iconSize, iconPos.y + iconSize),
+                          IM_COL32(195, 38, 38, 240), 2.0f * s);
+        dl->AddRect(iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize),
+                    IM_COL32(255, 180, 180, 200), 2.0f * s, 0, 1.0f * s);
+        dl->AddLine(ImVec2(iconPos.x + 4.0f * s, iconPos.y + 4.0f * s),
+                    ImVec2(iconPos.x + iconSize - 4.0f * s,
+                           iconPos.y + iconSize - 4.0f * s),
+                    IM_COL32(255, 255, 255, 255), 2.0f * s);
+        dl->AddLine(
+            ImVec2(iconPos.x + iconSize - 4.0f * s, iconPos.y + 4.0f * s),
+            ImVec2(iconPos.x + 4.0f * s, iconPos.y + iconSize - 4.0f * s),
+            IM_COL32(255, 255, 255, 255), 2.0f * s);
       } else {
         // Draw player emblem symbol
         UiArt::EmblemColors embCol;
         embCol.primary = IM_COL32(240, 240, 240, 255);
-        embCol.secondary = hasTeams ? (col == 0 ? IM_COL32(255, 160, 160, 255) : IM_COL32(160, 200, 255, 255)) : IM_COL32(180, 220, 240, 255);
-        UiArt::DrawEmblem(dl, r.emblem > 0 ? r.emblem : 1, 0, iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize), embCol);
+        embCol.secondary = hasTeams ? (col == 0 ? IM_COL32(255, 160, 160, 255)
+                                                : IM_COL32(160, 200, 255, 255))
+                                    : IM_COL32(180, 220, 240, 255);
+        UiArt::DrawEmblem(dl, r.emblem > 0 ? r.emblem : 1, 0, iconPos,
+                          ImVec2(iconPos.x + iconSize, iconPos.y + iconSize),
+                          embCol);
       }
 
       // 3. Player Gamertag and Service Tag
       const float nameX = iconPos.x + iconSize + 8.0f * s;
       const float nameY = r.tag.empty() ? (y + 7.0f * s) : (y + 3.0f * s);
-      const ImU32 nameCol = r.local ? IM_COL32(143, 225, 255, 255) : IM_COL32(245, 248, 252, 255);
+      const ImU32 nameCol =
+          r.local ? IM_COL32(143, 225, 255, 255) : IM_COL32(245, 248, 252, 255);
 
-      dl->PushClipRect(ImVec2(nameX, y), ImVec2(scoreX - 34.0f * s, y + rowH), true);
-      Text(dl, NobleStyle::TitleFont(), 16.5f * s, ImVec2(nameX, nameY), nameCol, r.name.c_str());
+      dl->PushClipRect(ImVec2(nameX, y), ImVec2(scoreX - 34.0f * s, y + rowH),
+                       true);
+      Text(dl, NobleStyle::TitleFont(), 16.5f * s, ImVec2(nameX, nameY),
+           nameCol, r.name.c_str());
 
       if (r.local) {
-        const float nw = TextWidth(NobleStyle::TitleFont(), 16.5f * s, r.name.c_str());
-        Text(dl, NobleStyle::SmallFont(), 11.0f * s, ImVec2(nameX + nw + 6.0f * s, nameY + 3.0f * s), IM_COL32(143, 225, 255, 230), "YOU");
+        const float nw =
+            TextWidth(NobleStyle::TitleFont(), 16.5f * s, r.name.c_str());
+        Text(dl, NobleStyle::SmallFont(), 11.0f * s,
+             ImVec2(nameX + nw + 6.0f * s, nameY + 3.0f * s),
+             IM_COL32(143, 225, 255, 230), "YOU");
       }
 
       if (!r.tag.empty()) {
-        Text(dl, NobleStyle::SmallFont(), 11.5f * s, ImVec2(nameX, y + 18.0f * s), IM_COL32(185, 205, 225, 210), r.tag.c_str());
+        Text(dl, NobleStyle::SmallFont(), 11.5f * s,
+             ImVec2(nameX, y + 18.0f * s), IM_COL32(185, 205, 225, 210),
+             r.tag.c_str());
       }
       dl->PopClipRect();
 
@@ -2218,67 +2727,110 @@ static void DrawScoreboardPanel() {
       const float rankIconSize = 22.0f * s;
       const float rankX = scoreX - rankIconSize - 8.0f * s;
       if (rankIcon) {
-        UiArt::DrawContain(dl, rankIcon, ImVec2(rankX, y + (rowH - rankIconSize) * 0.5f), ImVec2(rankX + rankIconSize, y + (rowH + rankIconSize) * 0.5f));
+        UiArt::DrawContain(
+            dl, rankIcon, ImVec2(rankX, y + (rowH - rankIconSize) * 0.5f),
+            ImVec2(rankX + rankIconSize, y + (rowH + rankIconSize) * 0.5f));
       }
 
       // 5. Stats: Score, K, D, A
       std::snprintf(buf, sizeof(buf), "%d", r.score);
-      Text(dl, NobleStyle::TitleFont(), 17.5f * s, ImVec2(scoreX + (scoreColW - TextWidth(NobleStyle::TitleFont(), 17.5f * s, buf)) * 0.5f, y + 7.0f * s), IM_COL32(255, 255, 255, 255), buf);
+      Text(dl, NobleStyle::TitleFont(), 17.5f * s,
+           ImVec2(scoreX + (scoreColW - TextWidth(NobleStyle::TitleFont(),
+                                                  17.5f * s, buf)) *
+                               0.5f,
+                  y + 7.0f * s),
+           IM_COL32(255, 255, 255, 255), buf);
 
       std::snprintf(buf, sizeof(buf), "%d", r.kills);
-      Text(dl, ImGui::GetFont(), 15.5f * s, ImVec2(kX + (kColW - TextWidth(ImGui::GetFont(), 15.5f * s, buf)) * 0.5f, y + 8.0f * s), IM_COL32(235, 240, 245, 240), buf);
+      Text(dl, ImGui::GetFont(), 15.5f * s,
+           ImVec2(kX + (kColW - TextWidth(ImGui::GetFont(), 15.5f * s, buf)) *
+                           0.5f,
+                  y + 8.0f * s),
+           IM_COL32(235, 240, 245, 240), buf);
 
       std::snprintf(buf, sizeof(buf), "%d", r.deaths);
-      Text(dl, ImGui::GetFont(), 15.5f * s, ImVec2(dX + (dColW - TextWidth(ImGui::GetFont(), 15.5f * s, buf)) * 0.5f, y + 8.0f * s), IM_COL32(195, 205, 215, 210), buf);
+      Text(dl, ImGui::GetFont(), 15.5f * s,
+           ImVec2(dX + (dColW - TextWidth(ImGui::GetFont(), 15.5f * s, buf)) *
+                           0.5f,
+                  y + 8.0f * s),
+           IM_COL32(195, 205, 215, 210), buf);
 
       std::snprintf(buf, sizeof(buf), "%d", r.assists);
-      Text(dl, ImGui::GetFont(), 15.5f * s, ImVec2(aX + (aColW - TextWidth(ImGui::GetFont(), 15.5f * s, buf)) * 0.5f, y + 8.0f * s), IM_COL32(195, 205, 215, 210), buf);
+      Text(dl, ImGui::GetFont(), 15.5f * s,
+           ImVec2(aX + (aColW - TextWidth(ImGui::GetFont(), 15.5f * s, buf)) *
+                           0.5f,
+                  y + 8.0f * s),
+           IM_COL32(195, 205, 215, 210), buf);
 
       // 6. Ping Badge (Pill with rounded corners)
       int ping = r.ping;
       if (!r.local && NetworkTransport::Get().IsActive()) {
-        const int live = r.hostPeer ? NetworkTransport::Get().GetPeerPingMs(0) : (r.machine ? NetworkTransport::Get().GetPeerPingMs(r.machine) : -1);
-        if (live >= 0) ping = live;
+        const int live =
+            r.hostPeer
+                ? NetworkTransport::Get().GetPeerPingMs(0)
+                : (r.machine ? NetworkTransport::Get().GetPeerPingMs(r.machine)
+                             : -1);
+        if (live >= 0)
+          ping = live;
       }
-      if (ping < 0) ping = 0;
+      if (ping < 0)
+        ping = 0;
 
-      const ImU32 pingBadgeCol = ping < 0 ? IM_COL32(90, 105, 120, 180)
-                               : (ping <= 100 ? IM_COL32(36, 175, 75, 230)
-                               : (ping <= 150 ? IM_COL32(215, 175, 35, 230)
-                               : IM_COL32(215, 65, 50, 230)));
+      const ImU32 pingBadgeCol =
+          ping < 0 ? IM_COL32(90, 105, 120, 180)
+                   : (ping <= 100 ? IM_COL32(36, 175, 75, 230)
+                                  : (ping <= 150 ? IM_COL32(215, 175, 35, 230)
+                                                 : IM_COL32(215, 65, 50, 230)));
 
       const float pillW = 38.0f * s;
       const float pillH = 20.0f * s;
-      const ImVec2 pill0(pingX + (pingColW - pillW) * 0.5f, y + (rowH - pillH) * 0.5f);
+      const ImVec2 pill0(pingX + (pingColW - pillW) * 0.5f,
+                         y + (rowH - pillH) * 0.5f);
       const ImVec2 pill1(pill0.x + pillW, pill0.y + pillH);
 
       dl->AddRectFilled(pill0, pill1, pingBadgeCol, 3.0f * s);
       const std::string pingText = (ping >= 0) ? std::to_string(ping) : "-";
-      Text(dl, NobleStyle::SmallFont(), 12.0f * s, ImVec2(pill0.x + (pillW - TextWidth(NobleStyle::SmallFont(), 12.0f * s, pingText.c_str())) * 0.5f, pill0.y + 2.0f * s), IM_COL32(255, 255, 255, 255), pingText.c_str());
+      Text(dl, NobleStyle::SmallFont(), 12.0f * s,
+           ImVec2(pill0.x + (pillW - TextWidth(NobleStyle::SmallFont(),
+                                               12.0f * s, pingText.c_str())) *
+                                0.5f,
+                  pill0.y + 2.0f * s),
+           IM_COL32(255, 255, 255, 255), pingText.c_str());
     }
 
     // Scrollbar track & thumb if list overflows
     if (overflow) {
       const float trackX = cx + colW - 3.0f * s;
       const float trackH = totalListH;
-      dl->AddRectFilled(ImVec2(trackX, listY), ImVec2(trackX + 3.0f * s, listY + trackH), IM_COL32(255, 255, 255, 24));
+      dl->AddRectFilled(ImVec2(trackX, listY),
+                        ImVec2(trackX + 3.0f * s, listY + trackH),
+                        IM_COL32(255, 255, 255, 24));
       const float thumbH = std::max(trackH * visibleRows / count, 18.0f * s);
-      const float thumbY = listY + (trackH - thumbH) * scroll / std::max(1, count - visibleRows);
-      dl->AddRectFilled(ImVec2(trackX, thumbY), ImVec2(trackX + 3.0f * s, thumbY + thumbH), kAccent);
+      const float thumbY =
+          listY + (trackH - thumbH) * scroll / std::max(1, count - visibleRows);
+      dl->AddRectFilled(ImVec2(trackX, thumbY),
+                        ImVec2(trackX + 3.0f * s, thumbY + thumbH), kAccent);
     }
   }
 
-  // 4. Footer Bar: Button Prompts (Left) and Match Watermark / Score Pills (Right)
+  // 4. Footer Bar: Button Prompts (Left) and Match Watermark / Score Pills
+  // (Right)
   const float footY = p0.y + headerH + subHeaderH + totalListH + 8.0f * s;
 
   // Prompts on the left
   const auto drawPrompt = [&](float &fx, const char *key, const char *label) {
-    const float kw = TextWidth(NobleStyle::SmallFont(), 13.0f * s, key) + 12.0f * s;
+    const float kw =
+        TextWidth(NobleStyle::SmallFont(), 13.0f * s, key) + 12.0f * s;
     const float kh = 22.0f * s;
-    dl->AddRectFilled(ImVec2(fx, footY + 2.0f * s), ImVec2(fx + kw, footY + 2.0f * s + kh), IM_COL32(255, 255, 255, 240), 3.0f * s);
-    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(fx + 6.0f * s, footY + 4.0f * s), IM_COL32(12, 18, 24, 255), key);
+    dl->AddRectFilled(ImVec2(fx, footY + 2.0f * s),
+                      ImVec2(fx + kw, footY + 2.0f * s + kh),
+                      IM_COL32(255, 255, 255, 240), 3.0f * s);
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s,
+         ImVec2(fx + 6.0f * s, footY + 4.0f * s), IM_COL32(12, 18, 24, 255),
+         key);
     fx += kw + 6.0f * s;
-    Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(fx, footY + 5.0f * s), IM_COL32(230, 238, 245, 255), label);
+    Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(fx, footY + 5.0f * s),
+         IM_COL32(230, 238, 245, 255), label);
     fx += TextWidth(NobleStyle::SmallFont(), 14.0f * s, label) + 20.0f * s;
   };
 
@@ -2289,9 +2841,11 @@ static void DrawScoreboardPanel() {
 
   // Watermark and mini score pills on the right (matches reference image)
   std::string watermark = mapName.empty() ? "Global Battles v40" : mapName;
-  const float wmWidth = TextWidth(NobleStyle::TitleFont(), 18.0f * s, watermark.c_str());
+  const float wmWidth =
+      TextWidth(NobleStyle::TitleFont(), 18.0f * s, watermark.c_str());
   const float wmX = p1.x - wmWidth - 70.0f * s;
-  Text(dl, NobleStyle::TitleFont(), 18.0f * s, ImVec2(wmX, footY + 2.0f * s), IM_COL32(200, 220, 240, 240), watermark.c_str());
+  Text(dl, NobleStyle::TitleFont(), 18.0f * s, ImVec2(wmX, footY + 2.0f * s),
+       IM_COL32(200, 220, 240, 240), watermark.c_str());
 
   // Team score square pills (or co-op total score pill)
   if (isCoopMode) {
@@ -2299,9 +2853,16 @@ static void DrawScoreboardPanel() {
     const float pillBoxW = 48.0f * s;
     const float pillBoxH = 18.0f * s;
     const float pillBoxX = p1.x - 78.0f * s;
-    dl->AddRectFilled(ImVec2(pillBoxX, footY), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH), IM_COL32(32, 64, 105, 250), 2.0f * s);
+    dl->AddRectFilled(ImVec2(pillBoxX, footY),
+                      ImVec2(pillBoxX + pillBoxW, footY + pillBoxH),
+                      IM_COL32(32, 64, 105, 250), 2.0f * s);
     std::snprintf(buf, sizeof(buf), "%d", teamScores[0]);
-    Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + 1.0f * s), IM_COL32(255, 255, 255, 255), buf);
+    Text(dl, NobleStyle::TitleFont(), 15.0f * s,
+         ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(),
+                                                 15.0f * s, buf)) *
+                               0.5f,
+                footY + 1.0f * s),
+         IM_COL32(255, 255, 255, 255), buf);
   } else if (hasTeams) {
     char buf[32];
     const float pillBoxW = 26.0f * s;
@@ -2309,58 +2870,90 @@ static void DrawScoreboardPanel() {
     const float pillBoxX = p1.x - 56.0f * s;
 
     // Team 1 pill
-    dl->AddRectFilled(ImVec2(pillBoxX, footY), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH), kTeamStyles[activeTeamIndices[0]].headerCol, 2.0f * s);
+    dl->AddRectFilled(ImVec2(pillBoxX, footY),
+                      ImVec2(pillBoxX + pillBoxW, footY + pillBoxH),
+                      kTeamStyles[activeTeamIndices[0]].headerCol, 2.0f * s);
     std::snprintf(buf, sizeof(buf), "%d", teamScores[0]);
-    Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + 1.0f * s), IM_COL32(255, 255, 255, 255), buf);
+    Text(dl, NobleStyle::TitleFont(), 15.0f * s,
+         ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(),
+                                                 15.0f * s, buf)) *
+                               0.5f,
+                footY + 1.0f * s),
+         IM_COL32(255, 255, 255, 255), buf);
 
     // Team 2 pill (only when the match really has a second team)
     if (columnCount > 1) {
-      dl->AddRectFilled(ImVec2(pillBoxX, footY + pillBoxH + 3.0f * s), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH * 2.0f + 3.0f * s), kTeamStyles[activeTeamIndices[1]].headerCol, 2.0f * s);
+      dl->AddRectFilled(
+          ImVec2(pillBoxX, footY + pillBoxH + 3.0f * s),
+          ImVec2(pillBoxX + pillBoxW, footY + pillBoxH * 2.0f + 3.0f * s),
+          kTeamStyles[activeTeamIndices[1]].headerCol, 2.0f * s);
       std::snprintf(buf, sizeof(buf), "%d", teamScores[1]);
-      Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + pillBoxH + 4.0f * s), IM_COL32(255, 255, 255, 255), buf);
+      Text(dl, NobleStyle::TitleFont(), 15.0f * s,
+           ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(),
+                                                   15.0f * s, buf)) *
+                                 0.5f,
+                  footY + pillBoxH + 4.0f * s),
+           IM_COL32(255, 255, 255, 255), buf);
     }
   }
 
   if (pointer) {
     ImGui::End();
 
-    // 5. Player Options Modal (Opens when user clicks or presses [A] on a player)
+    // 5. Player Options Modal (Opens when user clicks or presses [A] on a
+    // player)
     if (s_showPlayerModal && !s_selected.empty() && !s_boardReport.load()) {
       CenteredWindow(500.0f * s);
-      ImGui::Begin("##PlayerOptionsModal", nullptr, kPanelFlags | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
+      ImGui::Begin("##PlayerOptionsModal", nullptr,
+                   kPanelFlags | ImGuiWindowFlags_NoNavInputs |
+                       ImGuiWindowFlags_NoNavFocus);
 
       // Find the selected player's entry
       const PauseMenu::ScoreboardEntry *selEntry = nullptr;
       for (const auto &r : rows) {
-        if (r.name == s_selected) { selEntry = &r; break; }
+        if (r.name == s_selected) {
+          selEntry = &r;
+          break;
+        }
       }
 
       std::string headerTitle = "PLAYER: " + Upper(s_selected);
-      if (selEntry && !selEntry->tag.empty()) headerTitle += " [" + selEntry->tag + "]";
+      if (selEntry && !selEntry->tag.empty())
+        headerTitle += " [" + selEntry->tag + "]";
       NobleStyle::Header(headerTitle.c_str());
       ImGui::Spacing();
 
-      const bool isIndividualMuted = s_mutedNames.count(s_selected) > 0 || (selEntry && selEntry->machine != 0 && VoiceChat::IsPeerMuted(selEntry->machine));
+      const bool isIndividualMuted =
+          s_mutedNames.count(s_selected) > 0 ||
+          (selEntry && selEntry->machine != 0 &&
+           VoiceChat::IsPeerMuted(selEntry->machine));
 
       // Stats line
       if (selEntry) {
-        ImGui::TextColored(NobleStyle::Accent(), "Score: %d   |   Kills: %d   |   Deaths: %d   |   Assists: %d",
-                           selEntry->score, selEntry->kills, selEntry->deaths, selEntry->assists);
+        ImGui::TextColored(
+            NobleStyle::Accent(),
+            "Score: %d   |   Kills: %d   |   Deaths: %d   |   Assists: %d",
+            selEntry->score, selEntry->kills, selEntry->deaths,
+            selEntry->assists);
         ImGui::Spacing();
       }
 
       const float btnW = (ImGui::GetContentRegionAvail().x - 10.0f * s) * 0.5f;
 
       // Individual Mute Toggle
-      const char* muteLabel = isIndividualMuted ? "UNMUTE PLAYER" : "MUTE PLAYER";
-      if (ImGui::Button(muteLabel, ImVec2(btnW, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) {
+      const char *muteLabel =
+          isIndividualMuted ? "UNMUTE PLAYER" : "MUTE PLAYER";
+      if (ImGui::Button(muteLabel, ImVec2(btnW, 38.0f * s)) ||
+          ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) {
         if (isIndividualMuted) {
           s_mutedNames.erase(s_selected);
-          if (selEntry && selEntry->machine != 0) VoiceChat::SetPeerMuted(selEntry->machine, false);
+          if (selEntry && selEntry->machine != 0)
+            VoiceChat::SetPeerMuted(selEntry->machine, false);
           s_status = "Unmuted " + s_selected;
         } else {
           s_mutedNames.insert(s_selected);
-          if (selEntry && selEntry->machine != 0) VoiceChat::SetPeerMuted(selEntry->machine, true);
+          if (selEntry && selEntry->machine != 0)
+            VoiceChat::SetPeerMuted(selEntry->machine, true);
           s_status = "Muted " + s_selected;
         }
         MenuSounds::Click();
@@ -2369,20 +2962,25 @@ static void DrawScoreboardPanel() {
       ImGui::SameLine(0.0f, 10.0f * s);
 
       // Global Mute Toggle
-      const char* muteAllLabel = s_muteAllActive ? "UNMUTE ALL PLAYERS" : "MUTE ALL PLAYERS";
-      if (ImGui::Button(muteAllLabel, ImVec2(btnW, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+      const char *muteAllLabel =
+          s_muteAllActive ? "UNMUTE ALL PLAYERS" : "MUTE ALL PLAYERS";
+      if (ImGui::Button(muteAllLabel, ImVec2(btnW, 38.0f * s)) ||
+          ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
         s_muteAllActive = !s_muteAllActive;
         for (const auto &r : rows) {
-          if (!r.local && r.machine != 0) VoiceChat::SetPeerMuted(r.machine, s_muteAllActive);
+          if (!r.local && r.machine != 0)
+            VoiceChat::SetPeerMuted(r.machine, s_muteAllActive);
         }
-        s_status = s_muteAllActive ? "Muted all players" : "Unmuted all players";
+        s_status =
+            s_muteAllActive ? "Muted all players" : "Unmuted all players";
         MenuSounds::Click();
       }
 
       ImGui::Spacing();
 
       // Report & Kick buttons
-      if (NobleStyle::PrimaryButton("REPORT PLAYER", ImVec2(btnW, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) {
+      if (NobleStyle::PrimaryButton("REPORT PLAYER", ImVec2(btnW, 38.0f * s)) ||
+          ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) {
         s_reportReason = 0;
         s_boardReport.store(true);
         s_showPlayerModal = false;
@@ -2405,7 +3003,9 @@ static void DrawScoreboardPanel() {
 
       ImGui::Spacing();
 
-      if (ImGui::Button("CLOSE", ImVec2(-1, 34.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      if (ImGui::Button("CLOSE", ImVec2(-1, 34.0f * s)) ||
+          ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+          ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         s_showPlayerModal = false;
         MenuSounds::Back();
       }
@@ -2415,36 +3015,51 @@ static void DrawScoreboardPanel() {
 
     // Report Dialog
     if (s_boardReport.load()) {
-      static const char *const kReasons[4] = {"Cheating", "Abusive name or chat", "Griefing or team killing", "Something else"};
+      static const char *const kReasons[4] = {
+          "Cheating", "Abusive name or chat", "Griefing or team killing",
+          "Something else"};
       ImGui::SetNextWindowFocus();
       CenteredWindow(460.0f * s);
-      ImGui::Begin("##scoreboardreport", nullptr, kPanelFlags | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
-      if (padPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) s_reportReason = (s_reportReason + 1) % 4;
-      if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp)) s_reportReason = (s_reportReason + 3) % 4;
+      ImGui::Begin("##scoreboardreport", nullptr,
+                   kPanelFlags | ImGuiWindowFlags_NoNavInputs |
+                       ImGuiWindowFlags_NoNavFocus);
+      if (padPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown))
+        s_reportReason = (s_reportReason + 1) % 4;
+      if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp))
+        s_reportReason = (s_reportReason + 3) % 4;
       NobleStyle::Header(("REPORT " + Upper(s_selected)).c_str());
       ImGui::Spacing();
       for (int i = 0; i < 4; ++i)
         ImGui::RadioButton(kReasons[i], &s_reportReason, i);
       ImGui::Spacing();
-      ImGui::TextWrapped("This goes to the Project Noble team, with the map, the mode and your name.");
+      ImGui::TextWrapped("This goes to the Project Noble team, with the map, "
+                         "the mode and your name.");
       ImGui::Spacing();
       const float gap = 8.0f * s;
       const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
       static int s_demoSend = 0;
-      const bool demoSend = demo == 5 && !s_reportSending.load() && ++s_demoSend == 240;
-      if (NobleStyle::PrimaryButton("SEND REPORT", ImVec2(half, 38.0f * s)) || demoSend || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) {
+      const bool demoSend =
+          demo == 5 && !s_reportSending.load() && ++s_demoSend == 240;
+      if (NobleStyle::PrimaryButton("SEND REPORT", ImVec2(half, 38.0f * s)) ||
+          demoSend || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) {
         s_reportSending.store(true);
         std::string session;
         {
           std::lock_guard<std::mutex> lock(s_boardMutex);
           session = s_boardSession;
         }
-        if (session.empty()) session = MasterServerClient::Get().GetCurrentSessionId();
-        std::thread([session, target = s_selected, reason = std::string(kReasons[s_reportReason]), mapName, modeName] {
+        if (session.empty())
+          session = MasterServerClient::Get().GetCurrentSessionId();
+        std::thread([session, target = s_selected,
+                     reason = std::string(kReasons[s_reportReason]), mapName,
+                     modeName] {
           const std::string reporter = Settings::Get().Snapshot().playerName;
-          const bool sent = MasterServerClient::Get().SendReportSync(session, reporter, target, reason, mapName, modeName);
-          const bool saved = sent || SaveReport(target, reason.c_str(), mapName, modeName);
-          NOBLE_INFO("PauseMenu: report sent={} savedLocally={}", sent, !sent && saved);
+          const bool sent = MasterServerClient::Get().SendReportSync(
+              session, reporter, target, reason, mapName, modeName);
+          const bool saved =
+              sent || SaveReport(target, reason.c_str(), mapName, modeName);
+          NOBLE_INFO("PauseMenu: report sent={} savedLocally={}", sent,
+                     !sent && saved);
           s_reportResult.store(sent ? 1 : saved ? 2 : 3);
           s_reportSending.store(false);
         }).detach();
@@ -2453,7 +3068,9 @@ static void DrawScoreboardPanel() {
         MenuSounds::Click();
       }
       ImGui::SameLine(0.0f, gap);
-      if (ImGui::Button("CANCEL", ImVec2(half, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      if (ImGui::Button("CANCEL", ImVec2(half, 38.0f * s)) ||
+          ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+          ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         s_boardReport.store(false);
         MenuSounds::Back();
       }
@@ -2462,9 +3079,10 @@ static void DrawScoreboardPanel() {
   }
 }
 
-
-// Guest-side connection-lost panel: the host vanished (no packets for a while) but the engine keeps pumping frames, so
-// without this the guest just sits frozen in the mission. Offers the only reliable exit - relaunch the menu process.
+// Guest-side connection-lost panel: the host vanished (no packets for a while)
+// but the engine keeps pumping frames, so without this the guest just sits
+// frozen in the mission. Offers the only reliable exit - relaunch the menu
+// process.
 static bool DrawConnectionLostPanel(HWND hwnd) {
   using namespace NobleUi;
   ImGuiIO &io = ImGui::GetIO();
@@ -2473,25 +3091,36 @@ static bool DrawConnectionLostPanel(HWND hwnd) {
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
   dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), IM_COL32(4, 6, 10, 210));
   const float panelW = std::min(W * 0.5f, 720.0f * s), panelH = 260.0f * s;
-  const ImVec2 p0((W - panelW) * 0.5f, (H - panelH) * 0.5f), p1(p0.x + panelW, p0.y + panelH);
+  const ImVec2 p0((W - panelW) * 0.5f, (H - panelH) * 0.5f),
+      p1(p0.x + panelW, p0.y + panelH);
   dl->AddRectFilled(p0, p1, IM_COL32(10, 16, 26, 245), 8.0f * s);
   dl->AddRect(p0, p1, IM_COL32(70, 120, 165, 220), 8.0f * s, 0, 2.0f * s);
-  dl->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + 6.0f * s, p1.y), kAccent, 8.0f * s);
-  Text(dl, NobleStyle::TitleFont(), 34.0f * s, ImVec2(p0.x + 36.0f * s, p0.y + 30.0f * s),
-       IM_COL32(236, 240, 244, 255), "CONNECTION LOST");
-  Text(dl, ImGui::GetFont(), 20.0f * s, ImVec2(p0.x + 38.0f * s, p0.y + 84.0f * s),
-       IM_COL32(200, 210, 220, 255), "The host connection was lost.");
-  Text(dl, NobleStyle::SmallFont(), 15.0f * s, ImVec2(p0.x + 38.0f * s, p0.y + 116.0f * s),
-       IM_COL32(150, 190, 220, 255), "Holding the match open for host migration. A / Enter or click returns to the menu.");
+  dl->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + 6.0f * s, p1.y), kAccent,
+                    8.0f * s);
+  Text(dl, NobleStyle::TitleFont(), 34.0f * s,
+       ImVec2(p0.x + 36.0f * s, p0.y + 30.0f * s), IM_COL32(236, 240, 244, 255),
+       "CONNECTION LOST");
+  Text(dl, ImGui::GetFont(), 20.0f * s,
+       ImVec2(p0.x + 38.0f * s, p0.y + 84.0f * s), IM_COL32(200, 210, 220, 255),
+       "The host connection was lost.");
+  Text(dl, NobleStyle::SmallFont(), 15.0f * s,
+       ImVec2(p0.x + 38.0f * s, p0.y + 116.0f * s),
+       IM_COL32(150, 190, 220, 255),
+       "Holding the match open for host migration. A / Enter or click returns "
+       "to the menu.");
 
-  ImGui::SetNextWindowPos(ImVec2(p0.x + panelW * 0.5f - 120.0f * s, p0.y + panelH - 78.0f * s));
+  ImGui::SetNextWindowPos(
+      ImVec2(p0.x + panelW * 0.5f - 120.0f * s, p0.y + panelH - 78.0f * s));
   ImGui::SetNextWindowSize(ImVec2(240.0f * s, 52.0f * s));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
   ImGui::Begin("##NobleConnectionLost", nullptr,
-               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground);
-  const bool activate = ImGui::Button("Return to menu", ImVec2(240.0f * s, 44.0f * s)) ||
-                        ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                        ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+               ImGuiWindowFlags_NoDecoration |
+                   ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoBackground);
+  const bool activate =
+      ImGui::Button("Return to menu", ImVec2(240.0f * s, 44.0f * s)) ||
+      ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+      ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
   if (activate) {
     ImGui::End();
     ImGui::PopStyleColor();
@@ -2906,63 +3535,97 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const float by = H - 88.0f * s;
   float bx = W - margin - bw;
   bool overButton = false;
-  // What happens next in a hosted game. "-postgame-role host|guest" shows either one without a second PC.
+  // What happens next in a hosted game. "-postgame-role host|guest" shows
+  // either one without a second PC.
   static const int s_roleTest = [] {
     const wchar_t *const line = GetCommandLineW();
-    return wcsstr(line, L"-postgame-role host") ? 1 : wcsstr(line, L"-postgame-role guest") ? 2 : 0;
+    return wcsstr(line, L"-postgame-role host")    ? 1
+           : wcsstr(line, L"-postgame-role guest") ? 2
+                                                   : 0;
   }();
-  const bool isCmdGuest = (wcsstr(GetCommandLineW(), L"-connect") != nullptr || Relaunch::CurrentGameArgs().find(L" -connect") != std::wstring::npos);
-  const bool isCmdHost = (wcsstr(GetCommandLineW(), L"-host") != nullptr || Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+  const bool isCmdGuest =
+      (wcsstr(GetCommandLineW(), L"-connect") != nullptr ||
+       Relaunch::CurrentGameArgs().find(L" -connect") != std::wstring::npos);
+  const bool isCmdHost =
+      (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
+       Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
   const bool online = NetworkTransport::Get().IsActive();
-  const bool guestRole = s_roleTest == 2 || (s_roleTest == 0 && (isCmdGuest || (online && !NetworkTransport::Get().IsHost())));
-  const bool hostRole = s_roleTest == 1 || (s_roleTest == 0 && !guestRole && (isCmdHost || (online && NetworkTransport::Get().IsHost())));
+  const bool guestRole =
+      s_roleTest == 2 ||
+      (s_roleTest == 0 &&
+       (isCmdGuest || (online && !NetworkTransport::Get().IsHost())));
+  const bool hostRole =
+      s_roleTest == 1 ||
+      (s_roleTest == 0 && !guestRole &&
+       (isCmdHost || (online && NetworkTransport::Get().IsHost())));
   const std::wstring again = Relaunch::CurrentGameArgs();
-  // A guest's "again" would reconnect to a host who may have gone; only the host or a local player can start another.
+  // A guest's "again" would reconnect to a host who may have gone; only the
+  // host or a local player can start another.
   const bool guestPlayer = guestRole;
   const bool canPlayAgain = !again.empty() && !guestPlayer;
-  const bool hasPlaylist = wcsstr(GetCommandLineW(), L"-lobby-playlist") != nullptr;
-  const std::wstring nextMission = guestPlayer ? std::wstring() : NextCampaignMission(again);
+  const bool hasPlaylist =
+      wcsstr(GetCommandLineW(), L"-lobby-playlist") != nullptr;
+  const std::wstring nextMission =
+      guestPlayer ? std::wstring() : NextCampaignMission(again);
   const bool canNextMission = !nextMission.empty();
-  // Controller: left and right pick a button, A presses it, and A during the reveal only skips it. The focus starts away
-  // from QUIT, so one stray A can never close the game; a host starts on going back to the lobby.
+  // Controller: left and right pick a button, A presses it, and A during the
+  // reveal only skips it. The focus starts away from QUIT, so one stray A can
+  // never close the game; a host starts on going back to the lobby.
   enum { kPadQuit, kPadMenu, kPadAgain, kPadNext, kPadLobby };
   static int s_padButton = hostRole ? kPadLobby : kPadMenu;
-  std::vector<int> padOrder = { kPadQuit, kPadMenu };
-  if (canPlayAgain) padOrder.push_back(kPadAgain);
-  if ((hostRole && hasPlaylist) || canNextMission) padOrder.push_back(kPadNext);
-  if (hostRole) padOrder.push_back(kPadLobby);
+  std::vector<int> padOrder = {kPadQuit, kPadMenu};
+  if (canPlayAgain)
+    padOrder.push_back(kPadAgain);
+  if ((hostRole && hasPlaylist) || canNextMission)
+    padOrder.push_back(kPadNext);
+  if (hostRole)
+    padOrder.push_back(kPadLobby);
   int padAt = 1;
-  for (size_t i = 0; i < padOrder.size(); ++i) if (padOrder[i] == s_padButton) padAt = static_cast<int>(i);
-  if (UiPad::Left()) padAt = std::min(padAt + 1, static_cast<int>(padOrder.size()) - 1);
-  if (UiPad::Right()) padAt = std::max(padAt - 1, 0);
+  for (size_t i = 0; i < padOrder.size(); ++i)
+    if (padOrder[i] == s_padButton)
+      padAt = static_cast<int>(i);
+  if (UiPad::Left())
+    padAt = std::min(padAt + 1, static_cast<int>(padOrder.size()) - 1);
+  if (UiPad::Right())
+    padAt = std::max(padAt - 1, 0);
   s_padButton = padOrder[padAt];
   const bool padA = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
-  // A is jump: a player still pressing it as the panel finishes must not leave the screen, so it arms a second later.
+  // A is jump: a player still pressing it as the panel finishes must not leave
+  // the screen, so it arms a second later.
   static double s_padArmedAt = 0.0;
-  if (t < tEnd) s_padArmedAt = 0.0;
-  else if (s_padArmedAt == 0.0) s_padArmedAt = ImGui::GetTime() + 1.0;
+  if (t < tEnd)
+    s_padArmedAt = 0.0;
+  else if (s_padArmedAt == 0.0)
+    s_padArmedAt = ImGui::GetTime() + 1.0;
   const bool padPress = padA && t >= tEnd && ImGui::GetTime() >= s_padArmedAt;
-  if (padA && t < tEnd) s_reveal.skipped = true;
+  if (padA && t < tEnd)
+    s_reveal.skipped = true;
   const auto padOutline = [&](int button) {
-    if (s_padButton == button && (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad))
-      ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(143, 216, 255, 255), 0.0f, 0, 2.0f * s);
+    if (s_padButton == button &&
+        (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad))
+      ImGui::GetWindowDrawList()->AddRect(
+          ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+          IM_COL32(143, 216, 255, 255), 0.0f, 0, 2.0f * s);
   };
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
-  if (NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) || (padPress && s_padButton == kPadQuit)) {
+  if (NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) ||
+      (padPress && s_padButton == kPadQuit)) {
     QuitFromMatch(hwnd, "quit requested from post-game panel");
   }
   padOutline(kPadQuit);
   overButton |= ImGui::IsItemHovered();
   bx -= bw + gap;
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
-  if (ImGui::Button("RETURN TO MENU", ImVec2(bw, bh)) || (padPress && s_padButton == kPadMenu))
+  if (ImGui::Button("RETURN TO MENU", ImVec2(bw, bh)) ||
+      (padPress && s_padButton == kPadMenu))
     RelaunchAndClose(hwnd, L"-main-menu", "return to menu");
   padOutline(kPadMenu);
   overButton |= ImGui::IsItemHovered();
   if (canPlayAgain) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if (NobleStyle::PrimaryButton("PLAY AGAIN", ImVec2(bw, bh)) || (padPress && s_padButton == kPadAgain))
+    if (NobleStyle::PrimaryButton("PLAY AGAIN", ImVec2(bw, bh)) ||
+        (padPress && s_padButton == kPadAgain))
       RelaunchAndClose(hwnd, again, "play again");
     padOutline(kPadAgain);
     overButton |= ImGui::IsItemHovered();
@@ -2970,33 +3633,44 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const auto nextMissionButton = [&] {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if (NobleStyle::PrimaryButton("NEXT MISSION", ImVec2(bw, bh)) || (padPress && s_padButton == kPadNext))
-      RelaunchAndClose(hwnd, NextMissionArgs(nextMission, hostRole ? LobbyReturnArgs(true) : std::wstring()), "next mission");
+    if (NobleStyle::PrimaryButton("NEXT MISSION", ImVec2(bw, bh)) ||
+        (padPress && s_padButton == kPadNext))
+      RelaunchAndClose(hwnd,
+                       NextMissionArgs(nextMission, hostRole
+                                                        ? LobbyReturnArgs(true)
+                                                        : std::wstring()),
+                       "next mission");
     padOutline(kPadNext);
     overButton |= ImGui::IsItemHovered();
   };
-  if (canNextMission && !hostRole) nextMissionButton();
-  // The host takes everyone back to the lobby: its new process registers the same session again, and guests come back when
-  // the server says the match is over. Next in rotation waits for rotation itself.
+  if (canNextMission && !hostRole)
+    nextMissionButton();
+  // The host takes everyone back to the lobby: its new process registers the
+  // same session again, and guests come back when the server says the match is
+  // over. Next in rotation waits for rotation itself.
   if (hostRole) {
     if (canNextMission && !hasPlaylist) {
       nextMissionButton();
     } else {
+      bx -= bw + gap;
+      ImGui::SetCursorScreenPos(ImVec2(bx, by));
+      if (hasPlaylist) {
+        if (ImGui::Button("NEXT IN ROTATION", ImVec2(bw, bh)) ||
+            (padPress && s_padButton == kPadNext))
+          RelaunchAndClose(hwnd, LobbyReturnArgs(true, true),
+                           "next in rotation");
+        padOutline(kPadNext);
+        overButton |= ImGui::IsItemHovered();
+      } else {
+        UnavailableButton("NEXT IN ROTATION", ImVec2(bw, bh),
+                          "Pick a playlist on Custom Game to use a rotation.");
+        overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+      }
+    }
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if (hasPlaylist) {
-      if (ImGui::Button("NEXT IN ROTATION", ImVec2(bw, bh)) || (padPress && s_padButton == kPadNext))
-        RelaunchAndClose(hwnd, LobbyReturnArgs(true, true), "next in rotation");
-      padOutline(kPadNext);
-      overButton |= ImGui::IsItemHovered();
-    } else {
-      UnavailableButton("NEXT IN ROTATION", ImVec2(bw, bh), "Pick a playlist on Custom Game to use a rotation.");
-      overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
-    }
-    }
-    bx -= bw + gap;
-    ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if (NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) || (padPress && s_padButton == kPadLobby))
+    if (NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) ||
+        (padPress && s_padButton == kPadLobby))
       RelaunchAndClose(hwnd, LobbyReturnArgs(true), "return to lobby");
     padOutline(kPadLobby);
     overButton |= ImGui::IsItemHovered();
@@ -3006,15 +3680,20 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     const int lobbyState = PollHostBackInLobby();
     const bool canReturnLobby = (lobbyState == 1);
     if (canReturnLobby) {
-      if (NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) || (padPress && s_padButton == kPadLobby)) {
+      if (NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) ||
+          (padPress && s_padButton == kPadLobby)) {
         RelaunchAndClose(hwnd, LobbyReturnArgs(false), "guest return to lobby");
       }
       padOutline(kPadLobby);
       overButton |= ImGui::IsItemHovered();
     } else {
-      const char* guestBtnText = (lobbyState == 2 ? "HOST LEFT" : "WAITING FOR HOST");
-      const char* guestBtnTip = (lobbyState == 2 ? "The host's lobby closed. Return to the menu to play again."
-                                                 : "You can wait for the host or return to the menu at any time.");
+      const char *guestBtnText =
+          (lobbyState == 2 ? "HOST LEFT" : "WAITING FOR HOST");
+      const char *guestBtnTip =
+          (lobbyState == 2
+               ? "The host's lobby closed. Return to the menu to play again."
+               : "You can wait for the host or return to the menu at any "
+                 "time.");
       UnavailableButton(guestBtnText, ImVec2(bw, bh), guestBtnTip);
       overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
     }
@@ -3022,7 +3701,8 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       static bool s_guestAutoReturned = false;
       if (!s_guestAutoReturned) {
         s_guestAutoReturned = true;
-        RelaunchAndClose(hwnd, LobbyReturnArgs(false), "guest auto return to lobby");
+        RelaunchAndClose(hwnd, LobbyReturnArgs(false),
+                         "guest auto return to lobby");
       }
     }
   }
@@ -3034,46 +3714,63 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       display = s_displayMapName;
     }
     const std::string shownMap = !display.empty() ? Upper(display)
-                                : current.empty() ? std::string("-")
-                                                  : Upper(MapNames::Display(current));
+                                 : current.empty()
+                                     ? std::string("-")
+                                     : Upper(MapNames::Display(current));
     char nextName[64] = {};
     if (canNextMission)
-      WideCharToMultiByte(CP_UTF8, 0, nextMission.c_str(), -1, nextName, sizeof(nextName) - 1, nullptr, nullptr);
-    const std::string strip = "THIS MAP: " + shownMap + "    NEXT: " +
-                              (canNextMission ? Upper(MapNames::Display(nextName)) : std::string("NOT SET"));
-    Text(dl, smallFont, 15.0f * s, ImVec2(bx, by - 26.0f * s), kTextDim, strip.c_str());
+      WideCharToMultiByte(CP_UTF8, 0, nextMission.c_str(), -1, nextName,
+                          sizeof(nextName) - 1, nullptr, nullptr);
+    const std::string strip =
+        "THIS MAP: " + shownMap + "    NEXT: " +
+        (canNextMission ? Upper(MapNames::Display(nextName))
+                        : std::string("NOT SET"));
+    Text(dl, smallFont, 15.0f * s, ImVec2(bx, by - 26.0f * s), kTextDim,
+         strip.c_str());
   }
   // Auto-return / auto-advance countdown for host
   if (hostRole && t >= tEnd) {
-    static const int s_autoSeconds = _wtoi(ArgValue(GetCommandLineW(), L"-lobby-playlist-auto").c_str());
+    static const int s_autoSeconds =
+        _wtoi(ArgValue(GetCommandLineW(), L"-lobby-playlist-auto").c_str());
     if (!s_autoInited) {
       s_autoInited = true;
       if (s_autoSeconds > 0) {
         s_autoAt = ImGui::GetTime() + s_autoSeconds;
       }
     }
-    if (s_autoAt > 0.0 && !s_autoCancelled && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+    if (s_autoAt > 0.0 && !s_autoCancelled &&
+        (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+         ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
       s_autoAt = 0.0;
       s_autoCancelled = true;
       NOBLE_INFO("PauseMenu: lobby return countdown cancelled by host");
     }
     if (s_autoAt > 0.0 && !s_autoCancelled) {
-      const int left = std::max(0, static_cast<int>(s_autoAt - ImGui::GetTime() + 0.999));
+      const int left =
+          std::max(0, static_cast<int>(s_autoAt - ImGui::GetTime() + 0.999));
       char text[64];
       if (s_autoSeconds > 0) {
-        std::snprintf(text, sizeof(text), "Next match in %d s. B or Esc cancels.", left);
+        std::snprintf(text, sizeof(text),
+                      "Next match in %d s. B or Esc cancels.", left);
       } else {
-        std::snprintf(text, sizeof(text), "Returning party to lobby in %d s. B or Esc stays.", left);
+        std::snprintf(text, sizeof(text),
+                      "Returning party to lobby in %d s. B or Esc stays.",
+                      left);
       }
-      Text(dl, smallFont, 16.0f * s, ImVec2(margin, by + bh * 0.5f - 9.0f * s), kAmber, text);
+      Text(dl, smallFont, 16.0f * s, ImVec2(margin, by + bh * 0.5f - 9.0f * s),
+           kAmber, text);
       if (ImGui::GetTime() >= s_autoAt) {
         s_autoAt = 0.0;
         if (s_autoSeconds > 0) {
-          RelaunchAndClose(hwnd, LobbyReturnArgs(true, true), "next in rotation (countdown)");
+          RelaunchAndClose(hwnd, LobbyReturnArgs(true, true),
+                           "next in rotation (countdown)");
         } else if (canNextMission && !hasPlaylist) {
-          RelaunchAndClose(hwnd, NextMissionArgs(nextMission, LobbyReturnArgs(true)), "next mission (countdown)");
+          RelaunchAndClose(hwnd,
+                           NextMissionArgs(nextMission, LobbyReturnArgs(true)),
+                           "next mission (countdown)");
         } else {
-          RelaunchAndClose(hwnd, LobbyReturnArgs(true), "return to lobby (countdown)");
+          RelaunchAndClose(hwnd, LobbyReturnArgs(true),
+                           "return to lobby (countdown)");
         }
       }
     }
@@ -3115,7 +3812,8 @@ void PauseMenu::DrawLoading() {
                               IM_COL32(10, 16, 24, 255),
                               IM_COL32(10, 16, 24, 255), IM_COL32(2, 4, 8, 255),
                               IM_COL32(2, 4, 8, 255));
-  const UiTexture scene = modImage.empty() ? UiArt::LoadingBackground(scenario) : UiArt::ImageFile(modImage);
+  const UiTexture scene = modImage.empty() ? UiArt::LoadingBackground(scenario)
+                                           : UiArt::ImageFile(modImage);
   if (scene) {
     UiArt::DrawCover(dl, scene, ImVec2(0, 0), ImVec2(w, h));
     dl->AddRectFilledMultiColor(ImVec2(0, h * 0.50f), ImVec2(w, h),
@@ -3145,7 +3843,8 @@ void PauseMenu::DrawLoading() {
   float progress = LoadScreen::Get().GetLoadProgress();
   const HMODULE engineMod = GetModuleHandleW(L"haloreach.dll");
   if (engineMod) {
-    float engineProg = *reinterpret_cast<const float*>(reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
+    float engineProg = *reinterpret_cast<const float *>(
+        reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
     if (engineProg >= 0.0f && engineProg <= 1.0f && engineProg > progress) {
       progress = engineProg;
       LoadScreen::Get().SetLoadProgress(progress);
@@ -3167,9 +3866,10 @@ void PauseMenu::DrawLoading() {
   char pctBuf[32];
   std::snprintf(pctBuf, sizeof(pctBuf), "%d%%", progressPct);
   const ImVec2 pctSize = font->CalcTextSizeA(labelSize, FLT_MAX, 0.0f, pctBuf);
-  dl->AddText(font, labelSize,
-              ImVec2(left + barW - pctSize.x, titleTop - labelSize - 8.0f * uiScale),
-              accentCol, pctBuf);
+  dl->AddText(
+      font, labelSize,
+      ImVec2(left + barW - pctSize.x, titleTop - labelSize - 8.0f * uiScale),
+      accentCol, pctBuf);
 
   if (!mapName.empty()) {
     dl->AddText(title ? title : font, titleSize, ImVec2(left, titleTop),
@@ -3185,7 +3885,8 @@ void PauseMenu::DrawLoading() {
     dl->AddRectFilled(b0, ImVec2(b0.x + fillW, b1.y), accentCol);
   }
 
-  // The mod map's own description under the bar, wrapped to the bar's width plus a little.
+  // The mod map's own description under the bar, wrapped to the bar's width
+  // plus a little.
   if (!description.empty()) {
     const float textSize = ImGui::GetFontSize();
     const float wrap = w * 0.40f;
@@ -3197,13 +3898,15 @@ void PauseMenu::DrawLoading() {
   }
 }
 
-void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading, const std::function<void()> &extraOverlay) {
+void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading,
+                       const std::function<void()> &extraOverlay) {
   if (swapChain)
     s_swapChain.store(swapChain);
   s_lastEngineFrame.store(GetTickCount64());
   std::lock_guard<std::mutex> lock(s_renderMutex);
   RenderImpl(swapChain, loading, false, extraOverlay);
-  if (s_scoreboardShotRequest.exchange(false) && swapChain) FrameCapture::SaveNow(swapChain, 888888);
+  if (s_scoreboardShotRequest.exchange(false) && swapChain)
+    FrameCapture::SaveNow(swapChain, 888888);
 }
 
 bool PauseMenu::HoldFrame() {
@@ -3241,12 +3944,14 @@ bool PauseMenu::HoldFrame() {
   return true;
 }
 
-void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
-                           bool clear, const std::function<void()> &extraOverlay) {
+void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
+                           const std::function<void()> &extraOverlay) {
   const bool gameOver = s_gameOver.load();
-  // -postgame-test: force the clean GAME OVER panel so its composition over the engine's post-game UI can be captured
-  // without playing a match to its score limit.
-  if (!gameOver && (wcsstr(GetCommandLineW(), L"-postgame-test") || wcsstr(GetCommandLineW(), L"-postgame-role"))) {
+  // -postgame-test: force the clean GAME OVER panel so its composition over the
+  // engine's post-game UI can be captured without playing a match to its score
+  // limit.
+  if (!gameOver && (wcsstr(GetCommandLineW(), L"-postgame-test") ||
+                    wcsstr(GetCommandLineW(), L"-postgame-role"))) {
     static int s_postGameTestFrames = 0;
     if (!loading && ++s_postGameTestFrames == 900) {
       NOBLE_INFO("PauseMenu: -postgame-test forcing the game-over panel");
@@ -3255,23 +3960,27 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   }
 
   const bool open = s_open.load();
-  // A local match (no remote players) freezes while the menu is up. If a peer joins while it is open,
-  // the next frame resumes it, so online play keeps the old non-pausing behaviour.
+  // A local match (no remote players) freezes while the menu is up. If a peer
+  // joins while it is open, the next frame resumes it, so online play keeps the
+  // old non-pausing behaviour.
   const size_t peers = NetworkTransport::Get().GetGamePeerCount();
   SetLocalSimulationPaused(open && !loading && !gameOver && peers == 0);
   SocialOverlay::Poll(!open && !loading);
   const bool showFps = Settings::Get().Snapshot().showFps;
-  static const bool s_scoreboardTest = wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
+  static const bool s_scoreboardTest =
+      wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
   const int boardVk = KeyBindings::EffectiveKey(20);
   const int demo = ScoreboardDemo();
   static int s_demoFrames = 0;
   if (demo >= 2 && !loading && !open && !gameOver && s_demoFrames == 0)
     EnterScoreboardPointer();
   // A fresh press of the scoreboard key hands the pointer back to the game.
-  const bool boardPhysical = boardVk > 0 && (GetAsyncKeyState(boardVk) & 0x8000) != 0;
+  const bool boardPhysical =
+      boardVk > 0 && (GetAsyncKeyState(boardVk) & 0x8000) != 0;
   static bool s_boardWasDown = false, s_boardWasPointer = false;
   const bool wasPointer = s_boardPointer.load();
-  if (wasPointer && s_boardWasPointer && boardPhysical && !s_boardWasDown && demo == 0)
+  if (wasPointer && s_boardWasPointer && boardPhysical && !s_boardWasDown &&
+      demo == 0)
     s_boardPointer.store(false);
   s_boardWasDown = boardPhysical;
   s_boardWasPointer = wasPointer;
@@ -3281,15 +3990,17 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   }
   const bool boardPointer = s_boardPointer.load();
   const bool scoreboardHeld = !loading && !open && !gameOver &&
-                              (ReachHost::IsKeyHeld(boardVk) || s_scoreboardTest || demo > 0 || boardPointer);
+                              (ReachHost::IsKeyHeld(boardVk) ||
+                               s_scoreboardTest || demo > 0 || boardPointer);
 
   DXGI_SWAP_CHAIN_DESC desc{};
   if (FAILED(swapChain->GetDesc(&desc)) || !desc.OutputWindow)
     return;
   const HWND hwnd = desc.OutputWindow;
 
-  // Guests: if the host has been silent for a while, the engine keeps pumping frames but the session is dead. Show a panel
-  // instead of freezing in the mission.
+  // Guests: if the host has been silent for a while, the engine keeps pumping
+  // frames but the session is dead. Show a panel instead of freezing in the
+  // mission.
   static bool s_connectionLost = false;
   static std::atomic<bool> s_guestShouldReturnLobby{false};
   static std::atomic<bool> s_guestShouldDisband{false};
@@ -3300,16 +4011,19 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
       NOBLE_INFO("PauseMenu: received host_return_to_lobby");
       s_guestShouldReturnLobby.store(true);
     });
-    NetworkTransport::Get().SetLobbyClosedCallback([](const std::string& reason) {
-      NOBLE_INFO("PauseMenu: received lobby_closed/disband: {}", reason);
-      s_guestShouldDisband.store(true);
-    });
+    NetworkTransport::Get().SetLobbyClosedCallback(
+        [](const std::string &reason) {
+          NOBLE_INFO("PauseMenu: received lobby_closed/disband: {}", reason);
+          s_guestShouldDisband.store(true);
+        });
   }
 
-  const bool guest = NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
+  const bool guest =
+      NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
   if (guest) {
     if (s_guestShouldReturnLobby.exchange(false)) {
-      NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to pre-game lobby");
+      NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to "
+                 "pre-game lobby");
       Career::EnsureMatchSaved("host_returned_to_lobby");
       SetHostBackInLobby(1);
       if (!s_gameOver.load()) {
@@ -3319,7 +4033,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
       }
     }
     if (s_guestShouldDisband.exchange(false)) {
-      NOBLE_INFO("PauseMenu: host disbanded lobby / quit game, returning guest to main menu");
+      NOBLE_INFO("PauseMenu: host disbanded lobby / quit game, returning guest "
+                 "to main menu");
       Career::EnsureMatchSaved("host_disbanded_lobby");
       SetHostBackInLobby(2);
       if (!s_gameOver.load()) {
@@ -3329,23 +4044,31 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     }
   }
 
-  const double hostSilence = guest ? NetworkTransport::Get().SecondsSinceRemotePacket() : 0.0;
+  const double hostSilence =
+      guest ? NetworkTransport::Get().SecondsSinceRemotePacket() : 0.0;
   static ULONGLONG s_lastStateCheck = 0;
   const ULONGLONG nowTick = GetTickCount64();
   if (guest && hostSilence > 5.0 && nowTick - s_lastStateCheck > 2000) {
     s_lastStateCheck = nowTick;
-    std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
-    if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
+    std::wstring wSession =
+        ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+    if (wSession.empty())
+      wSession = ArgValue(GetCommandLineW(), L"-session-id");
     if (!wSession.empty()) {
       char sessUtf8[128] = {};
-      WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+      WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8,
+                          sizeof(sessUtf8) - 1, nullptr, nullptr);
       std::thread([sessUtf8, hostSilence]() {
-        const LobbyState state = MasterServerClient::Get().FetchLobbyStateSync(sessUtf8);
+        const LobbyState state =
+            MasterServerClient::Get().FetchLobbyStateSync(sessUtf8);
         if (state.ok && !state.isClosed && !state.inProgress) {
-          NOBLE_INFO("PauseMenu: host lobby poll shows inProgress=false, returning guest to pre-game lobby");
+          NOBLE_INFO("PauseMenu: host lobby poll shows inProgress=false, "
+                     "returning guest to pre-game lobby");
           s_guestShouldReturnLobby.store(true);
-        } else if ((state.ok && state.isClosed) || (!state.ok && hostSilence > 30.0)) {
-          NOBLE_INFO("PauseMenu: host lobby poll shows closed={} ok={} after {:.1f}s silence, disbanding to main menu",
+        } else if ((state.ok && state.isClosed) ||
+                   (!state.ok && hostSilence > 30.0)) {
+          NOBLE_INFO("PauseMenu: host lobby poll shows closed={} ok={} after "
+                     "{:.1f}s silence, disbanding to main menu",
                      state.isClosed, state.ok, hostSilence);
           s_guestShouldDisband.store(true);
         }
@@ -3356,15 +4079,19 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   if (!loading && !open && !gameOver && guest && hostSilence > 15.0) {
     if (!s_connectionLost) {
       s_connectionLost = true;
-      NOBLE_WARN("PauseMenu: host connection lost ({:.1f}s without packets) - holding the match for host migration",
+      NOBLE_WARN("PauseMenu: host connection lost ({:.1f}s without packets) - "
+                 "holding the match for host migration",
                  hostSilence);
     }
   } else if (guest && hostSilence < 2.0) {
-    // Packets resumed, e.g. after the engine migrated the host. Drop the panel instead of latching it forever.
+    // Packets resumed, e.g. after the engine migrated the host. Drop the panel
+    // instead of latching it forever.
     s_connectionLost = false;
   }
   const bool connectionLost = s_connectionLost;
-  if (!(open || gameOver || loading || showFps || scoreboardHeld || connectionLost || extraOverlay || SocialOverlay::WantsFrame()) || !swapChain ||      !ImGui::GetCurrentContext())
+  if (!(open || gameOver || loading || showFps || scoreboardHeld ||
+        connectionLost || extraOverlay || SocialOverlay::WantsFrame()) ||
+      !swapChain || !ImGui::GetCurrentContext())
     return;
 
   ID3D11Device *device = nullptr;
@@ -3436,9 +4163,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     GetClientRect(hwnd, &client);
     POINT cursor{};
     static bool s_boardWasPointerFrame = false;
-    if ((open || gameOver || boardPointer || extraOverlay) && Window::IsForeground(hwnd) &&
-        GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) &&
-        client.right > 0 && client.bottom > 0) {
+    if ((open || gameOver || boardPointer || extraOverlay) &&
+        Window::IsForeground(hwnd) && GetCursorPos(&cursor) &&
+        ScreenToClient(hwnd, &cursor) && client.right > 0 &&
+        client.bottom > 0) {
       // Window may be resized while the back buffer stays the same size: scale
       // to back-buffer pixels.
       const float sx = io.DisplaySize.x / static_cast<float>(client.right);
@@ -3449,7 +4177,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
       // ImGui a full press + release for it (ImGui spreads queued events over
       // frames).
       bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-      // The click that freed the scoreboard pointer is not a click on the panel: wait for its release.
+      // The click that freed the scoreboard pointer is not a click on the
+      // panel: wait for its release.
       static bool s_boardClickHeld = false;
       if (boardPointer && !s_boardWasPointerFrame && down)
         s_boardClickHeld = true;
@@ -3476,14 +4205,19 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     }
 
     UiPad::Feed(io);
-    // Keyboard/WM_CHAR events are already forwarded to ImGui by UIManager::HandleWndProc -> ImGui_ImplWin32_WndProcHandler.
-    // Plain ImGui text (pause list, challenges, buttons, settings) uses the fonts' fixed 15-18 px. The front-end
-    // menu scales it with the back buffer (FrontEndMenu sets this before its NewFrame); the match frame never did,
-    // so on a 4K back buffer every pause-menu label drew at about half size inside full-size rows.
+    // Keyboard/WM_CHAR events are already forwarded to ImGui by
+    // UIManager::HandleWndProc -> ImGui_ImplWin32_WndProcHandler. Plain ImGui
+    // text (pause list, challenges, buttons, settings) uses the fonts' fixed
+    // 15-18 px. The front-end menu scales it with the back buffer (FrontEndMenu
+    // sets this before its NewFrame); the match frame never did, so on a 4K
+    // back buffer every pause-menu label drew at about half size inside
+    // full-size rows.
     io.FontGlobalScale = NobleUi::Scale();
     ImGui_ImplDX11_NewFrame();
     ImGui::NewFrame();
-    if (SocialOverlay::IsTyping()) io.ClearInputKeys();   // the line takes the keyboard, not the panels below it
+    if (SocialOverlay::IsTyping())
+      io.ClearInputKeys(); // the line takes the keyboard, not the panels below
+                           // it
     if (showFps) {
       char fpsLabel[32];
       std::snprintf(fpsLabel, sizeof(fpsLabel), "FPS %.0f", io.Framerate);
@@ -3503,10 +4237,12 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         DrawLoading();
       if (open)
         DrawMenu(hwnd);
-      if (connectionLost && DrawConnectionLostPanel(hwnd)) return;
+      if (connectionLost && DrawConnectionLostPanel(hwnd))
+        return;
       if (scoreboardHeld && !connectionLost) {
         DrawScoreboardPanel();
-        // -scoreboard-demo: one screenshot about 30 s in, so the match is on screen behind the panel, not a loading frame.
+        // -scoreboard-demo: one screenshot about 30 s in, so the match is on
+        // screen behind the panel, not a loading frame.
         if (demo > 0 && ++s_demoFrames == 900) {
           s_scoreboardShotRequest.store(true);
           NOBLE_INFO("PauseMenu: -scoreboard-demo {} capture requested", demo);
@@ -3521,8 +4257,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         }
       }
     }
-    if (extraOverlay) extraOverlay();
-    SocialOverlay::Draw(24.0f, 24.0f, 778.0f);   // chat stays above the motion tracker
+    if (extraOverlay)
+      extraOverlay();
+    SocialOverlay::Draw(24.0f, 24.0f,
+                        778.0f); // chat stays above the motion tracker
     ImGui::Render();
 
     // The DX11 backend saves/restores most pipeline state but not the

@@ -826,6 +826,7 @@ int BlamEngine::s_engineModeOverride = 0;
 BlamEngine* BlamEngine::s_active = nullptr;
 bool BlamEngine::s_guestPostStart = false;
 std::string BlamEngine::s_savedFilmPath;
+bool BlamEngine::s_isSavedFilmPlayback = false;
 std::optional<VariantFields> BlamEngine::s_variantOverrides;
 std::string BlamEngine::s_variantPatch;
 std::atomic<bool> BlamEngine::s_gameTeamsEnabled{false};
@@ -887,9 +888,13 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     int clampedDiff = (difficulty >= 0 && difficulty <= 3) ? difficulty : 1;
 
-    bool isMainMenu = !s_savedFilmPath.empty() ? false : (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
+    const bool isSavedFilm = IsSavedFilmPlayback() || !s_savedFilmPath.empty();
+    if (isSavedFilm && NetworkTransport::Get().IsActive()) {
+        NetworkTransport::Get().Shutdown();
+    }
+    bool isMainMenu = isSavedFilm ? false : (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
     const bool isGuest = !connectAddress.empty();
-    if (!isMainMenu && !NetworkTransport::Get().IsActive()) {
+    if (!isMainMenu && !isSavedFilm && !NetworkTransport::Get().IsActive()) {
         if (isGuest) {
             std::string tip = "127.0.0.1";
             uint16_t tport = 11774;
@@ -1592,8 +1597,10 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             *reinterpret_cast<const char**>(&block[0x2BF20]) = s_activeFilmPathBuf.c_str();
             NOBLE_INFO("BlamEngine: Configured Theater Saved Film playback '{}' (staged as '{}') at launch_block+0x2BF20",
                        srcPath.string(), s_activeFilmPathBuf);
+            s_isSavedFilmPlayback = true;
         } else {
             NOBLE_ERROR("BlamEngine: Requested Theater Saved Film '{}' does not exist", s_savedFilmPath);
+            s_isSavedFilmPlayback = false;
         }
         s_savedFilmPath.clear();
     }
@@ -1711,6 +1718,10 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         gameModeTag = 0;    // Main Menu
     }
 
+    if (gameModeTag == 0 && s_savedFilmPath.empty()) {
+        s_isSavedFilmPlayback = false;
+    }
+
     if (!s_savedFilmPath.empty() && gameModeTag == 0) {
         if (_stricmp(effectiveGameMode.c_str(), "campaign") == 0) gameModeTag = 1;
         else if (_stricmp(effectiveGameMode.c_str(), "firefight") == 0) gameModeTag = 1035;
@@ -1751,7 +1762,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     noble::LobbyPatches::SetCampaignCoop(gameModeTag == 1 || gameModeTag == 1035);
 
     // Career pays by base type, so modded maps/variants earn exactly what their stock type earns.
-    if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), effectiveMapName, difficulty, skulls);
+    if (gameModeTag != 0 && !IsSavedFilmPlayback()) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), effectiveMapName, difficulty, skulls);
 
     auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath, connectAddress);
     // Campaign/Firefight co-op: the launch block declares how many players this session has (0xE8).

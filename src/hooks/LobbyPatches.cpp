@@ -9,6 +9,7 @@
 #include "ui/PauseMenu.hpp"
 #include "EnginePatches.hpp"
 #include "engine/ReachHost.hpp"
+#include "engine/BlamEngine.hpp"
 #endif
 #include <psapi.h>
 #include <vector>
@@ -457,6 +458,12 @@ static void __fastcall Hook_GameFinish() {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME FINISH requested by hr+0x{:X} stack: {}", RefuseRole(), GetCurrentProcessId(),
                    CallerRva(_ReturnAddress()), ReachStack());
     }
+#ifndef NOBLE_DEDICATED
+    if (noble::BlamEngine::IsSavedFilmPlayback()) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED GAME FINISH during Theater saved film playback");
+        return;
+    }
+#endif
     if (ShouldBlockPrematureEnd()) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED premature GAME FINISH during cutscene / match startup!");
         return;
@@ -478,6 +485,12 @@ static void __fastcall Hook_GameOver(int32_t reason) {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME OVER reason {} (0x{:X}) from hr+0x{:X}", RefuseRole(), GetCurrentProcessId(),
                    reason, reason, CallerRva(_ReturnAddress()));
     }
+#ifndef NOBLE_DEDICATED
+    if (noble::BlamEngine::IsSavedFilmPlayback()) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED GAME OVER (reason {}) during Theater saved film playback", reason);
+        return;
+    }
+#endif
     if (ShouldBlockPrematureEnd()) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED premature GAME OVER (reason {}) during cutscene / match startup!", reason);
         return;
@@ -487,6 +500,61 @@ static void __fastcall Hook_GameOver(int32_t reason) {
     PauseMenu::ShowGameOver();
 #endif
     if (s_originalGameOver) s_originalGameOver(reason);
+}
+
+// Abort game detour (hr+0x3ABB70, (uint32_t reason) -> void). Called on error 9 ("An error occurred during film playback"),
+// session monitor reason 7 (timeout / match ended), etc.
+typedef void(__fastcall* AbortGameFn)(uint32_t reason);
+static AbortGameFn s_originalAbortGame = nullptr;
+
+static void __fastcall Hook_AbortGame(uint32_t reason) {
+    NOBLE_INFO("LobbyPatches: AbortGame(reason={}) from hr+0x{:X}", reason, CallerRva(_ReturnAddress()));
+#ifndef NOBLE_DEDICATED
+    if (noble::BlamEngine::IsSavedFilmPlayback()) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED AbortGame(reason={}) during Theater saved film playback", reason);
+        if (s_reachBase && s_reachSize > 0x278EE90) {
+            *reinterpret_cast<uint8_t*>(s_reachBase + 0x278EE88) = 0; // saved_film_has_error
+            *reinterpret_cast<uint32_t*>(s_reachBase + 0x278EE8C) = 0; // saved_film_error_code
+        }
+        return;
+    }
+#endif
+    if (s_originalAbortGame) s_originalAbortGame(reason);
+}
+
+// Saved film session monitor detour (hr+0x3ABE70, () -> void).
+// Evaluates channel timeout and [c_game_engine+0x4c] (game ended). If either triggers, it shuts down the saved film
+// director and aborts with reason 7. During local saved film playback, suppress this monitor and clear any error flags.
+typedef void(__fastcall* SavedFilmSessionMonitorFn)();
+static SavedFilmSessionMonitorFn s_originalSavedFilmSessionMonitor = nullptr;
+
+static void __fastcall Hook_SavedFilmSessionMonitor() {
+#ifndef NOBLE_DEDICATED
+    if (noble::BlamEngine::IsSavedFilmPlayback()) {
+        if (s_reachBase && s_reachSize > 0x278EE90) {
+            *reinterpret_cast<uint8_t*>(s_reachBase + 0x278EE88) = 0; // saved_film_has_error
+            *reinterpret_cast<uint32_t*>(s_reachBase + 0x278EE8C) = 0; // saved_film_error_code
+        }
+        return;
+    }
+#endif
+    if (s_originalSavedFilmSessionMonitor) s_originalSavedFilmSessionMonitor();
+}
+
+// Set game ended detour (hr+0x3C08B4, (void* thisPtr, bool force) -> void).
+// Sets [c_game_engine+0x4c] = 1 based on stock match limits. Suppressed during saved film playback so the
+// recorded match plays continuously to the end of the film.
+typedef void(__fastcall* SetGameEndedFn)(void* thisPtr, bool force);
+static SetGameEndedFn s_originalSetGameEnded = nullptr;
+
+static void __fastcall Hook_SetGameEnded(void* thisPtr, bool force) {
+#ifndef NOBLE_DEDICATED
+    if (noble::BlamEngine::IsSavedFilmPlayback()) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED SetGameEnded(force={}) during Theater saved film playback", force);
+        return;
+    }
+#endif
+    if (s_originalSetGameEnded) s_originalSetGameEnded(thisPtr, force);
 }
 
 // Team count for the game-over check (hr+0x133320(out last player?, out teams alive, out teams with players)). Called
@@ -1183,6 +1251,31 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
         }
     } else {
         NOBLE_WARN("LobbyPatches: cmovz bytes differ at hr+0x40958B; left alone");
+    }
+
+    // 9. Theater saved film playback hooks:
+    // Prevents error dialog "An error occurred during film playback" and premature match aborts
+    // (AbortGame reason 7/9, SavedFilmSessionMonitor timeout abort, and SetGameEnded).
+    {
+        struct { uintptr_t rva; uint8_t sig[5]; void* detour; void** orig; const char* name; } theaterHooks[] = {
+            { 0x3ABB70, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_AbortGame),
+              reinterpret_cast<void**>(&s_originalAbortGame), "c_game_engine::abort_game" },
+            { 0x3ABE70, { 0x48, 0x89, 0x5C, 0x24, 0x10 }, reinterpret_cast<void*>(&Hook_SavedFilmSessionMonitor),
+              reinterpret_cast<void**>(&s_originalSavedFilmSessionMonitor), "c_saved_film_manager::session_monitor" },
+            { 0x3C08B4, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_SetGameEnded),
+              reinterpret_cast<void**>(&s_originalSetGameEnded), "c_game_engine::set_game_ended" },
+        };
+        for (auto& h : theaterHooks) {
+            uint8_t* fn = reinterpret_cast<uint8_t*>(base + h.rva);
+            if (h.rva + 5 <= size && std::memcmp(fn, h.sig, 5) == 0) {
+                if (HookManager::InstallHook(fn, h.detour, h.orig, h.name)) {
+                    patchCount++;
+                    NOBLE_INFO("LobbyPatches: {} hook installed at hr+0x{:X}", h.name, h.rva);
+                }
+            } else {
+                NOBLE_WARN("LobbyPatches: {} prologue mismatch at hr+0x{:X}; hook skipped", h.name, h.rva);
+            }
+        }
     }
 
     s_isApplied = true;

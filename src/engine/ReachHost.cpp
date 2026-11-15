@@ -910,6 +910,10 @@ static std::atomic<float> s_loadFraction{0.0f};
 // Layout notes: game results.
 static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a4;
+    if (noble::BlamEngine::IsSavedFilmPlayback()) {
+        NOBLE_INFO("ReachHost [Slot 6 - GameResults]: ignoring game results during Theater saved film playback");
+        return 0;
+    }
     int launchState = -1;
     if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
         SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState);
@@ -2661,12 +2665,14 @@ static bool ReadPad(NobleXInputState& state) {
 // endpoint's own port for recv (hr+0x43AB88 / hr+0x43AA78). Only the low 16 bits are set by the caller.
 static uint64_t __fastcall HostSlot41_NetSend(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr;
+    if (noble::BlamEngine::IsSavedFilmPlayback()) return 0;
     return NetworkTransport::Get().OnNetSend(a1, reinterpret_cast<const uint8_t*>(a2), static_cast<size_t>(a3),
                                              static_cast<uint16_t>(a4 & 0xFFFF));
 }
 
 static uint64_t __fastcall HostSlot43_NetRecv(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr;
+    if (noble::BlamEngine::IsSavedFilmPlayback()) return 0;
     return NetworkTransport::Get().OnNetRecv(reinterpret_cast<uint8_t*>(a1), static_cast<size_t>(a2), reinterpret_cast<uint64_t*>(a3),
                                              static_cast<uint16_t>(a4 & 0xFFFF));
 }
