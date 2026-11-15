@@ -4089,8 +4089,9 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     s_connectionLost = false;
   }
   const bool connectionLost = s_connectionLost;
+  const bool isTheater = noble::BlamEngine::IsSavedFilmPlayback();
   if (!(open || gameOver || loading || showFps || scoreboardHeld ||
-        connectionLost || extraOverlay || SocialOverlay::WantsFrame()) ||
+        connectionLost || extraOverlay || SocialOverlay::WantsFrame() || isTheater) ||
       !swapChain || !ImGui::GetCurrentContext())
     return;
 
@@ -4163,7 +4164,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     GetClientRect(hwnd, &client);
     POINT cursor{};
     static bool s_boardWasPointerFrame = false;
-    if ((open || gameOver || boardPointer || extraOverlay) &&
+    if ((open || gameOver || boardPointer || extraOverlay || isTheater) &&
         Window::IsForeground(hwnd) && GetCursorPos(&cursor) &&
         ScreenToClient(hwnd, &cursor) && client.right > 0 &&
         client.bottom > 0) {
@@ -4235,8 +4236,35 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     } else {
       if (loading)
         DrawLoading();
-      if (open)
+      if (open) {
         DrawMenu(hwnd);
+      } else if (isTheater && !loading) {
+        const float s = NobleUi::Scale();
+        const float btnW = 120.0f * s;
+        const float btnH = 32.0f * s;
+        const float topY = showFps ? (52.0f * s) : (16.0f * s);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - btnW - 16.0f * s, topY));
+        ImGui::SetNextWindowSize(ImVec2(btnW, btnH));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f * s);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f * s, 2.0f * s));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.08f, 0.11f, 0.70f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.24f, 0.55f, 0.85f, 0.50f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.14f, 0.18f, 0.60f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.32f, 0.48f, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.25f, 0.45f, 0.65f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.88f, 0.92f, 0.96f, 0.95f));
+        if (ImGui::Begin("##theater_pause_pill", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+          if (ImGui::Button("[ESC] MENU", ImVec2(-1, -1))) {
+            Toggle();
+          }
+        }
+        ImGui::End();
+        ImGui::PopStyleColor(6);
+        ImGui::PopStyleVar(3);
+      }
       if (connectionLost && DrawConnectionLostPanel(hwnd))
         return;
       if (scoreboardHeld && !connectionLost) {

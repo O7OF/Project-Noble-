@@ -2157,12 +2157,17 @@ static void FillLocalInput(uint8_t* st) {
     }
 
     const bool uiPointer = UiCursorActive();
+    const bool isTheater = noble::BlamEngine::IsSavedFilmPlayback();
 
     // Esc opens/closes Noble's pause menu, except while a Reach menu owns the pointer (there Esc
     // goes to the engine, e.g. to back out of a screen).
+    // In Theater mode or when the Pause menu is already up, Esc must always toggle/close the menu.
     static bool s_escWasDown = false;
-    const bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-    if (escDown && !s_escWasDown && !uiPointer && !PauseMenu::IsGameOver() && !SocialOverlay::OwnsEscape()) {
+    const bool escDown = ((GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0) ||
+                         ((GetAsyncKeyState(VK_F10) & 0x8000) != 0) ||
+                         ((GetAsyncKeyState(VK_PAUSE) & 0x8000) != 0);
+    const bool canToggleEsc = (!uiPointer || isTheater || PauseMenu::IsOpen()) && !PauseMenu::IsGameOver() && !SocialOverlay::OwnsEscape();
+    if (escDown && !s_escWasDown && canToggleEsc) {
         if (DevMenu::IsOpen()) DevMenu::Close();
         else PauseMenu::Toggle();
     }
@@ -2312,7 +2317,7 @@ static void FillLocalInput(uint8_t* st) {
         }
     }
 
-    if (!uiPointer) {
+    if (!uiPointer || isTheater || PauseMenu::IsOpen()) {
         st[0x004 + VK_ESCAPE] = 0; // Esc was ours (pause menu)
     }
 
