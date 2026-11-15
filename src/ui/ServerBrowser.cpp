@@ -601,30 +601,31 @@ void ServerBrowser::RenderServerList() {
     const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal && !ModDownloadPrompt::Get().IsActive();
     if (padFree) {
         if (!visibleIndices.empty()) {
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+            if (UiPad::AcceptPressed()) {
+                UiPad::ConsumeAccept();
                 if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
                     const auto& s = m_servers[m_selectedServerIndex];
                     if (!s.isOwn) AttemptJoin(s);
                 }
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
+            if (UiPad::ActionY() || ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
                 if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
                     ToggleFavorite(m_servers[m_selectedServerIndex].hostAddress, m_servers[m_selectedServerIndex].port);
                     RefreshServers();
                 }
             }
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+        if (UiPad::ActionX() || ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
             m_lastMasterRequest = -100.0;
             m_lastRefresh = -100.0;
             SessionManager::Get().TriggerDiscoveryScan();
             MenuSounds::Click();
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+        if (UiPad::TabPrev()) {
             m_modeFilter = (m_modeFilter + 4) % 5;
             MenuSounds::Tab(-1);
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+        if (UiPad::TabNext()) {
             m_modeFilter = (m_modeFilter + 1) % 5;
             MenuSounds::Tab(1);
         }
@@ -635,6 +636,7 @@ void ServerBrowser::RenderServerList() {
         ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable;
 
     if (!ImGui::BeginTable("ServerTable", 7, flags, ImVec2(0, 0))) return;
+    UiPad::ScrollWindow(false, false);
 
     // Widths include the cell padding and the sort arrow, so no header is elided ("Sour...", "Playe...").
     ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, U(86.0f));
@@ -686,8 +688,8 @@ void ServerBrowser::RenderServerList() {
             if (static_cast<int>(visible[k] - m_servers.data()) == m_selectedServerIndex) position = k;
         }
         int next = position;
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown) || UiPad::Down()) next = (position + 1) % count;
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp) || UiPad::Up()) next = (position - 1 + count) % count;
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) next = (position + 1) % count;
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) next = (position - 1 + count) % count;
         if (UiPad::PageDown() || ImGui::IsKeyPressed(ImGuiKey_PageDown)) next = std::min(position + 8, count - 1);
         if (UiPad::PageUp() || ImGui::IsKeyPressed(ImGuiKey_PageUp)) next = std::max(position - 8, 0);
         if (next != position) {

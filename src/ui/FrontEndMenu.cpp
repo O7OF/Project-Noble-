@@ -1620,9 +1620,10 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
             selected = (selected + dir + n) % n;
             MenuSounds::Scroll();
         };
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) step(1);
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) step(-1);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) step(1);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) step(-1);
         if (AcceptPressed() && items[selected].enabled) {
+            UiPad::ConsumeAccept();
             activated = selected;
         }
     }
@@ -1640,6 +1641,18 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
         const ImVec2 area0 = pos, area1(pos.x + width + 14.0f * ui.s, pos.y + maxRows * rh);
         const float wheel = ImGui::GetIO().MouseWheel;
         if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false)) first -= static_cast<int>(wheel);
+        static float s_stickAccum = 0.0f;
+        const float rStick = UiPad::AnalogScrollY(false);
+        if (rStick != 0.0f) {
+            s_stickAccum += rStick / std::max(1.0f, rh);
+            const int stepRows = static_cast<int>(s_stickAccum);
+            if (stepRows != 0) {
+                first += stepRows;
+                s_stickAccum -= static_cast<float>(stepRows);
+            }
+        } else {
+            s_stickAccum = 0.0f;
+        }
         first = std::clamp(first, 0, n - maxRows);
         const float trackX = pos.x + width + 6.0f * ui.s, trackH = maxRows * rh;
         ui.dl->AddRectFilled(ImVec2(trackX, pos.y), ImVec2(trackX + 3.0f * ui.s, pos.y + trackH), IM_COL32(255, 255, 255, 25));
@@ -1676,9 +1689,13 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
             if (items[i].enabled) activated = i;
         }
         if (i == selected) {
-            ui.dl->AddRectFilledMultiColor(a, b, IM_COL32(255, 255, 255, 46), IM_COL32(255, 255, 255, 4),
-                                           IM_COL32(255, 255, 255, 4), IM_COL32(255, 255, 255, 46));
-            ui.dl->AddRectFilled(a, ImVec2(a.x + 2.0f * ui.s, b.y), kWhite);
+            if (keyboard) {
+                NobleUi::DrawFocusHighlight(ui.dl, a, b, ui.s, true);
+            } else {
+                ui.dl->AddRectFilledMultiColor(a, b, IM_COL32(255, 255, 255, 46), IM_COL32(255, 255, 255, 4),
+                                               IM_COL32(255, 255, 255, 4), IM_COL32(255, 255, 255, 46));
+                ui.dl->AddRectFilled(a, ImVec2(a.x + 2.0f * ui.s, b.y), kWhite);
+            }
         }
         if (items[i].header) {
             const float cx = a.x + 14.0f * ui.s, cy = a.y + rh * 0.5f, t = 5.0f * ui.s;
@@ -1784,8 +1801,7 @@ bool AcceptPressed() {
     // trigger match start or menu actions under it.
     if (ModDownloadPrompt::Get().IsActive()) return false;
     if (ImGui::GetIO().WantTextInput || SocialOverlay::IsTyping()) return false;
-    return ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
-           ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || HintClicked(Prompt::Accept);
+    return UiPad::AcceptPressed() || HintClicked(Prompt::Accept);
 }
 
 // A prompt for a button with no Prompt of its own: Xbox glyph on a controller, key box on keyboard and mouse.
@@ -2600,17 +2616,22 @@ int PickerRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char*
     return change;
 }
 
-bool ActionButton(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, bool primary = true) {
+bool ActionButton(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, bool primary = true, bool focused = false) {
     const float h = 40.0f * ui.s;
     ImGui::SetCursorScreenPos(pos);
     ImGui::PushID(id);
     const bool pressed = ImGui::InvisibleButton("##b", ImVec2(width, h));
     const bool hovered = ImGui::IsItemHovered();
     ImGui::PopID();
-    const ImU32 bg = primary ? (hovered ? IM_COL32(76, 150, 200, 255) : IM_COL32(52, 112, 156, 240))
-                             : (hovered ? IM_COL32(60, 74, 88, 240) : IM_COL32(30, 38, 46, 230));
-    ui.dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + h), bg);
-    ui.dl->AddRect(pos, ImVec2(pos.x + width, pos.y + h), IM_COL32(170, 220, 255, hovered ? 220 : 90), 0.0f, 0, 1.0f);
+    const ImVec2 p1(pos.x + width, pos.y + h);
+    const ImU32 bg = primary ? ((hovered || focused) ? IM_COL32(76, 150, 200, 255) : IM_COL32(52, 112, 156, 240))
+                             : ((hovered || focused) ? IM_COL32(60, 74, 88, 240) : IM_COL32(30, 38, 46, 230));
+    ui.dl->AddRectFilled(pos, p1, bg, 2.0f * ui.s);
+    if (focused) {
+        NobleUi::DrawFocusHighlight(ui.dl, pos, p1, ui.s, true);
+    } else {
+        ui.dl->AddRect(pos, p1, IM_COL32(170, 220, 255, hovered ? 220 : 90), 2.0f * ui.s, 0, 1.0f);
+    }
     const float tw = TextWidth(NobleStyle::TitleFont(), 20.0f * ui.s, label);
     Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(pos.x + (width - tw) * 0.5f, pos.y + 9.0f * ui.s), kWhite, label);
     if (hovered) MenuSounds::Hover(ImGui::GetID(id));
@@ -2864,6 +2885,7 @@ struct MenuState {
     double lastLobbyPoll = 0.0;
     int lobbyPollFailures = 0;     // consecutive failed lobby-state fetches; a guest only leaves after 3
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
+    int lobbyFocusZone = 0;        // 0 = left options list, 1 = right session roster
     // Playlists. -1 = none chosen.
     std::vector<Playlists::Playlist> playlists;
     int playlistChoice = -1;
@@ -5302,15 +5324,16 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
     const int totalRows = static_cast<int>(optRows.size());
     st.lobbyMenuRow = std::clamp(st.lobbyMenuRow, 0, totalRows - 1);
+    if (st.lobbyRoster.empty()) st.lobbyFocusZone = 0;
 
     // Controller & Keyboard Navigation
     auto stepRow = [&](int d) {
         st.lobbyMenuRow = (st.lobbyMenuRow + d + totalRows) % totalRows;
         MenuSounds::Scroll();
     };
-    if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen) {
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) stepRow(1);
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) stepRow(-1);
+    if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen && st.lobbyFocusZone == 0) {
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) stepRow(1);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) stepRow(-1);
     }
 
     // A vanilla map only hosts the game types it was built for (Invasion on Sword Base crashed the engine), so
@@ -5389,18 +5412,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             NOBLE_INFO("FrontEndMenu: lobby team count set to {}", st.lobbyTeamCount);
             MenuSounds::Change();
         } else if (row.label == "CHANGE TEAM") {
-            // A team is picked from the dropdown, never stepped through with the arrows.
-            st.lobbyTeamPickerOpen = true;
-            st.lobbyTeamPickerOpenedAt = ImGui::GetTime();
-            if (!st.lobbyRoster.empty()) {
-                const LobbyPlayer& picked = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
-                st.lobbyTeamPickerRow = std::clamp(picked.team, 1, std::clamp(st.lobbyTeamCount, 2, kTeamCount)) - 1;
-            }
-            MenuSounds::Click();
+            if (!st.isLobbyHost || st.lobbyRoster.empty()) return;
             LobbyPlayer& player = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
             const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
             const int current = std::clamp(player.team, 0, teams);
-            const int next = current >= teams ? 1 : current + 1;
+            const int next = current <= 0 ? 1 : ((current - 1 + dir + teams) % teams) + 1;
             player.team = next;
             st.lobbyTeamsManual = true;   // stop the automatic deal from undoing this on the next poll
             if (player.isHost) MasterServerClient::Get().SetAdvertHostTeam(next);
@@ -5474,9 +5490,19 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
     };
 
-    if (!st.lobbyPickerOpen) {
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) cycleOption(-1);
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) cycleOption(1);
+    if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen && st.lobbyFocusZone == 0) {
+        const auto& curRow = optRows[st.lobbyMenuRow];
+        const bool isStepper = curRow.editable && !curRow.isStart;
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) || UiPad::Left()) {
+            if (isStepper) cycleOption(-1);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) || UiPad::Right()) {
+            if (isStepper) cycleOption(1);
+            else if (!st.lobbyRoster.empty()) {
+                st.lobbyFocusZone = 1;
+                MenuSounds::Scroll();
+            }
+        }
     }
 
     auto startMatch = [&]() {
@@ -5595,7 +5621,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
     };
 
-    if (!st.lobbyPickerOpen && AcceptPressed()) triggerAction();
+    if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen && st.lobbyFocusZone == 0 && AcceptPressed()) {
+        UiPad::ConsumeAccept();
+        triggerAction();
+    }
 
     // Option rows. The start button keeps one place whichever mode's list is above it.
     const float rowsY = top + 108.0f * ui.s;
@@ -5677,15 +5706,16 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     }
     for (int i = 0; i < totalRows && !pickerWasOpen; ++i) {
         const auto& row = optRows[i];
-        const bool focused = st.lobbyMenuRow == i;
+        const bool focused = st.lobbyFocusZone == 0 && st.lobbyMenuRow == i;
         if (row.isStart) {
             if (BigAction(ui, "lobby_start", ImVec2(colX, startY), colW, row.label.c_str(), row.tooltip.c_str(), true, true, focused)) {
+                st.lobbyFocusZone = 0;
                 st.lobbyMenuRow = i;
                 startMatch();
             }
             // Only a moved mouse takes the focus: a pointer left resting on a row used to pull the controller's
             // focus back to that row every frame.
-            if (ImGui::IsItemHovered() && mouseMoved) st.lobbyMenuRow = i;
+            if (ImGui::IsItemHovered() && mouseMoved) { st.lobbyFocusZone = 0; st.lobbyMenuRow = i; }
             continue;
         }
         char rowId[32];
@@ -5696,19 +5726,25 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         // While the team dropdown is up it owns the mouse: the rows underneath are drawn but inert, so a click
         // on a team never also hits START GAME / the row below it.
         if (!st.lobbyTeamPickerOpen && ImGui::InvisibleButton(rowId, ImVec2(colW, h))) {
+            st.lobbyFocusZone = 0;
             st.lobbyMenuRow = i;
-            cycleOption(ImGui::GetMousePos().x < colX + colW * 0.48f + 28.0f * ui.s ? -1 : 1);
+            if (row.label == "CHANGE TEAM" || row.label == "GAME OPTIONS" || row.label == "VOTE" || row.label == "GAME TYPE") {
+                triggerAction();
+            } else {
+                cycleOption(ImGui::GetMousePos().x < colX + colW * 0.48f + 28.0f * ui.s ? -1 : 1);
+            }
         }
         if (!st.lobbyTeamPickerOpen && ImGui::IsItemHovered() && mouseMoved && !focused) {
+            st.lobbyFocusZone = 0;
             st.lobbyMenuRow = i;
             MenuSounds::Scroll();
         }
         // The same plate, focus band, accent edge, font and arrows as OptionRow; a row that can't change has no arrows.
-        ui.dl->AddRectFilled(r0, r1, IM_COL32(8, 12, 18, 150));
+        ui.dl->AddRectFilled(r0, r1, IM_COL32(8, 12, 18, 165));
         if (focused) {
-            ui.dl->AddRectFilledMultiColor(r0, r1, IM_COL32(60, 120, 170, 120), IM_COL32(60, 120, 170, 20),
-                                           IM_COL32(60, 120, 170, 20), IM_COL32(60, 120, 170, 120));
-            ui.dl->AddRectFilled(r0, ImVec2(r0.x + 2.0f * ui.s, r1.y), kAccent);
+            NobleUi::DrawFocusHighlight(ui.dl, r0, r1, ui.s, true);
+        } else if (st.lobbyMenuRow == i) {
+            ui.dl->AddRectFilled(r0, ImVec2(r0.x + 2.0f * ui.s, r1.y), IM_COL32(143, 216, 255, 110));
         }
         Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(r0.x + 10.0f * ui.s, r0.y + 6.0f * ui.s), focused ? kWhite : kDim, row.label.c_str());
         const float vx = colX + colW * 0.48f, vw = colW * 0.52f, aw = 28.0f * ui.s;
@@ -5930,7 +5966,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const float teamHeadH = 20.0f * ui.s;
     const float panelH = headH + teamHeadH + slotPad + (slotH + slotGap) * 8.0f - slotGap;
     ui.dl->AddRectFilled(ImVec2(px, headY), ImVec2(px + pw, headY + panelH), panelFill);
-    ui.dl->AddRect(ImVec2(px, headY), ImVec2(px + pw, headY + panelH), panelEdge);
+    ui.dl->AddRect(ImVec2(px, headY), ImVec2(px + pw, headY + panelH),
+                   st.lobbyFocusZone == 1 ? IM_COL32(143, 216, 255, 220) : panelEdge,
+                   0.0f, 0, st.lobbyFocusZone == 1 ? 1.8f * ui.s : 1.0f);
     Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, headY + 4.0f * ui.s), kWhite, "MY GAME SESSION");
     char countBuf[32];
     std::snprintf(countBuf, sizeof(countBuf), "%zu/%d", st.lobbyRoster.size(), st.lobbyMaxPlayers);
@@ -6007,6 +6045,27 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             st.lobbyRosterSelection = (st.lobbyRosterSelection + (next ? 1 : -1) + rosterCount) % rosterCount;
             keepInView(st.lobbyRosterSelection);
             MenuSounds::Scroll();
+        }
+        if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen && st.lobbyFocusZone == 1) {
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) {
+                st.lobbyRosterSelection = (st.lobbyRosterSelection + 1) % rosterCount;
+                keepInView(st.lobbyRosterSelection);
+                MenuSounds::Scroll();
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) {
+                st.lobbyRosterSelection = (st.lobbyRosterSelection + rosterCount - 1) % rosterCount;
+                keepInView(st.lobbyRosterSelection);
+                MenuSounds::Scroll();
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) || UiPad::Left()) {
+                st.lobbyFocusZone = 0;
+                MenuSounds::Scroll();
+            }
+            if (AcceptPressed()) {
+                UiPad::ConsumeAccept();
+                st.lobbyProfileOpen = true;
+                MenuSounds::Click();
+            }
         }
         const bool pageUp = ImGui::IsKeyPressed(ImGuiKey_PageUp, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false);
         const bool pageDown = ImGui::IsKeyPressed(ImGuiKey_PageDown, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false);
@@ -6130,6 +6189,18 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             const float wheel = ImGui::GetIO().MouseWheel;
             if (wheel != 0.0f) scroll -= static_cast<int>(wheel);
         }
+        static float s_rosterStickAccum = 0.0f;
+        const float rStickRoster = UiPad::AnalogScrollY(false);
+        if (rStickRoster != 0.0f) {
+            s_rosterStickAccum += rStickRoster / std::max(1.0f, slotH);
+            const int step = static_cast<int>(s_rosterStickAccum);
+            if (step != 0) {
+                scroll += step;
+                s_rosterStickAccum -= static_cast<float>(step);
+            }
+        } else {
+            s_rosterStickAccum = 0.0f;
+        }
         const int total = static_cast<int>(entries.size());
         auto entryHeight = [&](const RosterEntry& e) { return e.kind == RosterEntry::Kind::Header ? headHdr : slotH; };
 
@@ -6193,7 +6264,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                           player.serviceTag, (local ? (Settings::Get().Snapshot().playerName.empty() ? std::string("Noble Six") : Settings::Get().Snapshot().playerName) : (player.username.empty() ? std::string(player.isHost ? "Host" : "Spartan") : player.username)), player.isDev, selected,
                           player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
                           local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{}, player.isTester);
-                if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
+                if (selected) {
+                    if (st.lobbyFocusZone == 1) NobleUi::DrawFocusHighlight(ui.dl, s0, s1, ui.s, true);
+                    else ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
+                }
                 {
                     uint64_t machine = 1000ULL + static_cast<uint64_t>(idx);   // demo rosters have no ids; only real ids ever talk
                     try { if (!player.machineId.empty()) machine = std::stoull(player.machineId, nullptr, 0); } catch (...) {}
@@ -6226,11 +6300,14 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
     // Back / Cancel Lobby Handling: the host returns to the setup screen of the mode it came from.
     if (back && teamPickerWasOpen) {
+        UiPad::ConsumeBack();
         // The dropdown already consumed Back this frame.
     } else if (back && st.lobbyProfileOpen) {
+        UiPad::ConsumeBack();
         st.lobbyProfileOpen = false;
         MenuSounds::Back();
     } else if (back && !pickerWasOpen && !profileWasOpen) {
+        UiPad::ConsumeBack();
         st.lobbyLaunchPending = false;
         ClearPendingLobbyEvents();
         if (st.isLobbyHost) {
@@ -7230,11 +7307,13 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     // A choice list that was open last frame owns Back and the up/down keys this frame.
     s_pickerBlocksNav = std::exchange(s_pickerOpenNow, false);
     // Esc in a text box only leaves the box.
-    const bool back = !modPromptOpen && !s_pickerBlocksNav && !ImGui::GetIO().WantTextInput && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
-                      ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || HintClicked(Prompt::Back));
+    const bool back = !modPromptOpen && !s_pickerBlocksNav && !ImGui::GetIO().WantTextInput &&
+                      (UiPad::BackPressed() || HintClicked(Prompt::Back));
     auto goBack = [&](Screen to) {
+        UiPad::ConsumeBack();
         st.screen = to;
         st.focusRow = 0;
+        st.lobbyFocusZone = 0;
         st.mapSearch[0] = 0;
         MenuSounds::Back();
     };
@@ -7343,30 +7422,35 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Quit" } });
         } else if (st.confirmQuit) {
             // Dim everything and show the question in the middle.
-            ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(0, 0, 0, 150));
-            const float bw = 460.0f * ui.s, bh = 190.0f * ui.s;
+            ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(0, 0, 0, 170));
+            const float bw = 480.0f * ui.s, bh = 200.0f * ui.s;
             const ImVec2 b0(ui.origin.x + (ui.size.x - bw) * 0.5f, ui.origin.y + (ui.size.y - bh) * 0.5f);
             const ImVec2 b1(b0.x + bw, b0.y + bh);
-            ui.dl->AddRectFilled(b0, b1, IM_COL32(12, 20, 30, 245));
-            ui.dl->AddRect(b0, b1, IM_COL32(143, 216, 255, 160), 0.0f, 0, 1.2f);
+            ui.dl->AddRectFilled(b0, b1, IM_COL32(12, 20, 30, 248), 4.0f * ui.s);
+            ui.dl->AddRect(b0, b1, IM_COL32(143, 216, 255, 180), 4.0f * ui.s, 0, 1.5f);
             ui.dl->AddLine(ImVec2(b0.x, b0.y + 3.0f * ui.s), ImVec2(b1.x, b0.y + 3.0f * ui.s), kAccent, 3.0f * ui.s);
             Text(ui, NobleStyle::TitleFont(), 26.0f, ImVec2(b0.x + 24.0f * ui.s, b0.y + 22.0f * ui.s), kWhite, "QUIT PROJECT NOBLE?");
-            Text(ui, nullptr, 17.0f, ImVec2(b0.x + 24.0f * ui.s, b0.y + 62.0f * ui.s), kDim, "Are you sure you want to close the game?");
+            Text(ui, nullptr, 17.0f, ImVec2(b0.x + 24.0f * ui.s, b0.y + 64.0f * ui.s), kDim, "Are you sure you want to close the game?");
             const float btnW = (bw - 24.0f * ui.s * 3.0f) * 0.5f;
             const float btnY = b1.y - 64.0f * ui.s;
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
-                ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
-                ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
-                ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) ||
+                ImGui::IsKeyPressed(ImGuiKey_UpArrow, false) || ImGui::IsKeyPressed(ImGuiKey_DownArrow, false) ||
+                ImGui::IsKeyPressed(ImGuiKey_Tab, false) || UiPad::Left() || UiPad::Right() || UiPad::Up() || UiPad::Down()) {
                 st.quitChoice = 1 - st.quitChoice;
                 MenuSounds::Scroll();
             }
-            const bool yes = ActionButton(ui, "quit_yes", ImVec2(b0.x + 24.0f * ui.s, btnY), btnW, "YES", st.quitChoice == 0);
-            const bool no = ActionButton(ui, "quit_no", ImVec2(b0.x + 48.0f * ui.s + btnW, btnY), btnW, "NO", st.quitChoice == 1);
+            const bool mouseMovedQuit = ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f;
+            const bool yes = ActionButton(ui, "quit_yes", ImVec2(b0.x + 24.0f * ui.s, btnY), btnW, "YES", st.quitChoice == 0, st.quitChoice == 0);
+            if (ImGui::IsItemHovered() && mouseMovedQuit) st.quitChoice = 0;
+            const bool no = ActionButton(ui, "quit_no", ImVec2(b0.x + 48.0f * ui.s + btnW, btnY), btnW, "NO", st.quitChoice == 1, st.quitChoice == 1);
+            if (ImGui::IsItemHovered() && mouseMovedQuit) st.quitChoice = 1;
             if (yes || (AcceptPressed() && st.quitChoice == 0)) {
+                UiPad::ConsumeAccept();
                 st.confirmQuit = false;
                 done = true;
             } else if (no || back || (AcceptPressed() && st.quitChoice == 1)) {
+                UiPad::ConsumeAccept();
+                UiPad::ConsumeBack();
                 st.confirmQuit = false;
                 if (!no) MenuSounds::Back();
             }

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstring>
 
 namespace noble {
@@ -144,6 +145,65 @@ void DrawBox(ImDrawList* dl, ImVec2 min, ImVec2 max, const char* text, bool hove
     const float tw = TextWidth(nullptr, 17.0f * s, text);
     Text(dl, nullptr, 17.0f * s, ImVec2((min.x + max.x - tw) * 0.5f, (min.y + max.y) * 0.5f - 9.0f * s),
          disabled ? kTextOff : (highlight ? kAccent : kText), text);
+}
+
+void DrawFocusHighlight(ImDrawList* dl, ImVec2 min, ImVec2 max, float scale, bool active) {
+    if (!active) return;
+    const float s = scale > 0.0f ? scale : Scale();
+    const float pulse = 0.85f + 0.15f * static_cast<float>(std::sin(ImGui::GetTime() * 5.0));
+    const ImU32 border = IM_COL32(143, 216, 255, static_cast<int>(240.0f * pulse));
+    const ImU32 glow = IM_COL32(100, 190, 255, static_cast<int>(46.0f * pulse));
+    dl->AddRectFilled(min, max, glow, 2.0f * s);
+    dl->AddRect(min, max, border, 2.0f * s, 0, 2.0f * s);
+    dl->AddRectFilled(min, ImVec2(min.x + 4.0f * s, max.y), kAccent);
+}
+
+bool DrawTile(ImDrawList* dl, const char* id, ImVec2 min, ImVec2 max, const char* title, const char* subtitle,
+              bool focused, bool selected, bool enabled, const char* badge) {
+    const float s = Scale();
+    const ImVec2 size(max.x - min.x, max.y - min.y);
+    ImGui::SetCursorScreenPos(min);
+    ImGui::PushID(id);
+    const bool clicked = ImGui::InvisibleButton("##tile", size) && enabled;
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+
+    const ImU32 bg = !enabled ? IM_COL32(14, 18, 24, 150)
+                   : (focused || selected) ? IM_COL32(34, 68, 102, 225)
+                   : hovered ? IM_COL32(28, 46, 68, 210)
+                   : IM_COL32(14, 22, 34, 195);
+    dl->AddRectFilled(min, max, bg, 3.0f * s);
+    if (focused) {
+        DrawFocusHighlight(dl, min, max, s, true);
+    } else if (selected) {
+        dl->AddRect(min, max, IM_COL32(143, 216, 255, 190), 3.0f * s, 0, 1.5f * s);
+        dl->AddRectFilled(min, ImVec2(min.x + 3.0f * s, max.y), IM_COL32(143, 216, 255, 200));
+    } else {
+        dl->AddRect(min, max, IM_COL32(143, 216, 255, hovered ? 120 : 42), 3.0f * s, 0, 1.0f);
+    }
+
+    const float padX = 14.0f * s;
+    const float titlePx = 19.0f * s;
+    const float subPx = 13.5f * s;
+    const bool hasSub = subtitle && subtitle[0] != '\0';
+    const float titleY = hasSub ? (min.y + 8.0f * s) : ((min.y + max.y - titlePx) * 0.5f);
+    const ImU32 titleCol = !enabled ? kTextOff : (focused || selected ? kText : IM_COL32(226, 236, 244, 255));
+    Text(dl, NobleStyle::TitleFont(), titlePx, ImVec2(min.x + padX, titleY), titleCol, title);
+
+    if (hasSub) {
+        Text(dl, NobleStyle::SmallFont(), subPx, ImVec2(min.x + padX, titleY + titlePx + 2.0f * s),
+             enabled ? kTextDim : kTextOff, subtitle, (max.x - min.x) - padX * 2.0f);
+    }
+    if (badge && badge[0] != '\0') {
+        const float bw = TextWidth(NobleStyle::SmallFont(), 13.0f * s, badge) + 14.0f * s;
+        const float bh = 20.0f * s;
+        const ImVec2 b0(max.x - bw - 10.0f * s, min.y + 8.0f * s);
+        const ImVec2 b1(b0.x + bw, b0.y + bh);
+        dl->AddRectFilled(b0, b1, IM_COL32(143, 216, 255, focused ? 65 : 35), 2.0f * s);
+        dl->AddRect(b0, b1, IM_COL32(143, 216, 255, 160), 2.0f * s, 0, 1.0f);
+        Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(b0.x + 7.0f * s, b0.y + 3.0f * s), kAccent, badge);
+    }
+    return clicked;
 }
 
 } // namespace NobleUi

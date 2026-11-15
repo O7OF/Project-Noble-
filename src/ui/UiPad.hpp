@@ -22,6 +22,21 @@ bool Right();
 bool PageUp();     // LT
 bool PageDown();   // RT
 
+// Frame-scoped action queries with consumption so closing a modal/dropdown never double-triggers the parent screen.
+bool AcceptPressed();   // Gamepad A or Enter/KeypadEnter
+bool BackPressed();     // Gamepad B or Escape
+bool ActionX();         // Gamepad X
+bool ActionY();         // Gamepad Y
+bool TabPrev();         // Gamepad LB or Q
+bool TabNext();         // Gamepad RB or E
+void ConsumeAccept();
+void ConsumeBack();
+void ConsumeAll();
+
+bool HasGamepad();
+// Smooth pixel scroll delta per frame from the Right Stick (and optionally Left Stick) for custom scroll lists.
+float AnalogScrollY(bool includeLeftStick = false);
+
 // Scrolls the current window: right stick always; D-pad and left stick with `arrows` (a page with nothing to select);
 // the triggers by a page with `triggers`. Call between Begin and End of the window that scrolls.
 void ScrollWindow(bool arrows, bool triggers);

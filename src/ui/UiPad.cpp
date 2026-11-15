@@ -149,6 +149,79 @@ bool Right() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::I
 bool PageUp() { return ImGui::IsKeyPressed(ImGuiKey_GamepadL2); }
 bool PageDown() { return ImGui::IsKeyPressed(ImGuiKey_GamepadR2); }
 
+namespace {
+bool s_acceptConsumed = false;
+bool s_backConsumed = false;
+bool s_xConsumed = false;
+bool s_yConsumed = false;
+bool s_tabConsumed = false;
+float s_rStickY = 0.0f;
+float s_lStickY = 0.0f;
+} // namespace
+
+bool AcceptPressed() {
+    if (s_acceptConsumed || ImGui::GetIO().WantTextInput) return false;
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) ||
+           ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+           ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
+}
+
+bool BackPressed() {
+    if (s_backConsumed) return false;
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+           ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+}
+
+bool ActionX() {
+    if (s_xConsumed || ImGui::GetIO().WantTextInput) return false;
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false);
+}
+
+bool ActionY() {
+    if (s_yConsumed || ImGui::GetIO().WantTextInput) return false;
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
+}
+
+bool TabPrev() {
+    if (s_tabConsumed || ImGui::GetIO().WantTextInput) return false;
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false);
+}
+
+bool TabNext() {
+    if (s_tabConsumed || ImGui::GetIO().WantTextInput) return false;
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false);
+}
+
+void ConsumeAccept() { s_acceptConsumed = true; }
+void ConsumeBack() { s_backConsumed = true; }
+void ConsumeAll() {
+    s_acceptConsumed = true;
+    s_backConsumed = true;
+    s_xConsumed = true;
+    s_yConsumed = true;
+    s_tabConsumed = true;
+}
+
+bool HasGamepad() {
+    return (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad) != 0;
+}
+
+float AnalogScrollY(bool includeLeftStick) {
+    const float dt = std::min(ImGui::GetIO().DeltaTime, 0.05f);
+    const float speed = 520.0f * dt;
+    float delta = -s_rStickY * speed;
+    if (includeLeftStick) delta -= s_lStickY * speed;
+    if (delta == 0.0f) {
+        if (ImGui::IsKeyDown(ImGuiKey_GamepadRStickDown)) delta += speed;
+        if (ImGui::IsKeyDown(ImGuiKey_GamepadRStickUp)) delta -= speed;
+        if (includeLeftStick) {
+            if (ImGui::IsKeyDown(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyDown(ImGuiKey_GamepadLStickDown)) delta += speed;
+            if (ImGui::IsKeyDown(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyDown(ImGuiKey_GamepadLStickUp)) delta -= speed;
+        }
+    }
+    return delta;
+}
+
 void ScrollWindow(bool arrows, bool triggers) {
     if (ImGui::GetScrollMaxY() <= 0.0f) return;
     float delta = 0.0f;
@@ -168,6 +241,12 @@ void ScrollWindow(bool arrows, bool triggers) {
 }
 
 void Feed(ImGuiIO& io) {
+    s_acceptConsumed = false;
+    s_backConsumed = false;
+    s_xConsumed = false;
+    s_yConsumed = false;
+    s_tabConsumed = false;
+
     // Every Noble screen reads the pad itself. ImGui's own pad navigation stays on only inside a popup, whose plain
     // widgets need it: anywhere else its hidden cursor could press a second button on one A (the lobby's COPY INVITE).
     if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -181,6 +260,16 @@ void Feed(ImGuiIO& io) {
         io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
         p = PadState{};
     }
+
+    auto normStick = [](int v) -> float {
+        const float dead = 8000.0f;
+        const float mag = static_cast<float>(std::abs(v));
+        if (mag <= dead) return 0.0f;
+        const float s = (mag - dead) / (32767.0f - dead);
+        return (v < 0 ? -1.0f : 1.0f) * std::clamp(s, 0.0f, 1.0f);
+    };
+    s_rStickY = normStick(p.ry);
+    s_lStickY = normStick(p.ly);
 
     struct Digital { ImGuiKey key; uint16_t bit; };
     static const Digital kDigital[] = {

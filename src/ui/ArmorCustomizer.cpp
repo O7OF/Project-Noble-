@@ -6,6 +6,7 @@
 #include "common/Settings.hpp"
 #include "NobleStyle.hpp"
 #include "UiArt.hpp"
+#include "UiPad.hpp"
 #include "career/Career.hpp"
 #include "common/Logger.hpp"
 #include "common/SaveCodec.hpp"
@@ -2784,8 +2785,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
 
     // Keys / d-pad: up/down picks the slot, left/right steps through its options.
     if (!ImGui::GetIO().WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) focus((m_focusedRow + 1) % rowCount);
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) focus((m_focusedRow - 1 + rowCount) % rowCount);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) focus((m_focusedRow + 1) % rowCount);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) focus((m_focusedRow - 1 + rowCount) % rowCount);
         SlotRow& fr = rows[m_focusedRow];
         if (fr.index && !fr.options.empty()) {
             const int n = static_cast<int>(fr.options.size());
@@ -2798,8 +2799,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 }
                 m_pickerScrollToEquipped = true;
             };
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) step(-1);
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) step(1);
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) || UiPad::Left()) step(-1);
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) || UiPad::Right()) step(1);
         }
     }
     // "-armory-focus <label>" (test only): start on a named slot so the per-slot camera can be captured.

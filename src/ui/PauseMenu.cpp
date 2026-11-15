@@ -1312,19 +1312,22 @@ void PauseMenu::DrawMenu(HWND hwnd) {
       }
     }
     ImGui::PopStyleColor();
-    // Underline, like the reference screens.
+    // Underline & crisp focus highlight.
     const ImVec2 p = ImGui::GetItemRectMin();
     const ImVec2 q = ImGui::GetItemRectMax();
-    ImGui::GetWindowDrawList()->AddLine(
-        ImVec2(p.x + 8.0f * s, q.y - 4.0f * s),
-        ImVec2(p.x + listW - 8.0f * s, q.y - 4.0f * s),
-        focused ? IM_COL32(140, 200, 255, 200) : IM_COL32(90, 105, 120, 120),
-        1.0f);
+    if (focused) {
+      NobleUi::DrawFocusHighlight(ImGui::GetWindowDrawList(), p, q, s, true);
+    } else {
+      ImGui::GetWindowDrawList()->AddLine(
+          ImVec2(p.x + 8.0f * s, q.y - 4.0f * s),
+          ImVec2(p.x + listW - 8.0f * s, q.y - 4.0f * s),
+          IM_COL32(90, 105, 120, 120), 1.0f);
+    }
     ImGui::PopID();
   }
   ImGui::PopStyleVar();
-  if (interactive && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                      ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
+  if (interactive && UiPad::AcceptPressed()) {
+    UiPad::ConsumeAccept();
     if (entries[s_focus].enabled)
       activated = s_focus;
   }
@@ -1589,7 +1592,11 @@ void PauseMenu::DrawMenu(HWND hwnd) {
 
   ImGui::Spacing();
   ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-  ImGui::TextUnformatted("Esc resumes");
+  ImGui::TextUnformatted(
+      UiPad::HasGamepad()
+          ? "[A] Select   [B / Start] Resume   [D-Pad / Stick] Navigate   "
+            "[Right Stick] Scroll Challenges"
+          : "Enter / Click Select   Esc Resume   Arrow Keys Navigate");
   ImGui::PopStyleColor();
   ImGui::End();
 }
@@ -1624,8 +1631,9 @@ void DrawSettingsPage(HWND hwnd) {
     ImGui::TextDisabled("Applied changes also reach this match. B goes back to "
                         "the pause menu.");
     ImGui::Separator();
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) &&
-        !PauseSettings().IsCapturingKey() && !ImGui::GetIO().WantTextInput) {
+    if (UiPad::BackPressed() && !PauseSettings().IsCapturingKey() &&
+        !ImGui::GetIO().WantTextInput) {
+      UiPad::ConsumeBack();
       s_showSettings.store(false);
       MenuSounds::Back();
     }
@@ -2391,15 +2399,12 @@ static void DrawScoreboardPanel() {
       selectedIsListed = true;
   }
 
-  const auto padPressed = [](ImGuiKey dpad, ImGuiKey stick) {
-    return ImGui::IsKeyPressed(dpad) || ImGui::IsKeyPressed(stick);
-  };
-  if (!pointer && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) ||
-                   ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
+  if (!pointer && UiPad::AcceptPressed()) {
+    UiPad::ConsumeAccept();
     PauseMenu::EnterScoreboardPointer();
   }
 
-  // Gamepad row navigation
+  // Gamepad & Keyboard row navigation
   if (pointer && !s_boardReport.load() && !s_showPlayerModal) {
     int column = 0, row = -1;
     for (int c = 0; c < columnCount; ++c) {
@@ -2426,21 +2431,33 @@ static void DrawScoreboardPanel() {
       }
       return false;
     };
-    if (padPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) {
+    if (UiPad::Down() || ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) {
       if (!pick(column, row + 1, 1) && columnCount > 1)
         pick(1 - column, 0, 1);
     }
-    if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp) &&
+    if ((UiPad::Up() || ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) &&
         row > 0) {
       pick(column, row - 1, -1);
     }
-    if (columnCount > 1 &&
-        (padPressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft) ||
-         padPressed(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight))) {
+    if (columnCount > 1 && (UiPad::Left() || UiPad::Right() ||
+                            ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) ||
+                            ImGui::IsKeyPressed(ImGuiKey_RightArrow, false))) {
       pick(1 - column, std::max(row, 0), 1);
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) &&
-        !s_selected.empty()) {
+    if (UiPad::AnalogScrollY(false) != 0.0f && columnCount > 0) {
+      static float s_sbAccum = 0.0f;
+      s_sbAccum += UiPad::AnalogScrollY(false) / std::max(1.0f, 34.0f * s);
+      const int step = static_cast<int>(s_sbAccum);
+      if (step != 0) {
+        s_boardScroll[column] =
+            std::clamp(s_boardScroll[column] + step, 0,
+                       std::max(0, static_cast<int>(columnRows[column].size()) -
+                                       visibleRows));
+        s_sbAccum -= static_cast<float>(step);
+      }
+    }
+    if (UiPad::AcceptPressed() && !s_selected.empty()) {
+      UiPad::ConsumeAccept();
       s_showPlayerModal = true;
       MenuSounds::Click();
     }
@@ -3023,9 +3040,9 @@ static void DrawScoreboardPanel() {
       ImGui::Begin("##scoreboardreport", nullptr,
                    kPanelFlags | ImGuiWindowFlags_NoNavInputs |
                        ImGuiWindowFlags_NoNavFocus);
-      if (padPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown))
+      if (UiPad::Down() || ImGui::IsKeyPressed(ImGuiKey_DownArrow, true))
         s_reportReason = (s_reportReason + 1) % 4;
-      if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp))
+      if (UiPad::Up() || ImGui::IsKeyPressed(ImGuiKey_UpArrow, true))
         s_reportReason = (s_reportReason + 3) % 4;
       NobleStyle::Header(("REPORT " + Upper(s_selected)).c_str());
       ImGui::Spacing();
@@ -3584,28 +3601,41 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   for (size_t i = 0; i < padOrder.size(); ++i)
     if (padOrder[i] == s_padButton)
       padAt = static_cast<int>(i);
-  if (UiPad::Left())
-    padAt = std::min(padAt + 1, static_cast<int>(padOrder.size()) - 1);
-  if (UiPad::Right())
-    padAt = std::max(padAt - 1, 0);
+  if (UiPad::Left() || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
+    const int nextAt =
+        std::min(padAt + 1, static_cast<int>(padOrder.size()) - 1);
+    if (nextAt != padAt) {
+      padAt = nextAt;
+      MenuSounds::Scroll();
+    }
+  }
+  if (UiPad::Right() || ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
+    const int nextAt = std::max(padAt - 1, 0);
+    if (nextAt != padAt) {
+      padAt = nextAt;
+      MenuSounds::Scroll();
+    }
+  }
   s_padButton = padOrder[padAt];
-  const bool padA = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+  const bool padA = UiPad::AcceptPressed();
   // A is jump: a player still pressing it as the panel finishes must not leave
-  // the screen, so it arms a second later.
+  // the screen, so arm shortly after reveal finishes.
   static double s_padArmedAt = 0.0;
   if (t < tEnd)
     s_padArmedAt = 0.0;
   else if (s_padArmedAt == 0.0)
-    s_padArmedAt = ImGui::GetTime() + 1.0;
+    s_padArmedAt = ImGui::GetTime() + 0.35;
   const bool padPress = padA && t >= tEnd && ImGui::GetTime() >= s_padArmedAt;
-  if (padA && t < tEnd)
+  if (padA && t < tEnd) {
+    UiPad::ConsumeAccept();
     s_reveal.skipped = true;
+  }
   const auto padOutline = [&](int button) {
-    if (s_padButton == button &&
-        (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad))
-      ImGui::GetWindowDrawList()->AddRect(
-          ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-          IM_COL32(143, 216, 255, 255), 0.0f, 0, 2.0f * s);
+    if (s_padButton == button) {
+      NobleUi::DrawFocusHighlight(ImGui::GetWindowDrawList(),
+                                  ImGui::GetItemRectMin(),
+                                  ImGui::GetItemRectMax(), s, true);
+    }
   };
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
   if (NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) ||
@@ -4091,7 +4121,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   const bool connectionLost = s_connectionLost;
   const bool isTheater = noble::BlamEngine::IsSavedFilmPlayback();
   if (!(open || gameOver || loading || showFps || scoreboardHeld ||
-        connectionLost || extraOverlay || SocialOverlay::WantsFrame() || isTheater) ||
+        connectionLost || extraOverlay || SocialOverlay::WantsFrame() ||
+        isTheater) ||
       !swapChain || !ImGui::GetCurrentContext())
     return;
 
@@ -4243,20 +4274,30 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
         const float btnW = 120.0f * s;
         const float btnH = 32.0f * s;
         const float topY = showFps ? (52.0f * s) : (16.0f * s);
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - btnW - 16.0f * s, topY));
+        ImGui::SetNextWindowPos(
+            ImVec2(io.DisplaySize.x - btnW - 16.0f * s, topY));
         ImGui::SetNextWindowSize(ImVec2(btnW, btnH));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f * s);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f * s, 2.0f * s));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                            ImVec2(4.0f * s, 2.0f * s));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.08f, 0.11f, 0.70f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.24f, 0.55f, 0.85f, 0.50f));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.14f, 0.18f, 0.60f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.32f, 0.48f, 0.90f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.25f, 0.45f, 0.65f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.88f, 0.92f, 0.96f, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                              ImVec4(0.06f, 0.08f, 0.11f, 0.70f));
+        ImGui::PushStyleColor(ImGuiCol_Border,
+                              ImVec4(0.24f, 0.55f, 0.85f, 0.50f));
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              ImVec4(0.10f, 0.14f, 0.18f, 0.60f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              ImVec4(0.18f, 0.32f, 0.48f, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                              ImVec4(0.25f, 0.45f, 0.65f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              ImVec4(0.88f, 0.92f, 0.96f, 0.95f));
         if (ImGui::Begin("##theater_pause_pill", nullptr,
-                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+                         ImGuiWindowFlags_NoDecoration |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus)) {
           if (ImGui::Button("[ESC] MENU", ImVec2(-1, -1))) {
             Toggle();
           }

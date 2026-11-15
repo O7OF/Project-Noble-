@@ -42,6 +42,13 @@ void DrawToggle(ImDrawList* dl, ImVec2 min, ImVec2 max, bool on, bool hovered, b
 //   Button-like box with centred text (key bindings, actions).
 void DrawBox(ImDrawList* dl, ImVec2 min, ImVec2 max, const char* text, bool hovered, bool highlight, bool disabled);
 
+// Crisp Reach-styled focus ring & left accent bar for controller/keyboard navigation.
+void DrawFocusHighlight(ImDrawList* dl, ImVec2 min, ImVec2 max, float scale, bool active = true);
+
+// Modern sleek tile with optional subtitle/badge and clear controller focus state. Returns true on click.
+bool DrawTile(ImDrawList* dl, const char* id, ImVec2 min, ImVec2 max, const char* title, const char* subtitle,
+              bool focused, bool selected, bool enabled = true, const char* badge = nullptr);
+
 // Text helpers (font may be nullptr = current font).
 float TextWidth(ImFont* font, float px, const char* text);
 void Text(ImDrawList* dl, ImFont* font, float px, ImVec2 pos, ImU32 col, const char* text, float wrapWidth = 0.0f);

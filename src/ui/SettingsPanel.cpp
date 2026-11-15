@@ -354,16 +354,16 @@ void SettingsPanel::Render() {
                    !m_captureEndedThisFrame;
     m_valueTookLeftRight = false;
     m_enterAppliesHere = m_focus < 0;
-    m_keyLeft = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft));
-    m_keyRight = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight));
-    m_keyAccept = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
-                                   ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
+    m_keyLeft = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) || UiPad::Left());
+    m_keyRight = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) || UiPad::Right());
+    m_keyAccept = m_navAllowed && UiPad::AcceptPressed();
+    if (m_keyAccept) UiPad::ConsumeAccept();
     if (m_navAllowed) {
         const int rows = std::max(1, m_lastRowCount);
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) {
             m_focus = m_focus + 1 >= rows ? -1 : m_focus + 1; m_scrollToFocus = true; MenuSounds::Scroll();
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) {
             m_focus = m_focus < 0 ? rows - 1 : m_focus - 1; m_scrollToFocus = true; MenuSounds::Scroll();
         }
         if (UiPad::PageDown() || UiPad::PageUp()) {   // the triggers jump a screenful of rows
@@ -371,10 +371,10 @@ void SettingsPanel::Render() {
             m_focus = std::clamp(m_focus + jump, 0, rows - 1); m_scrollToFocus = true; MenuSounds::Scroll();
         }
         const int n = static_cast<int>(Cat::Count);
-        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+        if (UiPad::TabPrev()) {
             m_cat = static_cast<Cat>((static_cast<int>(m_cat) + n - 1) % n); m_focus = 0; m_search[0] = 0; m_scrollToFocus = true; MenuSounds::Tab(-1);
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+        if (UiPad::TabNext()) {
             m_cat = static_cast<Cat>((static_cast<int>(m_cat) + 1) % n); m_focus = 0; m_search[0] = 0; m_scrollToFocus = true; MenuSounds::Tab(1);
         }
         if (TotalChanges() > 0) {
