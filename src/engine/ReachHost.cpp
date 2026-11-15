@@ -2306,34 +2306,8 @@ static void FillLocalInput(uint8_t* st) {
             ReachHost::RequestCinematicSkip();
         }
     }
-    {
-        // Test option "-scoreboard-at <seconds>": hold Tab (scoreboard) for 3 s that long after the first
-        // input poll, and save capture_777777.bmp halfway through (checks the service tag in game).
-        static double s_at = -1.0;
-        static bool s_parsed = false, s_shot = false;
-        static ULONGLONG s_start = 0;
-        if (!s_parsed) {
-            s_parsed = true;
-            int argc = 0;
-            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-            for (int i = 1; argv && i + 1 < argc; ++i) {
-                if (_wcsicmp(argv[i], L"-scoreboard-at") == 0) s_at = _wtof(argv[i + 1]);
-            }
-            if (argv) LocalFree(argv);
-            s_start = now;
-        }
-        if (s_at >= 0.0) {
-            const double t = static_cast<double>(now - s_start) / 1000.0;
-            if (t >= s_at && t < s_at + 3.0) {
-                st[0x004 + VK_TAB] = 0x80;
-                if (!s_shot && t >= s_at + 1.5) {
-                    s_shot = true;
-                    s_testCaptureRequest.store(true);
-                    NOBLE_INFO("ReachHost: -scoreboard-at {} s: scoreboard screenshot requested", s_at);
-                }
-            }
-        }
-    }
+    // Test option "-scoreboard-at <seconds>" lives in ApplyUnfocusedTestInput() (called from the slot 36 handler) so it
+    // can drive the scoreboard without the match window taking focus or capturing Tyler's mouse.
     {
         // Test option "-pause-at <seconds>": open the pause menu that long after the first input poll and save a
         // screenshot, so the menu can be reviewed without a hand on the keyboard.
@@ -2605,6 +2579,43 @@ static void FillLocalInput(uint8_t* st) {
     CameraThirdPerson::SetZoomHeld(mkZoomHeld || s_padZoomHeld.load());
 }
 
+// Test-only synthetic input that never touches the mouse or takes focus. The engine tick still runs while Noble's
+// window is unfocused (FillLocalInput returns early then, so normal mouse capture/clipping never happens), but the
+// overlay can be driven by publishing keys to the overlay mask here. Used by "-scoreboard-at" for captures of Noble's
+// scoreboard; no OS cursor calls are made in this function.
+static void ApplyUnfocusedTestInput(uint8_t* st) {
+    (void)st;  // deliberately does not write engine key state (that could open Reach's own scoreboard)
+    static double s_at = -1.0;
+    static bool s_parsed = false, s_shot = false, s_wasActive = false;
+    static ULONGLONG s_start = 0;
+    if (!s_parsed) {
+        s_parsed = true;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-scoreboard-at") == 0) s_at = _wtof(argv[i + 1]);
+        }
+        if (argv) LocalFree(argv);
+        s_start = GetTickCount64();
+    }
+    if (s_at < 0.0) return;
+    const double t = static_cast<double>(GetTickCount64() - s_start) / 1000.0;
+    const bool inRange = t >= s_at && t < s_at + 3.0;
+    const int boardVk = KeyBindings::EffectiveKey(20);
+    if (boardVk > 0 && boardVk < 256) {
+        if (inRange)
+            s_engineKeyMask[boardVk >> 5].fetch_or(1u << (boardVk & 31));
+        else if (s_wasActive)
+            s_engineKeyMask[boardVk >> 5].fetch_and(~(1u << (boardVk & 31)));
+    }
+    if (inRange && !s_shot && t >= s_at + 1.5) {
+        s_shot = true;
+        s_testCaptureRequest.store(true);
+        NOBLE_INFO("ReachHost: -scoreboard-at {} s: scoreboard screenshot requested (mouse/focus untouched)", s_at);
+    }
+    s_wasActive = inRange;
+}
+
 static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
     uint64_t userIndex = a1;
@@ -2624,6 +2635,7 @@ static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1
     alignas(16) uint8_t state[0x130] = {};
     if (static_cast<uint32_t>(userIndex) == 0) {
         FillLocalInput(state);
+        ApplyUnfocusedTestInput(state);
     }
     SafeCopyMemory(reinterpret_cast<void*>(outBuf), state, sizeof(state));
     return 1;
