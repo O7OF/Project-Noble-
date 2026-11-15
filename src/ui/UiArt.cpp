@@ -795,6 +795,26 @@ bool ImportMenuBackgroundImage(const std::filesystem::path& source, std::string&
     return true;
 }
 
+namespace {
+// Reach's loading-screen overlay art (Auntie Dot theme, extracted from HREK): data\ui\custom\loading first, then
+// data\ui\noble\loading. The files are grid.png, noble_logo.png and unsc_logo.png.
+UiTexture LoadingOverlayFile(const char* name) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    for (const fs::path& dir : { CustomDir() / "loading", NobleDir() / "loading" }) {
+        std::error_code ec;
+        const fs::path p = dir / name;
+        if (!fs::is_regular_file(p, ec)) continue;
+        UiTexture t = FileCached(p);
+        if (t) return t;
+    }
+    return {};
+}
+} // namespace
+
+UiTexture LoadingGrid() { return LoadingOverlayFile("grid.png"); }
+UiTexture LoadingLogoNoble() { return LoadingOverlayFile("noble_logo.png"); }
+UiTexture LoadingLogoUnsc() { return LoadingOverlayFile("unsc_logo.png"); }
+
 UiTexture LoadingBackground(const std::string& scenario) {
     std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return Cached("loading:" + scenario, [&]() -> UiTexture {

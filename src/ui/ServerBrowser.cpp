@@ -38,6 +38,21 @@ namespace {
 
 float U(float px) { return px * NobleUi::Scale(); }
 
+// Design option switch for the list presentation: "-server-browser-style 1|2|3".
+//   1 = the shipped tactical cards (amber corner brackets),
+//   2 = larger picture cards on a blue-glass panel (cyan chrome),
+//   3 = compact one-line table (dense, no thumbnails).
+// 1 is the default; the others exist so the layouts can be compared side by side in captures.
+int BrowserStyle() {
+    static const int s_style = [] {
+        const wchar_t* cmd = GetCommandLineW();
+        const wchar_t* p = cmd ? wcsstr(cmd, L"-server-browser-style ") : nullptr;
+        const int style = p ? _wtoi(p + 22) : 1;
+        return (style >= 1 && style <= 3) ? style : 1;
+    }();
+    return s_style;
+}
+
 static std::atomic<uint64_t> s_lastJoinAttemptMs{ 0 };
 static int s_browserPane = 0;   // 0 = server cards list, 1 = right game details buttons
 static int s_detailBtnIdx = 0;  // 0 = primary action, 1 = favorite, 2 = copy invite
@@ -460,8 +475,8 @@ void ServerBrowser::Render() {
     const float sScale = NobleUi::Scale();
     ImDrawList* parentDl = ImGui::GetWindowDrawList();
 
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(8, 14, 22, 210));
-    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(45, 75, 102, 120));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, BrowserStyle() >= 2 ? IM_COL32(10, 20, 31, 226) : IM_COL32(8, 14, 22, 210));
+    ImGui::PushStyleColor(ImGuiCol_Border, BrowserStyle() >= 2 ? IM_COL32(86, 148, 190, 150) : IM_COL32(45, 75, 102, 120));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(U(10.0f), U(10.0f)));
 
     ImGui::BeginChild("##serverlist", ImVec2(listWidth, bodyH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
@@ -471,7 +486,8 @@ void ServerBrowser::Render() {
     RenderServerList();
     ImGui::EndChild();
     NobleUi::DrawTacticalFrame(parentDl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale,
-                               s_browserPane == 0, true, false, s_browserPane == 0);
+                               s_browserPane == 0, true, false,
+                               BrowserStyle() == 1 && s_browserPane == 0);
 
     ImGui::SameLine(0.0f, paneGap);
 
@@ -482,7 +498,8 @@ void ServerBrowser::Render() {
     RenderServerDetails();
     ImGui::EndChild();
     NobleUi::DrawTacticalFrame(parentDl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale,
-                               s_browserPane == 1, m_selectedServerIndex >= 0, false, s_browserPane == 1);
+                               s_browserPane == 1, m_selectedServerIndex >= 0, false,
+                               BrowserStyle() == 1 && s_browserPane == 1);
 
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(2);
@@ -792,6 +809,7 @@ bool ServerBrowser::PassesFilters(const ServerEntry& s) const {
 
 void ServerBrowser::RenderServerList() {
     const float sScale = NobleUi::Scale();
+    const int style = BrowserStyle();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImFont* titleFont = NobleStyle::TitleFont() ? NobleStyle::TitleFont() : ImGui::GetFont();
     ImFont* bodyFont = ImGui::GetFont();
@@ -895,12 +913,13 @@ void ServerBrowser::RenderServerList() {
         return;
     }
 
-    const float cardH = U(74.0f);
-    const float cardGap = U(6.0f);
+    const bool compact = (style == 3);
+    const float cardH = compact ? U(46.0f) : (style == 2 ? U(98.0f) : U(74.0f));
+    const float cardGap = compact ? U(3.0f) : U(6.0f);
     const float pad = U(6.0f);
-    const float thumbH = cardH - pad * 2.0f;
-    const float thumbW = thumbH * (16.0f / 9.0f);
-    const float metricsW = U(165.0f);
+    const float thumbH = compact ? 0.0f : cardH - pad * 2.0f;
+    const float thumbW = compact ? 0.0f : thumbH * (16.0f / 9.0f);
+    const float metricsW = compact ? U(150.0f) : U(165.0f);
 
     for (const ServerEntry* entry : visible) {
         const ServerEntry& s = *entry;
@@ -931,49 +950,54 @@ void ServerBrowser::RenderServerList() {
                                       : IM_COL32(11, 20, 31, 205);
         dl->AddRectFilled(c0, c1, cardBg, 2.0f * sScale);
 
-        // Crisp 16:9 map preview thumbnail (no upscaling)
-        const ImVec2 t0(c0.x + pad, c0.y + pad);
-        const ImVec2 t1(t0.x + thumbW, t0.y + thumbH);
-        dl->AddRectFilled(t0, t1, IM_COL32(7, 12, 18, 255));
-        const std::string scenario = MapNames::ScenarioOf(s.mapName);
-        const std::string& artKey = scenario.empty() ? s.mapName : scenario;
-        UiTexture thumbTex = UiArt::MapPreview(artKey, true);
-        if (!thumbTex) thumbTex = UiArt::MapPhoto(artKey);
-        if (thumbTex) {
-            UiArt::DrawCoverCrisp(dl, thumbTex, t0, t1, IM_COL32(255, 255, 255, 255), 1.0f);
-        } else {
-            dl->AddLine(t0, t1, IM_COL32(34, 54, 74, 90), 1.0f);
-            dl->AddLine(ImVec2(t1.x, t0.y), ImVec2(t0.x, t1.y), IM_COL32(34, 54, 74, 90), 1.0f);
-            const char* noArt = s.isMod ? "MOD" : "MAP";
-            const ImVec2 nas = bodyFont->CalcTextSizeA(12.0f * sScale, FLT_MAX, 0.0f, noArt);
-            dl->AddText(bodyFont, 12.0f * sScale, ImVec2(t0.x + (thumbW - nas.x) * 0.5f, t0.y + (thumbH - nas.y) * 0.5f),
-                        IM_COL32(110, 138, 165, 200), noArt);
-        }
-        dl->AddRect(t0, t1, IM_COL32(90, 140, 180, 120), 0.0f, 0, 1.0f);
+        // Crisp 16:9 map preview thumbnail (no upscaling). The compact style (3) drops it for a dense text list.
+        ImVec2 t1(c0.x, c1.y);
+        if (!compact) {
+            const ImVec2 t0(c0.x + pad, c0.y + pad);
+            t1 = ImVec2(t0.x + thumbW, t0.y + thumbH);
+            dl->AddRectFilled(t0, t1, IM_COL32(7, 12, 18, 255));
+            const std::string scenario = MapNames::ScenarioOf(s.mapName);
+            const std::string& artKey = scenario.empty() ? s.mapName : scenario;
+            UiTexture thumbTex = UiArt::MapPreview(artKey, true);
+            if (!thumbTex) thumbTex = UiArt::MapPhoto(artKey);
+            if (thumbTex) {
+                UiArt::DrawCoverCrisp(dl, thumbTex, t0, t1, IM_COL32(255, 255, 255, 255), 1.0f);
+            } else {
+                dl->AddLine(t0, t1, IM_COL32(34, 54, 74, 90), 1.0f);
+                dl->AddLine(ImVec2(t1.x, t0.y), ImVec2(t0.x, t1.y), IM_COL32(34, 54, 74, 90), 1.0f);
+                const char* noArt = s.isMod ? "MOD" : "MAP";
+                const ImVec2 nas = bodyFont->CalcTextSizeA(12.0f * sScale, FLT_MAX, 0.0f, noArt);
+                dl->AddText(bodyFont, 12.0f * sScale, ImVec2(t0.x + (thumbW - nas.x) * 0.5f, t0.y + (thumbH - nas.y) * 0.5f),
+                            IM_COL32(110, 138, 165, 200), noArt);
+            }
+            dl->AddRect(t0, t1, IM_COL32(90, 140, 180, 120), 0.0f, 0, 1.0f);
 
-        if (s.isOwn || s.isFavorite) {
-            const char* corner = s.isOwn ? "YOU" : "FAV";
-            const ImU32 cornerBg = s.isOwn ? IM_COL32(22, 130, 185, 235) : IM_COL32(195, 145, 22, 235);
-            const ImVec2 cs = bodyFont->CalcTextSizeA(11.0f * sScale, FLT_MAX, 0.0f, corner);
-            dl->AddRectFilled(ImVec2(t0.x + 3.0f * sScale, t0.y + 3.0f * sScale),
-                              ImVec2(t0.x + cs.x + 11.0f * sScale, t0.y + cs.y + 6.0f * sScale), cornerBg, 2.0f * sScale);
-            dl->AddText(bodyFont, 11.0f * sScale, ImVec2(t0.x + 7.0f * sScale, t0.y + 4.5f * sScale),
-                        IM_COL32(250, 252, 255, 255), corner);
+            if (s.isOwn || s.isFavorite) {
+                const char* corner = s.isOwn ? "YOU" : "FAV";
+                const ImU32 cornerBg = s.isOwn ? IM_COL32(22, 130, 185, 235) : IM_COL32(195, 145, 22, 235);
+                const ImVec2 cs = bodyFont->CalcTextSizeA(11.0f * sScale, FLT_MAX, 0.0f, corner);
+                dl->AddRectFilled(ImVec2(t0.x + 3.0f * sScale, t0.y + 3.0f * sScale),
+                                  ImVec2(t0.x + cs.x + 11.0f * sScale, t0.y + cs.y + 6.0f * sScale), cornerBg, 2.0f * sScale);
+                dl->AddText(bodyFont, 11.0f * sScale, ImVec2(t0.x + 7.0f * sScale, t0.y + 4.5f * sScale),
+                            IM_COL32(250, 252, 255, 255), corner);
+            }
         }
 
         // Info column
-        const float textLeft = t1.x + U(14.0f);
+        const float textLeft = compact ? c0.x + U(14.0f) : t1.x + U(14.0f);
         const float textRight = c1.x - metricsW - U(12.0f);
         const float infoW = std::max(U(120.0f), textRight - textLeft);
 
         struct PillBadge { const char* text; ImU32 bg; ImU32 fg; };
         std::vector<PillBadge> badges;
-        if (s.isMod) badges.push_back({ "MOD", IM_COL32(60, 195, 235, 240), IM_COL32(8, 22, 30, 255) });
-        if (s.isPasswordProtected) badges.push_back({ "LOCKED", IM_COL32(215, 165, 38, 235), IM_COL32(22, 16, 6, 255) });
-        if (s.inProgress) badges.push_back({ "LIVE", IM_COL32(225, 128, 35, 235), IM_COL32(255, 248, 238, 255) });
-        if (s.build.find("-dev") != std::string::npos) badges.push_back({ "DEV", IM_COL32(95, 78, 175, 230), IM_COL32(240, 238, 255, 255) });
-        const bool compatible = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
-        if (!compatible) badges.push_back({ "OLD/MISMATCH", IM_COL32(190, 52, 52, 235), IM_COL32(255, 242, 242, 255) });
+        if (!compact) {
+            if (s.isMod) badges.push_back({ "MOD", IM_COL32(60, 195, 235, 240), IM_COL32(8, 22, 30, 255) });
+            if (s.isPasswordProtected) badges.push_back({ "LOCKED", IM_COL32(215, 165, 38, 235), IM_COL32(22, 16, 6, 255) });
+            if (s.inProgress) badges.push_back({ "LIVE", IM_COL32(225, 128, 35, 235), IM_COL32(255, 248, 238, 255) });
+            if (s.build.find("-dev") != std::string::npos) badges.push_back({ "DEV", IM_COL32(95, 78, 175, 230), IM_COL32(240, 238, 255, 255) });
+            const bool compatible = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
+            if (!compatible) badges.push_back({ "OLD/MISMATCH", IM_COL32(190, 52, 52, 235), IM_COL32(255, 242, 242, 255) });
+        }
 
         float badgeBlockW = 0.0f;
         const float badgeFontPx = 11.5f * sScale;
@@ -981,11 +1005,11 @@ void ServerBrowser::RenderServerList() {
             badgeBlockW += bodyFont->CalcTextSizeA(badgeFontPx, FLT_MAX, 0.0f, b.text).x + 16.0f * sScale;
         }
 
-        const float namePx = 17.5f * sScale;
+        const float namePx = compact ? 15.5f * sScale : (style == 2 ? 20.0f * sScale : 17.5f * sScale);
         const float maxNameW = std::max(U(80.0f), infoW - badgeBlockW - U(8.0f));
         const std::string displayName = EllipsizeLabel(titleFont, namePx, s.name.empty() ? "Unnamed Halo: Reach Server" : s.name, maxNameW);
         const ImVec2 nameSz = titleFont->CalcTextSizeA(namePx, FLT_MAX, 0.0f, displayName.c_str());
-        const float rowTopY = c0.y + U(13.0f);
+        const float rowTopY = compact ? c0.y + U(7.0f) : (style == 2 ? c0.y + U(17.0f) : c0.y + U(13.0f));
         dl->AddText(titleFont, namePx, ImVec2(textLeft, rowTopY),
                     selected ? IM_COL32(255, 250, 238, 255) : IM_COL32(228, 238, 248, 255), displayName.c_str());
 
@@ -1001,8 +1025,8 @@ void ServerBrowser::RenderServerList() {
         }
 
         // Subtitle line: Mode  ·  Map  ·  Game Type  ·  Region
-        const float subPx = 13.5f * sScale;
-        const float rowSubY = rowTopY + nameSz.y + U(6.0f);
+        const float subPx = compact ? 11.5f * sScale : 13.5f * sScale;
+        const float rowSubY = rowTopY + nameSz.y + (compact ? U(1.0f) : U(6.0f));
         std::string subLine = UpperAscii(s.gameMode.empty() ? "MULTIPLAYER" : s.gameMode);
         subLine += "   |   " + (s.mapName.empty() ? std::string("Unknown Map") : MapNames::Display(s.mapName));
         if (!s.variantName.empty()) subLine += "   |   " + s.variantName;
@@ -1018,14 +1042,14 @@ void ServerBrowser::RenderServerList() {
 
         char playerBuf[32];
         std::snprintf(playerBuf, sizeof(playerBuf), "%d / %d", s.playerCount, s.maxPlayers);
-        const float plPx = 16.5f * sScale;
+        const float plPx = compact ? 14.5f * sScale : 16.5f * sScale;
         const ImVec2 plSz = titleFont->CalcTextSizeA(plPx, FLT_MAX, 0.0f, playerBuf);
-        const float plX = mx0 + U(16.0f);
-        const float plY = c0.y + U(15.0f);
+        const float plX = mx0 + (compact ? U(10.0f) : U(16.0f));
+        const float plY = compact ? c0.y + U(6.0f) : c0.y + U(15.0f);
         dl->AddText(titleFont, plPx, ImVec2(plX, plY), IM_COL32(236, 244, 250, 255), playerBuf);
 
-        const float capW = U(62.0f);
-        const float capH = 4.0f * sScale;
+        const float capW = compact ? U(44.0f) : U(62.0f);
+        const float capH = compact ? 3.0f * sScale : 4.0f * sScale;
         const ImVec2 bar0(plX, plY + plSz.y + U(5.0f));
         const ImVec2 bar1(plX + capW, bar0.y + capH);
         dl->AddRectFilled(bar0, bar1, IM_COL32(30, 48, 66, 200), 1.0f * sScale);
@@ -1053,7 +1077,18 @@ void ServerBrowser::RenderServerList() {
                         IM_COL32(125, 145, 165, 180), "-- ms");
         }
 
-        NobleUi::DrawTacticalFrame(dl, c0, c1, sScale, focusedCard, selected, hovered, focusedCard);
+        if (compact) {
+            dl->AddRectFilled(c0, c1, cardBg, 2.0f * sScale);
+            dl->AddRect(c0, c1, selected ? IM_COL32(143, 216, 255, 200) : IM_COL32(72, 112, 148, 110),
+                        2.0f * sScale, 0, 1.0f);
+            dl->AddLine(ImVec2(c0.x + U(6.0f), c1.y + cardGap * 0.5f),
+                        ImVec2(c1.x - U(6.0f), c1.y + cardGap * 0.5f), IM_COL32(64, 100, 136, 80), 1.0f);
+        } else {
+            // A thin plate border keeps the cards separated in the blue-glass style (cyan, not amber).
+            dl->AddRect(c0, c1, selected ? IM_COL32(143, 216, 255, 170) : IM_COL32(66, 112, 150, 95),
+                        2.0f * sScale, 0, 1.0f);
+            NobleUi::DrawTacticalFrame(dl, c0, c1, sScale, focusedCard, selected, hovered, focusedCard && style == 1);
+        }
         ImGui::Dummy(ImVec2(listAvailW, cardGap));
     }
 }

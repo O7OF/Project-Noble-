@@ -71,6 +71,10 @@ public:
                                   const std::filesystem::path& thumbnail);
     // The mod map's own description, drawn under the progress bar. Safe from any thread.
     static void SetLoadingMapDescription(const std::string& description);
+    // Session context for the loading screen: the game mode ("campaign", "firefight", "forge", "multiplayer"), the
+    // lobby roster (host first) and how many players this launch is for. Main thread, before launch.
+    static void SetLoadingSession(const std::string& mode, std::vector<std::string> players, int expectedPlayers,
+                                  bool host, bool joiner);
 
     // True while the overlay wants the mouse pointer (pause menu, post-game panel or scoreboard actions).
     static bool WantsPointer();

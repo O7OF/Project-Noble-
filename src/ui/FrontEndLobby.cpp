@@ -1099,6 +1099,14 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
                                  player.serviceTag);
     }
     choice.host = false;
+    // Loading screen roster: host first, then the guests.
+    choice.rosterNames.clear();
+    for (int pass = 0; pass < 2; ++pass) {
+      for (const auto &player : st.lobbyRoster) {
+        if ((pass == 0) != player.isHost) continue;
+        choice.rosterNames.push_back(player.username.empty() ? "Host" : player.username);
+      }
+    }
     choice.map = st.lobbyLaunchMap.empty() ? st.lobbyMap : st.lobbyLaunchMap;
     choice.mapTitle = st.lobbyMapTitle;
     choice.mapImage = st.lobbyMapImage;
@@ -1869,6 +1877,14 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     for (const auto &player : st.lobbyRoster) {
       if (!player.isHost)
         ++choice.expectedPeers;
+    }
+    // Loading screen roster: host first, then the guests (the order the reference layout shows).
+    choice.rosterNames.clear();
+    for (int pass = 0; pass < 2; ++pass) {
+      for (const auto &player : st.lobbyRoster) {
+        if ((pass == 0) != player.isHost) continue;
+        choice.rosterNames.push_back(player.username.empty() ? "Host" : player.username);
+      }
     }
     choice.map = st.lobbyMap;
     choice.mapOverride = st.lobbyMapOverride;

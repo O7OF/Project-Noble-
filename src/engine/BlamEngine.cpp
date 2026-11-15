@@ -828,6 +828,19 @@ BlamEngine* BlamEngine::s_active = nullptr;
 bool BlamEngine::s_guestPostStart = false;
 std::string BlamEngine::s_savedFilmPath;
 bool BlamEngine::s_isSavedFilmPlayback = false;
+std::atomic<bool> BlamEngine::s_waitingForRemotePlayers{false};
+std::atomic<int> BlamEngine::s_waitingRemoteJoined{0};
+std::atomic<int> BlamEngine::s_waitingRemoteExpected{0};
+
+bool BlamEngine::IsWaitingForRemotePlayers() {
+  return s_waitingForRemotePlayers.load(std::memory_order_relaxed);
+}
+int BlamEngine::WaitingRemotePlayersJoined() {
+  return s_waitingRemoteJoined.load(std::memory_order_relaxed);
+}
+int BlamEngine::WaitingRemotePlayersExpected() {
+  return s_waitingRemoteExpected.load(std::memory_order_relaxed);
+}
 std::optional<VariantFields> BlamEngine::s_variantOverrides;
 std::string BlamEngine::s_variantPatch;
 std::atomic<bool> BlamEngine::s_gameTeamsEnabled{false};
@@ -1856,11 +1869,16 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                     const size_t targetPeers = static_cast<size_t>(peersToWaitFor);
                     const ULONGLONG deadline = GetTickCount64() + 45000;
                     ULONGLONG lastLog = 0;
+                    s_waitingRemoteExpected.store(static_cast<int>(targetPeers), std::memory_order_relaxed);
+                    s_waitingRemoteJoined.store(0, std::memory_order_relaxed);
+                    s_waitingForRemotePlayers.store(true, std::memory_order_relaxed);
                     NOBLE_INFO("BlamEngine: waiting for {} remote player(s) to finish loading and join membership before starting simulation...",
                                targetPeers);
                     while (GetTickCount64() < deadline) {
                         const size_t playersJoined = LobbyPatches::GetRemotePlayerAddCount();
                         const size_t channelPeers = NetworkTransport::Get().GetGamePeerCount();
+                        s_waitingRemoteJoined.store(static_cast<int>(std::max(playersJoined, channelPeers)),
+                                                    std::memory_order_relaxed);
                         if (playersJoined >= targetPeers || channelPeers >= targetPeers) {
                             const int settleMs = settleLonger ? 1000 : 400;
                             NOBLE_INFO("BlamEngine: {}/{} remote player(s) in session (membership: {}, engine peers: {}); settling {} ms for world replication",
@@ -1880,6 +1898,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                         NOBLE_WARN("BlamEngine: membership wait timed out with {}/{} player(s); starting simulation anyway",
                                    LobbyPatches::GetRemotePlayerAddCount(), targetPeers);
                     }
+                    s_waitingForRemotePlayers.store(false, std::memory_order_relaxed);
                 } else {
                     const int simDelay = 200;
                     std::this_thread::sleep_for(std::chrono::milliseconds(simDelay));

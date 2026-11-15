@@ -123,6 +123,12 @@ public:
     static bool IsSavedFilmPlayback() { return s_isSavedFilmPlayback; }
     static void SetSavedFilmPlayback(bool value) { s_isSavedFilmPlayback = value; }
 
+    // True while the launch is blocked waiting for the remote players it declared (host waiting at the membership
+    // barrier). The loading screen keeps itself up as WAITING FOR PLAYERS over these frames.
+    static bool IsWaitingForRemotePlayers();
+    static int WaitingRemotePlayersJoined();
+    static int WaitingRemotePlayersExpected();
+
     // Research switch: a guest normally skips PostCommand(10/11) and waits for the host's session sync. Campaign may
     // still need the guest to post them itself to create its own player; "-guest-post-start" enables that for a test.
     static void SetGuestPostStart(bool value) { s_guestPostStart = value; }
@@ -131,6 +137,9 @@ public:
 
 private:
     static int s_engineModeOverride;   // research hook: forces launch-block +0x0C
+    static std::atomic<bool> s_waitingForRemotePlayers;
+    static std::atomic<int> s_waitingRemoteJoined;
+    static std::atomic<int> s_waitingRemoteExpected;
     static bool s_guestPostStart;      // research hook: guest posts its own Command 10/11
     static std::string s_savedFilmPath; // Theater mode saved film path (.film)
     static bool s_isSavedFilmPlayback; // True during Theater saved film playback

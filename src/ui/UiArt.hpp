@@ -86,6 +86,13 @@ bool ImportMenuBackgroundImage(const std::filesystem::path& source, std::string&
 // Full-screen picture for the loading screen of this scenario ("m10", "20_sword_slayer", ...).
 UiTexture LoadingBackground(const std::string& scenario);
 
+// Reach's loading-screen overlay art (the Auntie Dot theme): the diamond grid (tile it) and the UNSC / Noble Team
+// corner logos. Files come from data\ui\custom\loading or data\ui\noble\loading (grid.png, unsc_logo.png,
+// noble_logo.png); empty when the player has none, so the loading screen simply leaves them out.
+UiTexture LoadingGrid();
+UiTexture LoadingLogoNoble();
+UiTexture LoadingLogoUnsc();
+
 // Map preview (316x160, or 668x292 when large) from MCC's levels pack; empty if the map has none.
 UiTexture MapPreview(const std::string& scenario, bool large);
 

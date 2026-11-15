@@ -7166,6 +7166,15 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
           if (choice.expectedPeers > 0) {
             args += L" -wait-peers " + std::to_wstring(choice.expectedPeers);
           }
+          // Loading screen session block: let the match process show the lobby roster (host first).
+          if (!choice.rosterNames.empty()) {
+            std::wstring rosterCsv;
+            for (size_t r = 0; r < choice.rosterNames.size(); ++r) {
+              if (r) rosterCsv += L"|";
+              rosterCsv += ToWide(choice.rosterNames[r]);
+            }
+            args += L" -loading-roster \"" + rosterCsv + L"\"";
+          }
           if (!choice.sessionId.empty()) {
             args += L" -session-id \"" + ToWide(choice.sessionId) + L"\"";
             if (!choice.sessionToken.empty()) {

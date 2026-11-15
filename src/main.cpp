@@ -1098,6 +1098,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool hostPublic = true;
     int hostMaxPlayers = 16;
     int expectedPeers = 0;
+    // Lobby roster for the loading screen (host first), passed down from the lobby's launch args as "a|b|c".
+    std::vector<std::string> loadingRoster;
     int localPortOverride = 11774;   // test-only: lets two instances run on one PC (-local-port)
     int engineModeOverride = 0;
     int liveWindowTestAt = -1;   // test-only: switch to borderless after N seconds
@@ -1175,6 +1177,18 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
                 hostMaxPlayers = _wtoi(argvW[++i]);
             } else if (arg == L"-wait-peers" && i + 1 < numArgs) {
                 expectedPeers = _wtoi(argvW[++i]);
+            } else if (arg == L"-loading-roster" && i + 1 < numArgs) {
+                // The lobby roster for the loading screen: names separated by '|', host first.
+                loadingRoster.clear();
+                std::wstring csv = argvW[++i];
+                size_t start = 0;
+                while (start <= csv.size()) {
+                    const size_t bar = csv.find(L'|', start);
+                    const std::wstring part = csv.substr(start, bar == std::wstring::npos ? std::wstring::npos : bar - start);
+                    if (!part.empty()) loadingRoster.push_back(WideToNarrow(part));
+                    if (bar == std::wstring::npos) break;
+                    start = bar + 1;
+                }
             } else if (arg == L"-local-port" && i + 1 < numArgs) {
                 const int value = _wtoi(argvW[++i]);
                 if (value > 0 && value <= 65535) localPortOverride = value;
@@ -1354,6 +1368,18 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         if (!mapTitle.empty() || !mapImage.empty() || !mapThumb.empty()) {
             noble::PauseMenu::SetLoadingMapInfo(mapTitle, mapImage, mapThumb);
         }
+        // Loading-screen session block: mode label, the lobby roster (host first) and the player count this launch
+        // waits for. A direct/solo launch falls back to the local player's name.
+        {
+            std::vector<std::string> roster = loadingRoster;
+            if (roster.empty()) {
+                std::string me = noble::Settings::Get().Snapshot().playerName;
+                roster.push_back(me.empty() ? std::string("NobleSix") : me);
+            }
+            const int total = launchHost ? (1 + expectedPeers) : 0;
+            noble::PauseMenu::SetLoadingSession(launchMode, std::move(roster), total, launchHost,
+                                                !connectAddress.empty());
+        }
     }
 
 
@@ -1516,6 +1542,15 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     if (!mapTitle.empty()) args += L" -map-title \"" + toWide(mapTitle) + L"\"";
     if (!mapImage.empty()) args += L" -map-image \"" + mapImage.wstring() + L"\"";
     if (!mapThumb.empty()) args += L" -map-thumb \"" + mapThumb.wstring() + L"\"";
+    // Keep the loading screen's session block on PLAY AGAIN / NEXT MISSION.
+    if (!loadingRoster.empty()) {
+        std::wstring rosterCsv;
+        for (size_t r = 0; r < loadingRoster.size(); ++r) {
+            if (r) rosterCsv += L"|";
+            rosterCsv += toWide(loadingRoster[r]);
+        }
+        args += L" -loading-roster \"" + rosterCsv + L"\"";
+    }
 
     // In-match scoreboard overlay data: fetch the session roster once so the panel can show names, ranks,
     // emblems and teams while the scoreboard key is held.

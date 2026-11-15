@@ -24,6 +24,7 @@
 #include "engine/KeyBindings.hpp"
 #include "engine/ReachHost.hpp"
 #include "engine/SessionVariant.hpp"
+#include "hooks/LobbyPatches.hpp"
 #include "host/Window.hpp"
 #include "mvar/ForgePlacementApply.hpp"
 #include "mvar/MapVariant.hpp"
@@ -38,6 +39,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <d3d11.h>
 #include <dxgi.h>
@@ -84,6 +87,21 @@ std::filesystem::path s_loadingImage;
 std::filesystem::path s_loadingThumb;
 std::string
     s_loadingDescription; // mod map blurb for the loading screen (plain text)
+// Session context for the loading screen: mode label (top right), the lobby roster (names of the players this launch
+// is for, host first), how many players the match was launched for, and whether this process hosts it.
+std::string s_loadingMode;                  // "campaign" / "firefight" / "forge" / "multiplayer"
+std::vector<std::string> s_loadingPlayers;  // lobby roster names, host first (may be empty)
+int s_loadingExpectedPlayers = 0;           // total players this launch waits for (0/1 = solo)
+bool s_loadingHost = true;
+bool s_loadingJoiner = false;               // this process joins a remote host
+
+// True once the engine has passed its loading screen but the host is still waiting for the remote players this launch
+// expects to join membership: the loading screen keeps drawing, now as the WAITING FOR PLAYERS screen, instead of the
+// black frame the engine shows on its own.
+bool LoadingWaitingForPlayers() {
+  if (BlamEngine::IsSavedFilmPlayback()) return false;
+  return BlamEngine::IsWaitingForRemotePlayers();
+}
 
 struct MapName {
   const char *scenario;
@@ -1120,6 +1138,18 @@ void PauseMenu::SetLoadingMapDescription(const std::string &description) {
   }
   std::lock_guard<std::mutex> lock(s_mapMutex);
   s_loadingDescription = out;
+}
+
+void PauseMenu::SetLoadingSession(const std::string &mode,
+                                  std::vector<std::string> players,
+                                  int expectedPlayers, bool host,
+                                  bool joiner) {
+  std::lock_guard<std::mutex> lock(s_mapMutex);
+  s_loadingMode = mode;
+  s_loadingPlayers = std::move(players);
+  s_loadingExpectedPlayers = std::max(expectedPlayers, 0);
+  s_loadingHost = host;
+  s_loadingJoiner = joiner;
 }
 
 void PauseMenu::DrawMenu(HWND hwnd) {
@@ -2174,7 +2204,7 @@ static void DrawScoreboardPanel() {
         {"Lexa Varomaii", "VKAI", 16, 2, 4, 5, 3, 0, 56, false},
         {"Connor", "K488", 20, 2, 4, 4, 2, 0, 49, false},
         {"Stop Shooting", "STOP", 6, 2, 3, 3, 5, 1, 55, false},
-        {"RainZaphkiel", "DΣV", 22, 2, 2, 2, 3, 0, 48, false},
+        {"RainZaphkiel", "DÎ£V", 22, 2, 2, 2, 3, 0, 48, false},
         {"RED", "RED", 10, 2, 1, 1, 0, 0, 43, false},
         {"HighImCasual", "0408", 16, 2, 1, 1, 1, 0, 64, false},
     };
@@ -3824,19 +3854,50 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   ImGui::End();
 }
 
+namespace {
+
+// Letter-spaced upper-case text, the Halo heading look ("C A M P A I G N"). Returns the drawn width.
+float AddTrackedText(ImDrawList *dl, ImFont *font, float px, ImVec2 pos, ImU32 col,
+                     const std::string &text, float tracking) {
+  float x = pos.x;
+  for (const char c : text) {
+    const char one[2] = {c, 0};
+    dl->AddText(font, px, ImVec2(x, pos.y), col, one);
+    x += font->CalcTextSizeA(px, FLT_MAX, 0.0f, one).x + tracking;
+  }
+  return x - pos.x;
+}
+
+float TrackedTextWidth(ImFont *font, float px, const std::string &text, float tracking) {
+  float width = 0.0f;
+  for (const char c : text) {
+    const char one[2] = {c, 0};
+    width += font->CalcTextSizeA(px, FLT_MAX, 0.0f, one).x + tracking;
+  }
+  return width;
+}
+
+std::string LoadingModeLabel(const std::string &mode) {
+  if (_stricmp(mode.c_str(), "campaign") == 0) return "CAMPAIGN";
+  if (_stricmp(mode.c_str(), "firefight") == 0) return "FIREFIGHT";
+  if (_stricmp(mode.c_str(), "forge") == 0 || _stricmp(mode.c_str(), "sandbox") == 0) return "FORGE";
+  return "CUSTOM GAME";
+}
+
+} // namespace
+
 void PauseMenu::DrawLoading() {
   ImGuiIO &io = ImGui::GetIO();
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
   const float w = io.DisplaySize.x;
   const float h = io.DisplaySize.y;
+  const float s = (std::max)(0.6f, h / 1080.0f);   // layout scale (1080p reference)
 
-  // Reach-style loading screen: a full-screen scene (the player's own art,
-  // Noble's art or the mission's scene from the MCC install), map name
-  // bottom-left, a moving bar (the engine's progress callback doesn't report
-  // real progress, so the bar only shows that it's working).
-  std::string mapName, scenario;
+  std::string mapName, scenario, description, mode;
   std::filesystem::path modImage, modThumb;
-  std::string description;
+  std::vector<std::string> players;
+  int expectedPlayers = 0;
+  bool host = true, joiner = false;
   {
     std::lock_guard<std::mutex> lock(s_mapMutex);
     mapName = s_loadingMapName;
@@ -3844,47 +3905,79 @@ void PauseMenu::DrawLoading() {
     modImage = s_loadingImage;
     modThumb = s_loadingThumb;
     description = s_loadingDescription;
+    mode = s_loadingMode;
+    players = s_loadingPlayers;
+    expectedPlayers = s_loadingExpectedPlayers;
+    host = s_loadingHost;
+    joiner = s_loadingJoiner;
   }
-  if (mapName.empty() && !scenario.empty()) {
-    mapName = Upper(DisplayName(scenario));
-  }
-  dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w, h),
-                              IM_COL32(10, 16, 24, 255),
-                              IM_COL32(10, 16, 24, 255), IM_COL32(2, 4, 8, 255),
-                              IM_COL32(2, 4, 8, 255));
-  const UiTexture scene = modImage.empty() ? UiArt::LoadingBackground(scenario)
-                                           : UiArt::ImageFile(modImage);
+  if (mapName.empty() && !scenario.empty()) mapName = Upper(DisplayName(scenario));
+
+  // ---- Background. The map picture is shown complete (native aspect, never cropped or stretched); a dim, soft copy
+  // fills the screen behind it so the letterbox never reads as a hard black bar. Reach only ships 1920x1080 loading
+  // art for campaign missions - map previews are 668x292, and stretching those full screen is the "zoomed in" look.
+  const ImVec2 full0(0.0f, 0.0f), full1(w, h);
+  dl->AddRectFilled(full0, full1, IM_COL32(4, 7, 11, 255));
+  const UiTexture scene = modImage.empty() ? UiArt::LoadingBackground(scenario) : UiArt::ImageFile(modImage);
   if (scene) {
-    UiArt::DrawCover(dl, scene, ImVec2(0, 0), ImVec2(w, h));
-    dl->AddRectFilledMultiColor(ImVec2(0, h * 0.50f), ImVec2(w, h),
-                                IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
-                                IM_COL32(0, 0, 0, 230), IM_COL32(0, 0, 0, 230));
+    UiArt::DrawCover(dl, scene, full0, full1, IM_COL32(92, 106, 128, 255));
+    dl->AddRectFilled(full0, full1, IM_COL32(5, 9, 14, 200));
   }
 
-  const ImVec4 accent = NobleStyle::Accent();
-  const ImU32 accentCol = ImGui::ColorConvertFloat4ToU32(accent);
-  const ImU32 mutedCol =
-      ImGui::ColorConvertFloat4ToU32(NobleStyle::TextMuted());
+  // Reach's loading-screen "Auntie Dot" diamond grid. It is the backdrop, so it is drawn before the map picture
+  // (Tyler: "the grid behind the photo of the map"): the lattice drifts slowly diagonally and a brighter wave travels
+  // along it, like the moving grid screen in the reference video.
+  {
+    const float cell = 138.0f * s;
+    const float t = static_cast<float>(ImGui::GetTime());
+    const float drift = std::fmod(t * 14.0f, cell);
+    const float wave = std::fmod(t * 0.045f, 1.0f) * (w + 2.0f * h) - h;
+    for (float c = -h - cell; c <= w + h + cell; c += cell) {
+      const float cc = c + drift;
+      const float d = std::abs(c - wave);
+      const float lift = (std::max)(0.0f, 1.0f - d / (cell * 2.2f));
+      const ImU32 gridCol = IM_COL32(120, 180, 216, static_cast<int>(22.0f + 52.0f * lift));
+      const float thick = (1.0f + 0.7f * lift) * s;
+      dl->AddLine(ImVec2(cc, 0.0f), ImVec2(cc + h, h), gridCol, thick);
+      dl->AddLine(ImVec2(cc, 0.0f), ImVec2(cc - h, h), gridCol, thick);
+      if (lift > 0.05f) {
+        const ImU32 crest = IM_COL32(150, 205, 240, static_cast<int>(90.0f * lift));
+        dl->AddLine(ImVec2(cc + 1.0f * s, 0.0f), ImVec2(cc + h + 1.0f * s, h), crest, 0.8f * s);
+        dl->AddLine(ImVec2(cc + 1.0f * s, 0.0f), ImVec2(cc - h + 1.0f * s, h), crest, 0.8f * s);
+      }
+    }
+  }
 
-  const float left = w * 0.08f;
-  const float base = h * 0.85f;
+  if (scene) {
+    const float aspect = scene.height > 0 ? static_cast<float>(scene.width) / static_cast<float>(scene.height)
+                                          : 16.0f / 9.0f;
+    float drawW = w * 0.84f;
+    float drawH = drawW / aspect;
+    const float maxH = h * 0.60f;
+    if (drawH > maxH) {
+      drawH = maxH;
+      drawW = drawH * aspect;
+    }
+    const ImVec2 c0((w - drawW) * 0.5f, h * 0.52f - drawH * 0.5f);
+    const ImVec2 c1(c0.x + drawW, c0.y + drawH);
+    dl->AddRect(ImVec2(c0.x - 1.0f, c0.y - 1.0f), ImVec2(c1.x + 1.0f, c1.y + 1.0f), IM_COL32(0, 0, 0, 160),
+                0.0f, 0, 2.0f);
+    dl->AddImage(scene.id, c0, c1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 255));
+    dl->AddRect(c0, c1, IM_COL32(150, 190, 220, 64), 0.0f, 0, 1.0f);
+    // Readability scrims: top, bottom, and a wash under the text block on the left.
+    dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w, h * 0.40f), IM_COL32(3, 6, 10, 245), IM_COL32(3, 6, 10, 245),
+                                IM_COL32(3, 6, 10, 0), IM_COL32(3, 6, 10, 0));
+    dl->AddRectFilledMultiColor(ImVec2(0, h * 0.60f), ImVec2(w, h), IM_COL32(3, 6, 10, 0), IM_COL32(3, 6, 10, 0),
+                                IM_COL32(3, 6, 10, 245), IM_COL32(3, 6, 10, 245));
+    dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w * 0.55f, h), IM_COL32(3, 6, 10, 170),
+                                IM_COL32(3, 6, 10, 0), IM_COL32(3, 6, 10, 0), IM_COL32(3, 6, 10, 170));
+  }
 
-  ImFont *title = NobleStyle::TitleFont();
-  ImFont *font = ImGui::GetFont();
-  const float titleSize =
-      title ? title->FontSize * 1.4f : ImGui::GetFontSize() * 2.0f;
-  // Spacing follows the screen height and the font sizes, so the label never
-  // lands on the map name at 1440p/4K.
-  const float uiScale = h / 1080.0f > 1.0f ? h / 1080.0f : 1.0f;
-  const float labelSize = ImGui::GetFontSize();
-  const float titleTop = base - titleSize - 4.0f * uiScale;
-
-  // Query live loading progress from engine or LoadScreen
+  // Live loading progress: LoadScreen's own value, improved by the engine's progress float when it reports one.
   float progress = LoadScreen::Get().GetLoadProgress();
   const HMODULE engineMod = GetModuleHandleW(L"haloreach.dll");
   if (engineMod) {
-    float engineProg = *reinterpret_cast<const float *>(
-        reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
+    float engineProg = *reinterpret_cast<const float *>(reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
     if (engineProg >= 0.0f && engineProg <= 1.0f && engineProg > progress) {
       progress = engineProg;
       LoadScreen::Get().SetLoadProgress(progress);
@@ -3893,48 +3986,155 @@ void PauseMenu::DrawLoading() {
   progress = (std::max)(0.0f, (std::min)(progress, 1.0f));
   const int progressPct = static_cast<int>(progress * 100.0f);
 
-  dl->AddText(font, labelSize,
-              ImVec2(left, titleTop - labelSize - 8.0f * uiScale), mutedCol,
-              "LOADING");
+  // Session state: who is here, how many players this launch waits for. The engine's membership count is the most
+  // direct answer while waiting for remote players; the transport count covers the earlier connection stage.
+  const size_t peers = (std::max)(NetworkTransport::Get().GetGamePeerCount(), LobbyPatches::GetRemotePlayerAddCount());
+  const size_t engineExpected = static_cast<size_t>((std::max)(0, BlamEngine::WaitingRemotePlayersExpected()));
+  const size_t engineJoined = static_cast<size_t>((std::max)(0, BlamEngine::WaitingRemotePlayersJoined()));
+  const size_t joined = 1 + (std::max)(peers, engineJoined);
+  const int wanted = (std::max)({expectedPlayers, static_cast<int>(players.size()), 1 + static_cast<int>(engineExpected)});
+  const size_t total = static_cast<size_t>(wanted);
+  const bool online = expectedPlayers > 1 || peers > 0 || joiner || engineExpected > 0;
+  const bool waitingForPlayers = expectedPlayers > static_cast<int>(joined) || engineExpected > engineJoined;
+  const bool waitingForHost = joiner && peers == 0 && progress < 0.97f && !waitingForPlayers;
+  const char *titleText = waitingForPlayers ? "WAITING FOR PLAYERS"
+                           : waitingForHost  ? "WAITING FOR HOST"
+                                             : "LOADING";
 
-  const float barW = w * 0.30f;
-  const float barH = 5.0f * uiScale;
-  const ImVec2 b0(left, base + 8.0f * uiScale);
-  const ImVec2 b1(left + barW, base + 8.0f * uiScale + barH);
+  const ImU32 white = IM_COL32(238, 243, 248, 255);
+  const ImU32 muted = IM_COL32(158, 174, 188, 255);
+  const ImU32 accent = ImGui::ColorConvertFloat4ToU32(NobleStyle::Accent());
+  const ImU32 good = IM_COL32(118, 214, 142, 255);
+  ImFont *font = ImGui::GetFont();
+  ImFont *titleFont = NobleStyle::TitleFont();
+  if (!titleFont) titleFont = font;
+  const float titlePx = 49.0f * s;
+  const float statusPx = 17.0f * s;
+  const float rowNamePx = 18.0f * s;
+  const float rowStatusPx = 13.0f * s;
+  const float margin = 84.0f * s;
 
-  // Actual percentage text right-aligned at bar's end
-  char pctBuf[32];
-  std::snprintf(pctBuf, sizeof(pctBuf), "%d%%", progressPct);
-  const ImVec2 pctSize = font->CalcTextSizeA(labelSize, FLT_MAX, 0.0f, pctBuf);
-  dl->AddText(
-      font, labelSize,
-      ImVec2(left + barW - pctSize.x, titleTop - labelSize - 8.0f * uiScale),
-      accentCol, pctBuf);
-
-  if (!mapName.empty()) {
-    dl->AddText(title ? title : font, titleSize, ImVec2(left, titleTop),
-                IM_COL32(235, 240, 245, 255), mapName.c_str());
+  // Mode label, top right, letter-spaced caps.
+  if (!mode.empty()) {
+    const std::string label = LoadingModeLabel(mode);
+    const float labelPx = 17.0f * s;
+    const float tracking = 4.5f * s;
+    const float labelW = TrackedTextWidth(titleFont, labelPx, label, tracking);
+    AddTrackedText(dl, titleFont, labelPx, ImVec2(w - margin - labelW, 56.0f * s),
+                   IM_COL32(228, 233, 239, 235), label, tracking);
   }
 
-  // Background track
-  dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 30));
+  // Top-left block: title, status line, roster, chat hint (the reference screen's layout).
+  const float titleTop = 104.0f * s;
+  AddTrackedText(dl, titleFont, titlePx, ImVec2(margin, titleTop), white, titleText, 1.2f * s);
 
-  // Filled progress bar based on actual %
-  if (progress > 0.001f) {
-    const float fillW = barW * progress;
-    dl->AddRectFilled(b0, ImVec2(b0.x + fillW, b1.y), accentCol);
+  std::string status;
+  char countBuf[96];
+  if (waitingForPlayers) {
+    std::snprintf(countBuf, sizeof(countBuf), "%d OF %d IN", static_cast<int>(joined), static_cast<int>(total));
+    status = mapName.empty() ? std::string(countBuf) : mapName + "  -  " + countBuf;
+  } else if (waitingForHost) {
+    status = mapName.empty() ? std::string("FINDING HOST") : mapName + "  -  FINDING HOST";
+  } else if (progress > 0.0f) {
+    std::snprintf(countBuf, sizeof(countBuf), "%d%%", progressPct);
+    status = mapName.empty() ? std::string(countBuf) : mapName + "  -  LOADING " + countBuf;
+  } else {
+    status = mapName;
+  }
+  const float statusTop = titleTop + titlePx + 12.0f * s;
+  if (!status.empty()) {
+    AddTrackedText(dl, font, statusPx, ImVec2(margin, statusTop), muted, status, 2.0f * s);
   }
 
-  // The mod map's own description under the bar, wrapped to the bar's width
-  // plus a little.
+  // Loading progress lives in the top-left block too (thin accent bar + percentage), under the status line. While the
+  // host is still waiting for players the load is finished, so the bar would only read a confusing 100%.
+  const float barW = (std::min)(0.22f * w, 420.0f * s);
+  const float barH = 3.0f * s;
+  const float barY = statusTop + statusPx + 22.0f * s;
+  if (!waitingForPlayers) {
+    const ImVec2 b0(margin, barY), b1(margin + barW, barY + barH);
+    dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 26));
+    if (progress > 0.001f) dl->AddRectFilled(b0, ImVec2(b0.x + barW * progress, b1.y), accent);
+    char pctBuf[16];
+    std::snprintf(pctBuf, sizeof(pctBuf), "%d%%", progressPct);
+    AddTrackedText(dl, font, 14.0f * s, ImVec2(b1.x + 10.0f * s, barY - 5.0f * s), accent, pctBuf, 1.5f * s);
+  }
+
+  // Player rows, host first; slots that have not joined yet are dimmed placeholders.
+  const SettingsData &settings = Settings::Get().Snapshot();
+  const std::string localName = settings.playerName.empty() ? std::string("NobleSix") : settings.playerName;
+  const float rowW = (std::min)(0.30f * w, 560.0f * s);
+  const float rowH = 40.0f * s;
+  const float rowGap = 7.0f * s;
+  float rowY = barY + 38.0f * s;
+  const int rows = (std::min)(wanted, 8);
+  for (int i = 0; i < rows; ++i) {
+    const bool isLocal = (i == 0 && players.empty()) ||
+                         (i < static_cast<int>(players.size()) &&
+                          players[static_cast<size_t>(i)] == localName);
+    std::string name;
+    if (i < static_cast<int>(players.size())) {
+      name = players[static_cast<size_t>(i)];
+    } else if (i == 0) {
+      name = localName;
+    } else {
+      name = "PLAYER " + std::to_string(i + 1);
+    }
+    if (isLocal) name += " (YOU)";
+    const bool present = isLocal || static_cast<size_t>(i) < joined;
+    std::string rowStatus;
+    ImU32 rowStatusCol = muted;
+    if (isLocal) {
+      rowStatus = host ? "HOSTING" : "READY";
+      rowStatusCol = host ? good : accent;
+    } else if (present) {
+      rowStatus = "READY";
+      rowStatusCol = accent;
+    } else {
+      rowStatus = "WAITING...";
+      rowStatusCol = IM_COL32(120, 132, 145, 255);
+    }
+    const ImVec2 r0(margin, rowY), r1(margin + rowW, rowY + rowH);
+    dl->AddRectFilled(r0, r1, present ? IM_COL32(10, 16, 22, 224) : IM_COL32(8, 12, 18, 160), 4.0f * s);
+    dl->AddRectFilled(ImVec2(r0.x, r0.y + 6.0f * s), ImVec2(r0.x + 3.0f * s, r1.y - 6.0f * s),
+                      present ? accent : IM_COL32(90, 104, 118, 180), 1.5f * s);
+    dl->AddRect(r0, r1, IM_COL32(255, 255, 255, present ? 30 : 16), 4.0f * s, 0, 1.0f);
+    AddTrackedText(dl, font, rowNamePx, ImVec2(r0.x + 16.0f * s, r0.y + (rowH - rowNamePx) * 0.5f - 2.0f * s),
+                   present ? white : IM_COL32(150, 162, 174, 235), name, 1.2f * s);
+    const float statusW = TrackedTextWidth(font, rowStatusPx, rowStatus, 2.0f * s);
+    AddTrackedText(dl, font, rowStatusPx,
+                   ImVec2(r1.x - 14.0f * s - statusW, r0.y + (rowH - rowStatusPx) * 0.5f - 1.0f * s),
+                   rowStatusCol, rowStatus, 2.0f * s);
+    rowY += rowH + rowGap;
+  }
+  if (online) {
+    AddTrackedText(dl, font, 13.0f * s, ImVec2(margin, rowY + 6.0f * s),
+                   IM_COL32(140, 154, 168, 230), "PRESS T FOR CHAT", 2.5f * s);
+  }
+
+  // The mod map's own description, under the roster block.
   if (!description.empty()) {
-    const float textSize = ImGui::GetFontSize();
-    const float wrap = w * 0.40f;
-    const ImVec2 at(left + 1.0f * uiScale, b1.y + 14.0f * uiScale);
-    dl->AddText(font, textSize, ImVec2(at.x + 1.0f, at.y + 1.0f),
-                IM_COL32(0, 0, 0, 200), description.c_str(), nullptr, wrap);
-    dl->AddText(font, textSize, at, IM_COL32(205, 215, 225, 235),
-                description.c_str(), nullptr, wrap);
+    const float wrap = (std::max)(rowW * 1.4f, w * 0.30f);
+    const ImVec2 at(margin, rowY + (online ? 34.0f * s : 8.0f * s));
+    dl->AddText(font, 15.0f * s, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 190), description.c_str(),
+                nullptr, wrap);
+    dl->AddText(font, 15.0f * s, at, IM_COL32(200, 212, 224, 225), description.c_str(), nullptr, wrap);
+  }
+
+  // Reach's own loading-screen corner marks: Noble Team emblem bottom-left, UNSC bottom-right.
+  const UiTexture nobleLogo = UiArt::LoadingLogoNoble();
+  const UiTexture unscLogo = UiArt::LoadingLogoUnsc();
+  const float logoSize = 112.0f * s;
+  const float logoBottom = h - 48.0f * s;
+  const float logoLeft = 72.0f * s;
+  const float logoRight = w - 72.0f * s - logoSize;
+  if (nobleLogo) {
+    dl->AddImage(nobleLogo.id, ImVec2(logoLeft, logoBottom - logoSize), ImVec2(logoLeft + logoSize, logoBottom),
+                 ImVec2(0, 0), ImVec2(1, 1), IM_COL32(172, 202, 230, 200));
+  }
+  if (unscLogo) {
+    dl->AddImage(unscLogo.id, ImVec2(logoRight, logoBottom - logoSize), ImVec2(logoRight + logoSize, logoBottom),
+                 ImVec2(0, 0), ImVec2(1, 1), IM_COL32(150, 186, 220, 190));
   }
 }
 
@@ -4141,7 +4341,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   }
   const bool connectionLost = s_connectionLost;
   const bool isTheater = noble::BlamEngine::IsSavedFilmPlayback();
-  if (!(open || gameOver || loading || showFps || scoreboardHeld ||
+  // The engine's loading screen is gone before an online co-op host has all its players: keep drawing our screen as
+  // WAITING FOR PLAYERS until the game session starts (otherwise this is a black frame with the FPS counter).
+  const bool waitingForPlayersScreen = LoadingWaitingForPlayers();
+  if (!(open || gameOver || loading || waitingForPlayersScreen || showFps || scoreboardHeld ||
         connectionLost || extraOverlay || SocialOverlay::WantsFrame() ||
         isTheater) ||
       !swapChain || !ImGui::GetCurrentContext())
@@ -4286,7 +4489,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     if (gameOver) {
       DrawGameOver(hwnd);
     } else {
-      if (loading)
+      if (loading || waitingForPlayersScreen)
         DrawLoading();
       if (open) {
         DrawMenu(hwnd);
