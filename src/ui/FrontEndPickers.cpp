@@ -2578,9 +2578,13 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                        cardTop, diffY, maxPlayersY, cardBot, px, innerW, actionsY,
                        px + pad + innerW * 0.48f);
           }
-          // HOST CO-OP size: campaign lobbies used to have no player-count control. 4..16, like Firefight's cap.
-          static const int kCampCaps[] = {4, 8, 12, 16};
-          constexpr int kNumCampCaps = 4;
+          // HOST CO-OP size: campaign lobbies used to have no player-count control. The row used to
+          // offer 4/8/12/16, but 5-player campaign co-op is not proven and crashes at 5 (Tyler,
+          // 2026-11-15 Phase-2 Stage 2 report). 4 is the only proven campaign count, so the row is
+          // clamped to it until the session/membership work proves more (see
+          // project-docs\NOTE-NETWORK-HANDOFF-TO-CLAUDE.md). Do not re-open without a real 5-player test.
+          static const int kCampCaps[] = {4};
+          constexpr int kNumCampCaps = 1;
           int campCapIdx = kNumCampCaps - 1;
           for (int ci = 0; ci < kNumCampCaps; ++ci) {
             if (kCampCaps[ci] >= st.campaignMaxPlayers) {
@@ -3638,7 +3642,11 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
               ++focusRows;
               y += 36.0f * ui.s;
             }
-            static const int kCaps[] = {4, 8, 12, 16, 24, 32, 48, 64, 96, 128};
+            // 48+ seats are untested and the 128-player work is on Tyler's hold; multiplayer also
+            // "stopped at 34 players" in his 2026-11-15 report. Clamp the picker to the implemented
+            // 32-slot work (stock 16 stays the default); Claude's session/replication work owns
+            // re-enabling higher counts (see project-docs\NOTE-NETWORK-HANDOFF-TO-CLAUDE.md).
+            static const int kCaps[] = {4, 8, 12, 16, 24, 32};
             constexpr int kNumCaps =
                 static_cast<int>(sizeof(kCaps) / sizeof(kCaps[0]));
             int capIdx = 3;

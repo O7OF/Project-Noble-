@@ -1917,28 +1917,26 @@ void SettingsPanel::RenderGame() {
   // now: by the time this screen opens the engine is already loaded, hence Next
   // start.
   {
-    constexpr int count = static_cast<int>(std::size(kEngineLimitLabels));
-    const int current = std::clamp(m_edit.extendedLimits, 0, count - 1);
+    // Extended profiles are disabled in this build: Settings::Load force-resets them to Stock and
+    // non-Forge launches are forced to Stock (upstream commit 4407101) because non-stock profiles
+    // caused black-screen loads and network kicks; the max-illumination/particle setting was also
+    // reported as crashing. Do not offer a selection that cannot take effect and was reported
+    // unstable: show the active value only. Re-enable the picker only after the stability work and
+    // the networking profile matching are proven (see project-docs\NOTE-NETWORK-HANDOFF-TO-CLAUDE.md).
     if (Row("ENGINE LIMITS",
-            "Raises object and render limits (Forge mode only; non-Forge modes "
-            "run on Stock limits for stability). All players in a match must "
-            "use the same setting. Takes effect after a restart.",
-            When::Restart, kEngineLimitLabels[0],
-            m_edit.extendedLimits != m_saved.extendedLimits)) {
-      if (const int d =
-              CycleValue(kEngineLimitLabels[current], current, count, false)) {
-        m_edit.extendedLimits = std::clamp(current + d, 0, count - 1);
-        if (m_edit.extendedLimits == 0)
-          m_edit.aiActors = 0;
-      }
+            "Extended engine-limit profiles are temporarily disabled in this build for stability. "
+            "The game always runs Stock limits. This option returns when the stability work is "
+            "proven.",
+            When::Info, kEngineLimitLabels[0], false)) {
+      InfoValue(kEngineLimitLabels[0]);
     }
   }
   {
     const noble::limits::Profile active = noble::limits::ActiveProfile();
     const char *activeName = noble::limits::ProfileName(active);
     if (Row("ACTIVE ENGINE LIMITS",
-            "The engine limit profile currently running in this session. "
-            "Change ENGINE LIMITS above and restart to switch profiles.",
+            "The engine limit profile currently running in this session (Stock while the extended "
+            "profiles are disabled).",
             When::Info, activeName, false)) {
       InfoValue(activeName);
     }
@@ -1960,10 +1958,9 @@ void SettingsPanel::RenderGame() {
     const bool extended = m_edit.extendedLimits != 0;
     const int displayIdx = extended ? current : 0;
     if (Row("AI ACTORS",
-            "How many AI actors the engine can hold (stock 96). Active when "
-            "ENGINE LIMITS is set to Extended or Full; every player and the "
-            "server must use the same value. Takes effect after a restart. "
-            "1,024 is experimental.",
+            "How many AI actors the engine can hold (stock 96). Disabled while "
+            "extended engine limits are disabled; the game runs the Stock 96 "
+            "actors. Every player and the server must match when it returns.",
             When::Restart, kAiActorLabels[0],
             m_edit.aiActors != m_saved.aiActors, !extended)) {
       if (const int d = CycleValue(kAiActorLabels[displayIdx], displayIdx,
