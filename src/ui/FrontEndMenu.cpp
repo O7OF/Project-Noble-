@@ -6838,8 +6838,11 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
             const auto describe = [](uint32_t id) {
               const auto profile =
                   noble::limits::ProfileFromInt(static_cast<int>(id >> 24));
+              const uint32_t generation = (id >> 16) & 0xFF;
               const uint32_t actors = id & 0xFFFF;
               return std::string(noble::limits::ProfileName(profile)) +
+                     (generation ? ", layout " + std::to_string(generation)
+                                 : std::string()) +
                      (actors ? ", AI actors " + std::to_string(actors)
                              : std::string());
             };
@@ -6847,7 +6850,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
                 "Can't join: this game uses engine limits " +
                 describe(static_cast<uint32_t>(peek.limitsId)) + "; you have " +
                 describe(mine) +
-                ". Change SETTINGS > ENGINE to match and restart Noble.";
+                ". Both players must run the same Noble build.";
             NOBLE_WARN("ServerBrowser join refused: {}", msg);
             UIManager::GetServerBrowser().SetStatus(msg);
             return;

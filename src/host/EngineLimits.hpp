@@ -19,6 +19,10 @@ enum class Profile : uint32_t { Stock = 0, V16 = 1, V16Particles = 2, Full = 3 }
 // them, so old saves stay in their own folder and old clients refuse to join (limits_id mismatch).
 constexpr Profile kShippedProfile = Profile::Full;
 constexpr int kShippedAiActors = 1024;
+// Bump whenever the pinned profile's game-state layout changes (pool capacities, bank sizes, stack frames...).
+// It is mixed into ProfileNetworkId, so a build with a different layout refuses to join another one even when the
+// profile name and actor count match. 1 = the 2026-11-15 squad 256->512 / objectives 64->125 raise.
+constexpr uint32_t kShippedLayoutGeneration = 1;
 
 struct PrepareResult {
     std::filesystem::path dllPath;   // what Loader should load (stock path on any fallback)

@@ -186,7 +186,9 @@ const char* ProfileName(Profile p) {
 // High byte = profile id, low 16 bits = actor count (0 = the stock 96, 1,024 = the experimental value).
 uint32_t ProfileNetworkId(Profile p, int aiActors) {
     const uint32_t actors = aiActors == 256 || aiActors == 512 || aiActors == 1024 ? static_cast<uint32_t>(aiActors) : 0u;
-    return (static_cast<uint32_t>(p) << 24) | actors;
+    // [profile:8][layout generation:8][AI actors:16]. The generation keeps two builds whose game-state layout
+    // differs (even with the same profile/actor count) from joining each other and desyncing.
+    return (static_cast<uint32_t>(p) << 24) | (kShippedLayoutGeneration << 16) | actors;
 }
 
 uint32_t LocalNetworkId() {
