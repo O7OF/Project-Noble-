@@ -2632,25 +2632,6 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
     }
 }
 
-// Campaign missions put AI Spartans (Noble Team, allied troopers) in the map next to the player. The
-// shader rewrite below is map-wide: every 'rmsh' Spartan material in the loaded map receives the local
-// player's undersuit, armour lights and visor colour, which painted the player's Armory colours onto every
-// NPC Spartan as well. A campaign keeps the stock material constants; there the player's own biped still
-// gets its colours from the profile record the engine applies, exactly as it did before this sync existed.
-static bool CampaignKeepsStockMaterial() {
-    static const bool s_campaign = [] {
-        bool campaign = false;
-        int argc = 0;
-        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        for (int i = 1; argv && i + 1 < argc; ++i) {
-            if (_wcsicmp(argv[i], L"-mode") == 0 && _wcsicmp(argv[i + 1], L"campaign") == 0) campaign = true;
-        }
-        if (argv) LocalFree(argv);
-        return campaign;
-    }();
-    return s_campaign;
-}
-
 // Reads haloreach.dll's live game_globals ([TLS + 0x48]) to identify Campaign ([+0x10] == 1) and
 // deterministic synchronous lockstep modes (Campaign, Firefight/Survival [+0x110EC] != 0, or Co-Op [+0x1EAB0] != 0).
 static bool ReadEngineModeFlagsSEH(uintptr_t base, bool* outIsCampaign, bool* outIsSynchronousSim) {
@@ -2673,65 +2654,17 @@ static bool ReadEngineModeFlagsSEH(uintptr_t base, bool* outIsCampaign, bool* ou
     }
 }
 
-// Campaign maps put AI Spartans (Noble Team) next to the player and the visor shader is map-wide. If the local player's
-// biped type is the only one in the loaded object table, patching the material cannot tint any NPC, so the exact Armory
-// visor colour can be shown in campaign too (Lone Wolf, solo customs); otherwise campaign keeps the stock material and
-// the profile picks the nearest valid stock visor slot instead of an invalid extended index (which renders white).
-[[maybe_unused]] static bool CampaignSpartanMaterialIsLocalOnlySEH(uintptr_t base, uint32_t localUnitDatum) {
-    __try {
-        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
-        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(
-            __readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
-        if (!tlsArray) return false;
-        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
-        if (!objTable) return false;
-        const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
-        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
-        if (!entries) return false;
-        // Find the local unit's biped tag index first.
-        int localBipd = -1;
-        const uint32_t localIndex = localUnitDatum & 0xFFFFu;
-        if (localIndex < static_cast<uint32_t>(maxObjects)) {
-            const uint8_t* entry = entries + static_cast<size_t>(localIndex) * 0x18;
-            const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry + 0x00);
-            if (salt != 0 && entry[0x04] == 0) {
-                const uint8_t* objPtr = *reinterpret_cast<uint8_t* const*>(entry + 0x10);
-                if (objPtr) localBipd = *reinterpret_cast<const uint16_t*>(objPtr);
-            }
-        }
-        if (localBipd < 0) return false;
-        for (int32_t i = 0; i < maxObjects; ++i) {
-            const uint8_t* entry = entries + static_cast<size_t>(i) * 0x18;
-            const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry + 0x00);
-            if (salt == 0 || entry[0x04] != 0) continue;
-            const uint8_t* objPtr = *reinterpret_cast<uint8_t* const*>(entry + 0x10);
-            if (!objPtr) continue;
-            const uint32_t datum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
-            if (datum == localUnitDatum) continue;
-            if (*reinterpret_cast<const uint16_t*>(objPtr) == static_cast<uint16_t>(localBipd)) return false;
-        }
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
 void ReachArmory::SyncMatchLiveBipeds() {
     HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
 
-    // Campaign keeps the stock map-wide material (the shader rewrite below is map-wide and would paint Noble Team's
-    // visors too), but the LOCAL player's own biped must still get the Armory visor colour: the engine's profile record
-    // only renders visor slots 0..4, so an extended finish (>= 5, e.g. blood_orange) shows white in campaign unless the
-    // per-object change colour is forced. Object writes are local-only and skipped in networked synchronous modes below.
-    const bool campaignStockMaterial = CampaignKeepsStockMaterial();
-
-    bool liveCampaign = false;
+    // NOTE: the visor/material rewrite below is map-wide. In Armory-style maps it tints every Spartan using those
+    // materials; in campaign and normal match maps the scan currently finds no map-local rmsh materials (Spartan
+    // materials are in the shared tag heap), so extended visor colours still fall back to the stock slot chosen by
+    // ArmoryVisorStockIndex. See REFERENCE-LIBRARY-2026-11-15.md section 5a before changing this.
     bool liveSynchronousSim = false;
-    const bool hasLiveFlags = ReadEngineModeFlagsSEH(base, &liveCampaign, &liveSynchronousSim);
-    const bool inCampaign = campaignStockMaterial || (hasLiveFlags && liveCampaign);
-    (void)inCampaign;   // kept for future scoping (campaign tag patch is map-wide, see the visor note below)
+    const bool hasLiveFlags = ReadEngineModeFlagsSEH(base, nullptr, &liveSynchronousSim);
 
     const ReachArmorySelection sel = GetSelection();
     {   // every match, also without custom colours; only the local player's own appearance copy (0 = none yet)

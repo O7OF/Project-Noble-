@@ -1124,6 +1124,35 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
           Text(ui, NobleStyle::TitleFont(), 16.0f,
                ImVec2(h0.x + 10.0f * ui.s, h0.y + 3.0f * ui.s), kWhite,
                Upper(vr.heading).c_str());
+          // A mod section that has been expanded can be folded again by clicking its heading row (the banner row is
+          // only drawn while the section is closed).
+          const int hdrGroup = vr.col[0] >= 0 ? vr.col[0] : vr.col[1];
+          ImGui::SetCursorScreenPos(h0);
+          ImGui::PushID("foldhdr");
+          ImGui::PushID(hdrGroup);
+          const bool hdrClicked = ImGui::InvisibleButton(
+              "##fold", ImVec2(h1.x - h0.x, h1.y - h0.y));
+          const bool hdrHovered = ImGui::IsItemHovered();
+          ImGui::PopID();
+          ImGui::PopID();
+          const char *foldLbl = "FOLD";
+          const float foldW =
+              TextWidth(NobleStyle::SmallFont(), 12.5f * ui.s, foldLbl);
+          Text(ui, NobleStyle::SmallFont(), 12.5f,
+               ImVec2(h1.x - foldW - 10.0f * ui.s, h0.y + 5.0f * ui.s),
+               hdrHovered ? kAccent : IM_COL32(143, 216, 255, 190), foldLbl);
+          if (hdrClicked) {
+            if (hdrGroup >= 0 &&
+                hdrGroup < static_cast<int>(groups.size()) &&
+                groups[hdrGroup].base.mod) {
+              st.openMods.erase(OpenKey(openMode, *groups[hdrGroup].base.mod));
+            }
+            st.mapDrawerKey.clear();
+            st.mapDrawerFocus = -1;
+            if (hdrGroup >= 0 && hdrGroup < static_cast<int>(groups.size()))
+              selectedGroupIdx = hdrGroup;
+            MenuSounds::Back();
+          }
         }
 
         if (vr.section) {
