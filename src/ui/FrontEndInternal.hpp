@@ -557,6 +557,8 @@ struct MenuState {
                             // MAP] + variants
   int mapDrawerFocus =
       -1; // -1 = map grid tile focused, 0 = [BASE MAP], 1..N = variant index
+  char mapDrawerFilter[64] = {}; // filter text inside the expanded [BASE MAP] + variants drawer
+  int mapDrawerCategory = 0;     // 0 = all, 1..N = forge/variant category inside the drawer
   float mapGridScrollY =
       0.0f; // vertical scroll offset of 2-column map tile grid
   std::filesystem::path mpSelectedMvar; // Custom Game active .mvar on current

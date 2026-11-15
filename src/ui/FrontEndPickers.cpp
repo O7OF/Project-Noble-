@@ -852,6 +852,7 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
   const float tileH = std::round(tileW * 0.48f);
   const float headingH = 28.0f * ui.s;
   const float drawerHeadH = 30.0f * ui.s;
+  const float drawerFilterH = 36.0f * ui.s;
   const float drawerRowH = 34.0f * ui.s;
 
   std::vector<VisualRow> vrows;
@@ -882,20 +883,77 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
       const int vis = std::clamp(totalDrawerItems, 1, 6);
       vrows[rIdx].drawerVisibleRows = vis;
       vrows[rIdx].drawerH =
-          12.0f * ui.s + drawerHeadH + vis * drawerRowH + 10.0f * ui.s;
+          12.0f * ui.s + drawerHeadH + drawerFilterH + vis * drawerRowH + 10.0f * ui.s;
     }
   }
 
-  // Clamp drawer focus if active
   int expandedGroupIdx = -1;
   for (const VisualRow &vr : vrows) {
     if (vr.expandedCol >= 0)
       expandedGroupIdx = vr.col[vr.expandedCol];
   }
+
+  // ---- Expanded drawer variant filter (text search + game-mode/forge category) ----
+  // Test hooks: "-drawer-filter-test <text>" and "-drawer-category-test <n>" pre-fill the drawer filter when it opens,
+  // so a capture can show the filtered list without any keyboard input.
+  static bool s_testDrawerParsed = false;
+  static std::string s_testDrawerFilter;
+  static int s_testDrawerCategory = 0;
+  if (!s_testDrawerParsed) {
+    s_testDrawerParsed = true;
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; argv && i + 1 < argc; ++i) {
+      if (_wcsicmp(argv[i], L"-drawer-filter-test") == 0) {
+        std::wstring ws(argv[i + 1]);
+        s_testDrawerFilter.assign(ws.begin(), ws.end());
+      } else if (_wcsicmp(argv[i], L"-drawer-category-test") == 0) {
+        s_testDrawerCategory = _wtoi(argv[i + 1]);
+      }
+    }
+    if (argv) LocalFree(argv);
+  }
+  static std::string s_lastDrawerKey;
+  if (st.mapDrawerKey != s_lastDrawerKey) {
+    s_lastDrawerKey = st.mapDrawerKey;
+    st.mapDrawerFilter[0] = '\0';
+    st.mapDrawerCategory = 0;
+    if (!st.mapDrawerKey.empty()) {
+      if (!s_testDrawerFilter.empty())
+        std::snprintf(st.mapDrawerFilter, sizeof(st.mapDrawerFilter), "%s", s_testDrawerFilter.c_str());
+      st.mapDrawerCategory = std::max(0, s_testDrawerCategory);
+    }
+  }
+  std::vector<std::string> drawerCats;
+  std::vector<int> drawerFiltered;
+  int drawerTotalVariants = 0;
+  if (expandedGroupIdx >= 0) {
+    const MapTileGroup &eg = groups[expandedGroupIdx];
+    drawerTotalVariants = static_cast<int>(eg.variants.size());
+    for (const MapEntry &v : eg.variants) {
+      if (v.forgeGroup.empty()) continue;
+      if (std::find(drawerCats.begin(), drawerCats.end(), v.forgeGroup) == drawerCats.end())
+        drawerCats.push_back(v.forgeGroup);
+    }
+    std::sort(drawerCats.begin(), drawerCats.end());
+    st.mapDrawerCategory =
+        std::clamp(st.mapDrawerCategory, 0, static_cast<int>(drawerCats.size()));
+    const std::string needle = st.mapDrawerFilter;
+    const std::string selectedCat =
+        st.mapDrawerCategory > 0 ? drawerCats[st.mapDrawerCategory - 1] : std::string();
+    for (int vi = 0; vi < static_cast<int>(eg.variants.size()); ++vi) {
+      const MapEntry &v = eg.variants[vi];
+      if (!selectedCat.empty() && v.forgeGroup != selectedCat) continue;
+      if (!needle.empty() && !ContainsNoCase(v.name, needle) &&
+          !ContainsNoCase(v.forgeGroup, needle))
+        continue;
+      drawerFiltered.push_back(vi);
+    }
+  }
   if (expandedGroupIdx < 0) {
     st.mapDrawerFocus = -1;
   } else if (st.mapDrawerFocus >= 0) {
-    const int maxD = static_cast<int>(groups[expandedGroupIdx].variants.size());
+    const int maxD = 1 + static_cast<int>(drawerFiltered.size());
     st.mapDrawerFocus = std::clamp(st.mapDrawerFocus, 0, maxD);
   }
 
@@ -992,9 +1050,9 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
         }
       }
     } else {
-      // Navigating inside open [BASE MAP] + Variants Drawer
+      // Navigating inside open [BASE MAP] + Variants Drawer (the list may be filtered).
       const MapTileGroup &grp = groups[expandedGroupIdx];
-      const int itemCount = 1 + static_cast<int>(grp.variants.size());
+      const int itemCount = 1 + static_cast<int>(drawerFiltered.size());
       if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
         if (st.mapDrawerFocus > 0) {
           --st.mapDrawerFocus;
@@ -1031,11 +1089,11 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
       }
       if (AcceptPressed()) {
         UiPad::ConsumeAccept();
-        if (st.mapDrawerFocus == 0)
+        if (st.mapDrawerFocus == 0) {
           selectedMvar.clear();
-        else if (st.mapDrawerFocus - 1 <
-                 static_cast<int>(grp.variants.size())) {
-          selectedMvar = grp.variants[st.mapDrawerFocus - 1].mvar;
+        } else if (st.mapDrawerFocus >= 1 &&
+                   st.mapDrawerFocus - 1 < static_cast<int>(drawerFiltered.size())) {
+          selectedMvar = grp.variants[drawerFiltered[st.mapDrawerFocus - 1]].mvar;
         }
         selectedGroupIdx = expandedGroupIdx;
         res.pickedBaseOrVariant = true;
@@ -1057,14 +1115,13 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
   if (expandedGroupIdx >= 0) {
     const int drR = groupToRowCol[expandedGroupIdx].first;
     const VisualRow &expVr = vrows[drR];
-    const int totalDrawerItems =
-        1 + static_cast<int>(groups[expandedGroupIdx].variants.size());
+    const int totalDrawerItems = 1 + static_cast<int>(drawerFiltered.size());
     if (totalDrawerItems > expVr.drawerVisibleRows) {
       const float expRowDrawY = gridPos.y + expVr.y - st.mapGridScrollY;
       const float expDTop = expRowDrawY + expVr.tilesH + 10.0f * ui.s;
       const float expDW = tileW * 2.0f + colGap;
       const ImVec2 expList0(gridPos.x + pad + 8.0f * ui.s,
-                            expDTop + drawerHeadH + 4.0f * ui.s);
+                            expDTop + drawerHeadH + drawerFilterH + 4.0f * ui.s);
       const ImVec2 expList1(gridPos.x + pad + expDW - 8.0f * ui.s,
                             expRowDrawY + expVr.tilesH + expVr.drawerH -
                                 6.0f * ui.s);
@@ -1421,9 +1478,95 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                ImVec2(cl0.x + 14.0f * ui.s, cl0.y + 4.0f * ui.s), kWhite,
                "COLLAPSE");
 
-          // Scrollable variant rows inside drawer
-          const int totalItems = 1 + static_cast<int>(grp.variants.size());
           int &dScroll = s_drawerScroll[grp.key];
+          // Filter row inside the drawer: variant text search + game-mode/forge category. Forge World AI
+          // Battlegrounds alone has 353 variants, so scrolling without these was unusable.
+          {
+            const ImVec2 fr0(d0.x + 1.0f, hd1.y);
+            const ImVec2 fr1(d1.x - 1.0f, hd1.y + drawerFilterH);
+            ui.dl->AddRectFilled(fr0, fr1, IM_COL32(13, 24, 36, 240));
+            ui.dl->AddLine(ImVec2(fr0.x, fr1.y), ImVec2(fr1.x, fr1.y),
+                           IM_COL32(255, 175, 70, 90), 1.0f * ui.s);
+            const float padF = 8.0f * ui.s;
+            float fx = fr0.x + padF;
+            const float fy = fr0.y + (drawerFilterH - 26.0f * ui.s) * 0.5f;
+            ImGui::PushID(grp.key.c_str());
+            ImGui::SetCursorScreenPos(ImVec2(fx, fy));
+            ImGui::SetNextItemWidth(220.0f * ui.s);
+            if (ImGui::InputTextWithHint("##drawerfilter", "Filter variants...",
+                                         st.mapDrawerFilter, sizeof(st.mapDrawerFilter))) {
+              dScroll = 0;
+              st.mapDrawerFocus = 0;
+            }
+            fx += 230.0f * ui.s;
+            if (!drawerCats.empty()) {
+              const std::string catLabel =
+                  st.mapDrawerCategory <= 0
+                      ? std::string("ALL MODES")
+                      : Upper(drawerCats[st.mapDrawerCategory - 1]);
+              const float lw =
+                  TextWidth(NobleStyle::SmallFont(), 12.5f * ui.s, catLabel.c_str());
+              const float catW = std::max(130.0f * ui.s, lw + 30.0f * ui.s);
+              // left arrow
+              ImGui::SetCursorScreenPos(ImVec2(fx, fy + 2.0f * ui.s));
+              if (ImGui::InvisibleButton("##catleft", ImVec2(20.0f * ui.s, 22.0f * ui.s))) {
+                st.mapDrawerCategory =
+                    st.mapDrawerCategory <= 0 ? static_cast<int>(drawerCats.size())
+                                              : st.mapDrawerCategory - 1;
+                dScroll = 0;
+                st.mapDrawerFocus = 0;
+                MenuSounds::Scroll();
+              }
+              const bool catLeftHov = ImGui::IsItemHovered();
+              const ImVec2 cat0(fx + 20.0f * ui.s, fy);
+              const ImVec2 cat1(cat0.x + catW, fy + 26.0f * ui.s);
+              // The whole pill is clickable too (cycles forward) - easier target than the two small arrows.
+              ImGui::SetCursorScreenPos(cat0);
+              if (ImGui::InvisibleButton("##catcycle", ImVec2(catW, 26.0f * ui.s))) {
+                st.mapDrawerCategory = (st.mapDrawerCategory + 1) %
+                                       (static_cast<int>(drawerCats.size()) + 1);
+                dScroll = 0;
+                st.mapDrawerFocus = 0;
+                MenuSounds::Scroll();
+              }
+              ImGui::SetCursorScreenPos(ImVec2(cat1.x, fy + 2.0f * ui.s));
+              if (ImGui::InvisibleButton("##catright", ImVec2(20.0f * ui.s, 22.0f * ui.s))) {
+                st.mapDrawerCategory = (st.mapDrawerCategory + 1) %
+                                       (static_cast<int>(drawerCats.size()) + 1);
+                dScroll = 0;
+                st.mapDrawerFocus = 0;
+                MenuSounds::Scroll();
+              }
+              const bool catRightHov = ImGui::IsItemHovered();
+              ui.dl->AddRectFilled(cat0, cat1, IM_COL32(22, 40, 58, 225), 3.0f * ui.s);
+              ui.dl->AddRect(cat0, cat1, IM_COL32(143, 216, 255, 110), 3.0f * ui.s);
+              Text(ui, NobleStyle::SmallFont(), 12.5f,
+                   ImVec2(cat0.x + (catW - lw) * 0.5f, cat0.y + 6.0f * ui.s),
+                   kAccent, catLabel.c_str());
+              const float ah = 6.0f * ui.s;
+              const float acy = fy + 13.0f * ui.s;
+              ui.dl->AddTriangleFilled(
+                  ImVec2(fx + 13.0f * ui.s, acy - ah), ImVec2(fx + 13.0f * ui.s, acy + ah),
+                  ImVec2(fx + 6.0f * ui.s, acy),
+                  catLeftHov ? kWhite : IM_COL32(143, 216, 255, 190));
+              ui.dl->AddTriangleFilled(
+                  ImVec2(cat1.x + 7.0f * ui.s, acy - ah), ImVec2(cat1.x + 7.0f * ui.s, acy + ah),
+                  ImVec2(cat1.x + 14.0f * ui.s, acy),
+                  catRightHov ? kWhite : IM_COL32(143, 216, 255, 190));
+              fx = cat1.x + 28.0f * ui.s;
+            }
+            ImGui::PopID();
+            char filterInfo[80];
+            std::snprintf(filterInfo, sizeof(filterInfo), "%d OF %d VARIANTS",
+                          static_cast<int>(drawerFiltered.size()), drawerTotalVariants);
+            const float fiW = TextWidth(NobleStyle::SmallFont(), 12.5f * ui.s, filterInfo);
+            Text(ui, NobleStyle::SmallFont(), 12.5f,
+                 ImVec2(fr1.x - fiW - 10.0f * ui.s, fr0.y + 11.0f * ui.s),
+                 IM_COL32(150, 180, 205, 235), filterInfo);
+          }
+
+          // Scrollable variant rows inside drawer
+          const int totalItems = 1 + static_cast<int>(drawerFiltered.size());
           const int maxDScroll = std::max(0, totalItems - vr.drawerVisibleRows);
           static int s_lastDrawerFocus = -999;
           if (st.mapDrawerFocus >= 0 &&
@@ -1434,7 +1577,8 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
               dScroll = st.mapDrawerFocus - vr.drawerVisibleRows + 1;
           }
           s_lastDrawerFocus = st.mapDrawerFocus;
-          const ImVec2 list0(d0.x + 8.0f * ui.s, hd1.y + 4.0f * ui.s),
+          const ImVec2 list0(d0.x + 8.0f * ui.s,
+                             hd1.y + drawerFilterH + 4.0f * ui.s),
               list1(d1.x - 8.0f * ui.s, d1.y - 6.0f * ui.s);
           if (totalItems > vr.drawerVisibleRows) {
             if (ImGui::IsMouseHoveringRect(list0, list1, false) &&
@@ -1467,7 +1611,7 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                                  const bool isBase = (itemIdx == 0);
                                  const MapEntry *varEntry =
                                      isBase ? &grp.base
-                                            : &grp.variants[itemIdx - 1];
+                                            : &grp.variants[drawerFiltered[itemIdx - 1]];
                                  const bool itemActive =
                                      (selectedGroupIdx == gIdx) &&
                                      (isBase
