@@ -1,4 +1,5 @@
 #include "CameraFov.hpp"
+#include "ReachArmory.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 
@@ -37,6 +38,18 @@ void CameraFov::SetEngineModule(HMODULE module) {
 bool CameraFov::Apply(float degrees) {
     const uintptr_t base = s_base.load();
     if (base == 0) return false;
+
+    // FOV is a match setting. The front-end and the Armory are rendered by the same haloreach.dll camera, so writing
+    // the match FOV while the menu is up (SETTINGS > VIDEO > APPLY from the front-end) visibly zoomed the Armory
+    // character out/in as the setting changed. CameraFov::Tick applies the saved value as soon as a match starts.
+    if (ReachArmory::IsMenuMode()) {
+        static bool s_logged = false;
+        if (!s_logged) {
+            s_logged = true;
+            NOBLE_INFO("CameraFov: front-end/Armory active - not applying the match FOV here (applied on match start)");
+        }
+        return false;
+    }
 
     const float value = ClampDegrees(degrees);
     void* const address = reinterpret_cast<void*>(base + kFovRva);
@@ -105,6 +118,35 @@ static void FovTestTick(uint64_t now) {
     d.fieldOfView = s_degrees;
     Settings::Get().Update(d);
     NOBLE_INFO("CameraFov: -fov-test-at: setting changed to {:.0f} degrees", s_degrees);
+}
+
+// Test-only: "-fov-apply-test-at <seconds> <degrees>" calls Apply() from the front-end loop - the same write
+// SETTINGS > VIDEO > APPLY performs while the menu/Armory is up - so the no-zoom fix can be captured as before/after
+// frames in one run.
+void CameraFov::TestMenuTick() {
+    static bool s_parsed = false, s_done = false;
+    static double s_at = 0.0;
+    static float s_degrees = 0.0f;
+    static uint64_t s_start = 0;
+    const uint64_t now = GetTickCount64();
+    if (!s_parsed) {
+        s_parsed = true;
+        s_start = now;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 2 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-fov-apply-test-at") == 0) {
+                s_at = _wtof(argv[i + 1]);
+                s_degrees = static_cast<float>(_wtof(argv[i + 2]));
+            }
+        }
+        if (argv) LocalFree(argv);
+        if (s_at <= 0.0) s_done = true;
+    }
+    if (s_done || now - s_start < static_cast<uint64_t>(s_at * 1000.0)) return;
+    s_done = true;
+    const bool wrote = Apply(s_degrees);
+    NOBLE_INFO("CameraFov: -fov-apply-test-at: front-end Apply({:.0f}) returned {}", s_degrees, wrote);
 }
 
 void CameraFov::Tick() {

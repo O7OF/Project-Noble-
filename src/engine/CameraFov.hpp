@@ -31,6 +31,10 @@ public:
     // Engine thread, every frame: applies Settings::fieldOfView when it changed and re-asserts it
     // every couple of seconds (the engine refreshes its camera settings block from the profile).
     static void Tick();
+
+    // Test-only: "-fov-apply-test-at <seconds> <degrees>" calls Apply() from the front-end loop, which is exactly what
+    // SETTINGS > VIDEO > APPLY does while the menu (and Armory) is up. Used to prove the Armory no longer zooms.
+    static void TestMenuTick();
 };
 
 } // namespace noble
