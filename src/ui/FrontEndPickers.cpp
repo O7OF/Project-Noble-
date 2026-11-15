@@ -2363,6 +2363,9 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                     select.empty() ? ctx.forgeVariant.string() : select.string();
                 st.lobbyVariantName =
                     select.empty() ? "Basic Editing" : std::string(st.optionsName);
+                st.lobbyModeKey.clear();
+                RefreshLobbyMode(ctx);
+                AssignLobbyTeams(st);
                 MasterServerClient::Get().UpdateLobbyAdvert(
                     st.lobbyMap, st.lobbyMode, st.lobbyVariantName,
                     st.lobbyDifficulty, st.lobbySkulls);
@@ -2385,6 +2388,9 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                 index < static_cast<int>(modes.size())) {
               st.lobbyVariantPath = modes[static_cast<size_t>(index)].path.string();
               st.lobbyVariantName = modes[static_cast<size_t>(index)].label;
+              st.lobbyModeKey.clear();
+              RefreshLobbyMode(ctx);
+              AssignLobbyTeams(st);
               MasterServerClient::Get().UpdateLobbyAdvert(
                   st.lobbyMap, st.lobbyMode, st.lobbyVariantName,
                   st.lobbyDifficulty, st.lobbySkulls);
@@ -2453,6 +2459,41 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
             }
           }
           if (back) {
+            if (!st.optionsValues.empty()) {
+              VariantRules::Preset preset;
+              preset.name = st.optionsName[0] ? std::string(st.optionsName)
+                                              : std::string("Custom Rules");
+              preset.base = st.optionsBase;
+              preset.values = st.optionsValues;
+              const std::filesystem::path targetPath =
+                  !st.optionsFile.empty()
+                      ? st.optionsFile
+                      : (VariantRules::Directory() /
+                         (ff ? "_active_firefight.json"
+                             : (forge ? "_active_forge.json"
+                                      : "_active_custom.json")));
+              if (VariantRules::Save(targetPath, preset)) {
+                NOBLE_INFO("FrontEndMenu: auto-applied game options '{}' on "
+                           "'{}' with {} change(s)",
+                           preset.name, preset.base, preset.values.size());
+                reloadModes(targetPath);
+              }
+            } else if (!st.optionsFile.empty()) {
+              const std::string fname = st.optionsFile.filename().string();
+              if (!fname.empty() && fname[0] == '_') {
+                std::error_code removeError;
+                std::filesystem::remove(st.optionsFile, removeError);
+                reloadModes(VariantBasePath(ctx.reachDir, st.optionsBase));
+              } else {
+                VariantRules::Preset preset;
+                preset.name = st.optionsName[0] ? std::string(st.optionsName)
+                                                : st.optionsFile.stem().string();
+                preset.base = st.optionsBase;
+                preset.values = st.optionsValues;
+                if (VariantRules::Save(st.optionsFile, preset))
+                  reloadModes(st.optionsFile);
+              }
+            }
             st.optionsOpen = false;
             MenuSounds::Back();
           }

@@ -144,9 +144,28 @@ std::filesystem::path VariantBasePath(const std::filesystem::path &reachDir,
                                       const std::string &base) {
   std::error_code ec;
   const std::filesystem::path name = std::filesystem::path(base).filename();
-  for (const std::filesystem::path &folder :
-       {reachDir / "game_variants",
-        VFS::GetUserStoragePath() / "game_variants"}) {
+  std::vector<std::filesystem::path> folders = {
+      reachDir / "game_variants",
+      VFS::GetUserStoragePath() / "game_variants",
+      ReachHost::Get().GetDataDir() / "game_variants",
+  };
+  wchar_t userProfile[MAX_PATH] = {};
+  if (GetEnvironmentVariableW(L"USERPROFILE", userProfile, MAX_PATH) > 0) {
+    const std::filesystem::path uProf(userProfile);
+    folders.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "Temporary" /
+                      "UserContent" / "HaloReach" / "GameType");
+    const std::filesystem::path localVariants =
+        uProf / "AppData" / "LocalLow" / "MCC" / "LocalFiles";
+    if (std::filesystem::is_directory(localVariants, ec)) {
+      for (const auto &sub :
+           std::filesystem::directory_iterator(localVariants, ec)) {
+        if (sub.is_directory())
+          folders.push_back(sub.path() / "HaloReach" / "GameType");
+      }
+    }
+    ec.clear();
+  }
+  for (const std::filesystem::path &folder : folders) {
     const std::filesystem::path candidate = folder / name;
     if (std::filesystem::is_regular_file(candidate, ec))
       return candidate;
