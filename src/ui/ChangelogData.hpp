@@ -65,6 +65,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Moved lobby chat and match traffic to the host's direct connection so backend servers handle matchmaking and accounts with minimal bandwidth and disk overhead."},
     };
 
+    const std::vector<ChangeItem> v019100Items = {
+        {"FIX", "Smooth Local 3rd-Person & Zoom Camera",
+         "Fixed third-person camera and zoom jitter across variable/sub-60 FPS frames by removing Present-frame skips, switching zoom interpolation to smooth QPC timing, caching zoom settings, and forwarding controller zoom state."},
+        {"FIX", "Per-Client Local Vehicle 1st-Person Camera",
+         "Kept third-person and vehicle first-person cameras strictly local per client with unit/seat validation and finite coordinate guards so cockpit cameras stay locked without snapping."},
+        {"UI", "Post-Match Control & Focus Stability",
+         "Fixed match-end Game Over focus highlights jumping wildly, reset post-game button/input/countdown states between matches, and ordered Virtual Cursor before physical mouse input to stop pointer fighting across M&K and controller."},
+        {"UI", "Smooth Screen Transitions & Menu Return",
+         "Settled focus transitions cleanly when returning to the Pre-Game Lobby or Main Menu and added smooth fade transitions while clearing leftover pickers across screens."},
+    };
+
     const std::vector<ChangeItem> v01999Items = {
         {"NETCODE", "All-Mode Netcode & Sync Hardening",
          "Verified bidirectional UDP routes before skipping relay, added Blam! membership handshake waits before host launch, SHA-256 verified preset JSON/binary game variants and .mvar map variants, and fixed join-in-progress kicks across Campaign, Firefight, Forge, and Custom Games."},
@@ -77,8 +88,16 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     };
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
+        if (currentVer != "v0.19.99") {
+            notes.push_back(ReleaseNotes{
+                currentVer,
+                "SMOOTH LOCAL CAMERAS, POST-MATCH UI CONTROL & TRANSITIONS",
+                "Jitter-Free 3rd-Person/Vehicle Cameras & Clean Match-End UI Focus",
+                v019100Items,
+            });
+        }
         notes.push_back(ReleaseNotes{
-            currentVer,
+            "v0.19.99",
             "ALL-MODE NETCODE SYNC, STABILITY & IN-APP WORKSHOP",
             "Bidirectional UDP Guards, Variant/Map Verification & Smooth Workshop Downloads",
             v01999Items,

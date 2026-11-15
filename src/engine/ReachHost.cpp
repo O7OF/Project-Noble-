@@ -1919,13 +1919,19 @@ static bool UiCursorActive() {
 
 bool ReachHost::IsUiScreenActive() { return UiCursorActive(); }
 
+static std::atomic<bool> s_padZoomHeld{false};
+static std::atomic<bool> s_padZoomToggled{false};
+
 static void InputRelease(HWND hwnd, const char* reason) {
+    s_padZoomHeld.store(false);
+    s_padZoomToggled.store(false);
     CameraThirdPerson::SetZoomHeld(false);
     if (!s_inputCaptured) return;
     ClipCursor(nullptr);
     if (hwnd) {
         HCURSOR arrow = s_savedClassCursor ? s_savedClassCursor : LoadCursorW(nullptr, IDC_ARROW);
         SetClassLongPtrW(hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
+        PostMessageW(hwnd, WM_SETCURSOR, reinterpret_cast<WPARAM>(hwnd), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
     }
     s_inputCaptured = false;
     NOBLE_INFO("ReachHost [Slot 36 - Input]: {}, mouse released", reason);
@@ -2038,6 +2044,8 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
         s_padConnected = false;
         if (s_padMode) NOBLE_INFO("ReachHost [Slot 36 - Input]: controller disconnected, back to keyboard and mouse");
         s_padMode = false;
+        s_padZoomHeld.store(false);
+        s_padZoomToggled.store(false);
         s_lastButtons = 0;
         return;
     }
@@ -2078,7 +2086,11 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
         }
     }
     if ((pressed & 0x0010) && !PauseMenu::IsGameOver()) PauseMenu::Toggle();
-    if (!s_padMode) return;
+    if (!s_padMode) {
+        s_padZoomHeld.store(false);
+        s_padZoomToggled.store(false);
+        return;
+    }
     // The scoreboard button shows Noble's panel, like the key: the engine never opens its own screen.
     if (buttons & 0x0020) {
         const int boardKey = KeyBindings::EffectiveKey(20);
@@ -2090,6 +2102,20 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
         static bool s_zoomWas = false;
         static int s_zoomPulse = 0;
         const bool zoomNow = (buttons & 0x0080) != 0;
+        const bool tpCam = (CameraThirdPerson::IsEnabled() || CameraThirdPerson::EngineWantsThirdPerson()) &&
+                           !(CameraThirdPerson::IsVehicleFirstPerson() && CameraThirdPerson::IsInVehicle() && !CameraThirdPerson::IsLocked());
+        if (!tpCam || UiCursorActive()) {
+            s_padZoomToggled.store(false);
+            s_padZoomHeld.store(false);
+        } else if (!s_pad.padToggleZoom) {
+            s_padZoomToggled.store(false);
+            s_padZoomHeld.store(zoomNow);
+        } else {
+            if (zoomNow && !s_zoomWas) {
+                s_padZoomToggled.store(!s_padZoomToggled.load());
+            }
+            s_padZoomHeld.store(s_padZoomToggled.load());
+        }
         if (!s_pad.padToggleZoom) {
             if (zoomNow != s_zoomWas) s_zoomPulse = 2;
             buttons = static_cast<WORD>(s_zoomPulse > 0 ? (buttons | 0x0080) : (buttons & ~0x0080));
@@ -2424,13 +2450,14 @@ static void FillLocalInput(uint8_t* st) {
     // Third-person weapon aim zoom: holding the bound Zoom key (slot 10, default Right Click) zooms the
     // third-person camera according to SETTINGS > GAME OPTIONS > CAMERA > THIRD-PERSON ZOOM.
     // Pressing Q must never trigger zoom unless the user explicitly set the Zoom keybind (slot 10) to Q.
+    bool mkZoomHeld = false;
     {
         const int zoomVk = KeyBindings::EffectiveKey(10);
         const bool boundZoomDown = zoomVk > 0 && zoomVk < 256 && st[0x004 + zoomVk] != 0;
-        const bool wantZoom = !uiPointer && !boardDown && !s_holdMouseUntilRelease &&
-                              (CameraThirdPerson::IsEnabled() || CameraThirdPerson::EngineWantsThirdPerson()) &&
-                              boundZoomDown;
-        CameraThirdPerson::SetZoomHeld(wantZoom);
+        mkZoomHeld = !uiPointer && !boardDown && !s_holdMouseUntilRelease &&
+                     (CameraThirdPerson::IsEnabled() || CameraThirdPerson::EngineWantsThirdPerson()) &&
+                     !(CameraThirdPerson::IsVehicleFirstPerson() && CameraThirdPerson::IsInVehicle() && !CameraThirdPerson::IsLocked()) &&
+                     boundZoomDown;
     }
 
     // Mouse look: delta from the window centre, then recentre (not while a menu owns the pointer).
@@ -2552,6 +2579,7 @@ static void FillLocalInput(uint8_t* st) {
     }
     if (boardDown) s_engineKeyMask[boardVk >> 5].fetch_or(1u << (boardVk & 31));
     FillLocalPad(st, dx != 0.0f || dy != 0.0f || buttons != 0 || wheel != 0.0f || AnyKeyDown(st));
+    CameraThirdPerson::SetZoomHeld(mkZoomHeld || s_padZoomHeld.load());
 }
 
 static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {

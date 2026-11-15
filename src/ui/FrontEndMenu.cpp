@@ -4403,6 +4403,7 @@ static std::atomic<ULONGLONG> s_lastLaunchTick{0};
 static std::atomic<bool> s_holdFrameOwned{false};
 static std::atomic<bool> s_resetInputEdges{false};
 static std::atomic<bool> s_resetFrameTimer{false};
+static std::atomic<bool> s_resetScreenTransition{false};
 static std::atomic<ULONGLONG> s_postMatchInputSettleUntil{0};
 
 bool RequestMatchLaunch(FrontEndChoice &outChoice, bool &done,
@@ -4582,8 +4583,15 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
     s_waitMouseRelease = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
   }
 
-  if (focused && GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) &&
-      client.right > 0 && client.bottom > 0) {
+  const bool vcOwnsPointer = UiPad::IsVirtualCursorControllingMouse();
+  if (vcOwnsPointer) {
+    if (resetEdges || settling) {
+      (void)Window::TakeLeftClicks();
+      (void)Window::TakeWheelNotches();
+    }
+  } else if (!settling && focused && GetCursorPos(&cursor) &&
+             ScreenToClient(hwnd, &cursor) && client.right > 0 &&
+             client.bottom > 0) {
     const float sx = io.DisplaySize.x / static_cast<float>(client.right);
     const float sy = io.DisplaySize.y / static_cast<float>(client.bottom);
     io.AddMousePosEvent(static_cast<float>(cursor.x) * sx,
@@ -4592,7 +4600,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
     const bool lDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
     if (!lDown)
       s_waitMouseRelease = false;
-    if (resetEdges || settling || s_waitMouseRelease) {
+    if (resetEdges || s_waitMouseRelease) {
       (void)Window::TakeLeftClicks();
       (void)Window::TakeWheelNotches();
       io.AddMouseButtonEvent(0, false);
@@ -4617,6 +4625,10 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
     io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     io.AddMouseButtonEvent(0, false);
     io.AddMouseButtonEvent(1, false);
+    if (resetEdges || settling) {
+      (void)Window::TakeLeftClicks();
+      (void)Window::TakeWheelNotches();
+    }
   }
 
   struct KeyMap {
@@ -5063,8 +5075,11 @@ void ContainerMatchEnded(OverlayContext &ctx, DWORD exitCode) {
     io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     ImGui::SetWindowFocus(nullptr);
   }
+  ctx.st.focusRow = 0;
+  ctx.st.lobbyFocusZone = 0;
   s_resetInputEdges.store(true);
   s_resetFrameTimer.store(true);
+  s_resetScreenTransition.store(true);
   s_postMatchInputSettleUntil.store(GetTickCount64() + 300);
   if (!s_holdFrameOwned.load()) {
     // Give HostSlot1_FrameTick a fresh grace period to resume presenting before
@@ -5120,12 +5135,31 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
   ImGui::PopStyleVar(2);
 
   MenuState &st = ctx.st;
+  static ULONGLONG s_screenEnterTick = 0;
   {
     static int s_lastScreen = -1;
+    if (s_resetScreenTransition.exchange(false)) {
+      s_lastScreen = -1;
+    }
     if (static_cast<int>(st.screen) != s_lastScreen) {
       NOBLE_INFO("FrontEndMenu: screen {} -> {}", s_lastScreen,
                  static_cast<int>(st.screen));
+      if (s_lastScreen != -1) {
+        st.confirmQuit = false;
+        st.playlistEditOpen = false;
+        st.optionsOpen = false;
+        st.optionsRuleDropdownOpen = false;
+        st.variantPickerOpen = false;
+        st.lobbyPickerOpen = false;
+        st.lobbyTeamPickerOpen = false;
+        st.lobbyProfileOpen = false;
+        st.lobbyMapPickerOpen = false;
+      }
       s_lastScreen = static_cast<int>(st.screen);
+      s_screenEnterTick = GetTickCount64();
+      g_pickerOpenNow = false;
+      UiPad::ConsumeAll();
+      ImGui::SetWindowFocus(nullptr);
       // Variants saved in a match (or another menu) must be visible the moment
       // the maps screen is entered.
       FrontEndMenu::InvalidateForgeMaps();
@@ -6137,6 +6171,21 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
   // behind it until the player downloads the lobby's mod or cancels.
   ModDownloadPrompt::Get().Render();
 
+  if (s_screenEnterTick != 0) {
+    const ULONGLONG elapsed = GetTickCount64() - s_screenEnterTick;
+    if (elapsed < 150) {
+      const float t = static_cast<float>(elapsed) / 150.0f;
+      const float smooth = t * t * (3.0f - 2.0f * t);
+      const int alpha = static_cast<int>(std::round((1.0f - smooth) * 95.0f));
+      if (alpha > 0) {
+        ui.dl->AddRectFilled(vp->Pos,
+                             ImVec2(vp->Pos.x + vp->Size.x,
+                                    vp->Pos.y + vp->Size.y),
+                             IM_COL32(8, 13, 21, alpha));
+      }
+    }
+  }
+
   ImGui::End();
 }
 
@@ -6944,8 +6993,8 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
         }
       }
     }
-    FeedEngineThreadInputs(hwnd, io);
     UiPad::Feed(io);
+    FeedEngineThreadInputs(hwnd, io);
     static const bool s_socialDemo =
         wcsstr(GetCommandLineW(), L"-social-demo") != nullptr;
     const bool chatScreenOk =

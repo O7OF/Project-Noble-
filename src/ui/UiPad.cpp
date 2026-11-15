@@ -173,10 +173,10 @@ std::string s_vcToastText;
 POINT s_lastPhysCursor{-99999, -99999};
 } // namespace
 
-bool Up() { return !IsVirtualCursorActive() && (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)); }
-bool Down() { return !IsVirtualCursorActive() && (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)); }
-bool Left() { return !IsVirtualCursorActive() && (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)); }
-bool Right() { return !IsVirtualCursorActive() && (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)); }
+bool Up() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || (!IsVirtualCursorActive() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)); }
+bool Down() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || (!IsVirtualCursorActive() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)); }
+bool Left() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || (!IsVirtualCursorActive() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)); }
+bool Right() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || (!IsVirtualCursorActive() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)); }
 bool PageUp() { return ImGui::IsKeyPressed(ImGuiKey_GamepadL2); }
 bool PageDown() { return ImGui::IsKeyPressed(ImGuiKey_GamepadR2); }
 
@@ -223,14 +223,20 @@ void ConsumeAll() {
     s_tabConsumed = true;
 }
 
+void SyncPhysicalCursorBaseline() {
+    POINT pt{};
+    if (GetCursorPos(&pt)) s_lastPhysCursor = pt;
+    else s_lastPhysCursor = POINT{-99999, -99999};
+}
+
 void ResetAfterMatch() {
     ConsumeAll();
     s_needInputResync = true;
-    s_postMatchSettleUntil = GetTickCount64() + 250;
+    s_postMatchSettleUntil = GetTickCount64() + 300;
     s_vcLmbHeld = false;
     s_vcInputFrame = false;
     s_vcControllingMouse = false;
-    s_lastPhysCursor = POINT{-99999, -99999};
+    SyncPhysicalCursorBaseline();
 }
 
 void SetVirtualCursorEnabled(bool on) {
@@ -256,6 +262,7 @@ void SetVirtualCursorEnabled(bool on) {
 
 bool IsVirtualCursorEnabled() { return s_vcEnabled; }
 bool IsVirtualCursorActive() { return s_vcMenuActive && s_vcEnabled && s_vcConnected; }
+bool IsVirtualCursorControllingMouse() { return IsVirtualCursorActive() && s_vcControllingMouse; }
 bool IsVirtualCursorInputFrame() { return s_vcInputFrame; }
 
 bool HasGamepad() {
@@ -405,6 +412,11 @@ void Feed(ImGuiIO& io, bool menuActive) {
 
     // Virtual Cursor Mode: smooth Left Stick cursor + A click/drag + Right Stick wheel scroll.
     const bool vcEligible = menuActive && s_vcEnabled && connected && !resync;
+    static bool s_physLmbWasDown = false;
+    const bool physLmbDown = !s_vcLmbHeld && ProcessInFront() && ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0);
+    const bool physLmbEdge = physLmbDown && !s_physLmbWasDown;
+    s_physLmbWasDown = physLmbDown;
+
     if (vcEligible && io.DisplaySize.x > 0.0f && io.DisplaySize.y > 0.0f) {
         POINT curPt{};
         bool physMoved = false;
@@ -421,10 +433,11 @@ void Feed(ImGuiIO& io, bool menuActive) {
         const float mag = std::hypot(nx, ny);
         constexpr float kCursorDeadzone = 0.20f;
         const bool stickMoved = mag > kCursorDeadzone;
+        const bool dpadPressed = (p.buttons & (kUp | kDown | kLeft | kRight)) != 0;
         const bool aDown = !settling && !io.WantTextInput && (p.buttons & kA) != 0;
         const bool rsWheel = std::abs(s_rStickY) > 0.0f;
 
-        if (stickMoved || aDown || rsWheel) {
+        if (stickMoved || rsWheel) {
             if (!s_vcControllingMouse) {
                 RECT rc{};
                 HWND hwnd = Window::ActiveHwnd();
@@ -440,12 +453,12 @@ void Feed(ImGuiIO& io, bool menuActive) {
                 s_vcPosInit = true;
             }
             s_vcControllingMouse = true;
-        } else if (physMoved) {
-            s_vcControllingMouse = false;
-            if (s_vcLmbHeld) {
+        } else if (physMoved || physLmbEdge || dpadPressed) {
+            if (s_vcControllingMouse && s_vcLmbHeld) {
                 io.AddMouseButtonEvent(0, false);
                 s_vcLmbHeld = false;
             }
+            s_vcControllingMouse = false;
         }
 
         if (s_vcControllingMouse) {
@@ -477,6 +490,9 @@ void Feed(ImGuiIO& io, bool menuActive) {
             // In Virtual Cursor mode, A triggers a pointer click rather than digital list Accept.
             ConsumeAccept();
             s_vcInputFrame = (stickMoved || aDown || s_vcLmbHeld || rsWheel);
+        } else if (s_vcLmbHeld) {
+            io.AddMouseButtonEvent(0, false);
+            s_vcLmbHeld = false;
         }
     } else {
         if (s_vcLmbHeld) {

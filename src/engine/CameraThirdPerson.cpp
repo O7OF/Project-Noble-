@@ -67,6 +67,7 @@ GetUltimateParentFn s_getUltimateParent = nullptr;
 UpdateObjectNodesFn s_updateObjectNodes = nullptr;
 
 std::atomic<bool> s_enabled{false};
+std::atomic<bool> s_locked{false};
 std::atomic<bool> s_vehicleFirstPerson{false};
 std::atomic<bool> s_vehicleFpKeyWasDown{false};
 std::atomic<bool> s_localInVehicle{false};
@@ -85,6 +86,7 @@ struct CameraTuning {
     float thirdOffsetX = 0.0f, thirdOffsetY = 0.0f;
     float vehicleOffsetX = 0.0f, vehicleOffsetY = 0.0f;
     float firstPersonFovMod = 0.0f, vehicleFirstPersonFovMod = 0.0f;
+    float thirdPersonZoom = 0.50f;
 };
 std::mutex s_tuningMutex;
 CameraTuning s_tuning;
@@ -102,6 +104,7 @@ CameraTuning CurrentTuning() {
         next.vehicleOffsetY = settings.vehicleFirstPersonOffsetY;
         next.firstPersonFovMod = settings.firstPersonFovMod;
         next.vehicleFirstPersonFovMod = settings.vehicleFirstPersonFovMod;
+        next.thirdPersonZoom = settings.thirdPersonZoom;
         std::lock_guard<std::mutex> lock(s_tuningMutex);
         s_tuning = next;
     }
@@ -110,6 +113,57 @@ CameraTuning CurrentTuning() {
 }
 std::atomic<bool> s_zoomHeld{false};
 std::atomic<float> s_zoomBlend{0.0f};
+std::mutex s_zoomMutex;
+LARGE_INTEGER s_zoomLastQpc{};
+LARGE_INTEGER s_zoomQpcFreq{};
+bool s_zoomQpcInit = false;
+
+float AdvanceZoomBlend(bool wantZoom) {
+    std::lock_guard<std::mutex> lock(s_zoomMutex);
+    if (!s_zoomQpcInit) {
+        QueryPerformanceFrequency(&s_zoomQpcFreq);
+        QueryPerformanceCounter(&s_zoomLastQpc);
+        s_zoomQpcInit = true;
+    }
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    float qpcDt = 0.0f;
+    if (s_zoomQpcFreq.QuadPart > 0 && now.QuadPart >= s_zoomLastQpc.QuadPart) {
+        qpcDt = static_cast<float>(
+            static_cast<double>(now.QuadPart - s_zoomLastQpc.QuadPart) /
+            static_cast<double>(s_zoomQpcFreq.QuadPart));
+    }
+    s_zoomLastQpc = now;
+    // Clamp large pauses (alt-tab, pause screen, loading) so zoom resumes cleanly without snapping, and cap
+    // individual steps at 50ms so frame-rate independent smoothstep remains silky on variable FPS systems.
+    if (!std::isfinite(qpcDt) || qpcDt < 0.0f || qpcDt > 0.25f) {
+        qpcDt = 0.0f;
+    } else if (qpcDt > 0.05f) {
+        qpcDt = 0.05f;
+    }
+
+    float blend = s_zoomBlend.load(std::memory_order_relaxed);
+    if (!std::isfinite(blend)) blend = 0.0f;
+    blend = std::clamp(blend, 0.0f, 1.0f);
+
+    const float target = wantZoom ? 1.0f : 0.0f;
+    if (std::fabs(target - blend) <= 0.0005f) {
+        blend = target;
+    } else if (qpcDt > 0.0f) {
+        const float rate = wantZoom ? 6.5f : 7.5f;
+        blend = wantZoom
+            ? std::min(1.0f, blend + qpcDt * rate)
+            : std::max(0.0f, blend - qpcDt * rate);
+    }
+    s_zoomBlend.store(blend, std::memory_order_relaxed);
+    return blend;
+}
+
+void ResetZoomBlendImmediate() {
+    std::lock_guard<std::mutex> lock(s_zoomMutex);
+    s_zoomBlend.store(0.0f, std::memory_order_relaxed);
+    s_zoomQpcInit = false;
+}
 
 using CameraUpdateFn = void(__fastcall*)(void* camera, int32_t userIndex, float dt, void* observerCommand);
 CameraUpdateFn s_originalFollow = nullptr;
@@ -131,14 +185,19 @@ int32_t __fastcall Hook_UnitThirdPerson(int32_t unitDatumIndex, int32_t* outReas
     int32_t dummyReason = 0;
     int32_t* reasonPtr = outReason ? outReason : &dummyReason;
     const int32_t orig = s_origUnitThirdPerson ? s_origUnitThirdPerson(unitDatumIndex, reasonPtr) : 0;
-    if (s_getLocalUnit && unitDatumIndex != -1 && unitDatumIndex == s_getLocalUnit(0)) {
+    const int32_t localUnit = s_getLocalUnit ? s_getLocalUnit(0) : -1;
+    if (localUnit == -1) {
+        s_localInVehicle.store(false);
+        return orig;
+    }
+    if (unitDatumIndex == localUnit) {
         const int32_t reason = *reasonPtr;
         const bool inVehicle = (reason >= 1 && reason <= 3);
         s_localInVehicle.store(inVehicle);
         const uintptr_t retAddr = reinterpret_cast<uintptr_t>(_ReturnAddress());
         const uintptr_t callerRva = (s_reachBase && retAddr > s_reachBase) ? (retAddr - s_reachBase) : 0;
         if (IsLocalCameraOrRenderCaller(callerRva)) {
-            if (inVehicle && s_vehicleFirstPerson.load()) {
+            if (inVehicle && s_vehicleFirstPerson.load() && !s_locked.load()) {
                 *reasonPtr = 0;
                 return 0;
             }
@@ -161,10 +220,16 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
         return;
     }
     const CameraTuning tuning = CurrentTuning();
-    const bool inVehicle = s_localInVehicle.load();
+    const int32_t unitDatum = s_getLocalUnit ? s_getLocalUnit(0) : -1;
+    const int32_t vehicleDatum = (unitDatum != -1 && s_getUltimateParent) ? s_getUltimateParent(unitDatum) : -1;
+    const bool actuallySeatedInVehicle = (unitDatum != -1 && vehicleDatum != -1 && vehicleDatum != unitDatum);
+    if (unitDatum == -1) {
+        s_localInVehicle.store(false);
+    }
+    const bool inVehicle = s_localInVehicle.load() && actuallySeatedInVehicle;
     // Vehicle first person off: the engine's third-person vehicle camera owns this update. Running the
     // cockpit-marker/offset work anyway burned a marker lookup (and, solo, a node recompute) every frame.
-    if (inVehicle && !s_vehicleFirstPerson.load())
+    if (inVehicle && (!s_vehicleFirstPerson.load() || s_locked.load()))
         return;
 
     // When in a vehicle in 1st person, unit_get_camera_position (haloreach+0x48A1C0) places the camera at the
@@ -178,70 +243,85 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
     // compute the head's vehicle-local offset in tick-T space, and transform that offset by the vehicle's interpolated
     // render-frame root matrix (useRenderNodes=1) so the camera remains rigidly locked inside the cockpit at any speed.
     if (inVehicle) {
-        const int32_t unitDatum = s_getLocalUnit ? s_getLocalUnit(0) : -1;
-        if (unitDatum != -1) {
-            auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
-            const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
-            const auto* up  = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x38);
+        auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
+        const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
+        const auto* up  = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x38);
 
-            const int32_t vehicleDatum = s_getUltimateParent ? s_getUltimateParent(unitDatum) : -1;
-            const bool netActive = NetworkTransport::Get().IsActive();
-            if (!netActive && vehicleDatum != -1 && vehicleDatum != unitDatum && s_updateObjectNodes) {
-                s_updateObjectNodes(unitDatum);
-            }
+        const bool netActive = NetworkTransport::Get().IsActive();
+        if (!netActive && s_updateObjectNodes) {
+            s_updateObjectNodes(unitDatum);
+        }
 
-            alignas(16) uint8_t unitMarkerTick[0x80] = {};
-            float headPos[3] = {pos[0], pos[1], pos[2]};
-            bool gotHead = false;
-            if (s_getObjectMarkers) {
-                const int16_t count = s_getObjectMarkers(unitDatum, 0xC2, unitMarkerTick, 1, 1, netActive ? 1 : 0);
-                if (count > 0) {
-                    const auto* mp = reinterpret_cast<const float*>(unitMarkerTick + 0x60);
+        alignas(16) uint8_t unitMarkerTick[0x80] = {};
+        float headPos[3] = {pos[0], pos[1], pos[2]};
+        bool gotHead = false;
+        if (s_getObjectMarkers) {
+            const int16_t count = s_getObjectMarkers(unitDatum, 0xC2, unitMarkerTick, 1, 1, netActive ? 1 : 0);
+            if (count > 0) {
+                const auto* mp = reinterpret_cast<const float*>(unitMarkerTick + 0x60);
+                if (std::isfinite(mp[0]) && std::isfinite(mp[1]) && std::isfinite(mp[2])) {
                     headPos[0] = mp[0];
                     headPos[1] = mp[1];
                     headPos[2] = mp[2];
                     gotHead = true;
                 }
             }
-            if (!gotHead && s_getUnitHeadPos) {
-                s_getUnitHeadPos(unitDatum, headPos);
+        }
+        if (!gotHead && s_getUnitHeadPos) {
+            float candidate[3] = {};
+            s_getUnitHeadPos(unitDatum, candidate);
+            if (std::isfinite(candidate[0]) && std::isfinite(candidate[1]) && std::isfinite(candidate[2])) {
+                headPos[0] = candidate[0];
+                headPos[1] = candidate[1];
+                headPos[2] = candidate[2];
                 gotHead = true;
             }
+        }
 
-            if (!netActive && gotHead && vehicleDatum != -1 && vehicleDatum != unitDatum && s_getObjectMarkers) {
-                alignas(16) uint8_t vehMarkerTick[0x80] = {};
-                alignas(16) uint8_t vehMarkerRender[0x80] = {};
-                const int16_t tickCount   = s_getObjectMarkers(vehicleDatum, 0, vehMarkerTick, 1, 1, 0);
-                const int16_t renderCount = s_getObjectMarkers(vehicleDatum, 0, vehMarkerRender, 1, 1, 1);
-                if (tickCount > 0 && renderCount > 0) {
-                    // object_marker layout (haloreach+0x470560):
-                    //   +0x38: real_matrix4x3 world_matrix (+0x38 scale, +0x3C forward[3], +0x48 left[3], +0x54 up[3], +0x60 pos[3])
-                    const auto* vehFwdTick  = reinterpret_cast<const float*>(vehMarkerTick + 0x3C);
-                    const auto* vehLeftTick = reinterpret_cast<const float*>(vehMarkerTick + 0x48);
-                    const auto* vehUpTick   = reinterpret_cast<const float*>(vehMarkerTick + 0x54);
-                    const auto* vehPosTick  = reinterpret_cast<const float*>(vehMarkerTick + 0x60);
+        if (!netActive && gotHead && s_getObjectMarkers) {
+            alignas(16) uint8_t vehMarkerTick[0x80] = {};
+            alignas(16) uint8_t vehMarkerRender[0x80] = {};
+            const int16_t tickCount   = s_getObjectMarkers(vehicleDatum, 0, vehMarkerTick, 1, 1, 0);
+            const int16_t renderCount = s_getObjectMarkers(vehicleDatum, 0, vehMarkerRender, 1, 1, 1);
+            if (tickCount > 0 && renderCount > 0) {
+                // object_marker layout (haloreach+0x470560):
+                //   +0x38: real_matrix4x3 world_matrix (+0x38 scale, +0x3C forward[3], +0x48 left[3], +0x54 up[3], +0x60 pos[3])
+                const auto* vehFwdTick  = reinterpret_cast<const float*>(vehMarkerTick + 0x3C);
+                const auto* vehLeftTick = reinterpret_cast<const float*>(vehMarkerTick + 0x48);
+                const auto* vehUpTick   = reinterpret_cast<const float*>(vehMarkerTick + 0x54);
+                const auto* vehPosTick  = reinterpret_cast<const float*>(vehMarkerTick + 0x60);
 
-                    const auto* vehFwdRender  = reinterpret_cast<const float*>(vehMarkerRender + 0x3C);
-                    const auto* vehLeftRender = reinterpret_cast<const float*>(vehMarkerRender + 0x48);
-                    const auto* vehUpRender   = reinterpret_cast<const float*>(vehMarkerRender + 0x54);
-                    const auto* vehPosRender  = reinterpret_cast<const float*>(vehMarkerRender + 0x60);
+                const auto* vehFwdRender  = reinterpret_cast<const float*>(vehMarkerRender + 0x3C);
+                const auto* vehLeftRender = reinterpret_cast<const float*>(vehMarkerRender + 0x48);
+                const auto* vehUpRender   = reinterpret_cast<const float*>(vehMarkerRender + 0x54);
+                const auto* vehPosRender  = reinterpret_cast<const float*>(vehMarkerRender + 0x60);
 
-                    const float dx = headPos[0] - vehPosTick[0];
-                    const float dy = headPos[1] - vehPosTick[1];
-                    const float dz = headPos[2] - vehPosTick[2];
+                const float dx = headPos[0] - vehPosTick[0];
+                const float dy = headPos[1] - vehPosTick[1];
+                const float dz = headPos[2] - vehPosTick[2];
 
-                    const float localFwd  = dx * vehFwdTick[0]  + dy * vehFwdTick[1]  + dz * vehFwdTick[2];
-                    const float localLeft = dx * vehLeftTick[0] + dy * vehLeftTick[1] + dz * vehLeftTick[2];
-                    const float localUp   = dx * vehUpTick[0]   + dy * vehUpTick[1]   + dz * vehUpTick[2];
+                const float localFwd  = dx * vehFwdTick[0]  + dy * vehFwdTick[1]  + dz * vehFwdTick[2];
+                const float localLeft = dx * vehLeftTick[0] + dy * vehLeftTick[1] + dz * vehLeftTick[2];
+                const float localUp   = dx * vehUpTick[0]   + dy * vehUpTick[1]   + dz * vehUpTick[2];
 
-                    headPos[0] = vehPosRender[0] + vehFwdRender[0] * localFwd + vehLeftRender[0] * localLeft + vehUpRender[0] * localUp;
-                    headPos[1] = vehPosRender[1] + vehFwdRender[1] * localFwd + vehLeftRender[1] * localLeft + vehUpRender[1] * localUp;
-                    headPos[2] = vehPosRender[2] + vehFwdRender[2] * localFwd + vehLeftRender[2] * localLeft + vehUpRender[2] * localUp;
+                const float nextHead[3] = {
+                    vehPosRender[0] + vehFwdRender[0] * localFwd + vehLeftRender[0] * localLeft + vehUpRender[0] * localUp,
+                    vehPosRender[1] + vehFwdRender[1] * localFwd + vehLeftRender[1] * localLeft + vehUpRender[1] * localUp,
+                    vehPosRender[2] + vehFwdRender[2] * localFwd + vehLeftRender[2] * localLeft + vehUpRender[2] * localUp,
+                };
+                if (std::isfinite(nextHead[0]) && std::isfinite(nextHead[1]) && std::isfinite(nextHead[2])) {
+                    headPos[0] = nextHead[0];
+                    headPos[1] = nextHead[1];
+                    headPos[2] = nextHead[2];
                 }
             }
+        }
 
-            const float offX = std::clamp(tuning.vehicleOffsetX, -1.0f, 1.0f);
-            const float offY = std::clamp(tuning.vehicleOffsetY, -1.0f, 1.0f);
+        const float offX = std::clamp(tuning.vehicleOffsetX, -1.0f, 1.0f);
+        const float offY = std::clamp(tuning.vehicleOffsetY, -1.0f, 1.0f);
+        if (std::isfinite(headPos[0]) && std::isfinite(headPos[1]) && std::isfinite(headPos[2]) &&
+            std::isfinite(fwd[0]) && std::isfinite(fwd[1]) && std::isfinite(fwd[2]) &&
+            std::isfinite(up[0])  && std::isfinite(up[1])  && std::isfinite(up[2])) {
             // Camera right basis vector in Reach's right-handed world space: right = normalize(cross(forward, up)).
             float rightX = fwd[1] * up[2] - fwd[2] * up[1];
             float rightY = fwd[2] * up[0] - fwd[0] * up[2];
@@ -251,49 +331,60 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
                 rightX /= rightLen;
                 rightY /= rightLen;
                 rightZ /= rightLen;
+            } else {
+                rightX = rightY = rightZ = 0.0f;
             }
 
-            pos[0] = headPos[0] + rightX * (offX * 0.50f) + up[0] * (offY * 0.50f);
-            pos[1] = headPos[1] + rightY * (offX * 0.50f) + up[1] * (offY * 0.50f);
-            pos[2] = headPos[2] + rightZ * (offX * 0.50f) + up[2] * (offY * 0.50f);
+            const float nextPos[3] = {
+                headPos[0] + rightX * (offX * 0.50f) + up[0] * (offY * 0.50f),
+                headPos[1] + rightY * (offX * 0.50f) + up[1] * (offY * 0.50f),
+                headPos[2] + rightZ * (offX * 0.50f) + up[2] * (offY * 0.50f),
+            };
+            if (std::isfinite(nextPos[0]) && std::isfinite(nextPos[1]) && std::isfinite(nextPos[2])) {
+                pos[0] = nextPos[0];
+                pos[1] = nextPos[1];
+                pos[2] = nextPos[2];
 
-            // c_first_person_camera::update (haloreach+0xC71B1..0xC71CC) populates:
-            //   +0x88 (float[3] safe_position) with object_get_center_of_mass(vehicleDatum) (e.g. the Falcon's rear passenger cabin),
-            //   +0xA4..0xB4 (unit pill base[3], height, radius) with the pilot unit's un-offset pill, and
-            //   +0x00 (flags) |= 0x1801 (enabling bit 0x800 safe_position collision raycast).
-            // During flight in observer_update_collision (haloreach+0xC8290), if observer_point_in_unit_pill (haloreach+0xC81C0)
-            // finds the cockpit camera outside the stale pill at +0xA4, observer_collision_raycast (haloreach+0xCA2C4) raycasts
-            // from +0x88 (the Falcon's rear cabin) to +0x04 (the cockpit), hitting the Falcon's interior bulkhead and snapping
-            // the camera into the back seats! Fix by centering both safe_position (+0x88) and the unit pill (+0xA4..0xB4) on the
-            // cockpit camera position and clearing flag 0x800.
-            auto* cmdBytes   = static_cast<uint8_t*>(observerCommand);
-            auto* cmdFlags   = reinterpret_cast<uint32_t*>(cmdBytes + 0x00);
-            auto* safePos    = reinterpret_cast<float*>(cmdBytes + 0x88);
-            auto* pillBase   = reinterpret_cast<float*>(cmdBytes + 0xA4);
-            auto* pillHeight = reinterpret_cast<float*>(cmdBytes + 0xB0);
-            auto* pillRadius = reinterpret_cast<float*>(cmdBytes + 0xB4);
+                // c_first_person_camera::update (haloreach+0xC71B1..0xC71CC) populates:
+                //   +0x88 (float[3] safe_position) with object_get_center_of_mass(vehicleDatum) (e.g. the Falcon's rear passenger cabin),
+                //   +0xA4..0xB4 (unit pill base[3], height, radius) with the pilot unit's un-offset pill, and
+                //   +0x00 (flags) |= 0x1801 (enabling bit 0x800 safe_position collision raycast).
+                // During flight in observer_update_collision (haloreach+0xC8290), if observer_point_in_unit_pill (haloreach+0xC81C0)
+                // finds the cockpit camera outside the stale pill at +0xA4, observer_collision_raycast (haloreach+0xCA2C4) raycasts
+                // from +0x88 (the Falcon's rear cabin) to +0x04 (the cockpit), hitting the Falcon's interior bulkhead and snapping
+                // the camera into the back seats! Fix by centering both safe_position (+0x88) and the unit pill (+0xA4..0xB4) on the
+                // cockpit camera position and clearing flag 0x800.
+                auto* cmdBytes   = static_cast<uint8_t*>(observerCommand);
+                auto* cmdFlags   = reinterpret_cast<uint32_t*>(cmdBytes + 0x00);
+                auto* safePos    = reinterpret_cast<float*>(cmdBytes + 0x88);
+                auto* pillBase   = reinterpret_cast<float*>(cmdBytes + 0xA4);
+                auto* pillHeight = reinterpret_cast<float*>(cmdBytes + 0xB0);
+                auto* pillRadius = reinterpret_cast<float*>(cmdBytes + 0xB4);
 
-            safePos[0] = pos[0];
-            safePos[1] = pos[1];
-            safePos[2] = pos[2];
+                safePos[0] = pos[0];
+                safePos[1] = pos[1];
+                safePos[2] = pos[2];
 
-            if (*pillHeight < 0.5f) *pillHeight = 1.0f;
-            if (*pillRadius < 0.5f) *pillRadius = 0.5f;
-            pillBase[0] = pos[0];
-            pillBase[1] = pos[1];
-            pillBase[2] = pos[2] - 0.5f * (*pillHeight);
+                if (!std::isfinite(*pillHeight) || *pillHeight < 0.5f) *pillHeight = 1.0f;
+                if (!std::isfinite(*pillRadius) || *pillRadius < 0.5f) *pillRadius = 0.5f;
+                pillBase[0] = pos[0];
+                pillBase[1] = pos[1];
+                pillBase[2] = pos[2] - 0.5f * (*pillHeight);
 
-            *cmdFlags = (*cmdFlags & ~0x800u) | 0x4000u;
+                *cmdFlags = (*cmdFlags & ~0x800u) | 0x4000u;
+            }
         }
     }
 
     const float mod = std::clamp(inVehicle ? tuning.vehicleFirstPersonFovMod : tuning.firstPersonFovMod, -1.20f, 1.20f);
     if (std::fabs(mod) > 1e-4f) {
         auto* fovRad = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x28);
-        // Positive mod (+0% .. +120%) widens FOV out up to 2.20x; negative mod (-0% .. -120%) narrows FOV in down to 1 / 2.20x.
-        const float scale = (mod >= 0.0f) ? (1.0f + mod) : (1.0f / (1.0f - mod));
-        // Clamp within 10 deg .. 145 deg (0.1745329f .. 2.5307274f rad) so Reach's FOV validator (1..150 deg) accepts it.
-        *fovRad = std::clamp(*fovRad * scale, 0.1745329f, 2.5307274f);
+        if (std::isfinite(*fovRad) && *fovRad > 0.01f) {
+            // Positive mod (+0% .. +120%) widens FOV out up to 2.20x; negative mod (-0% .. -120%) narrows FOV in down to 1 / 2.20x.
+            const float scale = (mod >= 0.0f) ? (1.0f + mod) : (1.0f / (1.0f - mod));
+            // Clamp within 10 deg .. 145 deg (0.1745329f .. 2.5307274f rad) so Reach's FOV validator (1..150 deg) accepts it.
+            *fovRad = std::clamp(*fovRad * scale, 0.1745329f, 2.5307274f);
+        }
     }
 }
 
@@ -305,33 +396,22 @@ bool NobleShapesCamera() {
     return s_engineThirdPerson.load() && !VFS::HasActiveMod();
 }
 
-void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
-    if (!observerCommand) return;
-    // Vehicle 1st person owns +0x04..+0x38 and +0x28 this frame; applying 3rd-person offsets/FOV on top
-    // shifted the cockpit view twice and doubled the FOV multiplication.
-    if (s_vehicleFirstPerson.load() && s_localInVehicle.load())
-        return;
-    // Both third-person hooks can fire for the same observer command in one frame; only tune it once.
-    static void* s_lastCommand = nullptr;
-    static uint64_t s_lastFrame = 0;
-    const uint64_t frame = s_frameCounter.load();
-    if (observerCommand == s_lastCommand && frame == s_lastFrame)
-        return;
-    s_lastCommand = observerCommand;
-    s_lastFrame = frame;
-    const bool active = NobleShapesCamera();
-    const bool wantZoom = active && s_zoomHeld.load();
-    const float step = std::clamp(dt > 0.0f && dt < 0.25f ? dt : (1.0f / 60.0f), 0.001f, 0.1f) * 10.0f;
-    float blend = s_zoomBlend.load();
-    if (wantZoom) {
-        blend = std::min(1.0f, blend + step);
-    } else {
-        blend = std::max(0.0f, blend - step);
-    }
-    s_zoomBlend.store(blend);
+thread_local int s_cameraHookDepth = 0;
 
-    if (!active) return;
-    const CameraTuning tuning = CurrentTuning();
+struct CameraHookDepthGuard {
+    int& depth;
+    explicit CameraHookDepthGuard(int& d) : depth(d) { ++depth; }
+    ~CameraHookDepthGuard() { --depth; }
+};
+
+void ApplyThirdPersonCameraTuning(float /*dt*/, void* observerCommand) {
+    if (!observerCommand || s_cameraHookDepth != 1) return;
+
+    // Vehicle 1st person owns +0x04..+0x38 and +0x28 on this update; decay third-person zoom cleanly and return.
+    if (s_vehicleFirstPerson.load() && s_localInVehicle.load() && !s_locked.load()) {
+        AdvanceZoomBlend(false);
+        return;
+    }
 
     // s_observer_command layout (verified at haloreach+0x1DE234 and haloreach+0xC9B0C):
     //   +0x10: float focus_offset[3] (x = forward, y = left [cross(up, forward)], z = up)
@@ -342,6 +422,43 @@ void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
     auto* focusDistance   = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x24);
     auto* fovRad          = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x28);
 
+    // Guard only against two sibling hooks running back-to-back on the exact same un-reset observerCommand
+    // before the engine re-zeros and re-evaluates it; multi-tick frames (<60 FPS or frame dips) populate fresh
+    // engine values each tick and must all be tuned every tick instead of skipping on s_frameCounter.
+    thread_local void* s_lastTunedCommand = nullptr;
+    thread_local bool s_hasLastTuned = false;
+    thread_local float s_lastTunedLR = 0.0f;
+    thread_local float s_lastTunedUD = 0.0f;
+    thread_local float s_lastTunedDist = 0.0f;
+    thread_local float s_lastTunedFov = 0.0f;
+
+    if (s_hasLastTuned && observerCommand == s_lastTunedCommand &&
+        *offsetLeftRight == s_lastTunedLR && *offsetUpDown == s_lastTunedUD &&
+        *focusDistance == s_lastTunedDist && *fovRad == s_lastTunedFov) {
+        return;
+    }
+
+    const bool active = NobleShapesCamera();
+    const bool wantZoom = active && s_zoomHeld.load();
+    const float blend = AdvanceZoomBlend(wantZoom);
+
+    if (!active) {
+        s_hasLastTuned = false;
+        return;
+    }
+
+    if (!std::isfinite(*offsetLeftRight) || !std::isfinite(*offsetUpDown) ||
+        !std::isfinite(*focusDistance) || !std::isfinite(*fovRad)) {
+        s_hasLastTuned = false;
+        return;
+    }
+
+    const float origLR = *offsetLeftRight;
+    const float origUD = *offsetUpDown;
+    const float origDist = *focusDistance;
+    const float origFov = *fovRad;
+
+    const CameraTuning tuning = CurrentTuning();
     const float offX = std::clamp(tuning.thirdOffsetX, -1.0f, 1.0f);
     const float offY = std::clamp(tuning.thirdOffsetY, -1.0f, 1.0f);
     if (std::fabs(offX) > 1e-4f) {
@@ -354,19 +471,33 @@ void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
     }
 
     const int percent = s_distancePercent.load();
-    if (percent != 100) {
+    if (percent != 100 && *focusDistance > 0.0f) {
         *focusDistance *= static_cast<float>(percent) / 100.0f;
         if (s_followLogCount.fetch_add(1) < 3) {
             NOBLE_INFO("CameraThirdPerson: follow distance scaled {}% -> {:.3f}", percent, *focusDistance);
         }
     }
-    if (blend > 0.001f) {
+    if (blend > 0.001f && *fovRad > 0.01f) {
         const float scale = CameraThirdPerson::EffectiveFovScale();
-        *fovRad = std::clamp(*fovRad * scale, 0.15f, 2.5f);
+        *fovRad = std::clamp(*fovRad * scale, 0.1745329f, 2.5307274f);
+    }
+
+    const bool modified = (*offsetLeftRight != origLR || *offsetUpDown != origUD ||
+                           *focusDistance != origDist || *fovRad != origFov);
+    if (modified) {
+        s_lastTunedCommand = observerCommand;
+        s_lastTunedLR = *offsetLeftRight;
+        s_lastTunedUD = *offsetUpDown;
+        s_lastTunedDist = *focusDistance;
+        s_lastTunedFov = *fovRad;
+        s_hasLastTuned = true;
+    } else {
+        s_hasLastTuned = false;
     }
 }
 
 void __fastcall Hook_CameraFollow(void* camera, int32_t userIndex, float dt, void* observerCommand) {
+    CameraHookDepthGuard guard(s_cameraHookDepth);
     if (s_originalFollow) s_originalFollow(camera, userIndex, dt, observerCommand);
     if (userIndex != 0) return; // never write the local player's tuning onto another observer
     if (observerCommand && DevCheats::IsFreecamActive()) {
@@ -379,6 +510,7 @@ void __fastcall Hook_CameraFollow(void* camera, int32_t userIndex, float dt, voi
 }
 
 void __fastcall Hook_CameraFollowingUpdate(void* camera, int32_t userIndex, float dt, void* observerCommand) {
+    CameraHookDepthGuard guard(s_cameraHookDepth);
     if (s_originalFollowingUpdate) s_originalFollowingUpdate(camera, userIndex, dt, observerCommand);
     if (userIndex != 0) return;
     if (observerCommand && DevCheats::IsFreecamActive()) {
@@ -503,8 +635,6 @@ void CameraThirdPerson::SetMode(int mode) {
     NOBLE_INFO("CameraThirdPerson: experiment mode {}", mode);
 }
 
-static std::atomic<bool> s_locked{false};
-
 void CameraThirdPerson::LockThirdPerson() {
     s_locked.store(true);
     s_vehicleFirstPerson.store(false);
@@ -519,7 +649,7 @@ void CameraThirdPerson::SetEnabled(bool enabled) {
     const bool before = s_enabled.exchange(enabled);
     if (!enabled) {
         s_zoomHeld.store(false);
-        s_zoomBlend.store(0.0f);
+        ResetZoomBlendImmediate();
     }
     if (before != enabled) NOBLE_INFO("CameraThirdPerson: third person {}", enabled ? "on" : "off");
 }
@@ -571,12 +701,14 @@ bool CameraThirdPerson::IsZoomHeld() {
 
 float CameraThirdPerson::EffectiveFovScale() {
     if (!NobleShapesCamera()) return 1.0f;
-    const float blend = std::clamp(s_zoomBlend.load(), 0.0f, 1.0f);
+    if (s_vehicleFirstPerson.load() && s_localInVehicle.load() && !s_locked.load()) return 1.0f;
+    const float blend = std::clamp(s_zoomBlend.load(std::memory_order_relaxed), 0.0f, 1.0f);
     if (blend <= 0.001f) return 1.0f;
-    const float zoomPercent = std::clamp(Settings::Get().Snapshot().thirdPersonZoom, 0.10f, 1.00f);
+    const float smooth = blend * blend * (3.0f - 2.0f * blend);
+    const float zoomPercent = std::clamp(CurrentTuning().thirdPersonZoom, 0.10f, 1.00f);
     // 50% zoom -> 0.65x FOV, 100% zoom -> 0.30x FOV, 10% zoom -> 0.93x FOV.
     const float targetScale = 1.0f - (zoomPercent * 0.70f);
-    return std::clamp(1.0f + (targetScale - 1.0f) * blend, 0.25f, 1.0f);
+    return std::clamp(1.0f + (targetScale - 1.0f) * smooth, 0.25f, 1.0f);
 }
 
 } // namespace noble

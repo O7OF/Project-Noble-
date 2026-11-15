@@ -134,9 +134,14 @@ void UIManager::ApplyReachTheme() {
 void UIManager::BeginFrame() {
     if (!s_isInitialized) return;
 
+    ImGuiIO& io = ImGui::GetIO();
     ImGui_ImplDX11_NewFrame();
+    const bool hadVc = UiPad::IsVirtualCursorControllingMouse();
     ImGui_ImplWin32_NewFrame();
-    UiPad::Feed(ImGui::GetIO());
+    if (hadVc && !io.MouseDown[0]) {
+        io.ClearInputMouse();
+    }
+    UiPad::Feed(io);
     ImGui::NewFrame();
     InputPrompts::Update();   // keyboard/mouse or controller prompts
 }

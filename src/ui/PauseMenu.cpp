@@ -76,6 +76,12 @@ std::atomic<IDXGISwapChain *> s_swapChain{
 std::atomic<ULONGLONG> s_lastEngineFrame{
     0}; // GetTickCount64 of the last slot-1 frame
 std::atomic<ULONGLONG> s_gameOverAt{0};
+std::atomic<bool> s_resetGameOverImGui{false};
+ULONGLONG s_gameOverSettleUntil = 0;
+int s_gameOverPadButton = -1;
+double s_gameOverPadArmedAt = 0.0;
+bool s_guestAutoReturned = false;
+bool s_gameOverWaitRelease = false;
 bool s_autoCancelled = false;
 double s_autoAt = 0.0;
 bool s_autoInited = false;
@@ -580,7 +586,8 @@ ImVec2 CenteredWindow(float width) {
 
 constexpr ImGuiWindowFlags kPanelFlags =
     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+    ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus;
 
 // The SETTINGS page is the same panel the front-end menu shows, reused inside
 // the pause menu so the player can change settings during a match (FOV, VSync,
@@ -968,8 +975,19 @@ void PauseMenu::ShowGameOver() {
     s_open.store(false);
     s_showSettings.store(false);
     SetLocalSimulationPaused(false);
-    s_gameOverAt.store(GetTickCount64());
+    const ULONGLONG now = GetTickCount64();
+    s_gameOverAt.store(now);
+    s_autoAt = 0.0;
+    s_autoCancelled = false;
+    s_autoInited = false;
+    s_gameOverPadButton = -1;
+    s_gameOverPadArmedAt = 0.0;
+    s_guestAutoReturned = false;
+    s_gameOverWaitRelease = true;
+    s_gameOverSettleUntil = now + 350;
+    s_resetGameOverImGui.store(true);
     Window::TakeLeftClicks();
+    Window::FlushInputEvents();
     NOBLE_INFO("PauseMenu: game over, showing post-game panel");
   }
 }
@@ -979,6 +997,11 @@ void PauseMenu::CancelGameOver() {
     s_autoAt = 0.0;
     s_autoCancelled = true;
     s_autoInited = false;
+    s_gameOverPadButton = -1;
+    s_gameOverPadArmedAt = 0.0;
+    s_guestAutoReturned = false;
+    s_gameOverWaitRelease = false;
+    s_gameOverSettleUntil = 0;
     NOBLE_INFO("PauseMenu: game over dismissed - gameplay resumed");
   }
 }
@@ -3186,7 +3209,9 @@ static bool DrawConnectionLostPanel(HWND hwnd) {
   ImGui::Begin("##NobleConnectionLost", nullptr,
                ImGuiWindowFlags_NoDecoration |
                    ImGuiWindowFlags_NoSavedSettings |
-                   ImGuiWindowFlags_NoBackground);
+                   ImGuiWindowFlags_NoBackground |
+                   ImGuiWindowFlags_NoNavInputs |
+                   ImGuiWindowFlags_NoNavFocus);
   const bool activate =
       ImGui::Button("Return to menu", ImVec2(240.0f * s, 44.0f * s)) ||
       ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
@@ -3258,7 +3283,8 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const ImGuiWindowFlags flags =
       ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
-      ImGuiWindowFlags_NoBringToFrontOnFocus;
+      ImGuiWindowFlags_NoBringToFrontOnFocus |
+      ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus;
   if (!ImGui::Begin("##NobleGameOver", nullptr, flags)) {
     ImGui::End();
     return;
@@ -3638,23 +3664,39 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const std::wstring nextMission =
       guestPlayer ? std::wstring() : NextCampaignMission(again);
   const bool canNextMission = !nextMission.empty();
-  // Controller: left and right pick a button, A presses it, and A during the
+  // Controller / Keyboard: left and right pick a button, A/Enter presses it, and A/Space/Enter during the
   // reveal only skips it. The focus starts away from QUIT, so one stray A can
-  // never close the game; a host starts on going back to the lobby.
+  // never close the game; a host or ready guest starts on going back to the lobby.
+  const int lobbyState = guestRole ? PollHostBackInLobby() : 0;
+  const bool canReturnLobby = guestRole && (lobbyState == 1);
+  if (s_gameOverWaitRelease) {
+    const bool anyInputHeld =
+        ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0) ||
+        ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0) ||
+        ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0) ||
+        ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown);
+    if (!anyInputHeld) {
+      s_gameOverWaitRelease = false;
+    }
+  }
+  const bool interactive =
+      !s_gameOverWaitRelease && GetTickCount64() >= s_gameOverSettleUntil;
+
   enum { kPadQuit, kPadMenu, kPadAgain, kPadNext, kPadLobby };
-  static int s_padButton = hostRole ? kPadLobby : kPadMenu;
   std::vector<int> padOrder = {kPadQuit, kPadMenu};
   if (canPlayAgain)
     padOrder.push_back(kPadAgain);
   if ((hostRole && hasPlaylist) || canNextMission)
     padOrder.push_back(kPadNext);
-  if (hostRole)
+  if (hostRole || canReturnLobby)
     padOrder.push_back(kPadLobby);
+  if (s_gameOverPadButton < 0)
+    s_gameOverPadButton = (hostRole || canReturnLobby) ? kPadLobby : kPadMenu;
   int padAt = 1;
   for (size_t i = 0; i < padOrder.size(); ++i)
-    if (padOrder[i] == s_padButton)
+    if (padOrder[i] == s_gameOverPadButton)
       padAt = static_cast<int>(i);
-  if (UiPad::Left() || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
+  if (interactive && (UiPad::Left() || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true))) {
     const int nextAt =
         std::min(padAt + 1, static_cast<int>(padOrder.size()) - 1);
     if (nextAt != padAt) {
@@ -3662,69 +3704,76 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       MenuSounds::Scroll();
     }
   }
-  if (UiPad::Right() || ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
+  if (interactive && (UiPad::Right() || ImGui::IsKeyPressed(ImGuiKey_RightArrow, true))) {
     const int nextAt = std::max(padAt - 1, 0);
     if (nextAt != padAt) {
       padAt = nextAt;
       MenuSounds::Scroll();
     }
   }
-  s_padButton = padOrder[padAt];
-  const bool padA = UiPad::AcceptPressed();
+  s_gameOverPadButton = padOrder[padAt];
+  const bool padA = interactive && UiPad::AcceptPressed();
   // A is jump: a player still pressing it as the panel finishes must not leave
   // the screen, so arm shortly after reveal finishes.
-  static double s_padArmedAt = 0.0;
   if (t < tEnd)
-    s_padArmedAt = 0.0;
-  else if (s_padArmedAt == 0.0)
-    s_padArmedAt = ImGui::GetTime() + 0.35;
-  const bool padPress = padA && t >= tEnd && ImGui::GetTime() >= s_padArmedAt;
+    s_gameOverPadArmedAt = 0.0;
+  else if (s_gameOverPadArmedAt == 0.0)
+    s_gameOverPadArmedAt = ImGui::GetTime() + 0.35;
+  const bool padPress =
+      padA && t >= tEnd && ImGui::GetTime() >= s_gameOverPadArmedAt;
   if (padA && t < tEnd) {
     UiPad::ConsumeAccept();
     s_reveal.skipped = true;
   }
-  const auto padOutline = [&](int button) {
-    if (s_padButton == button) {
+  const ImGuiIO &gio = ImGui::GetIO();
+  const bool pointerMoved =
+      (gio.MouseDelta.x != 0.0f || gio.MouseDelta.y != 0.0f);
+  const auto syncButtonFocus = [&](int button) {
+    if (ImGui::IsItemHovered()) {
+      overButton = true;
+      MenuSounds::Hover(ImGui::GetItemID());
+      if (interactive && pointerMoved &&
+          std::find(padOrder.begin(), padOrder.end(), button) != padOrder.end()) {
+        s_gameOverPadButton = button;
+      }
+    }
+    if (s_gameOverPadButton == button) {
       NobleUi::DrawFocusHighlight(ImGui::GetWindowDrawList(),
                                   ImGui::GetItemRectMin(),
                                   ImGui::GetItemRectMax(), s, true);
     }
   };
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
-  if (NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) ||
-      (padPress && s_padButton == kPadQuit)) {
+  if ((NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) && interactive) ||
+      (padPress && s_gameOverPadButton == kPadQuit)) {
     QuitFromMatch(hwnd, "quit requested from post-game panel");
   }
-  padOutline(kPadQuit);
-  overButton |= ImGui::IsItemHovered();
+  syncButtonFocus(kPadQuit);
   bx -= bw + gap;
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
-  if (ImGui::Button("RETURN TO MENU", ImVec2(bw, bh)) ||
-      (padPress && s_padButton == kPadMenu))
+  if ((ImGui::Button("RETURN TO MENU", ImVec2(bw, bh)) && interactive) ||
+      (padPress && s_gameOverPadButton == kPadMenu))
     RelaunchAndClose(hwnd, L"-main-menu", "return to menu");
-  padOutline(kPadMenu);
-  overButton |= ImGui::IsItemHovered();
+  syncButtonFocus(kPadMenu);
   if (canPlayAgain) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if (NobleStyle::PrimaryButton("PLAY AGAIN", ImVec2(bw, bh)) ||
-        (padPress && s_padButton == kPadAgain))
+    if ((NobleStyle::PrimaryButton("PLAY AGAIN", ImVec2(bw, bh)) && interactive) ||
+        (padPress && s_gameOverPadButton == kPadAgain))
       RelaunchAndClose(hwnd, again, "play again");
-    padOutline(kPadAgain);
-    overButton |= ImGui::IsItemHovered();
+    syncButtonFocus(kPadAgain);
   }
   const auto nextMissionButton = [&] {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if (NobleStyle::PrimaryButton("NEXT MISSION", ImVec2(bw, bh)) ||
-        (padPress && s_padButton == kPadNext))
+    if ((NobleStyle::PrimaryButton("NEXT MISSION", ImVec2(bw, bh)) && interactive) ||
+        (padPress && s_gameOverPadButton == kPadNext))
       RelaunchAndClose(hwnd,
                        NextMissionArgs(nextMission, hostRole
                                                         ? LobbyReturnArgs(true)
                                                         : std::wstring()),
                        "next mission");
-    padOutline(kPadNext);
-    overButton |= ImGui::IsItemHovered();
+    syncButtonFocus(kPadNext);
   };
   if (canNextMission && !hostRole)
     nextMissionButton();
@@ -3738,12 +3787,11 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       bx -= bw + gap;
       ImGui::SetCursorScreenPos(ImVec2(bx, by));
       if (hasPlaylist) {
-        if (ImGui::Button("NEXT IN ROTATION", ImVec2(bw, bh)) ||
-            (padPress && s_padButton == kPadNext))
+        if ((ImGui::Button("NEXT IN ROTATION", ImVec2(bw, bh)) && interactive) ||
+            (padPress && s_gameOverPadButton == kPadNext))
           RelaunchAndClose(hwnd, LobbyReturnArgs(true, true),
                            "next in rotation");
-        padOutline(kPadNext);
-        overButton |= ImGui::IsItemHovered();
+        syncButtonFocus(kPadNext);
       } else {
         UnavailableButton("NEXT IN ROTATION", ImVec2(bw, bh),
                           "Pick a playlist on Custom Game to use a rotation.");
@@ -3752,23 +3800,19 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     }
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if (NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) ||
-        (padPress && s_padButton == kPadLobby))
+    if ((NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) && interactive) ||
+        (padPress && s_gameOverPadButton == kPadLobby))
       RelaunchAndClose(hwnd, LobbyReturnArgs(true), "return to lobby");
-    padOutline(kPadLobby);
-    overButton |= ImGui::IsItemHovered();
+    syncButtonFocus(kPadLobby);
   } else if (guestRole) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    const int lobbyState = PollHostBackInLobby();
-    const bool canReturnLobby = (lobbyState == 1);
     if (canReturnLobby) {
-      if (NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) ||
-          (padPress && s_padButton == kPadLobby)) {
+      if ((NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) && interactive) ||
+          (padPress && s_gameOverPadButton == kPadLobby)) {
         RelaunchAndClose(hwnd, LobbyReturnArgs(false), "guest return to lobby");
       }
-      padOutline(kPadLobby);
-      overButton |= ImGui::IsItemHovered();
+      syncButtonFocus(kPadLobby);
     } else {
       const char *guestBtnText =
           (lobbyState == 2 ? "HOST LEFT" : "WAITING FOR HOST");
@@ -3781,7 +3825,6 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
     }
     if (canReturnLobby && t >= 15.0f) {
-      static bool s_guestAutoReturned = false;
       if (!s_guestAutoReturned) {
         s_guestAutoReturned = true;
         RelaunchAndClose(hwnd, LobbyReturnArgs(false),
@@ -3821,9 +3864,8 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
         s_autoAt = ImGui::GetTime() + s_autoSeconds;
       }
     }
-    if (s_autoAt > 0.0 && !s_autoCancelled &&
-        (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
-         ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+    if (interactive && s_autoAt > 0.0 && !s_autoCancelled && UiPad::BackPressed()) {
+      UiPad::ConsumeBack();
       s_autoAt = 0.0;
       s_autoCancelled = true;
       NOBLE_INFO("PauseMenu: lobby return countdown cancelled by host");
@@ -3861,7 +3903,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   if (t < tEnd) {
     Text(dl, smallFont, 16.0f * s, ImVec2(margin, by + bh * 0.5f - 9.0f * s),
          kTextDim, "Enter, Space or click: skip");
-    if (ImGui::IsMouseClicked(0) && !overButton)
+    if (interactive && ImGui::IsMouseClicked(0) && !overButton)
       s_reveal.skipped = true;
   }
   ImGui::End();
@@ -4461,14 +4503,30 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     s_last = now;
     io.DeltaTime = dt;
 
+    const bool pointerUiActive =
+        open || gameOver || boardPointer || extraOverlay != nullptr;
+    const bool gameOverJustReset = s_resetGameOverImGui.exchange(false);
+    if (gameOverJustReset) {
+      Window::TakeLeftClicks();
+      Window::FlushInputEvents();
+      UiPad::ResetAfterMatch();
+      io.ClearInputKeys();
+      io.ClearInputMouse();
+      io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    }
+
+    UiPad::Feed(io, pointerUiActive);
+
     RECT client{};
     GetClientRect(hwnd, &client);
     POINT cursor{};
     static bool s_boardWasPointerFrame = false;
-    if ((open || gameOver || boardPointer || extraOverlay || isTheater) &&
-        Window::IsForeground(hwnd) && GetCursorPos(&cursor) &&
-        ScreenToClient(hwnd, &cursor) && client.right > 0 &&
-        client.bottom > 0) {
+    if (UiPad::IsVirtualCursorControllingMouse()) {
+      s_boardWasPointerFrame = boardPointer;
+    } else if ((pointerUiActive || isTheater) &&
+               Window::IsForeground(hwnd) && GetCursorPos(&cursor) &&
+               ScreenToClient(hwnd, &cursor) && client.right > 0 &&
+               client.bottom > 0) {
       // Window may be resized while the back buffer stays the same size: scale
       // to back-buffer pixels.
       const float sx = io.DisplaySize.x / static_cast<float>(client.right);
@@ -4505,8 +4563,6 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
       io.AddMouseButtonEvent(0, false);
     }
-
-    UiPad::Feed(io, open || gameOver || boardPointer || extraOverlay != nullptr);
     // Keyboard/WM_CHAR events are already forwarded to ImGui by
     // UIManager::HandleWndProc -> ImGui_ImplWin32_WndProcHandler. Plain ImGui
     // text (pause list, challenges, buttons, settings) uses the fonts' fixed
@@ -4517,6 +4573,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     io.FontGlobalScale = NobleUi::Scale();
     ImGui_ImplDX11_NewFrame();
     ImGui::NewFrame();
+    if (gameOverJustReset)
+      ImGui::SetWindowFocus(nullptr);
     if (SocialOverlay::IsTyping())
       io.ClearInputKeys(); // the line takes the keyboard, not the panels below
                            // it
