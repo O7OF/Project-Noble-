@@ -6,10 +6,12 @@
 #include "common/Settings.hpp"
 #include "engine/DevCheats.hpp"
 #include "engine/SharedTagCache.hpp"
+#include "host/EngineLimits.hpp"
 #include "ui/PauseMenu.hpp"
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -20,19 +22,181 @@
 
 namespace noble {
 
+namespace {
+std::string SanitizeVariantFilename(const std::string &name,
+                                    const std::string &requiredExt) {
+  std::string base = std::filesystem::path(name).filename().string();
+  std::string clean;
+  clean.reserve(base.size());
+  for (unsigned char c : base) {
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' ||
+        c == ' ') {
+      clean.push_back(static_cast<char>(c));
+    } else {
+      clean.push_back('_');
+    }
+  }
+  while (!clean.empty() && (clean.front() == '.' || clean.front() == ' '))
+    clean.erase(clean.begin());
+  if (clean.empty())
+    return {};
+  if (!requiredExt.empty()) {
+    std::string lowerClean = clean;
+    for (char &ch : lowerClean)
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (lowerClean.size() < requiredExt.size() ||
+        lowerClean.compare(lowerClean.size() - requiredExt.size(),
+                           requiredExt.size(), requiredExt) != 0) {
+      clean += requiredExt;
+    }
+  }
+  return clean;
+}
+} // namespace
+
+bool NetworkTransport::Base64Encode(const uint8_t *data, size_t size,
+                                    std::string &out) {
+  static constexpr char kTable[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  out.clear();
+  if (!data && size > 0)
+    return false;
+  out.reserve(((size + 2) / 3) * 4);
+  for (size_t i = 0; i < size; i += 3) {
+    const uint32_t a = data[i];
+    const uint32_t b = (i + 1 < size) ? data[i + 1] : 0;
+    const uint32_t c = (i + 2 < size) ? data[i + 2] : 0;
+    const uint32_t v = (a << 16) | (b << 8) | c;
+    out.push_back(kTable[(v >> 18) & 0x3F]);
+    out.push_back(kTable[(v >> 12) & 0x3F]);
+    out.push_back((i + 1 < size) ? kTable[(v >> 6) & 0x3F] : '=');
+    out.push_back((i + 2 < size) ? kTable[v & 0x3F] : '=');
+  }
+  return true;
+}
+
+bool NetworkTransport::Base64Decode(const std::string &b64,
+                                    std::vector<uint8_t> &out) {
+  out.clear();
+  if (b64.empty())
+    return false;
+  static const int kLookup[256] = {
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+      52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+      -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+      15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+      -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+      41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+  };
+  uint32_t buf = 0;
+  int bits = 0;
+  for (unsigned char c : b64) {
+    if (c == '=' || std::isspace(c))
+      continue;
+    int val = kLookup[c];
+    if (val < 0)
+      return false;
+    buf = (buf << 6) | static_cast<uint32_t>(val);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push_back(static_cast<uint8_t>((buf >> bits) & 0xFF));
+    }
+  }
+  return !out.empty();
+}
+
+std::string NetworkTransport::Sha256Hex(const uint8_t *data, size_t size) {
+  if (!data && size > 0)
+    return {};
+  return noble::limits::DigestHex(noble::limits::Sha256(data, size));
+}
+
+bool NetworkTransport::VerifySha256Hex(const uint8_t *data, size_t size,
+                                       const std::string &expectedHex) {
+  if (expectedHex.empty())
+    return true;
+  if (!data && size > 0)
+    return false;
+  std::string actual = Sha256Hex(data, size);
+  if (actual.size() != expectedHex.size())
+    return false;
+  for (size_t i = 0; i < actual.size(); ++i) {
+    if (std::tolower(static_cast<unsigned char>(actual[i])) !=
+        std::tolower(static_cast<unsigned char>(expectedHex[i]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool NetworkTransport::MaterializeHostVariant(const std::string &name,
                                               const std::string &body,
                                               std::string &outPath) {
-  if (name.empty() || body.empty())
+  return MaterializeHostVariantFromPayload(name, body, false, outPath);
+}
+
+bool NetworkTransport::MaterializeHostVariantFromPayload(
+    const std::string &name, const std::string &body, bool isBase64,
+    std::string &outPath) {
+  const std::string clean = SanitizeVariantFilename(name, "");
+  if (clean.empty() || body.empty())
     return false;
+  std::vector<uint8_t> raw;
+  if (isBase64) {
+    if (!Base64Decode(body, raw) || raw.size() > 2 * 1024 * 1024)
+      return false;
+  } else {
+    if (body.size() > 2 * 1024 * 1024)
+      return false;
+    raw.assign(body.begin(), body.end());
+  }
   std::error_code ec;
   const auto dir = std::filesystem::current_path(ec) / "data" / "host_variants";
   std::filesystem::create_directories(dir, ec);
-  const auto path = dir / std::filesystem::path(name).filename();
-  std::ofstream out(path, std::ios::binary);
+  const auto path = dir / clean;
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
   if (!out)
     return false;
-  out.write(body.data(), static_cast<std::streamsize>(body.size()));
+  out.write(reinterpret_cast<const char *>(raw.data()),
+            static_cast<std::streamsize>(raw.size()));
+  out.close();
+  if (!out)
+    return false;
+  outPath = path.string();
+  return true;
+}
+
+bool NetworkTransport::MaterializeHostMapVariant(const std::string &name,
+                                                 const std::string &base64Body,
+                                                 std::string &outPath) {
+  const std::string clean = SanitizeVariantFilename(name, ".mvar");
+  if (clean.empty() || base64Body.empty())
+    return false;
+  std::vector<uint8_t> raw;
+  if (!Base64Decode(base64Body, raw) || raw.size() > 4 * 1024 * 1024)
+    return false;
+  std::error_code ec;
+  const auto dir =
+      std::filesystem::current_path(ec) / "data" / "host_map_variants";
+  std::filesystem::create_directories(dir, ec);
+  const auto path = dir / clean;
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out)
+    return false;
+  out.write(reinterpret_cast<const char *>(raw.data()),
+            static_cast<std::streamsize>(raw.size()));
   out.close();
   if (!out)
     return false;
@@ -52,7 +216,39 @@ bool NetworkTransport::SelfTest() {
   in.close();
   std::error_code ec;
   std::filesystem::remove(path, ec);
-  return roundtrip == body;
+  if (roundtrip != body)
+    return false;
+
+  const std::vector<uint8_t> mvarSample = { '_', 'b', 'l', 'f', 1, 2, 3, 4 };
+  std::string b64;
+  if (!Base64Encode(mvarSample.data(), mvarSample.size(), b64))
+    return false;
+  const std::string expectedSha = Sha256Hex(mvarSample.data(), mvarSample.size());
+  if (!VerifySha256Hex(mvarSample.data(), mvarSample.size(), expectedSha))
+    return false;
+  std::string mvarPath;
+  if (!MaterializeHostMapVariant("_selftest.mvar", b64, mvarPath))
+    return false;
+  std::ifstream min(mvarPath, std::ios::binary);
+  const std::vector<uint8_t> mvarRoundtrip(
+      (std::istreambuf_iterator<char>(min)), std::istreambuf_iterator<char>());
+  min.close();
+  std::filesystem::remove(mvarPath, ec);
+  if (mvarRoundtrip != mvarSample)
+    return false;
+
+  PeerRouteState unconfirmed{};
+  unconfirmed.lastUdpRecvTick = 1000;
+  if (IsRouteBidirectionalAlive(unconfirmed, 1100))
+    return false;
+  PeerRouteState confirmed{};
+  confirmed.pongConfirmed = true;
+  confirmed.lastPongRecvTick = 1000;
+  if (!IsRouteBidirectionalAlive(confirmed, 4000))
+    return false;
+  if (IsRouteBidirectionalAlive(confirmed, 5000))
+    return false;
+  return true;
 }
 
 namespace {
@@ -381,6 +577,8 @@ void NetworkTransport::AddPeer(uint64_t machineId, const std::string &ip,
       // wait until OnNetRecv observes an actual UDP packet or PONG from this peer
       // so WS relay fallback stays active during NAT punching / CGNAT JIP.
       route.directConfirmed = false;
+      route.pongConfirmed = false;
+      route.lastPongRecvTick = 0;
       route.lastUdpRecvTick = 0;
     }
   }
@@ -727,22 +925,20 @@ bool NetworkTransport::IsDirectUdpActive() const {
   if (!m_active.load() || m_socket == INVALID_SOCKET)
     return false;
   const uint64_t nowTick = GetTickCount64();
-  if (!m_isHost) {
-    const uint64_t lastUdpTick = m_lastUdpRecvTick.load();
-    return lastUdpTick != 0 && (nowTick - lastUdpTick) < 5000;
-  }
   std::lock_guard<std::mutex> lock(m_mutex);
+  if (!m_isHost) {
+    const auto it = m_peerRouteStates.find(m_hostMachineId);
+    if (it == m_peerRouteStates.end())
+      return false;
+    return IsRouteBidirectionalAlive(it->second, nowTick);
+  }
   if (m_peerTable.empty())
     return false;
   auto isRouteAlive = [&](uint64_t peerId) -> bool {
     const auto it = m_peerRouteStates.find(peerId);
     if (it == m_peerRouteStates.end())
       return false;
-    const uint64_t lastRecv = it->second.lastUdpRecvTick;
-    if (lastRecv == 0)
-      return false;
-    const uint64_t age = nowTick - lastRecv;
-    return (it->second.directConfirmed && age < 15000ULL) || age < 5000ULL;
+    return IsRouteBidirectionalAlive(it->second, nowTick);
   };
   for (uint64_t rp : m_relayPeers) {
     if (m_peerTable.find(rp) == m_peerTable.end() || !isRouteAlive(rp))
@@ -966,11 +1162,50 @@ void NetworkTransport::HandleControlJson(const std::string &msgStr,
       std::string lMode = ld.value("mode", "multiplayer");
       std::string lVar = ld.value("variant", "");
       std::string lVarBody = ld.value("variant_body", "");
+      bool lVarB64 = ld.value("variant_is_base64", false);
+      std::string lVarSha = ld.value("variant_sha256", "");
       std::string lVarPath = lVar;
-      if (!lVarBody.empty() && !lVar.empty() &&
-          MaterializeHostVariant(lVar, lVarBody, lVarPath)) {
-        NOBLE_INFO("NetworkTransport: host variant body '{}' saved to {}", lVar,
-                   lVarPath);
+      if (!lVarBody.empty() && !lVar.empty()) {
+        std::vector<uint8_t> rawCheck;
+        bool shaOk = true;
+        if (!lVarSha.empty()) {
+          if (lVarB64 && Base64Decode(lVarBody, rawCheck)) {
+            shaOk = VerifySha256Hex(rawCheck.data(), rawCheck.size(), lVarSha);
+          } else if (!lVarB64) {
+            shaOk = VerifySha256Hex(
+                reinterpret_cast<const uint8_t *>(lVarBody.data()),
+                lVarBody.size(), lVarSha);
+          }
+        }
+        if (shaOk && MaterializeHostVariantFromPayload(lVar, lVarBody, lVarB64,
+                                                       lVarPath)) {
+          NOBLE_INFO("NetworkTransport: host variant body '{}' saved to {}",
+                     lVar, lVarPath);
+        } else if (!shaOk) {
+          NOBLE_WARN("NetworkTransport: rejected variant '{}' due to SHA-256 "
+                     "mismatch",
+                     lVar);
+        }
+      }
+      std::string lMapVariant = ld.value("map_variant", "");
+      std::string lMapVarBody = ld.value("map_variant_body", "");
+      std::string lMapVarSha = ld.value("map_variant_sha256", "");
+      std::string lMapVarPath = lMapVariant;
+      if (!lMapVarBody.empty() && !lMapVariant.empty()) {
+        std::vector<uint8_t> mvarBytes;
+        bool shaOk = lMapVarSha.empty() ||
+                     (Base64Decode(lMapVarBody, mvarBytes) &&
+                      VerifySha256Hex(mvarBytes.data(), mvarBytes.size(),
+                                      lMapVarSha));
+        if (shaOk &&
+            MaterializeHostMapVariant(lMapVariant, lMapVarBody, lMapVarPath)) {
+          NOBLE_INFO("NetworkTransport: host map variant '{}' saved to {}",
+                     lMapVariant, lMapVarPath);
+        } else if (!shaOk) {
+          NOBLE_WARN("NetworkTransport: rejected map variant '{}' due to "
+                     "SHA-256 mismatch",
+                     lMapVariant);
+        }
       }
       int lDiff = ld.value("difficulty", 1);
       uint64_t lSkulls = 0;
@@ -997,7 +1232,7 @@ void NetworkTransport::HandleControlJson(const std::string &msgStr,
       }
       if (cb) {
         cb(lMap, lMode, lVarPath, lDiff, lSkulls, hIp, hPort, sId, lMapOverride,
-           lModFolder, lModId);
+           lModFolder, lModId, lMapVarPath);
       }
     } else if (type == "chat") {
       const std::string rawCh = j.value("channel", "all");
@@ -1425,9 +1660,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
       std::lock_guard<std::mutex> lock(m_mutex);
       auto &route = m_peerRouteStates[m_hostMachineId];
       route.lastUdpSendTick = nowTick;
-      directUdpAlive =
-          route.directConfirmed || (route.lastUdpRecvTick != 0 &&
-                                    (nowTick - route.lastUdpRecvTick) < 500);
+      directUdpAlive = IsRouteBidirectionalAlive(route, nowTick);
     }
     // Guest sends directly to host
     int sent = sendto(m_socket, reinterpret_cast<const char *>(wireData),
@@ -1541,6 +1774,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
   // If target is broadcast (0 or ~0ULL), broadcast to all known peers
   if (targetPeerId == 0 || targetPeerId == 0xFFFFFFFFFFFFFFFFULL) {
     std::vector<sockaddr_in> targets;
+    std::vector<sockaddr_in> pingTargets;
     bool allDirectConfirmed = false;
     {
       std::lock_guard<std::mutex> lock(m_mutex);
@@ -1550,13 +1784,15 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
         targets.push_back(kv.second);
         auto &route = m_peerRouteStates[kv.first];
         route.lastUdpSendTick = nowTick;
-        const uint64_t age = (route.lastUdpRecvTick != 0)
-                                 ? (nowTick - route.lastUdpRecvTick)
-                                 : UINT64_MAX;
-        const bool routeAlive =
-            (route.directConfirmed && age < 15000ULL) || age < 3000ULL;
+        const bool routeAlive = IsRouteBidirectionalAlive(route, nowTick);
         if (!routeAlive) {
           allDirectConfirmed = false;
+        }
+        const uint64_t pingGap = routeAlive ? 1000ULL : 400ULL;
+        if (route.lastPingSentTick == 0 ||
+            (nowTick - route.lastPingSentTick) >= pingGap) {
+          route.lastPingSentTick = nowTick;
+          pingTargets.push_back(kv.second);
         }
       }
       if (allDirectConfirmed) {
@@ -1566,13 +1802,9 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
             break;
           }
           const auto rit = m_peerRouteStates.find(rp);
-          const uint64_t age =
-              (rit != m_peerRouteStates.end() && rit->second.lastUdpRecvTick != 0)
-                  ? (nowTick - rit->second.lastUdpRecvTick)
-                  : UINT64_MAX;
           const bool routeAlive =
               rit != m_peerRouteStates.end() &&
-              ((rit->second.directConfirmed && age < 15000ULL) || age < 3000ULL);
+              IsRouteBidirectionalAlive(rit->second, nowTick);
           if (!routeAlive) {
             allDirectConfirmed = false;
             break;
@@ -1584,6 +1816,19 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
       sendto(m_socket, reinterpret_cast<const char *>(wireData),
              static_cast<int>(totalBytes), 0,
              reinterpret_cast<const sockaddr *>(&destAddr), sizeof(destAddr));
+    }
+    if (!pingTargets.empty()) {
+      uint8_t pingPkt[sizeof(uint64_t) + 4] = {0};
+      std::memcpy(pingPkt, &m_localMachineId, sizeof(uint64_t));
+      pingPkt[sizeof(uint64_t)] = 'P';
+      pingPkt[sizeof(uint64_t) + 1] = 'I';
+      pingPkt[sizeof(uint64_t) + 2] = 'N';
+      pingPkt[sizeof(uint64_t) + 3] = 'G';
+      for (const auto &pAddr : pingTargets) {
+        sendto(m_socket, reinterpret_cast<const char *>(pingPkt),
+               sizeof(pingPkt), 0, reinterpret_cast<const sockaddr *>(&pAddr),
+               sizeof(pAddr));
+      }
     }
     if (m_relayActive.load() && !allDirectConfirmed) {
       {
@@ -1601,6 +1846,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
   bool foundInUdp = false;
   sockaddr_in destAddr{};
   bool directConfirmed = false;
+  bool needHostPing = false;
   {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_peerTable.find(targetPeerId);
@@ -1609,11 +1855,13 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
       foundInUdp = true;
       auto &route = m_peerRouteStates[targetPeerId];
       route.lastUdpSendTick = nowTick;
-      const uint64_t age = (route.lastUdpRecvTick != 0)
-                               ? (nowTick - route.lastUdpRecvTick)
-                               : UINT64_MAX;
-      directConfirmed =
-          (route.directConfirmed && age < 15000ULL) || age < 3000ULL;
+      directConfirmed = IsRouteBidirectionalAlive(route, nowTick);
+      const uint64_t pingGap = directConfirmed ? 1000ULL : 400ULL;
+      if (route.lastPingSentTick == 0 ||
+          (nowTick - route.lastPingSentTick) >= pingGap) {
+        route.lastPingSentTick = nowTick;
+        needHostPing = true;
+      }
     } else if (!m_relayActive.load()) {
       // Target route unknown yet and relay is inactive: hold packet (Star-routing)
       // instead of broadcasting (Finding #9, #10). When relay IS active, it
@@ -1631,6 +1879,16 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
         sendto(m_socket, reinterpret_cast<const char *>(wireData),
                static_cast<int>(totalBytes), 0,
                reinterpret_cast<const sockaddr *>(&destAddr), sizeof(destAddr));
+    if (needHostPing) {
+      uint8_t pingPkt[sizeof(uint64_t) + 4] = {0};
+      std::memcpy(pingPkt, &m_localMachineId, sizeof(uint64_t));
+      pingPkt[sizeof(uint64_t)] = 'P';
+      pingPkt[sizeof(uint64_t) + 1] = 'I';
+      pingPkt[sizeof(uint64_t) + 2] = 'N';
+      pingPkt[sizeof(uint64_t) + 3] = 'G';
+      sendto(m_socket, reinterpret_cast<const char *>(pingPkt), sizeof(pingPkt),
+             0, reinterpret_cast<const sockaddr *>(&destAddr), sizeof(destAddr));
+    }
     if (packetNum <= 15 || (packetNum % 500) == 0) {
       char ipStr[INET_ADDRSTRLEN] = {0};
       inet_ntop(AF_INET, &destAddr.sin_addr, ipStr, sizeof(ipStr));
@@ -1801,21 +2059,24 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t *outBuffer, size_t bufferCapacity,
           auto &route = m_peerRouteStates[wireSender];
           route.addr = senderAddr;
           route.lastUdpRecvTick = now;
-          route.directConfirmed = true;
-          route.lastPongRecvTick = now;
-          if (isPong && route.lastPingSentTick != 0 &&
-              now >= route.lastPingSentTick) {
-            const int sample = static_cast<int>(
-                std::min<uint64_t>(999, now - route.lastPingSentTick));
-            route.rttMs =
-                (route.rttMs < 0) ? sample : ((route.rttMs * 3 + sample) / 4);
+          if (isPong) {
+            // Only true PONG proves bidirectional UDP (inbound + outbound both open).
+            route.directConfirmed = true;
+            route.pongConfirmed = true;
+            route.lastPongRecvTick = now;
+            if (route.lastPingSentTick != 0 && now >= route.lastPingSentTick) {
+              const int sample = static_cast<int>(
+                  std::min<uint64_t>(999, now - route.lastPingSentTick));
+              route.rttMs =
+                  (route.rttMs < 0) ? sample : ((route.rttMs * 3 + sample) / 4);
+            }
           } else if (route.rttMs < 0 && route.lastUdpSendTick != 0 &&
                      now >= route.lastUdpSendTick &&
                      (now - route.lastUdpSendTick) < 1000) {
             const int sample = static_cast<int>(now - route.lastUdpSendTick);
             route.rttMs = sample;
           }
-          if (!isPong && (route.lastPingSentTick == 0 ||
+          if (!isPong && (!route.pongConfirmed || route.lastPingSentTick == 0 ||
                           (now - route.lastPingSentTick) >= 1000)) {
             route.lastPingSentTick = now;
             sendPingProbe = true;
@@ -1907,7 +2168,6 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t *outBuffer, size_t bufferCapacity,
         auto &route = m_peerRouteStates[wireSender];
         route.addr = senderAddr;
         route.lastUdpRecvTick = now;
-        route.directConfirmed = true;
       }
       if (std::memcmp(rawBuf + 12, "NVOX", 4) == 0) {
         if (const VoiceFrameCallback cb = m_voiceFrameCb.load()) {
@@ -1931,7 +2191,6 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t *outBuffer, size_t bufferCapacity,
         auto &route = m_peerRouteStates[wireSender];
         route.addr = senderAddr;
         route.lastUdpRecvTick = now;
-        route.directConfirmed = true;
       }
       std::string msgStr(reinterpret_cast<const char *>(rawBuf + 12),
                          static_cast<size_t>(received - 12));
@@ -1963,8 +2222,6 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t *outBuffer, size_t bufferCapacity,
       auto &route = m_peerRouteStates[wireSender];
       route.addr = senderAddr;
       route.lastUdpRecvTick = now;
-      route.directConfirmed = true;
-      route.lastPongRecvTick = now;
       if (route.rttMs < 0 && route.lastUdpSendTick != 0 &&
           now >= route.lastUdpSendTick && (now - route.lastUdpSendTick) < 500) {
         route.rttMs = static_cast<int>(now - route.lastUdpSendTick);
@@ -1990,8 +2247,6 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t *outBuffer, size_t bufferCapacity,
         auto &route = m_peerRouteStates[wireSender];
         route.addr = senderAddr;
         route.lastUdpRecvTick = now;
-        route.directConfirmed = true;
-        route.lastPongRecvTick = now;
         if (route.rttMs < 0 && route.lastUdpSendTick != 0 &&
             now >= route.lastUdpSendTick &&
             (now - route.lastUdpSendTick) < 500) {

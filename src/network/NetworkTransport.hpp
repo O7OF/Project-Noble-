@@ -29,7 +29,20 @@ public:
   static bool MaterializeHostVariant(const std::string &name,
                                      const std::string &body,
                                      std::string &outPath);
-  // Writes/reads/removes a tiny host-variant body through the same helper.
+  static bool MaterializeHostVariantFromPayload(const std::string &name,
+                                                const std::string &body,
+                                                bool isBase64,
+                                                std::string &outPath);
+  static bool MaterializeHostMapVariant(const std::string &name,
+                                        const std::string &base64Body,
+                                        std::string &outPath);
+  static bool Base64Encode(const uint8_t *data, size_t size, std::string &out);
+  static bool Base64Decode(const std::string &b64, std::vector<uint8_t> &out);
+  static std::string Sha256Hex(const uint8_t *data, size_t size);
+  static bool VerifySha256Hex(const uint8_t *data, size_t size,
+                              const std::string &expectedHex);
+  // Writes/reads/removes a tiny host-variant and host-map-variant payload
+  // through the same helpers.
   static bool SelfTest();
 
   // Fixed session identifier shared by all Project Noble matches
@@ -44,11 +57,13 @@ public:
   bool Initialize(bool isHost, const std::string &remoteIp = "",
                   uint16_t remotePort = 11774, uint16_t localPort = 11774);
   void Shutdown();
-  // Best-effort teardown for leaving a match while haloreach.dll's network threads may still be running:
-  // disconnect and stop the relay, but leave the UDP socket to process exit. Closing it under OnNetRecv is
-  // what crashes guests at match end.
+  // Best-effort teardown for leaving a match while haloreach.dll's network
+  // threads may still be running: disconnect and stop the relay, but leave the
+  // UDP socket to process exit. Closing it under OnNetRecv is what crashes
+  // guests at match end.
   void ShutdownForExit();
-  // Host said the match is over. Consumed by the UI thread (never call UI/career from the relay thread).
+  // Host said the match is over. Consumed by the UI thread (never call
+  // UI/career from the relay thread).
   bool TakeMatchOverRequest() { return m_matchOver.exchange(false); }
   std::string TakeMatchOverJson();
 
@@ -104,7 +119,8 @@ public:
       const std::string &variant, int diff, uint64_t skulls,
       const std::string &hostIp, uint16_t hostPort,
       const std::string &sessionId, const std::string &mapOverride,
-      const std::string &modFolder, const std::string &modId)>;
+      const std::string &modFolder, const std::string &modId,
+      const std::string &mapVariant)>;
   using LobbyRosterCallback =
       std::function<void(const std::string &rosterJson)>;
   using LobbyClosedCallback = std::function<void(const std::string &reason)>;
@@ -249,7 +265,14 @@ private:
     uint64_t lastPongRecvTick = 0;
     int rttMs = -1;
     bool directConfirmed = false;
+    bool pongConfirmed = false;
   };
+  static bool IsRouteBidirectionalAlive(const PeerRouteState &route,
+                                        uint64_t nowTick) {
+    return route.pongConfirmed && route.lastPongRecvTick != 0 &&
+           nowTick >= route.lastPongRecvTick &&
+           (nowTick - route.lastPongRecvTick) <= 3500ULL;
+  }
 
   void FlushHeldPackets(uint64_t peerId, const sockaddr_in &destAddr);
   uint64_t ComputePacketHash(const uint8_t *data, size_t size) const;

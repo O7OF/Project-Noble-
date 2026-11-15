@@ -746,24 +746,32 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return (types == 0 && names == 0 && layouts == 0 && tuning == 0 && variantFields && hostVariant) ? 0 : 1;
     }
 
-    // Steam Workshop subscription helper: the join prompt starts us as "-steam-subscribe <id> -steam-dll <path>",
-    // we load MCC's steam_api64.dll, ask Steam for the item and exit. This runs before any window, engine or
-    // logger init so it is fast and cannot be blocked by the menu.
+    // Steam Workshop subscription helper: the join prompt starts us as
+    // "-steam-subscribe <id> -steam-dll <path> [-steam-progress <json>] [-parent-pid <pid>]",
+    // we load MCC's steam_api64.dll, subscribe + high-priority download, pump callbacks, and report live
+    // ISteamUGC::GetItemDownloadInfo byte progress without ever popping Steam open.
     {
         int subArgc = 0;
         LPWSTR* subArgv = CommandLineToArgvW(GetCommandLineW(), &subArgc);
         std::string workshopId;
         std::wstring steamApiDll;
+        std::wstring progressJson;
+        unsigned long parentPid = 0;
         for (int i = 1; subArgv && i < subArgc; ++i) {
             if (_wcsicmp(subArgv[i], L"-steam-subscribe") == 0 && i + 1 < subArgc) {
                 for (const wchar_t* c = subArgv[++i]; c && *c; ++c) workshopId.push_back(static_cast<char>(*c));
             } else if (_wcsicmp(subArgv[i], L"-steam-dll") == 0 && i + 1 < subArgc) {
                 steamApiDll = subArgv[++i];
+            } else if (_wcsicmp(subArgv[i], L"-steam-progress") == 0 && i + 1 < subArgc) {
+                progressJson = subArgv[++i];
+            } else if (_wcsicmp(subArgv[i], L"-parent-pid") == 0 && i + 1 < subArgc) {
+                parentPid = std::wcstoul(subArgv[++i], nullptr, 10);
             }
         }
         if (subArgv) LocalFree(subArgv);
         if (!workshopId.empty()) {
-            return noble::SteamWorkshop::SubscribeChildMain(workshopId, fs::path(steamApiDll));
+            return noble::SteamWorkshop::SubscribeChildMain(
+                workshopId, fs::path(steamApiDll), fs::path(progressJson), parentPid);
         }
     }
 

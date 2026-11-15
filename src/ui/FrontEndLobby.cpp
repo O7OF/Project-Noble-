@@ -5,7 +5,7 @@ namespace noble::fe {
 struct PendingLobbyEvents {
   bool launch = false;
   std::string map, mode, variant, hostEndpoint, sessionId, sessionToken;
-  std::string mapOverride, modFolder, modId;
+  std::string mapOverride, mapVariant, modFolder, modId;
   int difficulty = 1;
   uint64_t skulls = 0;
   bool roster = false;
@@ -110,8 +110,9 @@ void TakePendingLobbyEvents(MenuState &st) {
   }
   if (ev.launch && !st.lobbyLaunchPending && !st.isLobbyHost) {
     NOBLE_INFO("Lobby launch received: map='{}' mode='{}' variant='{}' "
-               "endpoint='{}' session='{}'",
-               ev.map, ev.mode, ev.variant, ev.hostEndpoint, ev.sessionId);
+               "mvar='{}' endpoint='{}' session='{}'",
+               ev.map, ev.mode, ev.variant, ev.mapVariant, ev.hostEndpoint,
+               ev.sessionId);
     st.lobbyLaunchPending = true;
     st.lobbyLaunchMap = ev.map;
     st.lobbyLaunchMode = ev.mode;
@@ -119,6 +120,7 @@ void TakePendingLobbyEvents(MenuState &st) {
     st.lobbyLaunchDiff = ev.difficulty;
     st.lobbyLaunchSkulls = ev.skulls;
     st.lobbyLaunchMapOverride = ev.mapOverride;
+    st.lobbyLaunchMapVariant = ev.mapVariant;
     st.lobbyLaunchModFolder = ev.modFolder;
     st.lobbyLaunchModId = ev.modId;
     if (st.lobbyHostEndpoint.empty() && !ev.hostEndpoint.empty())
@@ -410,7 +412,8 @@ void EnqueueLobbyLaunch(const std::string &lMap, const std::string &lMode,
                         const std::string &hIp, uint16_t hPort,
                         const std::string &sId, const std::string &lMapOverride,
                         const std::string &lModFolder,
-                        const std::string &lModId) {
+                        const std::string &lModId,
+                        const std::string &lMapVariant) {
   std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
   if (s_lobbyEvents.launch)
     return;
@@ -424,6 +427,7 @@ void EnqueueLobbyLaunch(const std::string &lMap, const std::string &lMode,
     s_lobbyEvents.hostEndpoint = hIp + ":" + std::to_string(hPort);
   s_lobbyEvents.sessionId = sId;
   s_lobbyEvents.mapOverride = lMapOverride;
+  s_lobbyEvents.mapVariant = lMapVariant;
   s_lobbyEvents.modFolder = lModFolder;
   s_lobbyEvents.modId = lModId;
 }
@@ -747,7 +751,7 @@ static void DrawLobbyMapPickerModal(OverlayContext &ctx, const Ui &ui,
       st.lobbyModId = chosen.mod->workshopId;
       st.lobbyModTitle = chosen.mod->title;
       st.lobbyModFolder = chosen.mod->folder;
-    } else if (!modded) {
+    } else {
       st.lobbyModId.clear();
       st.lobbyModTitle.clear();
       st.lobbyModFolder.clear();
@@ -769,6 +773,8 @@ static void DrawLobbyMapPickerModal(OverlayContext &ctx, const Ui &ui,
     MasterServerClient::Get().UpdateLobbyAdvert(
         st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
         st.lobbySkulls);
+    MasterServerClient::Get().UpdateLobbyModAdvert(
+        !st.lobbyModId.empty(), st.lobbyModId, st.lobbyModTitle);
     st.lobbyMapPickerOpen = false;
     s_lobbyPickerInit = false;
     st.mapDrawerKey.clear();
@@ -1235,22 +1241,32 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       choice.modFolder = st.lobbyModFolder;
     }
     choice.modTitle = st.lobbyModTitle;
-    // The host's Forge map arrives as a file name; use this PC's copy (Noble
-    // ships the megapack's maps).
+    // The host's Forge map arrives either as an uploaded .mvar materialized locally
+    // under data/host_map_variants or as a file name matching this PC's forgeMaps.
     choice.mapVariant.clear();
     if (!st.lobbyLaunchMapVariant.empty()) {
-      const std::filesystem::path want =
-          std::filesystem::path(st.lobbyLaunchMapVariant).filename();
-      for (const ForgeMap &fm : ctx.forgeMaps) {
-        if (_wcsicmp(fm.path.filename().c_str(), want.c_str()) == 0) {
-          choice.mapVariant = fm.path;
-          break;
+      {
+        std::error_code mvarEc;
+        const std::filesystem::path materialized(st.lobbyLaunchMapVariant);
+        if (materialized.is_absolute() &&
+            std::filesystem::exists(materialized, mvarEc)) {
+          choice.mapVariant = materialized;
         }
       }
       if (choice.mapVariant.empty()) {
-        NOBLE_WARN("FrontEndMenu: host's Forge map '{}' isn't on this PC; "
-                   "launching the plain map",
-                   want.string());
+        const std::filesystem::path want =
+            std::filesystem::path(st.lobbyLaunchMapVariant).filename();
+        for (const ForgeMap &fm : ctx.forgeMaps) {
+          if (_wcsicmp(fm.path.filename().c_str(), want.c_str()) == 0) {
+            choice.mapVariant = fm.path;
+            break;
+          }
+        }
+        if (choice.mapVariant.empty()) {
+          NOBLE_WARN("FrontEndMenu: host's Forge map '{}' isn't on this PC; "
+                     "launching the plain map",
+                     want.string());
+        }
       }
     }
     NOBLE_INFO("Guest launching from lobby: map='{}' mode='{}' "
@@ -1756,10 +1772,16 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         st.lobbyModFolder = lobbyMod->folder;
         st.lobbyModId = lobbyMod->workshopId;
         st.lobbyModTitle = lobbyMod->title;
+      } else {
+        st.lobbyModFolder.clear();
+        st.lobbyModId.clear();
+        st.lobbyModTitle.clear();
       }
       MasterServerClient::Get().UpdateLobbyAdvert(
           st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty,
           st.lobbySkulls);
+      MasterServerClient::Get().UpdateLobbyModAdvert(
+          !st.lobbyModId.empty(), st.lobbyModId, st.lobbyModTitle);
       MenuSounds::Change();
     } else if (row.label == "GAME TYPE") {
       const std::vector<MenuVariant> &varList =
@@ -1836,19 +1858,56 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         st.lobbyRoster = current.roster;
     }
     std::string variantBody;
-    if (!st.lobbyVariantPath.empty() &&
-        VariantRules::IsPresetFile(st.lobbyVariantPath)) {
-      std::ifstream in(st.lobbyVariantPath, std::ios::binary);
-      if (in)
-        variantBody.assign(std::istreambuf_iterator<char>(in),
-                           std::istreambuf_iterator<char>());
+    bool variantIsBase64 = false;
+    std::string variantSha256;
+    if (!st.lobbyVariantPath.empty()) {
+      std::error_code varEc;
+      const auto varSize =
+          std::filesystem::file_size(st.lobbyVariantPath, varEc);
+      if (!varEc && varSize > 0 && varSize <= 512 * 1024) {
+        std::ifstream in(st.lobbyVariantPath, std::ios::binary);
+        if (in) {
+          std::vector<uint8_t> raw(
+              (std::istreambuf_iterator<char>(in)),
+              std::istreambuf_iterator<char>());
+          variantSha256 =
+              NetworkTransport::Sha256Hex(raw.data(), raw.size());
+          if (VariantRules::IsPresetFile(st.lobbyVariantPath)) {
+            variantBody.assign(raw.begin(), raw.end());
+          } else if (NetworkTransport::Base64Encode(raw.data(), raw.size(),
+                                                    variantBody)) {
+            variantIsBase64 = true;
+          }
+        }
+      }
+    }
+    std::string mapVariantBody;
+    std::string mapVariantSha256;
+    if (!st.lobbyMapVariant.empty()) {
+      std::error_code mvarEc;
+      const auto mvarSize =
+          std::filesystem::file_size(st.lobbyMapVariant, mvarEc);
+      if (!mvarEc && mvarSize > 0 && mvarSize <= 2 * 1024 * 1024) {
+        std::ifstream in(st.lobbyMapVariant, std::ios::binary);
+        if (in) {
+          std::vector<uint8_t> raw(
+              (std::istreambuf_iterator<char>(in)),
+              std::istreambuf_iterator<char>());
+          if (NetworkTransport::Base64Encode(raw.data(), raw.size(),
+                                             mapVariantBody)) {
+            mapVariantSha256 =
+                NetworkTransport::Sha256Hex(raw.data(), raw.size());
+          }
+        }
+      }
     }
     try {
       MasterServerClient::Get().LaunchLobbySync(
           st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName,
           st.lobbyDifficulty, st.lobbySkulls, variantBody,
           st.lobbyMapOverride.string(), st.lobbyModFolder.string(),
-          st.lobbyModId, st.lobbyMapVariant.filename().string());
+          st.lobbyModId, st.lobbyMapVariant.filename().string(),
+          variantIsBase64, variantSha256, mapVariantBody, mapVariantSha256);
     } catch (const std::exception &e) {
       NOBLE_ERROR("FrontEndMenu: LaunchLobbySync exception: {}", e.what());
     } catch (...) {
@@ -1943,11 +2002,26 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
             st.forgeCustomVariant.empty() ? "Basic Editing" : "Forge Custom";
         forgeMv.custom = !st.forgeCustomVariant.empty();
         OpenGameOptions(ctx, forgeMv);
-      } else if (!ctx.variants.empty()) {
-        OpenGameOptions(
-            ctx,
-            ctx.variants[std::clamp(
-                st.variant, 0, static_cast<int>(ctx.variants.size()) - 1)]);
+      } else {
+        const std::vector<MenuVariant> &varList =
+            firefight ? ctx.ffVariants : ctx.variants;
+        if (!varList.empty()) {
+          int pick = firefight ? st.ffVariant : st.variant;
+          for (int i = 0; i < static_cast<int>(varList.size()); ++i) {
+            if ((!st.lobbyVariantPath.empty() &&
+                 varList[static_cast<size_t>(i)].path.string() ==
+                     st.lobbyVariantPath) ||
+                (!st.lobbyVariantName.empty() &&
+                 varList[static_cast<size_t>(i)].label ==
+                     st.lobbyVariantName)) {
+              pick = i;
+              break;
+            }
+          }
+          OpenGameOptions(
+              ctx, varList[std::clamp(
+                       pick, 0, static_cast<int>(varList.size()) - 1)]);
+        }
       }
     } else if (cur.label == "GAME TYPE" && cur.editable) {
       st.lobbyPickerOpen = true;

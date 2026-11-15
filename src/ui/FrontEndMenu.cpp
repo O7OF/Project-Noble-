@@ -6737,12 +6737,13 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
          const std::string &lVar, int lDiff, uint64_t lSkulls,
          const std::string &hIp, uint16_t hPort, const std::string &sId,
          const std::string &lMapOverride, const std::string &lModFolder,
-         const std::string &lModId) {
+         const std::string &lModId, const std::string &lMapVariant) {
         NOBLE_INFO("FrontEndMenu: Received WebSocket real-time lobby launch "
-                   "event! (map: {}, mode: {}, mod: {})",
-                   lMap, lMode, lModId);
+                   "event! (map: {}, mode: {}, mod: {}, mvar: {})",
+                   lMap, lMode, lModId, lMapVariant);
         fe::EnqueueLobbyLaunch(lMap, lMode, lVar, lDiff, lSkulls, hIp, hPort,
-                               sId, lMapOverride, lModFolder, lModId);
+                               sId, lMapOverride, lModFolder, lModId,
+                               lMapVariant);
       });
 
   NetworkTransport::Get().SetLobbyClosedCallback([](const std::string &reason) {

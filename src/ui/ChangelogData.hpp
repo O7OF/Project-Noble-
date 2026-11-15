@@ -65,42 +65,43 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Moved lobby chat and match traffic to the host's direct connection so backend servers handle matchmaking and accounts with minimal bandwidth and disk overhead."},
     };
 
+    const std::vector<ChangeItem> v01999Items = {
+        {"NETCODE", "All-Mode Netcode & Sync Hardening",
+         "Verified bidirectional UDP routes before skipping relay, added Blam! membership handshake waits before host launch, SHA-256 verified preset JSON/binary game variants and .mvar map variants, and fixed join-in-progress kicks across Campaign, Firefight, Forge, and Custom Games."},
+        {"FEATURE", "Smooth In-App Workshop Downloader",
+         "Downloading Steam Workshop mods now subscribes and downloads in-app with a live progress bar (downloaded / total, MB/s, ETA, stage), full mod metadata, creator name, tags, and scrollable description without popping open Steam."},
+        {"FIX", "Engine Hook Register Safety & Stability",
+         "Preserved volatile CPU/SSE registers across GameFinish, IsWhitespace, and VariantSource detours, fixed UI null-slot guard jumps, fixed Campaign intro black-screens, and restored real per-player ping IDs on the scoreboard."},
+        {"FIX", "Mode Options, Map Picker & Lobby Integrity",
+         "Fixed Firefight & Custom Games option editing inside the lobby, cleared stale Workshop mod flags when switching back to stock maps, and hardened host-only WebSocket controls and leave cleanup on the master server."},
+    };
+
+    if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
+        notes.push_back(ReleaseNotes{
+            currentVer,
+            "ALL-MODE NETCODE SYNC, STABILITY & IN-APP WORKSHOP",
+            "Bidirectional UDP Guards, Variant/Map Verification & Smooth Workshop Downloads",
+            v01999Items,
+        });
+    }
+
     if (currentVer != "v0.19.93") {
-        if (currentVer == "v0.19.94") {
-            notes.push_back(ReleaseNotes{
-                "v0.19.94",
-                "FUTURISTIC UI POLISH, SCROLLBARS & VIRTUAL CURSOR",
-                "Rounded Hi-Tech Panels, Fixed Scrolling & Controller Cursor Mode",
-                v01994Items,
-            });
-            notes.push_back(ReleaseNotes{
-                "v0.19.93",
-                "UI OVERHAUL, MAP PICKERS & NETCODE",
-                "Social, Service Record, Armory, Map Pickers & Direct Lobby Netcode",
-                [&]() {
-                    std::vector<ChangeItem> merged = currentUiOverhaulItems;
-                    merged.insert(merged.end(), v01993Items.begin(), v01993Items.end());
-                    return merged;
-                }(),
-            });
-        } else {
-            notes.push_back(ReleaseNotes{
-                currentVer,
-                "FUTURISTIC UI POLISH, SCROLLBARS & VIRTUAL CURSOR",
-                "Rounded Hi-Tech Panels, Fixed Scrolling & Controller Cursor Mode",
-                [&]() {
-                    std::vector<ChangeItem> merged = v01994Items;
-                    merged.insert(merged.end(), currentUiOverhaulItems.begin(), currentUiOverhaulItems.end());
-                    return merged;
-                }(),
-            });
-            notes.push_back(ReleaseNotes{
-                "v0.19.93",
-                "MAP PICKERS, SERVER BROWSER & NETCODE",
-                "Tile-Based Pickers & Direct Host Lobby Networking",
-                v01993Items,
-            });
-        }
+        notes.push_back(ReleaseNotes{
+            "v0.19.94",
+            "FUTURISTIC UI POLISH, SCROLLBARS & VIRTUAL CURSOR",
+            "Rounded Hi-Tech Panels, Fixed Scrolling & Controller Cursor Mode",
+            v01994Items,
+        });
+        notes.push_back(ReleaseNotes{
+            "v0.19.93",
+            "UI OVERHAUL, MAP PICKERS & NETCODE",
+            "Social, Service Record, Armory, Map Pickers & Direct Lobby Netcode",
+            [&]() {
+                std::vector<ChangeItem> merged = currentUiOverhaulItems;
+                merged.insert(merged.end(), v01993Items.begin(), v01993Items.end());
+                return merged;
+            }(),
+        });
     } else {
         std::vector<ChangeItem> merged = currentUiOverhaulItems;
         merged.insert(merged.end(), v01993Items.begin(), v01993Items.end());

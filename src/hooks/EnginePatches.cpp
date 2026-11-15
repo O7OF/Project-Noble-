@@ -53,12 +53,47 @@ Hook_IsArmorItemUnlocked(void * /*a1*/, void * /*a2*/, void * /*a3*/,
   return 1;
 }
 
-static uint8_t __fastcall Hook_IsWhitespace(uint16_t ch) {
-  if (ch < 0x09) {
-    return 0; // Characters below 0x09 are never whitespace; prevents binary
-              // search underflow crash
-  }
-  return s_originalIsWhitespace(ch);
+struct IsWhitespaceStubBlock {
+  uint8_t code[32];
+  void *originalFn;
+};
+static IsWhitespaceStubBlock *s_isWhitespaceStub = nullptr;
+
+// haloreach+0x362E8 (haloreach_is_whitespace) is an LTCG leaf whose callers
+// (notably haloreach+0x36342 -> 0x36350/0x36369) keep RCX and R11 live across
+// the call. A C++ __fastcall detour can clobber RCX/R11/XMM, corrupting the
+// caller's state; this raw machine-code fast-path touches only EAX and flags.
+static void *EnsureIsWhitespaceStub() {
+  if (s_isWhitespaceStub)
+    return s_isWhitespaceStub->code;
+  auto *blk = static_cast<IsWhitespaceStubBlock *>(VirtualAlloc(
+      nullptr, sizeof(IsWhitespaceStubBlock), MEM_COMMIT | MEM_RESERVE,
+      PAGE_EXECUTE_READWRITE));
+  if (!blk)
+    return nullptr;
+  std::memset(blk, 0, sizeof(IsWhitespaceStubBlock));
+  // 00: 66 83 F9 09     cmp cx, 9
+  // 04: 72 06           jb +6 (offset 0x0C)
+  // 06: FF 25 <disp32>  jmp qword ptr [rip + disp32 -> originalFn]
+  // 0C: 31 C0           xor eax, eax
+  // 0E: C3              ret
+  blk->code[0] = 0x66;
+  blk->code[1] = 0x83;
+  blk->code[2] = 0xF9;
+  blk->code[3] = 0x09;
+  blk->code[4] = 0x72;
+  blk->code[5] = 0x06;
+  blk->code[6] = 0xFF;
+  blk->code[7] = 0x25;
+  int32_t disp = static_cast<int32_t>(
+      reinterpret_cast<const uint8_t *>(&blk->originalFn) - (blk->code + 12));
+  std::memcpy(blk->code + 8, &disp, 4);
+  blk->code[12] = 0x31;
+  blk->code[13] = 0xC0;
+  blk->code[14] = 0xC3;
+  FlushInstructionCache(GetCurrentProcess(), blk, sizeof(IsWhitespaceStubBlock));
+  s_isWhitespaceStub = blk;
+  return blk->code;
 }
 
 // haloreach+0x5DF80: player_control_update(playerIndex, inputUserIndex, dt1,
@@ -479,11 +514,14 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
   }
 
   if (isWhitespaceAddr) {
-    if (HookManager::InstallHook(
-            reinterpret_cast<void *>(isWhitespaceAddr),
-            reinterpret_cast<void *>(&Hook_IsWhitespace),
-            reinterpret_cast<void **>(&s_originalIsWhitespace),
+    void *wsDetour = EnsureIsWhitespaceStub();
+    if (wsDetour &&
+        HookManager::InstallHook(
+            reinterpret_cast<void *>(isWhitespaceAddr), wsDetour,
+            &s_isWhitespaceStub->originalFn,
             "haloreach_is_whitespace")) {
+      s_originalIsWhitespace =
+          reinterpret_cast<IsWhitespaceFn>(s_isWhitespaceStub->originalFn);
       NOBLE_INFO("EnginePatches: Successfully hooked IsWhitespace at 0x{:X} to "
                  "patch underflow crash.",
                  isWhitespaceAddr);
