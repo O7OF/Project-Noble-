@@ -2084,6 +2084,9 @@ static void UpdateLiveScoreboard() {
   // Real per-player RTT only. No round-robin fallback: attaching another peer's number to a row is worse
   // than showing "-". The roster seed carries each player's machine id and the match transport now uses
   // the same id the lobby published.
+  int remoteRows = 0;
+  for (const auto &row : s_boardRows)
+    if (!row.local) ++remoteRows;
   for (auto &row : s_boardRows) {
     if (row.local) {
       row.ping = 0; // self / host reference
@@ -2093,6 +2096,16 @@ static void UpdateLiveScoreboard() {
         ms = NetworkTransport::Get().GetPeerPingMs(row.machine);
       } else if (row.hostPeer) {
         ms = NetworkTransport::Get().IsHost() ? 0 : NetworkTransport::Get().GetPeerPingMs(0);
+      }
+      // A direct-connect two-player session has exactly one remote peer, so its RTT is unambiguous even
+      // without a lobby roster (host knows the guest, guest knows the host).
+      if (ms < 0 && remoteRows == 1) {
+        if (!NetworkTransport::Get().IsHost()) {
+          ms = NetworkTransport::Get().GetPeerPingMs(0);
+        } else {
+          const auto pings = NetworkTransport::Get().GetAllPeerPingsMs();
+          if (pings.size() == 1) ms = pings.begin()->second;
+        }
       }
       row.ping = ms; // -1 means unknown and is drawn as "-"
     } else if (row.ping < 0) {
