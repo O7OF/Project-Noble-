@@ -218,7 +218,7 @@ void EnterLobby(OverlayContext &ctx, const ServerEntry &s,
     hostP.peerId = 1;
     hostP.username = s.name.empty() ? "Host" : s.name;
     hostP.isHost = true;
-    hostP.ping = s.ping >= 0 ? s.ping : 25;
+    hostP.ping = s.ping; // unknown stays -1 (drawn as "-"), never a made-up 25 ms
     ctx.st.lobbyRoster.push_back(hostP);
 
     LobbyPlayer me;
@@ -228,7 +228,7 @@ void EnterLobby(OverlayContext &ctx, const ServerEntry &s,
     me.isHost = false;
     me.isDev = AuthClient::Get().IsDeveloper();
     me.isTester = AuthClient::Get().IsTester();
-    me.ping = s.ping >= 0 ? s.ping : 25;
+    me.ping = s.ping;
     ctx.st.lobbyRoster.push_back(me);
   }
 

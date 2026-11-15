@@ -44,6 +44,13 @@ public:
   bool Initialize(bool isHost, const std::string &remoteIp = "",
                   uint16_t remotePort = 11774, uint16_t localPort = 11774);
   void Shutdown();
+  // Best-effort teardown for leaving a match while haloreach.dll's network threads may still be running:
+  // disconnect and stop the relay, but leave the UDP socket to process exit. Closing it under OnNetRecv is
+  // what crashes guests at match end.
+  void ShutdownForExit();
+  // Host said the match is over. Consumed by the UI thread (never call UI/career from the relay thread).
+  bool TakeMatchOverRequest() { return m_matchOver.exchange(false); }
+  std::string TakeMatchOverJson();
 
   // Chat: the relay carries JSON chat frames; the UI owns rendering.
   struct ChatMessage {
@@ -178,6 +185,8 @@ private:
   ChatCallback m_chatCb;
   std::mutex m_chatCbMutex;
   std::atomic<uint64_t> m_lastRemotePacketMs{0};
+  std::atomic<bool> m_matchOver{false};
+  std::string m_matchOverJson;
   bool m_isHost = true;
   SOCKET m_socket = INVALID_SOCKET;
   uint16_t m_localPort = 11774;

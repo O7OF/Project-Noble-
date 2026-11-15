@@ -4773,6 +4773,17 @@ bool StartContainerChild(const std::wstring &args, OverlayContext &ctx) {
     full += L" -container-hwnd " +
             std::to_wstring(reinterpret_cast<uintptr_t>(Window::ActiveHwnd()));
   }
+  // The match process must use the same machine id the lobby roster published for this player. Otherwise
+  // its wire id is random and every machine-id-keyed feature (ping rows, per-peer mute, name lookup) misses.
+  {
+    const uint64_t lobbyMachine = MasterServerClient::GetLobbyMachineId();
+    if (lobbyMachine != 0) {
+      wchar_t idText[32] = {};
+      _snwprintf_s(idText, _countof(idText), _TRUNCATE, L"0x%016llX",
+                   static_cast<unsigned long long>(lobbyMachine));
+      SetEnvironmentVariableW(L"NOBLE_MACHINE_ID", idText);
+    }
+  }
   HANDLE hChild = nullptr;
   if (!Relaunch::StartChildMatch(full, reinterpret_cast<void **>(&hChild))) {
     NOBLE_ERROR("FrontEndMenu: failed to start the match process in the "

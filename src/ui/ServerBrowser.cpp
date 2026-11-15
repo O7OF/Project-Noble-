@@ -160,7 +160,7 @@ static void ProbeServerPingAsync(const std::string& host, uint16_t port) {
             rtt = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
             if (rtt < 1) rtt = 1;
         } else {
-            rtt = 42; // regional fallback
+            rtt = -1; // no reply: unknown (drawn "-"), never a made-up regional number
         }
 
         std::lock_guard<std::mutex> lock(s_pingMutex);
@@ -383,7 +383,7 @@ void ServerBrowser::RefreshServers() {
             if (it != s_pingSamples.end() && it->second.rttMs >= 0) {
                 e.ping = it->second.rttMs;
             } else {
-                e.ping = 45;
+                e.ping = -1; // not measured yet
             }
         }
         ProbeServerPingAsync(m.address, m.port);

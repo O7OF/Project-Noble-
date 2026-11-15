@@ -450,8 +450,9 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
 
   std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
   if (!containerVal.empty()) {
-    MasterServerClient::Get().Shutdown(keepHostSession);
-    SessionManager::Get().Shutdown();
+    // The launcher process owns the lobby/session: shutting it down here can block on HTTP/WebSocket
+    // joins and made the post-match buttons look dead. Disconnect, hand the relaunch over and exit.
+    NetworkTransport::Get().ShutdownForExit();
     if (isMainMenu || args.empty()) {
       Relaunch::RequestContainerRelaunch(L"-main-menu");
       NOBLE_INFO("PauseMenu: {} in container mode - returning to main menu in "
@@ -492,7 +493,7 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
 
   MasterServerClient::Get().Shutdown(keepHostSession);
   SessionManager::Get().Shutdown();
-  NetworkTransport::Get().Shutdown();
+  NetworkTransport::Get().ShutdownForExit();
   Relaunch::HandOff(
       args); // ends this process; returns only if the new one could not start
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
@@ -546,7 +547,7 @@ void QuitFromMatch(HWND hwnd, const char *what) {
   }
   MasterServerClient::Get().Shutdown(false);
   SessionManager::Get().Shutdown();
-  NetworkTransport::Get().Shutdown();
+  NetworkTransport::Get().ShutdownForExit();
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }
 
@@ -1971,19 +1972,6 @@ static void UpdateLiveScoreboard() {
   const SettingsData snap = Settings::Get().Snapshot();
   const int localRank = Career::RankIndex(Career::Get().credits);
   const bool netActive = NetworkTransport::Get().IsActive();
-  const bool netHost = netActive && NetworkTransport::Get().IsHost();
-  const int fallbackPing =
-      netActive ? NetworkTransport::Get().GetPeerPingMs(0) : -1;
-  std::vector<int> peerPingList;
-  if (netActive) {
-    const auto peerPingMap = NetworkTransport::Get().GetAllPeerPingsMs();
-    peerPingList.reserve(peerPingMap.size());
-    for (const auto &kv : peerPingMap) {
-      if (kv.second >= 0) {
-        peerPingList.push_back(kv.second);
-      }
-    }
-  }
 
   std::lock_guard<std::mutex> lock(s_boardMutex);
   bool anyValid = false;
@@ -2029,7 +2017,7 @@ static void UpdateLiveScoreboard() {
             entry.local && !snap.serviceTag.empty() ? snap.serviceTag : tagUtf8;
         entry.team = scores[i].team >= 0 ? scores[i].team : 1;
         entry.rank = entry.local ? localRank : 0;
-        entry.ping = entry.local ? 0 : (fallbackPing > 0 ? fallbackPing : 0);
+        entry.ping = 0; // filled per player below; unknown stays -1 (drawn as "-")
         s_boardRows.push_back(entry);
         matched = &s_boardRows.back();
       }
@@ -2063,23 +2051,20 @@ static void UpdateLiveScoreboard() {
     }
   }
 
-  size_t peerPingCursor = 0;
+  // Real per-player RTT only. No round-robin fallback: attaching another peer's number to a row is worse
+  // than showing "-". The roster seed carries each player's machine id and the match transport now uses
+  // the same id the lobby published.
   for (auto &row : s_boardRows) {
     if (row.local) {
-      row.ping = (netActive && !netHost && fallbackPing > 0) ? fallbackPing : 0;
+      row.ping = 0; // self / host reference
     } else if (netActive) {
       int ms = -1;
       if (row.machine != 0) {
         ms = NetworkTransport::Get().GetPeerPingMs(row.machine);
+      } else if (row.hostPeer) {
+        ms = NetworkTransport::Get().IsHost() ? 0 : NetworkTransport::Get().GetPeerPingMs(0);
       }
-      if (ms < 0 && netHost && !peerPingList.empty()) {
-        ms = peerPingList[peerPingCursor % peerPingList.size()];
-        ++peerPingCursor;
-      }
-      if (ms < 0) {
-        ms = fallbackPing;
-      }
-      row.ping = (ms >= 0) ? ms : 0;
+      row.ping = ms; // -1 means unknown and is drawn as "-"
     } else if (row.ping < 0) {
       row.ping = 0;
     }
@@ -2779,19 +2764,20 @@ static void DrawScoreboardPanel() {
                   y + 8.0f * s),
            IM_COL32(195, 205, 215, 210), buf);
 
-      // 6. Ping Badge (Pill with rounded corners)
+      // 6. Ping Badge (Pill with rounded corners). Unknown stays -1 and is drawn as "-".
       int ping = r.ping;
       if (!r.local && NetworkTransport::Get().IsActive()) {
         const int live =
             r.hostPeer
-                ? NetworkTransport::Get().GetPeerPingMs(0)
+                ? (NetworkTransport::Get().IsHost() ? 0
+                                                    : NetworkTransport::Get().GetPeerPingMs(0))
                 : (r.machine ? NetworkTransport::Get().GetPeerPingMs(r.machine)
                              : -1);
         if (live >= 0)
           ping = live;
       }
-      if (ping < 0)
-        ping = 0;
+      if (ping < -1)
+        ping = -1;
 
       const ImU32 pingBadgeCol =
           ping < 0 ? IM_COL32(90, 105, 120, 180)
@@ -4075,6 +4061,17 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   const bool guest =
       NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
   if (guest) {
+    if (NetworkTransport::Get().TakeMatchOverRequest() && !s_gameOver.load()) {
+      // The relay thread only flags it now: career/UI work happens here, on the render thread,
+      // after the match has stopped touching the session.
+      NOBLE_INFO("PauseMenu: host match_over received; showing the post-game panel");
+      const std::string matchOverJson = NetworkTransport::Get().TakeMatchOverJson();
+      if (!matchOverJson.empty())
+        Career::OnMatchOverJson(matchOverJson);
+      else
+        Career::EnsureMatchSaved("match_over");
+      ShowGameOver();
+    }
     if (s_guestShouldReturnLobby.exchange(false)) {
       NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to "
                  "pre-game lobby");

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <mutex>
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>
@@ -75,6 +76,37 @@ std::atomic<int> s_mode{0};   // experiment: 0 = answer true, 1 = answer false, 
 std::atomic<bool> s_f5WasDown{false};
 std::atomic<int> s_logCount{0};
 std::atomic<bool> s_engineThirdPerson{false};
+
+// Camera hooks run every frame. Settings::Get().Snapshot() copies the whole SettingsData (strings, maps) under a
+// mutex, so reading it per frame allocated several times per camera update and caused hitching in a match. Cache
+// only the camera fields here and refresh them 4x/sec.
+struct CameraTuning {
+    float thirdOffsetX = 0.0f, thirdOffsetY = 0.0f;
+    float vehicleOffsetX = 0.0f, vehicleOffsetY = 0.0f;
+    float firstPersonFovMod = 0.0f, vehicleFirstPersonFovMod = 0.0f;
+};
+std::mutex s_tuningMutex;
+CameraTuning s_tuning;
+std::atomic<uint64_t> s_tuningPollMs{0};
+
+CameraTuning CurrentTuning() {
+    const uint64_t now = GetTickCount64();
+    if (now - s_tuningPollMs.load() >= 250) {
+        s_tuningPollMs.store(now);
+        const SettingsData settings = Settings::Get().Snapshot();
+        CameraTuning next;
+        next.thirdOffsetX = settings.thirdPersonOffsetX;
+        next.thirdOffsetY = settings.thirdPersonOffsetY;
+        next.vehicleOffsetX = settings.vehicleFirstPersonOffsetX;
+        next.vehicleOffsetY = settings.vehicleFirstPersonOffsetY;
+        next.firstPersonFovMod = settings.firstPersonFovMod;
+        next.vehicleFirstPersonFovMod = settings.vehicleFirstPersonFovMod;
+        std::lock_guard<std::mutex> lock(s_tuningMutex);
+        s_tuning = next;
+    }
+    std::lock_guard<std::mutex> lock(s_tuningMutex);
+    return s_tuning;
+}
 std::atomic<bool> s_zoomHeld{false};
 std::atomic<float> s_zoomBlend{0.0f};
 
@@ -127,7 +159,7 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
         DevCheats::ApplyFreecam(pos, fwd);
         return;
     }
-    const SettingsData settings = Settings::Get().Snapshot();
+    const CameraTuning tuning = CurrentTuning();
     const bool inVehicle = s_localInVehicle.load();
 
     // When in a vehicle in 1st person, unit_get_camera_position (haloreach+0x48A1C0) places the camera at the
@@ -203,8 +235,8 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
                 }
             }
 
-            const float offX = std::clamp(settings.vehicleFirstPersonOffsetX, -1.0f, 1.0f);
-            const float offY = std::clamp(settings.vehicleFirstPersonOffsetY, -1.0f, 1.0f);
+            const float offX = std::clamp(tuning.vehicleOffsetX, -1.0f, 1.0f);
+            const float offY = std::clamp(tuning.vehicleOffsetY, -1.0f, 1.0f);
             // Camera right basis vector in Reach's right-handed world space: right = normalize(cross(forward, up)).
             float rightX = fwd[1] * up[2] - fwd[2] * up[1];
             float rightY = fwd[2] * up[0] - fwd[0] * up[2];
@@ -250,7 +282,7 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
         }
     }
 
-    const float mod = std::clamp(inVehicle ? settings.vehicleFirstPersonFovMod : settings.firstPersonFovMod, -1.20f, 1.20f);
+    const float mod = std::clamp(inVehicle ? tuning.vehicleFirstPersonFovMod : tuning.firstPersonFovMod, -1.20f, 1.20f);
     if (std::fabs(mod) > 1e-4f) {
         auto* fovRad = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x28);
         // Positive mod (+0% .. +120%) widens FOV out up to 2.20x; negative mod (-0% .. -120%) narrows FOV in down to 1 / 2.20x.
@@ -282,7 +314,7 @@ void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
     s_zoomBlend.store(blend);
 
     if (!active) return;
-    const SettingsData settings = Settings::Get().Snapshot();
+    const CameraTuning tuning = CurrentTuning();
 
     // s_observer_command layout (verified at haloreach+0x1DE234 and haloreach+0xC9B0C):
     //   +0x10: float focus_offset[3] (x = forward, y = left [cross(up, forward)], z = up)
@@ -293,8 +325,8 @@ void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
     auto* focusDistance   = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x24);
     auto* fovRad          = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x28);
 
-    const float offX = std::clamp(settings.thirdPersonOffsetX, -1.0f, 1.0f);
-    const float offY = std::clamp(settings.thirdPersonOffsetY, -1.0f, 1.0f);
+    const float offX = std::clamp(tuning.thirdOffsetX, -1.0f, 1.0f);
+    const float offY = std::clamp(tuning.thirdOffsetY, -1.0f, 1.0f);
     if (std::fabs(offX) > 1e-4f) {
         // +0x14 is along camera left (cross(up, forward)), so subtracting offX moves right when offX > 0 and left when offX < 0.
         *offsetLeftRight -= offX * 0.50f;

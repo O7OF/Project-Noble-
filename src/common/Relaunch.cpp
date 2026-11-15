@@ -94,7 +94,7 @@ bool Start(const std::wstring& args, unsigned long* outPid) {
                                args.find(L"-lobby-return host") != std::wstring::npos;
     MasterServerClient::Get().Shutdown(handsOnSession);
     SessionManager::Get().Shutdown();
-    NetworkTransport::Get().Shutdown();
+    NetworkTransport::Get().ShutdownForExit();
 
 
     wchar_t exe[MAX_PATH] = {};
@@ -166,7 +166,7 @@ bool StartChildMatch(const std::wstring& args, void** outProcessHandle, unsigned
                                args.find(L"-lobby-return host") != std::wstring::npos;
     MasterServerClient::Get().Shutdown(handsOnSession);
     SessionManager::Get().Shutdown();
-    NetworkTransport::Get().Shutdown();
+    NetworkTransport::Get().ShutdownForExit();
 
     wchar_t exe[MAX_PATH] = {};
     if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return false;

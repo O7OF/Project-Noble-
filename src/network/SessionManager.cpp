@@ -264,7 +264,7 @@ void SessionManager::DiscoveryListenerLoop() {
                         session.modId = SanitizeText(tokens[9], 24);
                         session.modTitle = SanitizeText(tokens[10], 96);
                     }
-                    session.pingMs = 12; // Local LAN base latency
+                    session.pingMs = -1; // LAN beacons carry no measurement; unknown until probed
                     session.lastSeen = std::chrono::steady_clock::now();
 
                     std::lock_guard<std::mutex> lock(m_sessionsMutex);

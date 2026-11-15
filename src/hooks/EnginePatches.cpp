@@ -390,7 +390,16 @@ void EnginePatches::OnFrameTick() {
   }
 }
 
+static std::atomic<bool> s_cinematicOnlyMission{false};
+
+void EnginePatches::SetCinematicOnlyMission(bool enabled) {
+  s_cinematicOnlyMission.store(enabled);
+}
+
 bool EnginePatches::ShouldBlockPrematureGameOver() {
+  // A cinematic-only mission has no gameplay to protect: its finish IS the cutscene ending.
+  if (s_cinematicOnlyMission.load())
+    return false;
   // If cinematic is playing, or cutscene skip occurred in the last 15 seconds,
   // block GameOver
   if (CinematicInProgress())

@@ -875,8 +875,14 @@ void MasterServerClient::DoHeartbeat() {
     const auto peerPings = NetworkTransport::Get().GetAllPeerPingsMs();
     if (!peerPings.empty()) {
         nlohmann::json pingsObj = nlohmann::json::object();
+        // The roster/host ids are published as 0x-prefixed hex strings, joins as decimal. Publish both
+        // spellings (plus the host's own 0 ms row) so the backend and the joiners can always join them.
+        pingsObj[std::to_string(NetworkTransport::Get().GetLocalMachineId())] = 0;
+        char hex[24] = {};
         for (const auto& kv : peerPings) {
             pingsObj[std::to_string(kv.first)] = kv.second;
+            std::snprintf(hex, sizeof(hex), "0x%016llX", static_cast<unsigned long long>(kv.first));
+            pingsObj[hex] = kv.second;
         }
         body["peer_pings"] = std::move(pingsObj);
     }
@@ -1124,7 +1130,7 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
                     } catch (...) {}
                 } else if (p.isHost) {
                     int liveHostPing = NetworkTransport::Get().GetPeerPingMs(0);
-                    if (liveHostPing > 0 && (p.ping <= 0 || p.ping == 25)) p.ping = liveHostPing;
+                    if (liveHostPing > 0 && p.ping <= 0) p.ping = liveHostPing;
                 }
                 state.roster.push_back(p);
             }
@@ -1209,7 +1215,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "machine_id", std::to_string(LobbyMachineId()) },
         { "guest_port", localPort },
         { "guest_lan_address", UPnP::Get().GetInternalIP() },
-        { "ping", measuredPing > 0 ? measuredPing : 25 }
+        { "ping", measuredPing > 0 ? measuredPing : 0 }
     };
 
     const std::string dump = body.dump();
@@ -1297,7 +1303,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
                     } catch (...) {}
                 } else if (p.isHost) {
                     int liveHostPing = NetworkTransport::Get().GetPeerPingMs(0);
-                    if (liveHostPing > 0 && (p.ping <= 0 || p.ping == 25)) p.ping = liveHostPing;
+                    if (liveHostPing > 0 && p.ping <= 0) p.ping = liveHostPing;
                 }
                 state.roster.push_back(p);
             }

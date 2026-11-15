@@ -125,8 +125,18 @@ bool NetworkTransport::Initialize(bool isHost, const std::string &remoteIp,
     m_localMachineId = kDefaultHostMachineId;
     m_hostMachineId = kDefaultHostMachineId;
   } else {
-    m_localMachineId = GenerateRandomMachineId();
+    // A guest must use the same machine id the lobby roster published for it, or the host's scoreboard /
+    // peer_pings keys never match the id on the wire. The launcher passes it through NOBLE_MACHINE_ID.
+    uint64_t override = 0;
+    wchar_t value[32] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_MACHINE_ID", value, 32) > 0 && value[0] != L'0') {
+      wchar_t* end = nullptr;
+      override = std::wcstoull(value, &end, 0);
+    }
+    m_localMachineId = override != 0 ? override : GenerateRandomMachineId();
     m_hostMachineId = kDefaultHostMachineId;
+    if (override != 0)
+      NOBLE_INFO("NetworkTransport: guest machine id from lobby: 0x{:X}", override);
   }
 
   std::memset(&m_remoteHostAddr, 0, sizeof(m_remoteHostAddr));
@@ -321,6 +331,23 @@ void NetworkTransport::Shutdown() {
   NOBLE_INFO("NetworkTransport: Shutdown complete.");
 }
 
+std::string NetworkTransport::TakeMatchOverJson() {
+  std::lock_guard<std::mutex> lock(m_relayMutex);
+  std::string out = std::move(m_matchOverJson);
+  m_matchOverJson.clear();
+  return out;
+}
+
+void NetworkTransport::ShutdownForExit() {
+  // haloreach.dll's network thread can still be calling OnNetSend/OnNetRecv on this object when a guest
+  // leaves at match end. Closing m_socket under recvfrom was crashing non-host clients. Tell peers we
+  // left and stop the relay, then let process exit reclaim the socket.
+  SendDisconnectPacket();
+  StopRelay();
+  m_active.store(false);
+  NOBLE_INFO("NetworkTransport: exit teardown (disconnect sent; UDP socket left to process exit).");
+}
+
 void NetworkTransport::GetSessionGuid(uint8_t outGuid16[16]) const {
   if (!outGuid16)
     return;
@@ -468,23 +495,28 @@ void NetworkTransport::SendDisconnectPacket() {
 int NetworkTransport::GetPeerPingMs(uint64_t machineId) const {
   std::lock_guard<std::mutex> lock(m_mutex);
   if (machineId == 0) {
-    if (!m_isHost)
-      machineId = m_hostMachineId;
-    else if (!m_peerRouteStates.empty())
-      return m_peerRouteStates.begin()->second.rttMs;
+    // 0 means "the host": the host itself is the reference point (0 ms), a guest measures the host.
+    // Never return an arbitrary peer's RTT here - that is what made every remote row share one number.
+    if (m_isHost)
+      return 0;
+    machineId = m_hostMachineId;
   }
   auto it = m_peerRouteStates.find(machineId);
-  if (it != m_peerRouteStates.end() && it->second.rttMs >= 0) {
-    return it->second.rttMs;
-  }
-  return -1;
+  if (it == m_peerRouteStates.end() || it->second.rttMs < 0)
+    return -1;
+  const uint64_t last = it->second.lastPongRecvTick;
+  if (last == 0 || GetTickCount64() - last > 5000ULL)
+    return -1; // stale: unknown, not a ghost value from a peer that stopped answering
+  return it->second.rttMs;
 }
 
 std::unordered_map<uint64_t, int> NetworkTransport::GetAllPeerPingsMs() const {
   std::lock_guard<std::mutex> lock(m_mutex);
   std::unordered_map<uint64_t, int> out;
+  const uint64_t now = GetTickCount64();
   for (const auto &kv : m_peerRouteStates) {
-    if (kv.second.rttMs >= 0) {
+    if (kv.second.rttMs >= 0 && kv.second.lastPongRecvTick != 0 &&
+        now - kv.second.lastPongRecvTick <= 5000ULL) {
       out[kv.first] = kv.second.rttMs;
     }
   }
@@ -587,7 +619,9 @@ void NetworkTransport::FlushHeldPackets(uint64_t peerId,
   const uint64_t now = GetTickCount64();
   size_t count = 0;
   for (const auto &pkt : toFlush) {
-    if (now - pkt.enqueueTick > 5000)
+    // Anything older than a few ticks is worse than dropping it: the engine re-sends, while a
+    // multi-second replay lands as an input backlog.
+    if (now - pkt.enqueueTick > 250)
       continue;
     sendto(m_socket, reinterpret_cast<const char *>(pkt.data.data()),
            static_cast<int>(pkt.data.size()), 0,
@@ -998,9 +1032,14 @@ void NetworkTransport::HandleControlJson(const std::string &msgStr,
         cb(reason);
       }
     } else if (type == "match_over") {
-      NOBLE_INFO("NetworkTransport: received match_over packet from host");
-      Career::OnMatchOverJson(msgStr);
-      PauseMenu::ShowGameOver();
+      // The relay thread must not touch UI/career state: the render thread is often already tearing the
+      // match down when this arrives (the non-host match-end crash). Hand it to the UI frame instead.
+      NOBLE_INFO("NetworkTransport: received match_over packet from host (deferred to the UI thread)");
+      m_matchOver.store(true);
+      {
+        std::lock_guard<std::mutex> lock(m_relayMutex);
+        m_matchOverJson = msgStr;
+      }
     } else if (type == "host_return_to_lobby") {
       LobbyReturnCallback cb;
       {
@@ -1386,7 +1425,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
       route.lastUdpSendTick = nowTick;
       directUdpAlive =
           route.directConfirmed || (route.lastUdpRecvTick != 0 &&
-                                    (nowTick - route.lastUdpRecvTick) < 3000);
+                                    (nowTick - route.lastUdpRecvTick) < 500);
     }
     // Guest sends directly to host
     int sent = sendto(m_socket, reinterpret_cast<const char *>(wireData),
@@ -1420,7 +1459,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
     // Periodically send a 12-byte PING every 500ms while !directUdpAlive (NAT
     // hole punch) or every 1000ms while active so the Host echoes PONG and both
     // sides measure live RTT ping and confirm bidirectional UDP.
-    const uint64_t pingInterval = directUdpAlive ? 1000ULL : 500ULL;
+    const uint64_t pingInterval = directUdpAlive ? 1000ULL : 250ULL;
     if (m_remoteHostAddr.sin_addr.s_addr != 0 &&
         (nowTick - m_lastPunchTick >= pingInterval)) {
       m_lastPunchTick = nowTick;
@@ -1578,7 +1617,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t *data,
       // instead of broadcasting (Finding #9, #10). When relay IS active, it
       // delivers the packet immediately below without stalling stale duplicates.
       auto &q = m_heldPackets[targetPeerId];
-      if (q.size() < 128) {
+      if (q.size() < 32) {
         q.push_back(
             {std::vector<uint8_t>(wireData, wireData + totalBytes), nowTick});
       }
@@ -1632,7 +1671,10 @@ bool NetworkTransport::QueueWirePacket(const uint8_t *wire, size_t wireLen,
   if (sender == 0 || sender == m_localMachineId) {
     return false; // Never queue our own packets
   }
-  if (m_relayActive.load() &&
+  // Only a relay copy can duplicate a packet already taken over UDP. haloreach.dll deliberately re-sends
+  // byte-identical channel packets (keepalives, input/connect retries); dropping those on the direct path
+  // costs a whole engine input tick.
+  if (fromRelay && m_relayActive.load() &&
       IsDuplicatePacket(ComputePacketHash(wire, wireLen))) {
     return false;
   }

@@ -1247,7 +1247,10 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 *reinterpret_cast<uint64_t*>(&block[0x60]) = localMachineId;
                 block[0xE8] = 0x01;
                 *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
-                if (!isCampaign && !isFirefight) {
+                // The host's player identifier and slot descriptor are needed by campaign/firefight too: without
+                // +0xF0 the local player is not bound, the intro spawns out of bounds and the mission sits on a
+                // black screen. This was gated to multiplayer in 145510a and is the campaign regression.
+                {
                     *reinterpret_cast<uint64_t*>(&block[0xF0]) = 0x000000003F59F3BEULL;
                     block[0x100] = 0x00;
                     block[0x101] = 0x00;
@@ -1266,8 +1269,9 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 }
             }
 
-            // Reset unassigned slots on host and guest so remote peers can be registered
-            if (!isCampaign && !isFirefight) {
+            // Reset unassigned slots on host and guest so remote peers can be registered. Campaign/Firefight
+            // included: 5+ co-op needs every free descriptor, and the authentic block already has 0xFF here.
+            {
                 size_t startSlot = isGuest ? 2 : 1;
                 for (size_t slot = startSlot; slot < 16; ++slot) {
                     size_t offset = 0x100 + (slot * 0x20);
@@ -1760,6 +1764,17 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     // Campaign & Firefight co-op: keep joining peers even when the engine decides their progress is incompatible
     // (see LobbyPatches::Hook_BootPeer) - otherwise the mission ends with "Error hosting co-op".
     noble::LobbyPatches::SetCampaignCoop(gameModeTag == 1 || gameModeTag == 1035);
+    {
+        // Noble Actual and Lone Wolf are the only stock missions with no gameplay. Their "mission end"
+        // happens right after the cutscene, so do not let the premature-end guard swallow it.
+        std::string lowerMap = effectiveMapName;
+        for (char& ch : lowerMap) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        const bool cinematicOnly = (gameModeTag == 1 || gameModeTag == 5) &&
+                                   (lowerMap == "m05" || lowerMap == "m70_bonus");
+        noble::EnginePatches::SetCinematicOnlyMission(cinematicOnly);
+        if (cinematicOnly)
+            NOBLE_INFO("BlamEngine: '{}' is a cinematic-only mission; allowing its mission end", effectiveMapName);
+    }
 
     // Career pays by base type, so modded maps/variants earn exactly what their stock type earns.
     if (gameModeTag != 0 && !IsSavedFilmPlayback()) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), effectiveMapName, difficulty, skulls);
@@ -1771,12 +1786,22 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     // Removed once in e817d2f and re-proven by test; do not reduce this to 1 for a co-op host.
     if (gameModeTag == 1 || gameModeTag == 1035 || gameModeTag == 5) {
         int declaredPlayers = 1;
-        if (connectAddress.empty() && expectedPeers > 0) declaredPlayers = 1 + expectedPeers;
+        const bool hostWithGuests = connectAddress.empty() && expectedPeers > 0;
+        if (hostWithGuests) declaredPlayers = 1 + expectedPeers;
         // Exactly the players this launch is for. Declaring more than are present leaves the engine waiting at load
         // state 8 for participants that never arrive (a solo launch with 4 declared hangs on the loading screen), and
         // the lobby already passes the full roster, so a three-player lobby declares three and starts.
+        // 5+ co-op: the session has to be created with room for the extra players, otherwise a player joining over
+        // the launch size ends the mission instead of being seated. Only widen when the roster is already over the
+        // engine's stock 4-player co-op size, so the proven 1-4 player launches keep their exact block.
+        if (hostWithGuests && declaredPlayers > 4) {
+            constexpr int kCoopCapacity = 8;
+            declaredPlayers = std::min(16, std::max(declaredPlayers, kCoopCapacity));
+            NOBLE_INFO("BlamEngine: co-op roster is over 4; creating the session with capacity {} (0xE8)", declaredPlayers);
+        }
         launchBlock[0xE8] = static_cast<uint8_t>(declaredPlayers);
-        NOBLE_INFO("BlamEngine: launch block declares {} player(s) (0xE8)", declaredPlayers);
+        NOBLE_INFO("BlamEngine: launch block declares {} player(s) (0xE8), {} expected peer(s), mode {}",
+                   declaredPlayers, expectedPeers, gameModeTag);
     }
 
     // Request corresponding wireframe loading screen .dots
