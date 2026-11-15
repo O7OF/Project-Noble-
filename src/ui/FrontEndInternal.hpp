@@ -263,6 +263,9 @@ struct HintExtra {
   InputPrompts::Button button;
   const char *key;
   const char *label;
+  // Clickable extras get a hover plate and report a click through HintExtraClicked(label) on the next frame (used by the
+  // main-menu "What's New" hint so Tyler can click it, not just press N).
+  bool clickable = false;
 };
 
 
@@ -680,6 +683,7 @@ int DrawList(const Ui &ui, const char *id, ImVec2 pos, float width,
 bool DrawSourceTabs(const Ui &ui, ImVec2 pos, int &active, int moddedCount,
                     int forgeCount = -1, float *tabsEnd = nullptr);
 bool HintClicked(Prompt p);
+bool HintExtraClicked(const char* label);
 bool AcceptPressed();
 void DrawHints(const Ui &ui,
                const std::vector<std::pair<Prompt, const char *>> &hints,

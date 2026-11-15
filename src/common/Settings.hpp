@@ -49,6 +49,9 @@ struct SettingsData {
     float mouseSmoothing = 0.0f;    // 0 = off: evens out jitter, at the cost of a little latency (0..0.9)
     bool invertLook = false;
     bool toggleCrouch = false;     // true: press Crouch once to stay crouched, press again to stand
+    // true: Right Click/zoom key latches the third-person zoom instead of holding it (keyboard & mouse). The controller has
+    // its own padToggleZoom because Reach's pad zoom is already toggled by the engine.
+    bool toggleZoom = false;
     std::map<int, int> keyOverrides; // profile action index -> virtual-key code
     int wheelUpAction = 4;         // action the mouse wheel's up notches trigger (-1 = nothing); 4 = change weapon
     int wheelDownAction = 4;       // same for down notches (engine key 0xAE; up is 0xAF)

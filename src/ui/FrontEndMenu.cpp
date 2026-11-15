@@ -2090,6 +2090,11 @@ using InputPrompts::Prompt;
 int s_hintClicked = -1;   // Prompt clicked during the last frame, -1 = none
 int s_hintThisFrame = -1; // the click being handled this frame
 bool HintClicked(Prompt p) { return s_hintThisFrame == static_cast<int>(p); }
+static std::string s_hintExtraClicked;   // clickable HintExtra label clicked last frame
+static std::string s_hintExtraThisFrame; // the clickable HintExtra label being handled this frame
+bool HintExtraClicked(const char *label) {
+  return label && s_hintExtraThisFrame == label;
+}
 
 bool AcceptPressed() {
   // A modal, text input box, or chat line owns ENTER/A while it is up;
@@ -2137,6 +2142,7 @@ void DrawHints(const Ui &ui,
   }
   const bool pad = InputPrompts::Current() == InputPrompts::Device::Gamepad;
   for (const HintExtra &extra : extras) {
+    const float x0 = x;
     x += (pad ? InputPrompts::DrawButton(ui.dl, NobleStyle::SmallFont(),
                                          ImVec2(x, y), 22.0f * ui.s,
                                          extra.button)
@@ -2145,8 +2151,20 @@ void DrawHints(const Ui &ui,
          7.0f * ui.s;
     Text(ui, NobleStyle::SmallFont(), 17.0f, ImVec2(x, y + 2.0f * ui.s), kWhite,
          extra.label);
-    x += TextWidth(NobleStyle::SmallFont(), 17.0f * ui.s, extra.label) +
-         26.0f * ui.s;
+    x += TextWidth(NobleStyle::SmallFont(), 17.0f * ui.s, extra.label);
+    if (extra.clickable) {
+      const ImVec2 r0(x0 - 6.0f * ui.s, y - 5.0f * ui.s);
+      const ImVec2 r1(x + 8.0f * ui.s, y + 27.0f * ui.s);
+      if (ImGui::IsMouseHoveringRect(r0, r1, false)) {
+        ui.dl->AddRectFilled(r0, r1, IM_COL32(143, 216, 255, 40), 3.0f * ui.s);
+        ui.dl->AddRect(r0, r1, IM_COL32(143, 216, 255, 120), 3.0f * ui.s);
+        if (ImGui::IsMouseClicked(0)) {
+          s_hintExtraClicked = extra.label ? extra.label : "";
+          MenuSounds::Click();
+        }
+      }
+    }
+    x += 26.0f * ui.s;
   }
 }
 
@@ -2950,9 +2968,10 @@ int ClickRow(const Ui &ui, const char *id, ImVec2 pos, float width,
   const int change =
       OptionRow(ui, id, pos, width, label, value, focused, nullptr, false);
   ImGui::PushID(id);
-  ImGui::SetCursorScreenPos(ImVec2(pos.x + width * 0.48f, pos.y));
-  const bool hit =
-      ImGui::InvisibleButton("##mid", ImVec2(width * 0.52f, 32.0f * ui.s));
+  // The whole row is the click target. It used to be only the middle/value 52%, so clicking the row's label (or the
+  // empty left half) did nothing - that is why GAME OPTIONS looked unclickable on Custom/Firefight/Forge.
+  ImGui::SetCursorScreenPos(pos);
+  const bool hit = ImGui::InvisibleButton("##row", ImVec2(width, 32.0f * ui.s));
   DrawMiddleHint(ui, pos, width, value, ImGui::IsItemHovered(), false, down);
   ImGui::PopID();
   if (hit)
@@ -4606,6 +4625,30 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
     io.AddMousePosEvent(last.x, last.y);
     io.AddMouseButtonEvent(0, false);
     io.AddMouseButtonEvent(1, false);
+    // Test-only "-menu-wheel-at <seconds> <notches>" (repeatable): wheel over the parked mouse position, so lists that need
+    // scrolling (Settings category rows) can be captured. Positive = wheel up.
+    struct TestWheel { double at = 0.0; float notches = 0.0f; };
+    static bool s_wheelParsed = false;
+    static std::vector<TestWheel> s_wheels;
+    static size_t s_wheelIdx = 0;
+    if (!s_wheelParsed) {
+      s_wheelParsed = true;
+      int wargc = 0;
+      LPWSTR *wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+      for (int i = 1; wargv && i + 2 < wargc; ++i) {
+        if (_wcsicmp(wargv[i], L"-menu-wheel-at") == 0) {
+          TestWheel w;
+          w.at = _wtof(wargv[i + 1]);
+          w.notches = static_cast<float>(_wtof(wargv[i + 2]));
+          if (w.at > 0.0) s_wheels.push_back(w);
+        }
+      }
+      if (wargv) LocalFree(wargv);
+    }
+    if (s_wheelIdx < s_wheels.size() && ImGui::GetTime() >= s_wheels[s_wheelIdx].at) {
+      io.AddMouseWheelEvent(0.0f, s_wheels[s_wheelIdx].notches);
+      ++s_wheelIdx;
+    }
     return;
   }
 
@@ -5245,6 +5288,7 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
   const float top = ui.size.y * 0.09f;
   const SettingsData settings = Settings::Get().Snapshot();
   s_hintThisFrame = std::exchange(s_hintClicked, -1);
+  s_hintExtraThisFrame = std::exchange(s_hintExtraClicked, std::string());
   const bool modPromptOpen = ModDownloadPrompt::Get().IsActive();
   // A choice list that was open last frame owns Back and the up/down keys this
   // frame.
@@ -5401,12 +5445,13 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
         st.quitChoice = 1;
         MenuSounds::Back();
       } else if (!ImGui::GetIO().WantTextInput &&
-                 (UiPad::ActionY() || ImGui::IsKeyPressed(ImGuiKey_N, false))) {
+                 (UiPad::ActionY() || ImGui::IsKeyPressed(ImGuiKey_N, false) ||
+                  HintExtraClicked("What's New"))) {
         s_showChangelogManual = true;
         MenuSounds::Click();
       }
       DrawHints(ui, {{Prompt::Accept, "Select"}, {Prompt::Back, "Quit"}},
-                {{InputPrompts::Button::Y, "N", "What's New"}});
+                {{InputPrompts::Button::Y, "N", "What's New", true}});
     } else if (st.confirmQuit) {
       // Dim everything and show the question in the middle.
       ui.dl->AddRectFilled(

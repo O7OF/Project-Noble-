@@ -398,6 +398,20 @@ void SettingsPanel::Render() {
     std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s",
                   m_edit.masterServerUrl.c_str());
     m_loaded = true;
+    // Test-only "-settings-search <text>": pre-fills the search box so a capture can show filtered rows (e.g. "toggle"
+    // for the TOGGLE CROUCH / TOGGLE ZOOM options) without typing into an unfocused window.
+    {
+      int argc = 0;
+      LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+      for (int i = 1; argv && i + 1 < argc; ++i) {
+        if (_wcsicmp(argv[i], L"-settings-search") == 0) {
+          std::wstring ws(argv[i + 1]);
+          const std::string text(ws.begin(), ws.end());
+          std::snprintf(m_search, sizeof(m_search), "%s", text.c_str());
+        }
+      }
+      if (argv) LocalFree(argv);
+    }
   } else {
     // Keep identity fields in sync if they were updated outside SettingsPanel
     // (e.g. in Armory or First-Start).
@@ -2187,10 +2201,19 @@ void SettingsPanel::RenderKeyboardMouse() {
     if (g == ActionGroup::Movement) {
       if (Row("TOGGLE CROUCH",
               "On: press Crouch once to stay crouched, press again to stand "
-              "up. Off: crouch only while you hold the Crouch key.",
+              "up. Works for the Crouch key and the controller crouch button. "
+              "Off: crouch only while you hold it.",
               When::Apply, "Off",
               m_edit.toggleCrouch != m_saved.toggleCrouch)) {
         ToggleValue(m_edit.toggleCrouch);
+      }
+      if (Row("TOGGLE ZOOM",
+              "On: press Zoom (right click by default) once to stay zoomed, "
+              "press again to release. Off: zoom only while you hold it. The "
+              "controller has its own Toggle zoom option under Controller.",
+              When::Apply, "Off",
+              m_edit.toggleZoom != m_saved.toggleZoom)) {
+        ToggleValue(m_edit.toggleZoom);
       }
     }
   }
@@ -2838,6 +2861,7 @@ int SettingsPanel::CountDiff(const SettingsData &a, const SettingsData &b,
             f(a.mouseAcceleration, b.mouseAcceleration) +
             f(a.mouseSmoothing, b.mouseSmoothing) +
             (a.toggleCrouch != b.toggleCrouch) +
+            (a.toggleZoom != b.toggleZoom) +
             (a.wheelUpAction != b.wheelUpAction) +
             (a.wheelDownAction != b.wheelDownAction);
     for (int i = 0; i < KeyBindings::kActionCount; ++i) {
@@ -2960,6 +2984,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     e.mouseAcceleration = d.mouseAcceleration;
     e.mouseSmoothing = d.mouseSmoothing;
     e.toggleCrouch = d.toggleCrouch;
+    e.toggleZoom = d.toggleZoom;
     e.wheelUpAction = d.wheelUpAction;
     e.wheelDownAction = d.wheelDownAction;
     e.keyOverrides.clear();

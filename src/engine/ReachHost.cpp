@@ -2109,6 +2109,24 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
         }
         s_zoomWas = zoomNow;
     }
+    // Toggle crouch for the controller: the SETTINGS > CONTROLS > KEYBOARD & MOUSE > TOGGLE CROUCH option applies to the
+    // pad too. A rising edge of the crouch button flips a latched state, so the engine stays crouched until pressed again.
+    {
+        static bool s_padCrouchWas = false;
+        static bool s_padCrouchToggled = false;
+        if (!s_pad.toggleCrouch || UiCursorActive() || !s_padMode) {
+            s_padCrouchWas = false;
+            s_padCrouchToggled = false;
+        } else {
+            const bool crouchNow = (buttons & 0x0040) != 0;
+            if (crouchNow && !s_padCrouchWas) s_padCrouchToggled = !s_padCrouchToggled;
+            if (s_padCrouchToggled)
+                buttons = static_cast<WORD>(buttons | 0x0040);
+            else
+                buttons = static_cast<WORD>(buttons & ~0x0040);
+            s_padCrouchWas = crouchNow;
+        }
+    }
     // The maths lives in engine/InputTuning.cpp so the self-test can prove these settings change the output.
     SHORT lx = g.sThumbLX, ly = g.sThumbLY, rx = g.sThumbRX, ry = g.sThumbRY;
     InputTuning::ApplyStickLayout(s_pad.padStickLayout, lx, ly, rx, ry);
@@ -2436,14 +2454,33 @@ static void FillLocalInput(uint8_t* st) {
     // Third-person weapon aim zoom: holding the bound Zoom key (slot 10, default Right Click) zooms the
     // third-person camera according to SETTINGS > GAME OPTIONS > CAMERA > THIRD-PERSON ZOOM.
     // Pressing Q must never trigger zoom unless the user explicitly set the Zoom keybind (slot 10) to Q.
+    // SETTINGS > CONTROLS > KEYBOARD & MOUSE > TOGGLE ZOOM latches it instead (press once, press again to release); the pad
+    // has its own padToggleZoom because Reach's controller zoom already toggles.
     bool mkZoomHeld = false;
     {
+        static bool s_mkZoomWasDown = false;
+        static bool s_mkZoomToggled = false;
+        static bool s_mkToggleZoom = false;
+        static ULONGLONG s_mkToggleZoomRead = 0;
+        if (GetTickCount64() - s_mkToggleZoomRead > 500) {
+            s_mkToggleZoomRead = GetTickCount64();
+            s_mkToggleZoom = Settings::Get().Snapshot().toggleZoom;
+        }
         const int zoomVk = KeyBindings::EffectiveKey(10);
         const bool boundZoomDown = zoomVk > 0 && zoomVk < 256 && st[0x004 + zoomVk] != 0;
-        mkZoomHeld = !uiPointer && !boardDown && !s_holdMouseUntilRelease &&
-                     (CameraThirdPerson::IsEnabled() || CameraThirdPerson::EngineWantsThirdPerson()) &&
-                     !(CameraThirdPerson::IsVehicleFirstPerson() && CameraThirdPerson::IsInVehicle() && !CameraThirdPerson::IsLocked()) &&
-                     boundZoomDown;
+        const bool zoomContext =
+            !uiPointer && !boardDown && !s_holdMouseUntilRelease &&
+            (CameraThirdPerson::IsEnabled() || CameraThirdPerson::EngineWantsThirdPerson()) &&
+            !(CameraThirdPerson::IsVehicleFirstPerson() && CameraThirdPerson::IsInVehicle() && !CameraThirdPerson::IsLocked());
+        if (!zoomContext || !s_mkToggleZoom) {
+            s_mkZoomToggled = false;
+            s_mkZoomWasDown = false;
+            mkZoomHeld = zoomContext && boundZoomDown;
+        } else {
+            if (boundZoomDown && !s_mkZoomWasDown) s_mkZoomToggled = !s_mkZoomToggled;
+            s_mkZoomWasDown = boundZoomDown;
+            mkZoomHeld = s_mkZoomToggled;
+        }
     }
 
     // Mouse look: delta from the window centre, then recentre (not while a menu owns the pointer).
