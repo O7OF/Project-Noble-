@@ -72,6 +72,18 @@ std::string Format(const char *fmt, double v) {
 }
 std::string Percent(float v) { return Format("%.0f %%", v * 100.0f); }
 
+// Cuts a row label with "..." so it never runs into the slider column (long camera labels used to overlap the slider
+// track, which made the whole row of sliders look offset - Tyler's "game options wheels" report).
+std::string FitLabel(ImFont *font, float px, const char *text, float maxW) {
+  if (!text) return std::string();
+  if (maxW <= 0.0f || TextWidth(font, px, text) <= maxW) return text;
+  std::string out(text);
+  while (!out.empty() &&
+         TextWidth(font, px, (out + "...").c_str()) > maxW)
+    out.pop_back();
+  return out + "...";
+}
+
 struct CatInfo {
   const char *group; // printed above the first category of a group
   const char *name;
@@ -846,13 +858,18 @@ bool SettingsPanel::Row(const char *label, const char *description, When when,
   RowBackground(dl, p, q, focused, hovered);
   if (changed)
     ChangedDot(dl, ImVec2(p.x + 10.0f * s, p.y + h * 0.5f), s);
+  // Slider/value column starts at the same place on every row; the label is clipped to it so a long label can never
+  // overlap the slider track.
+  const float valMinX = p.x + w * 0.46f;
+  const std::string fittedLabel = FitLabel(
+      NobleStyle::TitleFont(), 17.0f * s, label, valMinX - (p.x + 20.0f * s) - 10.0f * s);
   Text(dl, NobleStyle::TitleFont(), 17.0f * s,
        ImVec2(p.x + 20.0f * s, p.y + h * 0.5f - 10.0f * s),
        disabled ? kTextOff : (focused ? kText : IM_COL32(190, 214, 232, 255)),
-       label);
+       fittedLabel.c_str());
   ImGui::Dummy(ImVec2(w, h));
 
-  m_valMin = ImVec2(p.x + w * 0.46f, p.y + 4.0f * s);
+  m_valMin = ImVec2(valMinX, p.y + 4.0f * s);
   m_valMax = ImVec2(q.x - 10.0f * s, q.y - 4.0f * s);
   m_rowFocused = focused;
   m_rowHovered = hovered;
@@ -878,8 +895,10 @@ bool SettingsPanel::SliderValue(float &v, float lo, float hi, float step,
   const float s = Scale();
   bool changed = false;
   const ImVec2 save = ImGui::GetCursorScreenPos();
-  const float textW =
-      std::max(86.0f * s, TextWidth(nullptr, 17.0f * s, text) + 14.0f * s);
+  // Fixed value-column width for every slider: the track ends at the same x on every row instead of growing/shrinking
+  // with the width of the current value text (rows whose value was "OUT 120 %" ended further left than rows showing
+  // "100 %", so the sliders looked offset from one another - Tyler's Game Options report).
+  const float textW = 132.0f * s;
   const bool percent = std::strchr(text, '%') != nullptr &&
                        hi <= 1.0f; // shown as 0-100%, stored as 0-1
   ImGui::SetCursorScreenPos(m_valMin);
