@@ -500,6 +500,34 @@ void __fastcall Hook_CameraFollow(void* camera, int32_t userIndex, float dt, voi
     CameraHookDepthGuard guard(s_cameraHookDepth);
     if (s_originalFollow) s_originalFollow(camera, userIndex, dt, observerCommand);
     if (userIndex != 0) return; // never write the local player's tuning onto another observer
+    // Test-only "-visor-cam-test": put the camera in front of the local player's head and look back, so a capture shows
+    // the actual in-game visor colour (used to verify Armory -> match appearance; pair with -third-person).
+    static const bool s_visorCamTest = std::wcsstr(GetCommandLineW(), L"-visor-cam-test") != nullptr;
+    if (s_visorCamTest && observerCommand) {
+        const int32_t localUnit = s_getLocalUnit ? s_getLocalUnit(0) : -1;
+        if (localUnit != -1 && s_getUnitHeadPos) {
+            float head[3] = {};
+            s_getUnitHeadPos(localUnit, head);
+            auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
+            auto* fwd = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x2C);
+            float f[3] = { fwd[0], fwd[1], fwd[2] };
+            const float len = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+            if (len > 1e-3f) { f[0] /= len; f[1] /= len; f[2] /= len; }
+            pos[0] = head[0] + f[0] * 1.35f;
+            pos[1] = head[1] + f[1] * 1.35f;
+            pos[2] = head[2] + f[2] * 1.35f + 0.05f;
+            fwd[0] = -f[0];
+            fwd[1] = -f[1];
+            fwd[2] = -f[2];
+            static bool s_loggedVisorCam = false;
+            if (!s_loggedVisorCam) {
+                s_loggedVisorCam = true;
+                NOBLE_INFO("CameraThirdPerson: -visor-cam-test camera in front of unit 0x{:X} (head {:.2f},{:.2f},{:.2f})",
+                           static_cast<uint32_t>(localUnit), head[0], head[1], head[2]);
+            }
+            return;
+        }
+    }
     if (observerCommand && DevCheats::IsFreecamActive()) {
         auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
         const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
@@ -513,6 +541,26 @@ void __fastcall Hook_CameraFollowingUpdate(void* camera, int32_t userIndex, floa
     CameraHookDepthGuard guard(s_cameraHookDepth);
     if (s_originalFollowingUpdate) s_originalFollowingUpdate(camera, userIndex, dt, observerCommand);
     if (userIndex != 0) return;
+    static const bool s_visorCamTest = std::wcsstr(GetCommandLineW(), L"-visor-cam-test") != nullptr;
+    if (s_visorCamTest && observerCommand) {
+        const int32_t localUnit = s_getLocalUnit ? s_getLocalUnit(0) : -1;
+        if (localUnit != -1 && s_getUnitHeadPos) {
+            float head[3] = {};
+            s_getUnitHeadPos(localUnit, head);
+            auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
+            auto* fwd = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x2C);
+            float f[3] = { fwd[0], fwd[1], fwd[2] };
+            const float len = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+            if (len > 1e-3f) { f[0] /= len; f[1] /= len; f[2] /= len; }
+            pos[0] = head[0] + f[0] * 1.35f;
+            pos[1] = head[1] + f[1] * 1.35f;
+            pos[2] = head[2] + f[2] * 1.35f + 0.05f;
+            fwd[0] = -f[0];
+            fwd[1] = -f[1];
+            fwd[2] = -f[2];
+            return;
+        }
+    }
     if (observerCommand && DevCheats::IsFreecamActive()) {
         auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
         const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);

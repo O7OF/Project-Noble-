@@ -1,7 +1,8 @@
-﻿#include "ReachArmory.hpp"
+#include "ReachArmory.hpp"
 #include "ElitePack.hpp"
 #include "SharedTagCache.hpp"
 #include "common/Logger.hpp"
+#include "common/ArmoryVisor.hpp"
 #include "network/NetworkTransport.hpp"
 #include "ui/FrontEndMenu.hpp"
 #include "EmbeddedBlocks.hpp"
@@ -859,6 +860,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
     HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+    int matchedVisorMaterials = 0;
     __try {
         uint8_t* tagTable = *reinterpret_cast<uint8_t* const*>(base + 0xC1A600);
         if (!tagTable) return;
@@ -919,6 +921,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                     // 3) spartan_helmet_interior_visor (21 float4s, f4[1][0] == 3.0f, f4[8][0] == 1.0f):
                     //    f4[17] (+0x110) = visor specular/env tint, f4[6] (+0x60) & f4[7] (+0x70) = visor reflection tint
                     else if (visorRgb && f4Count == 21 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[8 * 4 + 0] - 1.0f) < 0.1f) {
+                        ++matchedVisorMaterials;
                         f4[6 * 4 + 0] = visorRgb[0];
                         f4[6 * 4 + 1] = visorRgb[1];
                         f4[6 * 4 + 2] = visorRgb[2];
@@ -935,6 +938,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                     // 4) Secondary visor material (24 float4s, f4[1][0] == 10.0f):
                     //    f4[9] (+0x90) & f4[10] (+0xA0) = visor gold/reflection tint
                     else if (visorRgb && f4Count == 24 && std::abs(f4[1 * 4 + 0] - 10.0f) < 0.1f) {
+                        ++matchedVisorMaterials;
                         f4[9 * 4 + 0] = visorRgb[0];
                         f4[9 * 4 + 1] = visorRgb[1];
                         f4[9 * 4 + 2] = visorRgb[2];
@@ -946,6 +950,11 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                     }
                 }
             }
+        }
+        static std::atomic<int> s_visorPatchLogs{0};
+        if (visorRgb && s_visorPatchLogs.fetch_add(1) < 5) {
+            NOBLE_INFO("ReachArmory: visor shader tint applied to {} material(s) (rgb {:.2f},{:.2f},{:.2f})",
+                       matchedVisorMaterials, visorRgb[0], visorRgb[1], visorRgb[2]);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
@@ -2664,16 +2673,65 @@ static bool ReadEngineModeFlagsSEH(uintptr_t base, bool* outIsCampaign, bool* ou
     }
 }
 
+// Campaign maps put AI Spartans (Noble Team) next to the player and the visor shader is map-wide. If the local player's
+// biped type is the only one in the loaded object table, patching the material cannot tint any NPC, so the exact Armory
+// visor colour can be shown in campaign too (Lone Wolf, solo customs); otherwise campaign keeps the stock material and
+// the profile picks the nearest valid stock visor slot instead of an invalid extended index (which renders white).
+[[maybe_unused]] static bool CampaignSpartanMaterialIsLocalOnlySEH(uintptr_t base, uint32_t localUnitDatum) {
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(
+            __readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return false;
+        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
+        if (!objTable) return false;
+        const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
+        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
+        if (!entries) return false;
+        // Find the local unit's biped tag index first.
+        int localBipd = -1;
+        const uint32_t localIndex = localUnitDatum & 0xFFFFu;
+        if (localIndex < static_cast<uint32_t>(maxObjects)) {
+            const uint8_t* entry = entries + static_cast<size_t>(localIndex) * 0x18;
+            const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry + 0x00);
+            if (salt != 0 && entry[0x04] == 0) {
+                const uint8_t* objPtr = *reinterpret_cast<uint8_t* const*>(entry + 0x10);
+                if (objPtr) localBipd = *reinterpret_cast<const uint16_t*>(objPtr);
+            }
+        }
+        if (localBipd < 0) return false;
+        for (int32_t i = 0; i < maxObjects; ++i) {
+            const uint8_t* entry = entries + static_cast<size_t>(i) * 0x18;
+            const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry + 0x00);
+            if (salt == 0 || entry[0x04] != 0) continue;
+            const uint8_t* objPtr = *reinterpret_cast<uint8_t* const*>(entry + 0x10);
+            if (!objPtr) continue;
+            const uint32_t datum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
+            if (datum == localUnitDatum) continue;
+            if (*reinterpret_cast<const uint16_t*>(objPtr) == static_cast<uint16_t>(localBipd)) return false;
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 void ReachArmory::SyncMatchLiveBipeds() {
-    if (CampaignKeepsStockMaterial()) return;
     HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
 
+    // Campaign keeps the stock map-wide material (the shader rewrite below is map-wide and would paint Noble Team's
+    // visors too), but the LOCAL player's own biped must still get the Armory visor colour: the engine's profile record
+    // only renders visor slots 0..4, so an extended finish (>= 5, e.g. blood_orange) shows white in campaign unless the
+    // per-object change colour is forced. Object writes are local-only and skipped in networked synchronous modes below.
+    const bool campaignStockMaterial = CampaignKeepsStockMaterial();
+
     bool liveCampaign = false;
     bool liveSynchronousSim = false;
     const bool hasLiveFlags = ReadEngineModeFlagsSEH(base, &liveCampaign, &liveSynchronousSim);
-    if (hasLiveFlags && liveCampaign) return;
+    const bool inCampaign = campaignStockMaterial || (hasLiveFlags && liveCampaign);
+    (void)inCampaign;   // kept for future scoping (campaign tag patch is map-wide, see the visor note below)
 
     const ReachArmorySelection sel = GetSelection();
     {   // every match, also without custom colours; only the local player's own appearance copy (0 = none yet)
@@ -2704,6 +2762,10 @@ void ReachArmory::SyncMatchLiveBipeds() {
 
     static ULONGLONG s_lastTagUpdate = 0;
     const ULONGLONG now = GetTickCount64();
+    // Extended finishes have no engine visor slot (only stock slots 0..4 exist; an invalid index renders white), so
+    // their exact colour has to come from the map shader patch, exactly like the Armory preview does. This is map-wide:
+    // every Spartan in the loaded map gets the local player's visor tint. That is the cost of custom finishes until the
+    // tint is replicated per player.
     if (now - s_lastTagUpdate > 250) {
         s_lastTagUpdate = now;
         UpdateTagShaderConstantsSEH(
@@ -2712,6 +2774,14 @@ void ReachArmory::SyncMatchLiveBipeds() {
             sel.accentCustom ? sel.accentRgb.data() : nullptr,
             nullptr,   // undersuit: never painted (see WriteColorsAndSuit)
             customVisor ? visFloats : nullptr);
+    }
+
+    static bool s_loggedVisorMode = false;
+    if (customVisor && !s_loggedVisorMode) {
+        s_loggedVisorMode = true;
+        const int engineSlot = ArmoryVisorStockIndex(sel.visorColorIndex, sel.visor);
+        NOBLE_INFO("ReachArmory: visor '{}' (catalog {}) -> stock engine slot {}; local change colour 3 ({:.2f},{:.2f},{:.2f}); visor shader tint on (map-wide)",
+                   sel.visor, sel.visorColorIndex, engineSlot, visFloats[0], visFloats[1], visFloats[2]);
     }
 
     // Never mutate deterministic object-pool datums locally in networked synchronous lockstep modes
