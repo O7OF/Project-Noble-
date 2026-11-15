@@ -4554,6 +4554,61 @@ void UpdateSceneForScreen(Screen screen) {
 }
 
 void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
+  // Test-only "-menu-click-at <seconds> <x> <y>" (repeatable): injects left clicks at screen coordinates (ImGui
+  // display space, same 1920x1080 space as the capture BMPs) after the given time. The mouse never moves and the window
+  // can stay unfocused, so hover/click bugs on menu buttons can be reproduced with -capture-at.
+  struct TestClick {
+    double at = 0.0;
+    float x = 0.0f;
+    float y = 0.0f;
+  };
+  static bool s_clickParsed = false;
+  static std::vector<TestClick> s_clicks;
+  static size_t s_clickIdx = 0;
+  static int s_clickPhase = 0; // 0 = waiting, 1 = press, 2 = release
+  if (!s_clickParsed) {
+    s_clickParsed = true;
+    int argc = 0;
+    LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; argv && i + 3 < argc; ++i) {
+      if (_wcsicmp(argv[i], L"-menu-click-at") == 0) {
+        TestClick c;
+        c.at = _wtof(argv[i + 1]);
+        c.x = static_cast<float>(_wtof(argv[i + 2]));
+        c.y = static_cast<float>(_wtof(argv[i + 3]));
+        if (c.at > 0.0)
+          s_clicks.push_back(c);
+      }
+    }
+    if (argv)
+      LocalFree(argv);
+  }
+  if (!s_clicks.empty()) {
+    if (s_clickIdx < s_clicks.size()) {
+      const TestClick &c = s_clicks[s_clickIdx];
+      if (s_clickPhase == 0 && ImGui::GetTime() >= c.at)
+        s_clickPhase = 1;
+      if (s_clickPhase == 1) {
+        io.AddMousePosEvent(c.x, c.y);
+        io.AddMouseButtonEvent(0, true);
+        s_clickPhase = 2;
+        return;
+      }
+      if (s_clickPhase == 2) {
+        io.AddMousePosEvent(c.x, c.y);
+        io.AddMouseButtonEvent(0, false);
+        s_clickPhase = 0;
+        ++s_clickIdx;
+        return;
+      }
+    }
+    const TestClick &last = s_clicks.back();
+    io.AddMousePosEvent(last.x, last.y);
+    io.AddMouseButtonEvent(0, false);
+    io.AddMouseButtonEvent(1, false);
+    return;
+  }
+
   // Test-only: "-menu-ignore-input" freezes the menu for screenshots. The
   // window still renders, but the mouse/keyboard cannot move the selection or
   // cycle the Armory camera while a capture is taken.

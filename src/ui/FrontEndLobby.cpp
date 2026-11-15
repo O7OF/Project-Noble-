@@ -701,7 +701,7 @@ static void DrawLobbyMapPickerModal(OverlayContext &ctx, const Ui &ui,
       s_lobbyPickerIdx, s_lobbyPickerMvar, true,
       modded ? "No matching modded maps"
              : (forgeTab ? "No matching Forge maps" : "No maps found"),
-      campaign ? "BASE MISSION" : "BASE MAP");
+      campaign ? "BASE MISSION" : "BASE MAP", false, modMode);
 
   // Right Preview & Confirm Card
   const MapTileGroup *selGrp =

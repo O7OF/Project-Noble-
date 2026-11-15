@@ -627,6 +627,27 @@ std::vector<MapTileGroup> BuildMapTileGroups(
                                             : mod->multiplayer;
       std::vector<MapEntry> maps =
           ModMaps(*mod, listed, baseMaps, baseCount, carrier);
+      if (maps.empty())
+        continue;
+      // A mod is one collapsed section until the player opens it (or types a search): its maps used to be all on
+      // screen at once, which made a 10-mod campaign list hundreds of tiles long. The section banner shows the mod
+      // title and how many maps it contains; clicking it expands the section.
+      const bool open =
+          !query.empty() || ctx.st.openMods.count(OpenKey(modMode, *mod)) != 0;
+      if (!open) {
+        MapTileGroup section;
+        section.key = "modsection:" + OpenKey(modMode, *mod);
+        MapEntry banner = maps.front();
+        banner.name = mod->title;
+        banner.blurb = PlainDescription(mod->description, 180);
+        banner.header = true;
+        banner.enabled = false;
+        banner.mod = mod;
+        section.base = std::move(banner);
+        section.sectionMapCount = static_cast<int>(maps.size());
+        groups.push_back(std::move(section));
+        continue;
+      }
       bool firstInMod = true;
       for (MapEntry &m : maps) {
         if (m.header)
@@ -778,7 +799,8 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                     ImVec2 gridSize, const std::vector<MapTileGroup> &groups,
                     int &selectedGroupIdx, std::filesystem::path &selectedMvar,
                     bool hasFocus, const char *emptyText,
-                    const char *baseItemTag, bool autoScrollSelection) {
+                    const char *baseItemTag, bool autoScrollSelection,
+                    ModMode openMode) {
   TacticalGridResult res;
   const ImVec2 gridEnd(gridPos.x + gridSize.x, gridPos.y + gridSize.y);
 
@@ -814,6 +836,7 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
     int col[2] = {-1, -1};
     int expandedCol =
         -1; // 0 or 1 if one of the 2 tiles in this row has its drawer open
+    bool section = false; // full-width collapsed mod banner row
     float y = 0.0f;
     float tilesH = 0.0f;
     float drawerH = 0.0f;
@@ -833,15 +856,18 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
 
   std::vector<VisualRow> vrows;
   std::vector<std::pair<int, int>> groupToRowCol(groups.size(), {0, 0});
+  const float sectionH = 48.0f * ui.s;
   for (int i = 0; i < static_cast<int>(groups.size()); ++i) {
     const std::string &hdr = groups[i].groupHeading;
-    const bool needNewRow =
-        vrows.empty() || !hdr.empty() || vrows.back().col[1] >= 0;
+    const bool isSection = groups[i].sectionMapCount > 0;
+    const bool needNewRow = vrows.empty() || isSection || !hdr.empty() ||
+                            vrows.back().col[1] >= 0;
     if (needNewRow) {
       VisualRow vr;
-      vr.heading = hdr;
+      vr.heading = isSection ? std::string() : hdr;
+      vr.section = isSection;
       vr.col[0] = i;
-      vr.tilesH = tileH;
+      vr.tilesH = isSection ? sectionH : tileH;
       vrows.push_back(std::move(vr));
     } else {
       vrows.back().col[1] = i;
@@ -849,7 +875,7 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
     const int rIdx = static_cast<int>(vrows.size()) - 1;
     const int cIdx = (vrows.back().col[0] == i) ? 0 : 1;
     groupToRowCol[i] = {rIdx, cIdx};
-    if (st.mapDrawerKey == groups[i].key) {
+    if (!isSection && st.mapDrawerKey == groups[i].key) {
       vrows[rIdx].expandedCol = cIdx;
       const int totalDrawerItems =
           1 + static_cast<int>(groups[i].variants.size());
@@ -936,7 +962,15 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
           UiPad::ConsumeAccept();
         UiPad::ConsumeAll();
         const MapTileGroup &grp = groups[selectedGroupIdx];
-        if (st.mapDrawerKey == grp.key && wasY) {
+        if (grp.sectionMapCount > 0 && grp.base.mod) {
+          // Collapsed mod banner: Accept / click expands or folds the whole mod section.
+          const std::string k = OpenKey(openMode, *grp.base.mod);
+          if (!st.openMods.erase(k))
+            st.openMods.insert(k);
+          st.mapDrawerKey.clear();
+          st.mapDrawerFocus = -1;
+          MenuSounds::Click();
+        } else if (st.mapDrawerKey == grp.key && wasY) {
           st.mapDrawerKey.clear();
           st.mapDrawerFocus = -1;
           MenuSounds::Back();
@@ -1092,6 +1126,72 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                Upper(vr.heading).c_str());
         }
 
+        if (vr.section) {
+          // Collapsed mod section: one full-width banner. Click (or Accept) expands the mod into its map tiles.
+          const int gIdx = vr.col[0];
+          const MapTileGroup &grp = groups[gIdx];
+          const ImVec2 s0(gridPos.x + pad, rowDrawY);
+          const ImVec2 s1(gridPos.x + pad + innerW, rowDrawY + vr.tilesH);
+          const bool isSel = (gIdx == selectedGroupIdx);
+          const bool isFocused = hasFocus && isSel;
+          ImGui::SetCursorScreenPos(s0);
+          ImGui::PushID("modsec");
+          ImGui::PushID(gIdx);
+          const bool secClicked =
+              ImGui::InvisibleButton("##modsec", ImVec2(s1.x - s0.x, s1.y - s0.y));
+          const bool secHovered = ImGui::IsItemHovered();
+          ImGui::PopID();
+          ImGui::PopID();
+          if (secHovered && mouseMoved)
+            MenuSounds::Hover(ImGui::GetID(grp.key.c_str()));
+          if (secClicked) {
+            selectedGroupIdx = gIdx;
+            if (grp.base.mod) {
+              const std::string k = OpenKey(openMode, *grp.base.mod);
+              if (!st.openMods.erase(k))
+                st.openMods.insert(k);
+            }
+            st.mapDrawerKey.clear();
+            st.mapDrawerFocus = -1;
+            MenuSounds::Click();
+          }
+          ui.dl->AddRectFilled(s0, s1,
+                               (secHovered || isSel)
+                                   ? IM_COL32(24, 46, 68, 235)
+                                   : IM_COL32(13, 24, 36, 225),
+                               4.0f * ui.s);
+          ui.dl->AddRectFilled(s0, ImVec2(s0.x + 3.0f * ui.s, s1.y),
+                               kAccent, 2.0f * ui.s);
+          NobleUi::DrawTacticalFrame(ui.dl, s0, s1, ui.s, isFocused,
+                                     isSel || secHovered, false, true);
+          const char *unit =
+              (baseItemTag && std::strstr(baseItemTag, "MISSION")) ? "MISSIONS"
+                                                                   : "MAPS";
+          char cnt[64];
+          std::snprintf(cnt, sizeof(cnt), "%d %s", grp.sectionMapCount, unit);
+          const std::string modTitle = Ellipsize(
+              NobleStyle::TitleFont(), 20.0f * ui.s, Upper(grp.base.name),
+              innerW - 240.0f * ui.s);
+          Text(ui, NobleStyle::TitleFont(), 20.0f,
+               ImVec2(s0.x + 16.0f * ui.s, s0.y + 11.0f * ui.s), kWhite,
+               modTitle.c_str());
+          const float cntW = TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, cnt);
+          Text(ui, NobleStyle::SmallFont(), 14.0f,
+               ImVec2(s1.x - cntW - 120.0f * ui.s, s0.y + 16.0f * ui.s),
+               IM_COL32(150, 180, 205, 235), cnt);
+          const char *expandLbl = "CLICK TO EXPAND";
+          const float expW =
+              TextWidth(NobleStyle::SmallFont(), 12.5f * ui.s, expandLbl);
+          Text(ui, NobleStyle::SmallFont(), 12.5f,
+               ImVec2(s1.x - expW - 22.0f * ui.s, s0.y + 16.0f * ui.s),
+               kAccent, expandLbl);
+          const float cx = s1.x - 18.0f * ui.s;
+          const float cyMid = s0.y + vr.tilesH * 0.5f;
+          ui.dl->AddTriangleFilled(ImVec2(cx - 4.0f * ui.s, cyMid - 6.0f * ui.s),
+                                   ImVec2(cx + 5.0f * ui.s, cyMid),
+                                   ImVec2(cx - 4.0f * ui.s, cyMid + 6.0f * ui.s),
+                                   kAccent);
+        } else {
         // Draw up to 2 tiles in this row
         for (int c = 0; c < 2; ++c) {
           const int gIdx = vr.col[c];
@@ -1259,7 +1359,7 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                          IM_COL32(255, 175, 70, 140), 1.0f);
           char headTxt[128];
           std::snprintf(headTxt, sizeof(headTxt),
-                        "%s  \xE2\x80\x94  BASE MAP & VARIANTS (%zu)",
+                        "%s  -  BASE MAP & VARIANTS (%zu)",
                         Upper(grp.base.name).c_str(), grp.variants.size());
           Text(ui, NobleStyle::TitleFont(), 15.5f,
                ImVec2(hd0.x + 12.0f * ui.s, hd0.y + 6.0f * ui.s),
@@ -1441,6 +1541,7 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
             std::clamp(static_cast<int>(drScrollFloat + 0.5f), 0, maxDScroll);
       }
     }
+        }
   }
   ui.dl->PopClipRect();
 
@@ -2203,10 +2304,17 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
             st.mapGridScrollY = 0.0f;
           }
           const bool modded = st.campaignSource == 1;
-          const float searchX = std::max(left + 26.0f * ui.s + 240.0f * ui.s,
-                                         tabsEnd + 10.0f * ui.s);
+          // Search sits right of the tabs, but is clamped inside the screen (it used to run off the right edge on
+          // narrow/4:3 UIs and was clipped).
+          const float campScreenRight = ui.origin.x + ui.size.x * 0.94f;
+          float searchX = std::max(left + 26.0f * ui.s + 240.0f * ui.s,
+                                   tabsEnd + 10.0f * ui.s);
+          float searchW = 220.0f * ui.s;
+          if (searchX + searchW > campScreenRight - 8.0f * ui.s)
+            searchX = std::max(left + 26.0f * ui.s, campScreenRight - searchW - 8.0f * ui.s);
+          searchW = std::min(searchW, std::max(80.0f * ui.s, campScreenRight - searchX - 8.0f * ui.s));
           if (DrawSearchBox(ui, "##mission_search",
-                            ImVec2(searchX, top + 72.0f * ui.s), 180.0f * ui.s,
+                            ImVec2(searchX, top + 72.0f * ui.s), searchW,
                             st.mapSearch, sizeof(st.mapSearch),
                             "Search missions & mods"))
             st.mapSearchRow = 0;
@@ -2239,7 +2347,7 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
               groups, pick, campDummyMvar, st.focusRow == 0,
               searching ? "Nothing matches your search"
                         : "No Reach campaign mods installed",
-              "BASE MISSION", firstEnter);
+              "BASE MISSION", firstEnter, ModMode::Campaign);
           if (gridRes.pickedBaseOrVariant) {
             st.mapDrawerKey.clear();
             st.mapDrawerFocus = -1;
@@ -2273,7 +2381,7 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
           const float stripY = actionsY - LobbyStripHeight(ui) - 8.0f * ui.s;
           const float controlsH =
               98.0f * ui.s + 8.0f * ui.s + 36.0f * ui.s + 30.0f * ui.s;
-          const float metaFixedH = 195.0f * ui.s;
+          const float metaFixedH = 231.0f * ui.s;
           const float previewH =
               std::clamp(stripY - cardTop - controlsH - metaFixedH,
                          68.0f * ui.s, innerW * 292.0f / 668.0f);
@@ -2281,12 +2389,53 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
           float y = DrawMapDetailHeaderCard(ui, rc0, pw, previewH,
                                             selGrp ? &selGrp->base : nullptr,
                                             nullptr, "CAMPAIGN");
+          const float diffY = y;
           y += DifficultyTiles(ui, "diff", ImVec2(px + pad, y), innerW,
                                st.difficulty, st.focusRow == 1) +
                8.0f * ui.s;
+          const float maxPlayersY = y;
+          static const bool s_dbgCampaignLayout =
+              wcsstr(GetCommandLineW(), L"-menu-debug-layout") != nullptr;
+          if (s_dbgCampaignLayout) {
+            NOBLE_INFO("CampaignLayout: cardTop={:.0f} diffY={:.0f} maxPlayersY={:.0f} cardBot={:.0f} px={:.0f} innerW={:.0f} actionY={:.0f} valueX={:.0f}",
+                       cardTop, diffY, maxPlayersY, cardBot, px, innerW, actionsY,
+                       px + pad + innerW * 0.48f);
+          }
+          // HOST CO-OP size: campaign lobbies used to have no player-count control. 4..16, like Firefight's cap.
+          static const int kCampCaps[] = {4, 8, 12, 16};
+          constexpr int kNumCampCaps = 4;
+          int campCapIdx = kNumCampCaps - 1;
+          for (int ci = 0; ci < kNumCampCaps; ++ci) {
+            if (kCampCaps[ci] >= st.campaignMaxPlayers) {
+              campCapIdx = ci;
+              break;
+            }
+          }
+          char campCapText[32];
+          std::snprintf(campCapText, sizeof(campCapText), "%d PLAYERS",
+                        kCampCaps[campCapIdx]);
+          int campCapPicked = -1;
+          const int campCapStep = PickerRow(
+              ui, "camp_players", ImVec2(px + pad, y), innerW, "MAX PLAYERS",
+              campCapText, st.focusRow == 2,
+              [&](std::vector<std::string> &choices, int &current) {
+                for (int ci = 0; ci < kNumCampCaps; ++ci)
+                  choices.push_back(std::to_string(kCampCaps[ci]) +
+                                    " PLAYERS");
+                current = campCapIdx;
+              },
+              &campCapPicked, st.focusRow == 2 && AcceptPressed());
+          if (campCapStep)
+            campCapIdx =
+                (campCapIdx + campCapStep + kNumCampCaps) % kNumCampCaps;
+          if (campCapPicked >= 0)
+            campCapIdx = campCapPicked;
+          if (campCapStep || campCapPicked >= 0)
+            st.campaignMaxPlayers = kCampCaps[campCapIdx];
+          y += 36.0f * ui.s;
           const std::string skullText = SkullSummary(st.skulls);
           if (OptionRow(ui, "skulls", ImVec2(px + pad, y), innerW, "SKULLS",
-                        skullText.c_str(), st.focusRow == 2, nullptr, false)) {
+                        skullText.c_str(), st.focusRow == 3, nullptr, false)) {
             st.screen = Screen::Skulls;
           }
           ImGui::SetCursorScreenPos(ImVec2(px + pad, y));
@@ -2327,8 +2476,8 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
           const bool startSolo =
               ((BigAction(ui, "start", ImVec2(px + pad, actionsY), bw,
                           "PLAY SOLO", sub.c_str(), true, canStart,
-                          st.focusRow == 3) ||
-                (st.focusRow == 3 && AcceptPressed())) &&
+                          st.focusRow == 4) ||
+                (st.focusRow == 4 && AcceptPressed())) &&
                canStart) ||
               (AutoPlayNow() && canStart);
           const char *coopSub =
@@ -2340,8 +2489,8 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
               ((BigAction(ui, "coop",
                           ImVec2(px + pad + bw + 10.0f * ui.s, actionsY),
                           innerW - bw - 10.0f * ui.s, "HOST CO-OP", coopSub,
-                          true, canStart, st.focusRow == 4) ||
-                (st.focusRow == 4 && AcceptPressed())) &&
+                          true, canStart, st.focusRow == 5) ||
+                (st.focusRow == 5 && AcceptPressed())) &&
                canStart);
           const std::string launchScenario =
               mission
@@ -2350,8 +2499,8 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                   : std::string();
           if (hostCoop) {
             SetupHostLobby(st, launchScenario, "campaign", "", "Campaign",
-                           st.difficulty, st.skulls, 16, mission->mod,
-                           mission->mapOverride, mission->name,
+                           st.difficulty, st.skulls, st.campaignMaxPlayers,
+                           mission->mod, mission->mapOverride, mission->name,
                            mission->imageLoading, mission->imageThumbnail);
           } else if (startSolo) {
             FrontEndChoice req;
@@ -2374,21 +2523,21 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
           if (!g_pickerBlocksNav && st.focusRow > 0) {
             if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
                 ImGui::IsKeyPressed(ImGuiKey_Tab) || UiPad::Down())
-              st.focusRow = std::min(4, st.focusRow + 1);
+              st.focusRow = std::min(5, st.focusRow + 1);
             if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())
               st.focusRow = std::max(1, st.focusRow - 1);
-            if (st.focusRow == 3 &&
+            if (st.focusRow == 4 &&
                 (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Right())) {
+              st.focusRow = 5;
+              MenuSounds::Scroll();
+            }
+            if (st.focusRow == 5 &&
+                (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left())) {
               st.focusRow = 4;
               MenuSounds::Scroll();
             }
-            if (st.focusRow == 4 &&
-                (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left())) {
-              st.focusRow = 3;
-              MenuSounds::Scroll();
-            }
           }
-          if (st.focusRow == 2 && AcceptPressed())
+          if (st.focusRow == 3 && AcceptPressed())
             st.screen = Screen::Skulls;
           if (!ImGui::GetIO().WantTextInput && UiPad::ActionX()) {
             st.screen = Screen::Skulls;
@@ -2984,7 +3133,7 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
               : forgeTab ? "No Forge maps in data\\map_variants"
               : ff       ? "No Reach Firefight mods installed"
                          : "No Reach multiplayer mods installed",
-              forge ? "BASE CANVAS" : "BASE MAP", firstEnter);
+              forge ? "BASE CANVAS" : "BASE MAP", firstEnter, modMode);
           if (gridRes.pickedBaseOrVariant) {
             if (searching && !groups.empty()) {
               const std::string chosenKey =

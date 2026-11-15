@@ -382,6 +382,7 @@ struct MenuState {
   int skull = 0;
   uint64_t skulls = 0;
   int campaignSource = 0;
+  int campaignMaxPlayers = 4; // HOST CO-OP size; 4..16
   int ffSource = 0;
   int mpSource = 0;
   int forgeSource = 0;
@@ -625,6 +626,10 @@ struct MapTileGroup {
   std::string key;
   std::vector<MapEntry> variants;
   std::string groupHeading;
+  // Collapsed mod section: a single full-width banner (base.header is set and base.mod points at the mod) listing how
+  // many maps the mod has. Clicking it expands the section (inserts the mod into MenuState::openMods) and the maps
+  // appear as tiles on the next frame.
+  int sectionMapCount = 0;
 };
 
 
@@ -770,7 +775,8 @@ TacticalGridResult DrawTacticalMapGrid(
     const Ui &ui, MenuState &st, ImVec2 gridPos, ImVec2 gridSize,
     const std::vector<MapTileGroup> &groups, int &selectedGroupIdx,
     std::filesystem::path &selectedMvar, bool hasFocus, const char *emptyText,
-    const char *baseItemTag, bool autoScrollSelection = false);
+    const char *baseItemTag, bool autoScrollSelection = false,
+    ModMode openMode = ModMode::Multiplayer);
 float DrawMapDetailHeaderCard(const Ui &ui, ImVec2 cardPos, float cardW,
                               float previewH, const MapEntry *baseMap,
                               const MapEntry *variantMap,
