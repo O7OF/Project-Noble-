@@ -4,6 +4,7 @@
 
 #include "common/Logger.hpp"
 #include "common/SaveCodec.hpp"
+#include "common/ArmoryVisor.hpp"
 #include "hooks/HookManager.hpp"
 #include "engine/SharedTagCache.hpp"
 
@@ -1213,12 +1214,9 @@ void RefreshLocalPicks() {
             const std::string visorId = sp.value("visor_id", std::string());
             if (visorId == "black") uiVisorIdx = 3;
             else if (visorId == "gold") uiVisorIdx = 4;
-            // In haloreach.dll's internal visor table (see 0x393CC / 0x3B2F4), engine visor 3 is Gold
-            // and engine visor 4 is Black, whereas the Armory UI catalog has 3 = Black and 4 = Gold.
-            int engineVisorIdx = uiVisorIdx;
-            if (uiVisorIdx == 3) engineVisorIdx = 4;
-            else if (uiVisorIdx == 4) engineVisorIdx = 3;
-            s_localSpartanVisorIndex = static_cast<uint8_t>(engineVisorIdx);
+            // Same resolution as ReachHost's profile path: resolve by string id (the Armory UI catalog order differs
+            // from MCC's item order for ice/crimson/onyx/violet) and apply the engine's stock 3/4 Gold/Black swap.
+            s_localSpartanVisorIndex = static_cast<uint8_t>(ArmoryVisorEngineIndex(uiVisorIdx, visorId));
             s_localSpartanVisorCustom = sp.value("visor_custom", false);
             if (sp.contains("visor_custom_rgb") && sp["visor_custom_rgb"].is_array() && sp["visor_custom_rgb"].size() == 3) {
                 for (int i = 0; i < 3; ++i) s_localSpartanVisorRgb[i] = std::clamp(sp["visor_custom_rgb"][i].get<float>(), 0.0f, 1.0f);

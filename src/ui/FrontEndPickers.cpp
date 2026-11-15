@@ -1169,28 +1169,32 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                                                                    : "MAPS";
           char cnt[64];
           std::snprintf(cnt, sizeof(cnt), "%d %s", grp.sectionMapCount, unit);
+          const char *expandLbl = "CLICK TO EXPAND";
+          ImFont *smallFont = NobleStyle::SmallFont();
+          const float cntW = TextWidth(smallFont, 14.0f * ui.s, cnt);
+          const float expW = TextWidth(smallFont, 12.5f * ui.s, expandLbl);
+          // Right-align "CLICK TO EXPAND", then the count with a fixed gap before it. The old layout put the count at a
+          // fixed 120 px from the edge and drew a chevron over the label at narrow widths.
+          const float rightEdge = s1.x - 16.0f * ui.s;
+          const float gapBetween = 18.0f * ui.s;
+          const bool showExpand = rightEdge - expW - gapBetween - cntW >
+                                  s0.x + 120.0f * ui.s;
+          const float expX = rightEdge - expW;
+          const float cntX = (showExpand ? expX - gapBetween : rightEdge) - cntW;
+          const float countY = s0.y + 16.0f * ui.s;
+          Text(ui, smallFont, 14.0f, ImVec2(cntX, countY),
+               IM_COL32(150, 180, 205, 235), cnt);
+          if (showExpand)
+            Text(ui, smallFont, 12.5f, ImVec2(expX, countY), kAccent,
+                 expandLbl);
+          const float titleRight = cntX - 20.0f * ui.s;
+          const float titleMaxW = std::max(80.0f * ui.s, titleRight - (s0.x + 16.0f * ui.s));
           const std::string modTitle = Ellipsize(
               NobleStyle::TitleFont(), 20.0f * ui.s, Upper(grp.base.name),
-              innerW - 240.0f * ui.s);
+              titleMaxW);
           Text(ui, NobleStyle::TitleFont(), 20.0f,
                ImVec2(s0.x + 16.0f * ui.s, s0.y + 11.0f * ui.s), kWhite,
                modTitle.c_str());
-          const float cntW = TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, cnt);
-          Text(ui, NobleStyle::SmallFont(), 14.0f,
-               ImVec2(s1.x - cntW - 120.0f * ui.s, s0.y + 16.0f * ui.s),
-               IM_COL32(150, 180, 205, 235), cnt);
-          const char *expandLbl = "CLICK TO EXPAND";
-          const float expW =
-              TextWidth(NobleStyle::SmallFont(), 12.5f * ui.s, expandLbl);
-          Text(ui, NobleStyle::SmallFont(), 12.5f,
-               ImVec2(s1.x - expW - 22.0f * ui.s, s0.y + 16.0f * ui.s),
-               kAccent, expandLbl);
-          const float cx = s1.x - 18.0f * ui.s;
-          const float cyMid = s0.y + vr.tilesH * 0.5f;
-          ui.dl->AddTriangleFilled(ImVec2(cx - 4.0f * ui.s, cyMid - 6.0f * ui.s),
-                                   ImVec2(cx + 5.0f * ui.s, cyMid),
-                                   ImVec2(cx - 4.0f * ui.s, cyMid + 6.0f * ui.s),
-                                   kAccent);
         } else {
         // Draw up to 2 tiles in this row
         for (int c = 0; c < 2; ++c) {

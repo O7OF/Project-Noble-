@@ -7,6 +7,7 @@
 #include "ui/UiArt.hpp"
 #include "common/Logger.hpp"
 #include "common/SaveCodec.hpp"
+#include "common/ArmoryVisor.hpp"
 #include "common/DeviceIdentity.hpp"
 #include "hooks/EnginePatches.hpp"
 #include "hooks/HookManager.hpp"
@@ -1453,27 +1454,11 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         };
         // haloreach.dll+0x2EDC5E is patched (EnginePatches) to convert kVisor + 0..29 directly to internal
         // visor indices 0..29 without stock 0..4 clamping, and 0x2C7DCC is patched to allow network replication.
-        // Note: in haloreach.dll's internal pmcg visor table (see 0x393CC / 0x3B2F4), internal index 3 is Gold
-        // and internal index 4 is Black, whereas the Armory UI catalog has 3 = "black" and 4 = "gold".
+        // ArmoryVisor.hpp resolves the finish by its string id (the Armory UI catalog order is not MCC's item order)
+        // and handles the engine's stock 3/4 (Gold/Black) swap; ElitePack uses the same helper for the appearance
+        // record, so the menu and the game always agree.
         auto visorOffset = [](int idx, const std::string& id) -> uint32_t {
-            int uiIdx = -1;
-            static const std::string_view kVisorIds[30] = {
-                "default", "silver", "blue", "black", "gold", "rose_gold",
-                "emerald", "ice", "crimson", "onyx", "violet", "amber",
-                "cyan", "ruby", "sapphire", "amethyst", "bronze", "sunfire",
-                "lime", "platinum", "obsidian", "pearl", "electric_blue", "blood_orange",
-                "mint", "copper", "midnight", "magenta", "aquamarine", "titanium"
-            };
-            if (!id.empty()) {
-                for (size_t i = 0; i < 30; ++i) {
-                    if (kVisorIds[i] == id) { uiIdx = static_cast<int>(i); break; }
-                }
-            }
-            if (uiIdx < 0 && idx >= 0 && idx < 30) uiIdx = idx;
-            if (uiIdx < 0) return 0;
-            if (uiIdx == 3) return 4; // UI 3 ("black") -> engine pmcg visor 4 (Black)
-            if (uiIdx == 4) return 3; // UI 4 ("gold")  -> engine pmcg visor 3 (Gold)
-            return static_cast<uint32_t>(uiIdx);
+            return static_cast<uint32_t>(ArmoryVisorEngineIndex(idx, id));
         };
 
         const uint32_t spEffectOff = armoryEffectOffset(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));
@@ -1532,9 +1517,9 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
             }
             memcpy(profile + 0x1AC, serviceTag, sizeof(serviceTag));
         }
-        NOBLE_INFO("ReachHost [Slot 34]: applied Armory appearance ({}, helmet {}, chest {}, effect {}/{}, Elite set {}, colours {}/{})",
+        NOBLE_INFO("ReachHost [Slot 34]: applied Armory appearance ({}, helmet {}, chest {}, effect {}/{}, Elite set {}, colours {}/{}, visor slot {})",
                    species == 0 ? "Spartan" : "Elite", helmet, chest, spEffectOff, elEffectOff, eliteSet,
-                   primaryColor, secondaryColor);
+                   primaryColor, secondaryColor, visorOff);
     } catch (const nlohmann::json::exception& e) {
         NOBLE_WARN("ReachHost [Slot 34]: could not read Armory appearance from '{}': {}", appearancePath.string(), e.what());
     }
