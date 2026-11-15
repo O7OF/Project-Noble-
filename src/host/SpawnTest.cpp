@@ -591,9 +591,13 @@ bool CinematicInProgress() {
 
 uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e) {
     const uint64_t result = s_originalTick(a, b, c, d, e);
-    if (a != 0) return result; // Process Noble ticks, hotkeys and spawner steps only once per frame (player 0)
+    // FUN_180061A38(a, playerIndex, c, dt1, dt2): the second argument is the player index (it is
+    // forwarded to player_control_update), so gate the per-frame work on player 0. The old check used
+    // the first argument (a unit handle), so after 7f31cf2 the whole tick body never ran (horde,
+    // spawn-test, dev cheats and cinematic gating were dead in every mode since 2026-11-09).
+    if (b != 0) return result; // Process Noble ticks, hotkeys and spawner steps only once per frame (player 0)
 #ifndef NOBLE_DEDICATED
-    noble::DevCheats::GameTick(a);
+    noble::DevCheats::GameTick(b);
 #endif
     noble::pelican::GameTick(s_base);
     if (!s_firstTick) s_firstTick = GetTickCount64();
