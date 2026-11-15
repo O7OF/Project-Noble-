@@ -1112,6 +1112,72 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
     }
   }
 
+  // 10. UI interface table null-slot crash (RVA 0x41E3E3).
+  // After returning to the menu the engine resolves an interface index (seen 0x72) and calls vtable+0x48
+  // on that slot without checking it. A null slot faults at 0x41E3EB reading [rcx] (crash dump: m10 ->
+  // menu, null read in haloreach+0x41E3EB). Keep the slot load, but when the slot is null store the
+  // engine's own "unavailable" sentinel (-1) and skip the call.
+  {
+    static const uint8_t kExpectedSlotLoad[8] = {0x4A, 0x8B, 0x8C, 0xF8,
+                                                 0x10, 0x01, 0x00, 0x00};
+    uint8_t *patchAddr = reinterpret_cast<uint8_t *>(baseAddress + 0x41E3E3);
+    if (0x41E3E3 + sizeof(kExpectedSlotLoad) <= modInfo.SizeOfImage &&
+        std::memcmp(patchAddr, kExpectedSlotLoad, sizeof(kExpectedSlotLoad)) ==
+            0) {
+      void *trampoline = AllocateNear(reinterpret_cast<uintptr_t>(patchAddr), 64,
+                                      PAGE_EXECUTE_READWRITE);
+      if (trampoline) {
+        const uintptr_t trampAddr = reinterpret_cast<uintptr_t>(trampoline);
+        const uintptr_t resume = baseAddress + 0x41E3EB;
+        const uintptr_t nullPath = baseAddress + 0x41E410;
+        const int32_t relResume =
+            static_cast<int32_t>(resume - (trampAddr + 0x12 + 5));
+        const int32_t relNull =
+            static_cast<int32_t>(nullPath - (trampAddr + 0x17 + 5));
+        uint8_t code[0x17] = {
+            0x4A, 0x8B, 0x8C, 0xF8, 0x10, 0x01, 0x00,
+            0x00,                   // mov rcx, [rax + r15*8 + 0x110]
+            0x48, 0x85, 0xC9,       // test rcx, rcx
+            0x74, 0x05,             // jz +5 (to the null path jmp)
+            0xE9, 0, 0, 0, 0,       // jmp resume (0x41E3EB)
+            0xE9, 0, 0, 0, 0        // jmp nullPath (0x41E410)
+        };
+        std::memcpy(code + 0x0E, &relResume, sizeof(int32_t));
+        std::memcpy(code + 0x13, &relNull, sizeof(int32_t));
+        std::memcpy(reinterpret_cast<void *>(trampAddr), code, sizeof(code));
+        FlushInstructionCache(GetCurrentProcess(),
+                              reinterpret_cast<void *>(trampAddr),
+                              sizeof(code));
+
+        const int32_t relToTramp = static_cast<int32_t>(
+            trampAddr - (reinterpret_cast<uintptr_t>(patchAddr) + 5));
+        uint8_t patch[8] = {0xE9, 0, 0, 0, 0, 0x90, 0x90, 0x90};
+        std::memcpy(patch + 1, &relToTramp, sizeof(int32_t));
+        DWORD oldProt = 0;
+        if (VirtualProtect(patchAddr, sizeof(patch), PAGE_EXECUTE_READWRITE,
+                           &oldProt)) {
+          std::memcpy(patchAddr, patch, sizeof(patch));
+          FlushInstructionCache(GetCurrentProcess(), patchAddr,
+                                sizeof(patch));
+          VirtualProtect(patchAddr, sizeof(patch), oldProt, &oldProt);
+          NOBLE_INFO("EnginePatches: Installed UI interface null-slot guard at "
+                     "RVA 0x41E3E3 -> trampoline 0x{:X}.",
+                     trampAddr);
+        } else {
+          NOBLE_WARN(
+              "EnginePatches: Failed to VirtualProtect at RVA 0x41E3E3.");
+        }
+      } else {
+        NOBLE_WARN(
+            "EnginePatches: Failed to allocate near trampoline for RVA "
+            "0x41E3E3.");
+      }
+    } else {
+      NOBLE_INFO("EnginePatches: RVA 0x41E3E3 already patched or unexpected "
+                 "opcodes.");
+    }
+  }
+
   s_isApplied = true;
   return true;
 }

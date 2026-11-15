@@ -1098,6 +1098,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool hostPublic = true;
     int hostMaxPlayers = 16;
     int expectedPeers = 0;
+    int localPortOverride = 11774;   // test-only: lets two instances run on one PC (-local-port)
     int engineModeOverride = 0;
     int liveWindowTestAt = -1;   // test-only: switch to borderless after N seconds
     bool guestPostStart = false;
@@ -1174,6 +1175,9 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
                 hostMaxPlayers = _wtoi(argvW[++i]);
             } else if (arg == L"-wait-peers" && i + 1 < numArgs) {
                 expectedPeers = _wtoi(argvW[++i]);
+            } else if (arg == L"-local-port" && i + 1 < numArgs) {
+                const int value = _wtoi(argvW[++i]);
+                if (value > 0 && value <= 65535) localPortOverride = value;
             } else if (arg == L"-third-person") {
                 thirdPerson = true;
             } else if (arg == L"-variant-dump" && i + 1 < numArgs) {
@@ -1823,7 +1827,7 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         // Initialize Guest NetworkTransport and register the join with the Master Server / WebSocket Relay
         // BEFORE starting haloreach.dll's engine thread so the Host's NAT hole-punching and the WebSocket
         // relay are already active when the engine sends its first join-request packet.
-        noble::NetworkTransport::Get().Initialize(false, tip, tport);
+        noble::NetworkTransport::Get().Initialize(false, tip, tport, static_cast<uint16_t>(localPortOverride));
         const uint64_t guestMachineId = noble::NetworkTransport::Get().GetLocalMachineId();
         const uint16_t guestPort = noble::NetworkTransport::Get().GetLocalPort();
         if (!relayUrl.empty()) {
@@ -1856,7 +1860,7 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
             // Bind UDP port 11774 and start Master Server advertisement + WebSocket Relay BEFORE
             // blamEngine->LaunchMap loads the map so the Host's UDP socket and relay are ready before
             // any Guest sends its first join-request packet.
-            noble::NetworkTransport::Get().Initialize(true);
+            noble::NetworkTransport::Get().Initialize(true, "", 11774, static_cast<uint16_t>(localPortOverride));
 
             noble::HostConfig cfg;
             std::string modeTitle = launchMode;
