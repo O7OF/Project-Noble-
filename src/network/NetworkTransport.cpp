@@ -129,7 +129,9 @@ bool NetworkTransport::Initialize(bool isHost, const std::string &remoteIp,
     // peer_pings keys never match the id on the wire. The launcher passes it through NOBLE_MACHINE_ID.
     uint64_t override = 0;
     wchar_t value[32] = {};
-    if (GetEnvironmentVariableW(L"NOBLE_MACHINE_ID", value, 32) > 0 && value[0] != L'0') {
+    if (GetEnvironmentVariableW(L"NOBLE_MACHINE_ID", value, 32) > 0) {
+      // The launcher writes "0x%016llX"; a leading '0' is part of a valid hex id, so parse first and
+      // only treat the result 0 as "not set" (this check rejected every launcher-provided id).
       wchar_t* end = nullptr;
       override = std::wcstoull(value, &end, 0);
     }
