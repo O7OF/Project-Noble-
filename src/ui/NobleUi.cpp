@@ -5,7 +5,10 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <string>
+#include <unordered_map>
 
 namespace noble {
 namespace NobleUi {
@@ -408,6 +411,170 @@ void DrawInteractiveScrollbar(ImDrawList *dl, const char *id, ImVec2 trackMin,
                 ImVec2(cx + trackW * 0.22f, cy + 3.0f * s),
                 IM_COL32(14, 24, 36, 180), 1.4f * s);
   }
+}
+
+int ConsumeWheelSteps(const char *id, float wheelDelta) {
+  if (wheelDelta == 0.0f)
+    return 0;
+  static std::unordered_map<ImGuiID, float> s_accum;
+  const ImGuiID key = ImGui::GetID(id ? id : "##wheel");
+  float &acc = s_accum[key];
+  // Clear opposing remainder when reversing scroll direction so scrolling responds crisply.
+  if ((acc > 0.0f && wheelDelta < 0.0f) || (acc < 0.0f && wheelDelta > 0.0f)) {
+    acc = 0.0f;
+  }
+  acc += wheelDelta;
+  const int steps = static_cast<int>(std::trunc(acc));
+  if (steps != 0) {
+    acc -= static_cast<float>(steps);
+  }
+  return steps;
+}
+
+void DrawTacticalBar(ImDrawList *dl, ImVec2 p0, ImVec2 p1, float fraction,
+                     ImU32 fillCol, float s) {
+  if (!dl)
+    return;
+  const float scale = s > 0.0f ? s : Scale();
+  const float frac = std::clamp(fraction, 0.0f, 1.0f);
+  const float r = 2.0f * scale;
+  dl->AddRectFilled(p0, p1, IM_COL32(10, 16, 26, 225), r);
+  dl->AddRect(p0, p1, IM_COL32(100, 165, 215, 72), r, 0, 1.0f);
+  if (frac > 0.0f) {
+    const float fillW = std::max(3.0f * scale, (p1.x - p0.x) * frac);
+    const ImVec2 f1(std::min(p1.x, p0.x + fillW), p1.y);
+    dl->AddRectFilled(p0, f1, fillCol, r);
+    if (frac < 1.0f) {
+      dl->AddLine(ImVec2(f1.x - 1.0f, p0.y), ImVec2(f1.x - 1.0f, p1.y),
+                  IM_COL32(255, 255, 255, 190), 1.5f * scale);
+    }
+  }
+  const float w = p1.x - p0.x;
+  for (int seg = 1; seg < 5; ++seg) {
+    const float sx = p0.x + w * (static_cast<float>(seg) * 0.2f);
+    dl->AddLine(ImVec2(sx, p0.y + 1.0f), ImVec2(sx, p1.y - 1.0f),
+                IM_COL32(6, 10, 16, 130), 1.0f);
+  }
+}
+
+void DrawChallengeCard(const Career::Challenge &c, float width, bool focused,
+                       bool &outHovered, bool &outClicked, bool compact) {
+  const float s = Scale();
+  ImDrawList *dl = ImGui::GetWindowDrawList();
+  ImFont *titleFont = Font(NobleStyle::TitleFont());
+  ImFont *smallFont = Font(NobleStyle::SmallFont());
+
+  static constexpr ImU32 kDoneColour = IM_COL32(105, 220, 145, 255);
+  static constexpr const char *kModeChip[4] = {"CAMPAIGN", "FIREFIGHT",
+                                               "MULTIPLAYER", "ANY MODE"};
+  static constexpr ImU32 kModeColour[4] = {
+      IM_COL32(150, 175, 95, 255), IM_COL32(210, 95, 72, 255),
+      IM_COL32(82, 154, 222, 255), kAccent};
+
+  auto grouped = [](long long v) -> std::string {
+    std::string digits = std::to_string(v < 0 ? -v : v), out;
+    for (size_t i = 0; i < digits.size(); ++i) {
+      if (i && (digits.size() - i) % 3 == 0)
+        out.push_back(',');
+      out.push_back(digits[i]);
+    }
+    return v < 0 ? "-" + out : out;
+  };
+
+  const int modeIdx = std::clamp(c.mode, 0, 3);
+  const ImU32 modeCol = kModeColour[modeIdx];
+  const float padX = (compact ? 14.0f : 16.0f) * s;
+  const float padY = (compact ? 10.0f : 12.0f) * s;
+  const float chipPx = (compact ? 11.0f : 11.5f) * s;
+  const float titlePx = (compact ? 16.5f : 18.0f) * s;
+  const float descPx = (compact ? 13.0f : 13.5f) * s;
+  const float countPx = (compact ? 13.0f : 13.5f) * s;
+  const float descW = std::max(80.0f * s, width - padX * 2.0f - 4.0f * s);
+  const ImVec2 descSize =
+      smallFont->CalcTextSizeA(descPx, FLT_MAX, descW, c.description.c_str());
+
+  const float topRowH = (compact ? 22.0f : 24.0f) * s;
+  const float titleRowH = titlePx + 3.0f * s;
+  const float descH = std::max(descPx + 2.0f * s, descSize.y);
+  const float barRowH = (compact ? 18.0f : 20.0f) * s;
+  const float cardH = padY + topRowH + titleRowH + descH + 6.0f * s + barRowH + padY;
+
+  const ImVec2 c0 = ImGui::GetCursorScreenPos();
+  const ImVec2 c1(c0.x + width, c0.y + cardH);
+  outClicked = ImGui::InvisibleButton("##chal_card", ImVec2(width, cardH));
+  outHovered = ImGui::IsItemHovered();
+
+  const ImU32 bg = c.done     ? IM_COL32(16, 36, 28, 228)
+                   : focused  ? IM_COL32(22, 40, 58, 238)
+                   : outHovered ? IM_COL32(19, 31, 46, 230)
+                                : IM_COL32(14, 22, 34, 222);
+  dl->AddRectFilled(c0, c1, bg, 3.0f * s);
+  dl->AddRectFilled(c0, ImVec2(c0.x + 4.0f * s, c1.y),
+                    c.done ? kDoneColour : modeCol, 1.5f * s);
+  DrawTacticalFrame(dl, c0, c1, s, focused, c.done, outHovered, true);
+
+  const float innerX = c0.x + padX + 2.0f * s;
+  const float rightX = c1.x - padX;
+  float y = c0.y + padY;
+
+  // Mode chip (left) + reward / COMPLETE badge (right)
+  {
+    const char *chipTxt = kModeChip[modeIdx];
+    const float chipW = TextWidth(smallFont, chipPx, chipTxt) + 12.0f * s;
+    const float chipH = 18.0f * s;
+    const ImVec2 p0(innerX, y);
+    const ImVec2 p1(innerX + chipW, y + chipH);
+    dl->AddRectFilled(p0, p1,
+                      (modeCol & 0x00FFFFFFu) | IM_COL32(0, 0, 0, 42),
+                      2.5f * s);
+    dl->AddRect(p0, p1, (modeCol & 0x00FFFFFFu) | IM_COL32(0, 0, 0, 145),
+                2.5f * s, 0, 1.0f);
+    Text(dl, smallFont, chipPx, ImVec2(p0.x + 6.0f * s, p0.y + 2.5f * s),
+         modeCol, chipTxt);
+
+    std::string crText = "+" + grouped(c.reward) + " cR";
+    const float crW = TextWidth(titleFont, countPx + 1.5f * s, crText.c_str());
+    Text(dl, titleFont, countPx + 1.5f * s,
+         ImVec2(rightX - crW, y + 1.0f * s), c.done ? kDoneColour : kAmber,
+         crText.c_str());
+
+    if (c.done) {
+      const char *doneTxt = "COMPLETE";
+      const float dw = TextWidth(smallFont, chipPx, doneTxt) + 12.0f * s;
+      const ImVec2 d0(rightX - crW - 8.0f * s - dw, y);
+      const ImVec2 d1(d0.x + dw, y + chipH);
+      dl->AddRectFilled(d0, d1, IM_COL32(24, 72, 46, 220), 2.5f * s);
+      dl->AddRect(d0, d1, IM_COL32(105, 220, 145, 190), 2.5f * s, 0, 1.0f);
+      Text(dl, smallFont, chipPx, ImVec2(d0.x + 6.0f * s, d0.y + 2.5f * s),
+           kDoneColour, doneTxt);
+    }
+    y += topRowH;
+  }
+
+  // Title + wrapped description
+  dl->PushClipRect(ImVec2(innerX, y), ImVec2(rightX, y + titleRowH), true);
+  Text(dl, titleFont, titlePx, ImVec2(innerX, y), c.done ? kDoneColour : kText,
+       c.title.c_str());
+  dl->PopClipRect();
+  y += titleRowH;
+
+  Text(dl, smallFont, descPx, ImVec2(innerX, y), kTextDim,
+       c.description.c_str(), descW);
+  y += descH + 6.0f * s;
+
+  // Bottom row: Tactical Progress Bar + tabular counter
+  const long long target = std::max<long long>(1, c.target);
+  const long long shown = c.done ? target : std::min(c.progress, target);
+  const float frac = static_cast<float>(shown) / static_cast<float>(target);
+  const std::string countStr = grouped(shown) + " / " + grouped(target);
+  const float countW = TextWidth(smallFont, countPx, countStr.c_str());
+  const float barH = (compact ? 8.0f : 9.0f) * s;
+  const float barY = y + (barRowH - barH) * 0.5f;
+  const float barMaxX = std::max(innerX + 40.0f * s, rightX - countW - 12.0f * s);
+  DrawTacticalBar(dl, ImVec2(innerX, barY), ImVec2(barMaxX, barY + barH), frac,
+                  c.done ? kDoneColour : modeCol, s);
+  Text(dl, smallFont, countPx, ImVec2(rightX - countW, y + 2.0f * s),
+       c.done ? kDoneColour : kText, countStr.c_str());
 }
 
 } // namespace NobleUi

@@ -105,6 +105,7 @@ private:
     bool m_valueTookLeftRight = false;  // a focused value row used left/right this frame, so the tabs must not
     bool m_enterAppliesHere = false;    // the focused row has no use for Enter
     bool m_scrollToFocus = false;
+    bool m_resetRowsScroll = false;
     int m_curRow = -1;
     bool m_rowFocused = false, m_rowHovered = false, m_rowDisabled = false;
     ImVec2 m_valMin, m_valMax;

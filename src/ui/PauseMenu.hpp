@@ -78,6 +78,10 @@ public:
 
     // True while the overlay wants the mouse pointer (pause menu, post-game panel or scoreboard actions).
     static bool WantsPointer();
+    // True while the map loading / waiting-for-players overlay is actively presenting.
+    static bool IsLoading();
+    // Releases any cached DX11 render targets held by the overlay (safe to call on shutdown/reset).
+    static void Shutdown();
 
     // Draws whatever is visible into the swap chain's back buffer. `loading` = the engine hasn't
     // finished launching yet. Engine thread only.

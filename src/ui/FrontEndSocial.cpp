@@ -141,6 +141,7 @@ void DrawSocialScreen(OverlayContext &ctx, const Ui &ui, float left,
   static int s_actionCounts[256] = {};
   static bool s_focusQuickAddBox = false;
   static bool s_focusSearchBox = false;
+  static bool s_resetSocialScroll = false;
 
   // Tab switching via LB/RB or Q/E (guarded against modals and text boxes)
   if (!modalBlocked && !typing) {
@@ -157,6 +158,7 @@ void DrawSocialScreen(OverlayContext &ctx, const Ui &ui, float left,
     s_prevTab = st.socialTab;
     s_focusRow = 0;
     s_focusAction = 0;
+    s_resetSocialScroll = true;
   }
 
   ImGui::SetCursorScreenPos(ImVec2(px + padX, py + padY));
@@ -291,6 +293,10 @@ void DrawSocialScreen(OverlayContext &ctx, const Ui &ui, float left,
                         (footerH > 0.0f ? 8.0f * ui.s : 0.0f);
 
   ImGui::SetCursorScreenPos(ImVec2(tabOrigin.x, scrollTop));
+  if (s_resetSocialScroll) {
+    ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
+    s_resetSocialScroll = false;
+  }
   ImGui::BeginChild("##social_scroll",
                     ImVec2(innerW, std::max(120.0f * ui.s, scrollH)),
                     ImGuiChildFlags_None, ImGuiWindowFlags_None);

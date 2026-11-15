@@ -536,6 +536,11 @@ int Window::TakeWheelNotches() {
     }
 }
 
+float Window::TakeWheelSteps() {
+    const int delta = s_wheelDelta.exchange(0);
+    return static_cast<float>(delta) / static_cast<float>(WHEEL_DELTA);
+}
+
 bool Window::InSizeMove() { return s_sizeMove.load(); }
 
 LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {

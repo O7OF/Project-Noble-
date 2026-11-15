@@ -149,7 +149,7 @@ static const MasterRegion kMasterRegions[] = {
 
 struct PingSample {
     int rttMs = -1;
-    double timestamp = 0.0;
+    ULONGLONG timestampMs = 0;
 };
 static std::mutex s_pingMutex;
 static std::unordered_map<std::string, PingSample> s_pingSamples;
@@ -157,14 +157,15 @@ static std::unordered_map<std::string, PingSample> s_pingSamples;
 static void ProbeServerPingAsync(const std::string& host, uint16_t port) {
     if (host.empty() || host == "127.0.0.1" || host == "localhost" || port == 0) return;
     const std::string key = host + ":" + std::to_string(port);
-    const double now = ImGui::GetTime();
+    const ULONGLONG nowMs = GetTickCount64();
     {
         std::lock_guard<std::mutex> lock(s_pingMutex);
         auto it = s_pingSamples.find(key);
-        if (it != s_pingSamples.end() && (now - it->second.timestamp) < 5.0) {
+        if (it != s_pingSamples.end() && nowMs >= it->second.timestampMs &&
+            (nowMs - it->second.timestampMs) < 5000ULL) {
             return;
         }
-        s_pingSamples[key] = { it != s_pingSamples.end() ? it->second.rttMs : -1, now };
+        s_pingSamples[key] = { it != s_pingSamples.end() ? it->second.rttMs : -1, nowMs };
     }
 
     std::thread([host, port, key]() {
@@ -203,7 +204,7 @@ static void ProbeServerPingAsync(const std::string& host, uint16_t port) {
         }
 
         std::lock_guard<std::mutex> lock(s_pingMutex);
-        s_pingSamples[key] = { rtt, ImGui::GetTime() };
+        s_pingSamples[key] = { rtt, GetTickCount64() };
     }).detach();
 }
 

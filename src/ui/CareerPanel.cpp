@@ -11,6 +11,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <cfloat>
+#include <chrono>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -54,15 +55,44 @@ ImU32 DifficultyColour(int d) {
     }
 }
 
-void DrawTacticalBar(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float fraction, ImU32 fillCol) {
-    const float r = std::max(1.5f, (p1.y - p0.y) * 0.45f);
-    dl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, 22), r);
-    dl->AddRect(p0, p1, IM_COL32(143, 216, 255, 45), r);
-    const float f = std::clamp(fraction, 0.0f, 1.0f);
-    if (f > 0.0f) {
-        const float fw = std::max(r * 2.0f, (p1.x - p0.x) * f);
-        dl->AddRectFilled(p0, ImVec2(std::min(p1.x, p0.x + fw), p1.y), fillCol, r);
+constexpr ImU32 kDoneColour = IM_COL32(132, 226, 146, 255);
+
+// Cache career snapshots briefly so rendering Service Record / Challenges /
+// Commendations does not lock Career's mutex and rebuild vectors every frame.
+const Career::Record& CachedRecord() {
+    static Career::Record s_cached{};
+    static std::chrono::steady_clock::time_point s_last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (s_last.time_since_epoch().count() == 0 ||
+        now - s_last >= std::chrono::milliseconds(500)) {
+        s_cached = Career::GetRecord();
+        s_last = now;
     }
+    return s_cached;
+}
+
+const std::vector<Career::Challenge>& CachedChallenges() {
+    static std::vector<Career::Challenge> s_cached;
+    static std::chrono::steady_clock::time_point s_last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (s_last.time_since_epoch().count() == 0 ||
+        now - s_last >= std::chrono::milliseconds(500)) {
+        s_cached = Career::Challenges();
+        s_last = now;
+    }
+    return s_cached;
+}
+
+const std::vector<Career::Commendation>& CachedCommendations() {
+    static std::vector<Career::Commendation> s_cached;
+    static std::chrono::steady_clock::time_point s_last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (s_last.time_since_epoch().count() == 0 ||
+        now - s_last >= std::chrono::milliseconds(500)) {
+        s_cached = Career::Commendations();
+        s_last = now;
+    }
+    return s_cached;
 }
 
 void DrawKpiTile(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* label, const char* bigValue,
@@ -85,80 +115,6 @@ void DrawKpiTile(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* label, const 
         Text(dl, small, 13.0f * s, ImVec2(p0.x + pad, p1.y - 22.0f * s), kTextDim, subLabel,
              (p1.x - p0.x) - pad * 1.8f);
     }
-}
-
-const char* const kModeChip[4] = { "CAMPAIGN", "FIREFIGHT", "MULTIPLAYER", "ANY MODE" };
-const ImU32 kModeColour[4] = { IM_COL32(120, 190, 255, 255), IM_COL32(255, 150, 90, 255),
-                               IM_COL32(150, 220, 120, 255), IM_COL32(200, 200, 210, 255) };
-const ImU32 kDoneColour = IM_COL32(132, 226, 146, 255);
-
-void ChallengeCard(const Career::Challenge& c, float width, bool focused, bool& outHovered, bool& outClicked) {
-    using namespace NobleUi;
-    const float s = Scale();
-    const float pad = 14.0f * s;
-    ImFont* body = ImGui::GetFont();
-    ImFont* small = NobleStyle::SmallFont();
-    const float bodyPx = 18.0f * s, smallPx = 14.0f * s;
-    const float textW = width - pad * 2.0f;
-    ImFont* descFont = small ? small : body;
-    const float descH = std::max(
-        descFont->CalcTextSizeA(smallPx + 1.0f * s, FLT_MAX, textW, c.description.c_str()).y,
-        descFont->CalcTextSizeA(smallPx + 1.0f * s, FLT_MAX, 0.0f, "A\nA").y);
-    const float height = pad + smallPx + 8.0f * s + bodyPx + 4.0f * s + descH + 12.0f * s + 10.0f * s + pad;
-
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
-    const ImVec2 p1(p0.x + width, p0.y + height);
-    outClicked = ImGui::InvisibleButton("##chg_card", ImVec2(width, height));
-    outHovered = ImGui::IsItemHovered();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const int mode = std::clamp(c.mode, 0, 3);
-
-    ImU32 bg = c.done ? IM_COL32(20, 42, 28, 222) : IM_COL32(14, 22, 32, 218);
-    if (focused || outHovered) {
-        bg = c.done ? IM_COL32(28, 56, 38, 236) : IM_COL32(24, 38, 54, 236);
-    }
-    dl->AddRectFilled(p0, p1, bg, 3.0f * s);
-    dl->AddRectFilled(p0, ImVec2(p0.x + 3.5f * s, p1.y), c.done ? kDoneColour : kModeColour[mode]);
-    DrawTacticalFrame(dl, p0, p1, s, focused, c.done, outHovered, true);
-
-    float y = p0.y + pad;
-    const float chipW = TextWidth(small, smallPx, kModeChip[mode]) + 14.0f * s;
-    dl->AddRectFilled(ImVec2(p0.x + pad, y - 2.0f * s), ImVec2(p0.x + pad + chipW, y + smallPx + 3.0f * s),
-                      IM_COL32(10, 16, 24, 180), 2.0f * s);
-    dl->AddRect(ImVec2(p0.x + pad, y - 2.0f * s), ImVec2(p0.x + pad + chipW, y + smallPx + 3.0f * s),
-                kModeColour[mode], 2.0f * s, 0, 1.0f);
-    Text(dl, small, smallPx, ImVec2(p0.x + pad + 7.0f * s, y), kModeColour[mode], kModeChip[mode]);
-
-    char reward[48];
-    std::snprintf(reward, sizeof(reward), "+%s cR", Grouped(c.reward).c_str());
-    const float rw = TextWidth(body, bodyPx, reward);
-    Text(dl, body, bodyPx, ImVec2(p1.x - pad - rw, y - 2.0f * s), c.done ? kDoneColour : kAmber, reward);
-    y += smallPx + 8.0f * s;
-
-    Text(dl, body, bodyPx, ImVec2(p0.x + pad, y), c.done ? kDoneColour : kText, c.title.c_str());
-    y += bodyPx + 4.0f * s;
-    Text(dl, small, smallPx + 1.0f * s, ImVec2(p0.x + pad, y), kTextDim, c.description.c_str(), textW);
-    y += descH + 12.0f * s;
-
-    const float f = c.target > 0
-                        ? std::clamp(static_cast<float>(c.progress) / static_cast<float>(c.target), 0.0f, 1.0f)
-                        : 0.0f;
-    char label[64];
-    if (c.done) std::snprintf(label, sizeof(label), "COMPLETE");
-    else std::snprintf(label, sizeof(label), "%s / %s", Grouped(c.progress).c_str(), Grouped(c.target).c_str());
-    const float lw = TextWidth(small, smallPx, label);
-    const float barX1 = p1.x - pad - lw - (c.done ? 26.0f : 12.0f) * s;
-    const float barY = y + 1.0f * s, barH = 7.0f * s;
-    DrawTacticalBar(dl, ImVec2(p0.x + pad, barY), ImVec2(barX1, barY + barH), f,
-                    c.done ? kDoneColour : kAccent);
-
-    const float ly = barY + barH * 0.5f - smallPx * 0.5f - 1.0f * s;
-    if (c.done) {
-        const float cx = p1.x - pad - lw - 16.0f * s, cy = barY + barH * 0.5f;
-        dl->AddLine(ImVec2(cx, cy), ImVec2(cx + 4.0f * s, cy + 4.0f * s), kDoneColour, 2.0f * s);
-        dl->AddLine(ImVec2(cx + 4.0f * s, cy + 4.0f * s), ImVec2(cx + 11.0f * s, cy - 5.0f * s), kDoneColour, 2.0f * s);
-    }
-    Text(dl, small, smallPx, ImVec2(p1.x - pad - lw, ly), c.done ? kDoneColour : kText, label);
 }
 
 ImU32 TierTint(int tier, bool tracked) {
@@ -245,8 +201,8 @@ void CommendationRow(const Career::Commendation& c, float width, bool focused, b
     }
     const float lw = TextWidth(small, smallPx, label);
     const float barX1 = right - lw - 12.0f * s;
-    DrawTacticalBar(dl, ImVec2(x, barY), ImVec2(barX1, barY + barH), f,
-                    c.tier >= 6 ? IM_COL32(255, 150, 60, 255) : kAccent);
+    NobleUi::DrawTacticalBar(dl, ImVec2(x, barY), ImVec2(barX1, barY + barH), f,
+                             c.tier >= 6 ? IM_COL32(255, 150, 60, 255) : kAccent, s);
     Text(dl, small, smallPx, ImVec2(right - lw, barY + barH * 0.5f - smallPx * 0.5f - 1.0f * s), kText, label);
 }
 
@@ -257,6 +213,8 @@ void CareerPanel::Render() {
     const float s = Scale();
 
     static const char* const kTabs[] = { "SERVICE RECORD", "CHALLENGES", "COMMENDATIONS", "RANKS" };
+    static int s_prevTab = -1;
+    static int s_prevCommendTab = -1;
     if (!ImGui::GetIO().WantTextInput) {
         if (UiPad::TabPrev() || ImGui::IsKeyPressed(ImGuiKey_Q, false)) {
             m_tab = (m_tab + 3) % 4;
@@ -293,6 +251,11 @@ void CareerPanel::Render() {
                 IM_COL32(143, 216, 255, 55), 1.0f);
     ImGui::SetCursorScreenPos(ImVec2(tabOrigin.x, ruleY + 8.0f * s));
 
+    if (s_prevTab != m_tab || (m_tab == 2 && s_prevCommendTab != m_commendTab)) {
+        ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
+        s_prevTab = m_tab;
+        s_prevCommendTab = m_commendTab;
+    }
     ImGui::BeginChild("##careerBody", ImVec2(0, 0), ImGuiChildFlags_None);
     // D-pad / Left Stick navigates tiles in all 4 tabs; Right Stick smoothly scrolls everywhere,
     // and LT/RT page-scrolls Record / Challenges / Ranks while switching modes on Commendations.
@@ -309,7 +272,7 @@ void CareerPanel::Render() {
 void CareerPanel::RenderRecord() {
     using namespace NobleUi;
     const float s = Scale();
-    const Career::Record r = Career::GetRecord();
+    const Career::Record& r = CachedRecord();
     const auto& ranks = Career::Ranks();
     const int rank = Career::RankIndex(r.totals.credits);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -351,7 +314,7 @@ void CareerPanel::RenderRecord() {
             const float prog = hi > lo ? static_cast<float>(r.totals.credits - lo) / static_cast<float>(hi - lo) : 1.0f;
             const ImVec2 b0(cx, h0.y + 90.0f * s);
             const ImVec2 b1(std::max(cx + 140.0f * s, midRight), b0.y + 10.0f * s);
-            DrawTacticalBar(dl, b0, b1, prog, kAccent);
+            NobleUi::DrawTacticalBar(dl, b0, b1, prog, kAccent, s);
 
             char pctBuf[48];
             std::snprintf(pctBuf, sizeof(pctBuf), "%d%% TO NEXT RANK", static_cast<int>(std::clamp(prog, 0.0f, 1.0f) * 100.0f));
@@ -616,7 +579,7 @@ void CareerPanel::RenderRecord() {
 
 void CareerPanel::RenderChallenges() {
     using namespace NobleUi;
-    const std::vector<Career::Challenge> list = Career::Challenges();
+    const std::vector<Career::Challenge>& list = CachedChallenges();
     const float s = Scale();
     const float avail = ImGui::GetContentRegionAvail().x;
     const int columns = avail >= 820.0f * s ? 2 : 1;
@@ -677,7 +640,7 @@ void CareerPanel::RenderChallenges() {
             const bool focused = (cardIdx == m_challengeFocus);
             bool hovered = false, clicked = false;
             ImGui::BeginGroup();
-            ChallengeCard(c, cardW, focused, hovered, clicked);
+            NobleUi::DrawChallengeCard(c, cardW, focused, hovered, clicked);
             ImGui::EndGroup();
             if (clicked || (hovered && !navMoved)) {
                 m_challengeFocus = cardIdx;
@@ -695,7 +658,7 @@ void CareerPanel::RenderChallenges() {
 
 void CareerPanel::RenderCommendations() {
     using namespace NobleUi;
-    const std::vector<Career::Commendation> list = Career::Commendations();
+    const std::vector<Career::Commendation>& list = CachedCommendations();
     const float s = Scale();
     static const char* const kModeTitle[3] = { "CAMPAIGN", "FIREFIGHT", "MULTIPLAYER" };
     static const ImU32 kTabModeColour[3] = { IM_COL32(150, 170, 90, 255), IM_COL32(200, 80, 60, 255),

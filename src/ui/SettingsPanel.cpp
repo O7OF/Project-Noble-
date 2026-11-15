@@ -516,6 +516,7 @@ void SettingsPanel::Render() {
       m_focus = 0;
       m_search[0] = 0;
       m_scrollToFocus = true;
+      m_resetRowsScroll = true;
       MenuSounds::Tab(-1);
     }
     if (UiPad::TabNext()) {
@@ -523,6 +524,7 @@ void SettingsPanel::Render() {
       m_focus = 0;
       m_search[0] = 0;
       m_scrollToFocus = true;
+      m_resetRowsScroll = true;
       MenuSounds::Tab(1);
     }
     if (TotalChanges() > 0) {
@@ -567,6 +569,7 @@ void SettingsPanel::Render() {
       if (m_focus > 0)
         m_focus = 0;
       m_scrollToFocus = true;
+      m_resetRowsScroll = true;
       MenuSounds::Tab(right ? 1 : -1);
     }
   }
@@ -645,8 +648,10 @@ void SettingsPanel::RenderCategories(float width, float height) {
     if (hovered)
       MenuSounds::Hover(ImGui::GetItemID());
     if (clicked) {
-      if (static_cast<int>(m_cat) != i)
+      if (static_cast<int>(m_cat) != i) {
         MenuSounds::Tab(i > static_cast<int>(m_cat) ? 1 : -1);
+        m_resetRowsScroll = true;
+      }
       m_cat = static_cast<Cat>(i);
       m_focus = 0;
       m_search[0] = 0;
@@ -747,8 +752,10 @@ void SettingsPanel::RenderRows(float width, float height) {
   const float s = Scale();
   ImGui::BeginChild("##setrows", ImVec2(width, height), ImGuiChildFlags_None,
                     ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
-  if (m_focus < 0 && m_scrollToFocus)
+  if (m_resetRowsScroll || (m_focus < 0 && m_scrollToFocus)) {
     ImGui::SetScrollY(0.0f);
+    m_resetRowsScroll = false;
+  }
   UiPad::ScrollWindow(false,
                       false); // right stick reads ahead of the focused row
   m_rowCount = 0;

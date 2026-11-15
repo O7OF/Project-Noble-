@@ -826,6 +826,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
 static uint64_t __fastcall HostSlot2_ResizeBuffers(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
     ResetGammaPass();
+    PauseMenu::Shutdown();
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 2 - ResizeBuffers]: Engine requested swap chain buffer refresh");
@@ -2511,7 +2512,12 @@ static void FillLocalInput(uint8_t* st) {
     static int s_wheelPending = 0;
     static int s_pulseSign = 0;
     static ULONGLONG s_pulseStart = 0;
-    s_wheelPending += Window::TakeWheelNotches();
+    if (uiPointer || PauseMenu::IsLoading()) {
+        s_wheelPending = 0;
+        s_pulseSign = 0;
+    } else {
+        s_wheelPending += Window::TakeWheelNotches();
+    }
     {
         // Test option "-wheel-after <seconds>": one wheel-down notch that long after the first input poll.
         static double s_testAt = -1.0;

@@ -1875,8 +1875,9 @@ int DrawList(const Ui &ui, const char *id, ImVec2 pos, float width,
     const ImVec2 area0 = pos,
                  area1(pos.x + width + 14.0f * ui.s, pos.y + maxRows * rh);
     const float wheel = ImGui::GetIO().MouseWheel;
-    if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false))
-      first -= static_cast<int>(wheel);
+    if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false)) {
+      first -= NobleUi::ConsumeWheelSteps(id ? id : "##list_wheel", wheel);
+    }
     static std::unordered_map<ImGuiID, float> s_stickAccumMap;
     float &stickAccum = s_stickAccumMap[key];
     const float rStick = UiPad::AnalogScrollY(false);
@@ -4676,16 +4677,21 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
   static bool s_waitMouseRelease = false;
   if (resetEdges) {
     (void)Window::TakeLeftClicks();
-    (void)Window::TakeWheelNotches();
+    (void)Window::TakeWheelSteps();
     (void)Window::TakeTypedChars();
     s_waitMouseRelease = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
   }
 
   const bool vcOwnsPointer = UiPad::IsVirtualCursorControllingMouse();
   if (vcOwnsPointer) {
-    if (resetEdges || settling) {
+    if (resetEdges || settling || !focused) {
       (void)Window::TakeLeftClicks();
-      (void)Window::TakeWheelNotches();
+      (void)Window::TakeWheelSteps();
+    } else {
+      const float wheel = Window::TakeWheelSteps();
+      if (wheel != 0.0f) {
+        io.AddMouseWheelEvent(0.0f, wheel);
+      }
     }
   } else if (!settling && focused && GetCursorPos(&cursor) &&
              ScreenToClient(hwnd, &cursor) && client.right > 0 &&
@@ -4700,7 +4706,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
       s_waitMouseRelease = false;
     if (resetEdges || s_waitMouseRelease) {
       (void)Window::TakeLeftClicks();
-      (void)Window::TakeWheelNotches();
+      (void)Window::TakeWheelSteps();
       io.AddMouseButtonEvent(0, false);
       io.AddMouseButtonEvent(1, false);
     } else {
@@ -4713,10 +4719,9 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
       const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
       io.AddMouseButtonEvent(1, rDown);
 
-      const int wheel = Window::TakeWheelNotches();
-      if (wheel != 0) {
-        const float dampened = static_cast<float>(std::clamp(wheel, -1, 1));
-        io.AddMouseWheelEvent(0.0f, dampened);
+      const float wheel = Window::TakeWheelSteps();
+      if (wheel != 0.0f) {
+        io.AddMouseWheelEvent(0.0f, wheel);
       }
     }
   } else {
@@ -4725,7 +4730,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
     io.AddMouseButtonEvent(1, false);
     if (resetEdges || settling) {
       (void)Window::TakeLeftClicks();
-      (void)Window::TakeWheelNotches();
+      (void)Window::TakeWheelSteps();
     }
   }
 
