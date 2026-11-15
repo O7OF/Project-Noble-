@@ -61,6 +61,8 @@ private:
     void RenderFilterBar();
     void RenderServerList();
     void RenderServerDetails();
+    // FAVOURITE / COPY INVITE row, drawn in a fixed footer under the details pane so it is always visible.
+    void RenderServerActions();
     void RenderDirectConnectModal();
     void RenderMasterServerModal();
     void TryJoin(const std::string& address, uint16_t port, bool hasPassword);

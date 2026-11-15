@@ -77,6 +77,7 @@ bool ModInstalledCached(const std::string& publishedFileId) {
 static std::atomic<uint64_t> s_lastJoinAttemptMs{ 0 };
 static int s_browserPane = 0;   // 0 = server cards list, 1 = right game details buttons
 static int s_detailBtnIdx = 0;  // 0 = primary action, 1 = favorite, 2 = copy invite
+static bool s_detailTriggerFocused = false; // Accept pressed this frame while the details pane has focus
 
 bool CanStartJoinNow(std::string& statusOut) {
     if (FrontEndMenu::IsMatchRunning()) {
@@ -554,7 +555,11 @@ void ServerBrowser::Render() {
 
     ImGui::SameLine(0.0f, paneGap);
 
-    ImGui::BeginChild("##serverdetails", ImVec2(detailsWidth, bodyH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    // Details content scrolls, but FAVOURITE / COPY INVITE are pinned in a footer child so they are always visible and
+    // clickable (they used to sit below the fold with mod warnings in the pane - Tyler's "can't click Favourite").
+    const float detailsFooterH = U(54.0f);
+    const ImVec2 detailsOrigin = ImGui::GetCursorScreenPos();
+    ImGui::BeginChild("##serverdetails", ImVec2(detailsWidth, bodyH - detailsFooterH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
     if (UiPad::IsVirtualCursorActive() ? ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) : (s_browserPane == 1)) {
         UiPad::ScrollWindow(false, true);
     }
@@ -563,6 +568,13 @@ void ServerBrowser::Render() {
     NobleUi::DrawTacticalFrame(parentDl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale,
                                s_browserPane == 1, m_selectedServerIndex >= 0, false,
                                BrowserStyle() == 1 && s_browserPane == 1);
+
+    ImGui::SetCursorScreenPos(ImVec2(detailsOrigin.x, detailsOrigin.y + bodyH - detailsFooterH));
+    ImGui::BeginChild("##serveractions", ImVec2(detailsWidth, detailsFooterH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    RenderServerActions();
+    ImGui::EndChild();
+    NobleUi::DrawTacticalFrame(parentDl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale,
+                               s_browserPane == 1, m_selectedServerIndex >= 0, false, false);
 
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(2);
@@ -815,6 +827,9 @@ void ServerBrowser::RenderFilterBar() {
         m_lastRefresh = -100.0;
         sessions.TriggerDiscoveryScan();
         MasterServerClient::Get().RequestList();
+        // The keyboard path below already shows this; the button used to refresh silently, which made it look like the
+        // click did nothing (Tyler's "can't click Refresh" report).
+        m_status = "Refreshing server list...";
         MenuSounds::Click();
     }
     if (drawActionBtn("##directConnBtn", "DIRECT CONNECT", false)) {
@@ -1210,7 +1225,8 @@ void ServerBrowser::RenderServerDetails() {
     const ServerEntry& s = m_servers[m_selectedServerIndex];
 
     const bool modalBlocking = ImGui::GetIO().WantTextInput || m_showDirectConnectModal || m_showMasterModal || ModDownloadPrompt::Get().IsActive();
-    bool triggerFocusedBtn = false;
+    bool& triggerFocusedBtn = s_detailTriggerFocused;
+    triggerFocusedBtn = false;
     if (!modalBlocking && s_browserPane == 1) {
         if (UiPad::Left() || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
             s_browserPane = 0;
@@ -1238,7 +1254,7 @@ void ServerBrowser::RenderServerDetails() {
     // Crisp 16:9 Map Artwork Header (never upscaled above native asset resolution)
     {
         const float photoW = ImGui::GetContentRegionAvail().x;
-        const float photoH = std::min(photoW * 9.0f / 16.0f, U(118.0f));
+        const float photoH = std::min(photoW * 9.0f / 16.0f, U(76.0f));
         const ImVec2 p0 = ImGui::GetCursorScreenPos();
         const ImVec2 p1(p0.x + photoW, p0.y + photoH);
         dl->AddRectFilled(p0, p1, IM_COL32(8, 13, 20, 255));
@@ -1303,13 +1319,13 @@ void ServerBrowser::RenderServerDetails() {
         } else {
             // Different build string on the same release line (usually dev vs release): allowed, but say so.
             wrappedLine(true, ImVec4{1.0f, 0.82f, 0.35f, 1.0f},
-                        std::string("Host version ") + std::string(noble::ExtractBaseVersion(s.build)) + " (yours " +
+                        std::string("Host ") + std::string(noble::ExtractBaseVersion(s.build)) + " (yours " +
                             std::string(noble::ExtractBaseVersion(noble::kBuildTag)) + ") - compatible.");
         }
     }
     if (s.isMod || !s.modId.empty()) {
         ImGui::Spacing();
-        if (s.isMod) wrappedLine(true, ImVec4{0.35f, 0.85f, 0.95f, 1.0f}, "Custom map / modded content");
+        if (s.isMod && s.modId.empty()) wrappedLine(true, ImVec4{0.35f, 0.85f, 0.95f, 1.0f}, "Custom map / modded content");
         if (!s.modId.empty()) {
             const bool modReady = ModInstalledCached(s.modId);
             const std::string modLabel = s.modTitle.empty() ? ("Workshop item " + s.modId) : s.modTitle;
@@ -1344,13 +1360,6 @@ void ServerBrowser::RenderServerDetails() {
     };
 
     drawInfoRow("MODE", s.gameMode + (s.inProgress ? "  [LIVE]" : ""));
-    if (!s.region.empty() && s.region != "YOU") {
-        const char* regDesc = (s.region == "US East") ? "US East (Virginia)"
-                            : (s.region == "US West") ? "US West (Oregon)"
-                            : (s.region == "UK")      ? "UK (London)"
-                            : s.region.c_str();
-        drawInfoRow("REGION", regDesc);
-    }
     drawInfoRow("MAP", MapNames::Display(s.mapName));
     if (!s.variantName.empty()) {
         drawInfoRow("GAMETYPE", s.variantName);
@@ -1389,7 +1398,7 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::PopStyleColor();
     }
 
-    ImGui::Dummy(ImVec2(0.0f, 10.0f * sScale));
+    ImGui::Dummy(ImVec2(0.0f, 6.0f * sScale));
 
     auto focusOutline = [&](int btnIndex) {
         if (s_browserPane == 1 && s_detailBtnIdx == btnIndex) {
@@ -1462,15 +1471,32 @@ void ServerBrowser::RenderServerDetails() {
         }
     }
 
-    ImGui::Dummy(ImVec2(0.0f, 4.0f * sScale));
+    // FAVOURITE / COPY INVITE live in the pinned footer (RenderServerActions) so they cannot scroll out of view.
+}
+
+void ServerBrowser::RenderServerActions() {
+    const float sScale = NobleUi::Scale();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (m_selectedServerIndex < 0 || m_selectedServerIndex >= static_cast<int>(m_servers.size())) {
+        ImGui::TextDisabled("Select a server from the list to favourite it or copy its invite.");
+        return;
+    }
+    const ServerEntry& s = m_servers[m_selectedServerIndex];
+    auto focusOutline = [&](int btnIndex) {
+        if (s_browserPane == 1 && s_detailBtnIdx == btnIndex) {
+            NobleUi::DrawTacticalFrame(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), sScale, true, true, false, true);
+        }
+    };
     const float halfW = (ImGui::GetContentRegionAvail().x - U(8.0f)) * 0.5f;
-    if (ImGui::Button(s.isFavorite ? "UNFAVOURITE" : "FAVOURITE", ImVec2(halfW, U(32))) || (triggerFocusedBtn && s_detailBtnIdx == 1)) {
+    if (ImGui::Button(s.isFavorite ? "UNFAVOURITE" : "FAVOURITE", ImVec2(halfW, U(32))) ||
+        (s_detailTriggerFocused && s_detailBtnIdx == 1)) {
         ToggleFavorite(s.hostAddress, s.port);
         RefreshServers();
     }
     focusOutline(1);
     ImGui::SameLine(0.0f, U(8.0f));
-    if (ImGui::Button("COPY INVITE", ImVec2(halfW, U(32))) || (triggerFocusedBtn && s_detailBtnIdx == 2)) {
+    if (ImGui::Button("COPY INVITE", ImVec2(halfW, U(32))) ||
+        (s_detailTriggerFocused && s_detailBtnIdx == 2)) {
         std::string ipToCopy = s.hostAddress;
         if (s.isOwn) {
             std::string pubIp = UPnP::Get().GetExternalIP();
