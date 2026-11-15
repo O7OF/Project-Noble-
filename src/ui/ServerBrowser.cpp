@@ -483,13 +483,14 @@ void ServerBrowser::RefreshServers() {
             demo.ping = d.ping;
             demo.source = d.source;
             demo.region = d.source;
-            demo.isOwn = true;   // not joinable: the row exists for screenshots and UI tests only
+            demo.isOwn = (demo.name != "Demo modded 12");   // the first demo row shows the joinable details path
             demo.isMod = d.modId != nullptr;
             if (d.modId) demo.modId = d.modId;
             if (d.modTitle) demo.modTitle = d.modTitle;
             demo.mapDescription = demo.isMod ? ("Custom map from " + demo.modTitle) : std::string();
             demo.modDescription = demo.isMod ? demo.modTitle : std::string();
             demo.build = kBuildTag;
+            if (demo.name == "Demo modded 12") demo.build = "0.19.98 (Closed Source)";   // version-issue demo row
             list.push_back(std::move(demo));
         }
     }
@@ -1237,7 +1238,7 @@ void ServerBrowser::RenderServerDetails() {
     // Crisp 16:9 Map Artwork Header (never upscaled above native asset resolution)
     {
         const float photoW = ImGui::GetContentRegionAvail().x;
-        const float photoH = std::min(photoW * 9.0f / 16.0f, U(195.0f));
+        const float photoH = std::min(photoW * 9.0f / 16.0f, U(118.0f));
         const ImVec2 p0 = ImGui::GetCursorScreenPos();
         const ImVec2 p1(p0.x + photoW, p0.y + photoH);
         dl->AddRectFilled(p0, p1, IM_COL32(8, 13, 20, 255));
@@ -1280,6 +1281,49 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::Dummy(ImVec2(availW, 18.0f * sScale));
     ImGui::Dummy(ImVec2(0.0f, 4.0f * sScale));
 
+    // Version / mod problems sit right under the address so they are visible before the pane scrolls; every line wraps
+    // inside the panel (plain TextColored does not wrap and used to run under the scrollbar - Tyler's screenshot).
+    const float wrapW = (std::max)(U(60.0f), availW - 18.0f * sScale);
+    const auto wrappedLine = [&](bool coloured, ImVec4 colour, const std::string& text) {
+        if (coloured) ImGui::PushStyleColor(ImGuiCol_Text, colour);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + wrapW);
+        ImGui::TextWrapped("%s", text.c_str());
+        ImGui::PopTextWrapPos();
+        if (coloured) ImGui::PopStyleColor();
+    };
+    const bool buildMismatch = !s.build.empty() && !noble::AreBuildsCompatible(s.build, noble::kBuildTag);
+    const bool buildDiffers = !s.build.empty() && s.build != noble::kBuildTag;
+    if (buildDiffers) {
+        ImGui::Spacing();
+        if (buildMismatch) {
+            wrappedLine(true, ImVec4{0.97f, 0.38f, 0.38f, 1.0f},
+                        std::string("VERSION MISMATCH: host runs ") + std::string(noble::ExtractBaseVersion(s.build)) +
+                            " and you have " + std::string(noble::ExtractBaseVersion(noble::kBuildTag)) +
+                            " - you cannot join until one of you updates.");
+        } else {
+            // Different build string on the same release line (usually dev vs release): allowed, but say so.
+            wrappedLine(true, ImVec4{1.0f, 0.82f, 0.35f, 1.0f},
+                        std::string("Host version ") + std::string(noble::ExtractBaseVersion(s.build)) + " (yours " +
+                            std::string(noble::ExtractBaseVersion(noble::kBuildTag)) + ") - compatible.");
+        }
+    }
+    if (s.isMod || !s.modId.empty()) {
+        ImGui::Spacing();
+        if (s.isMod) wrappedLine(true, ImVec4{0.35f, 0.85f, 0.95f, 1.0f}, "Custom map / modded content");
+        if (!s.modId.empty()) {
+            const bool modReady = ModInstalledCached(s.modId);
+            const std::string modLabel = s.modTitle.empty() ? ("Workshop item " + s.modId) : s.modTitle;
+            wrappedLine(false, ImVec4{}, "Required Workshop mod: " + modLabel);
+            if (modReady) {
+                wrappedLine(true, ImVec4{0.45f, 0.86f, 0.55f, 1.0f}, "Mod installed - ready to join.");
+            } else {
+                wrappedLine(true, ImVec4{1.0f, 0.78f, 0.3f, 1.0f},
+                            "Mod NOT installed - DOWNLOAD MOD & JOIN installs it first.");
+            }
+        }
+    }
+    ImGui::Dummy(ImVec2(0.0f, 4.0f * sScale));
+
     // Structured Telemetry Key-Value Table
     int rowIdx = 0;
     const float keyW = U(90.0f);
@@ -1289,7 +1333,7 @@ void ServerBrowser::RenderServerDetails() {
         const ImVec2 r0 = ImGui::GetCursorScreenPos();
         const float valMaxW = std::max(U(80.0f), availW - keyW - 12.0f * sScale);
         const std::string vClip = EllipsizeLabel(bodyFont, rowTextPx, val, valMaxW);
-        const float rowH = 22.0f * sScale;
+        const float rowH = 19.0f * sScale;
         const ImVec2 r1(r0.x + availW, r0.y + rowH);
         if ((rowIdx++ % 2) == 0) {
             dl->AddRectFilled(r0, r1, IM_COL32(14, 24, 36, 150));
@@ -1344,20 +1388,6 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::TextWrapped("Match in progress - join in progress is enabled.");
         ImGui::PopStyleColor();
     }
-    if (s.isMod || !s.modId.empty()) {
-        ImGui::Spacing();
-        if (s.isMod) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom map / modded content");
-        if (!s.modId.empty()) {
-            const bool modReady = ModInstalledCached(s.modId);
-            const std::string modLabel = s.modTitle.empty() ? ("Workshop item " + s.modId) : s.modTitle;
-            ImGui::TextWrapped("Required Workshop mod: %s", modLabel.c_str());
-            if (modReady) {
-                ImGui::TextColored(ImVec4(0.45f, 0.86f, 0.55f, 1.0f), "Mod installed - ready to join.");
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.3f, 1.0f), "Mod NOT installed - DOWNLOAD MOD & JOIN fetches it first.");
-            }
-        }
-    }
 
     ImGui::Dummy(ImVec2(0.0f, 10.0f * sScale));
 
@@ -1368,6 +1398,7 @@ void ServerBrowser::RenderServerDetails() {
     };
 
     if (s.isOwn) {
+        ImGui::Spacing();
         ImGui::TextDisabled("You are hosting this session.");
         if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(-1, U(36))) || (triggerFocusedBtn && s_detailBtnIdx == 0)) {
             SessionManager::Get().StopHosting();
@@ -1380,11 +1411,7 @@ void ServerBrowser::RenderServerDetails() {
         const bool compatible = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
         if (!compatible) {
             const int rel = noble::CompareBuilds(noble::kBuildTag, s.build);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("VERSION MISMATCH: host runs %s and you have %s.",
-                               std::string(noble::ExtractBaseVersion(s.build)).c_str(),
-                               std::string(noble::ExtractBaseVersion(noble::kBuildTag)).c_str());
-            ImGui::PopStyleColor();
+            // The mismatch itself is already shown in the wrapped warning above; here only the update actions remain.
             if (rel < 0) {
                 Updater& up = Updater::Get();
                 if (up.IsInitialized()) {
