@@ -855,7 +855,7 @@ static void ScanEliteTable() {
 // -----------------------------------------------------------------------------
 static void UpdateTagShaderConstantsSEH(bool previewElite,
                                         const uint32_t words[4],
-                                        const float accentRgb[3],
+                                        const float lightsRgb[3],
                                         const float undersuitRgb[3],
                                         const float visorRgb[3]) {
     HMODULE hReach = noble::ReachModule();
@@ -896,11 +896,11 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
 
                 if (!previewElite) {
                     // 1) spartan_armor (26 float4s, f4[1][0] == 3.0f):
-                    //    f4[22] (+0x160) = self_illum_color (Armor Lights on legs, back, and chest -> Colors > Accent)
-                    if (accentRgb && f4Count == 26 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[23 * 4 + 0] - 1.0f) < 0.1f) {
-                        f4[22 * 4 + 0] = accentRgb[0] * 2.2f;
-                        f4[22 * 4 + 1] = accentRgb[1] * 2.2f;
-                        f4[22 * 4 + 2] = accentRgb[2] * 2.2f;
+                    //    f4[22] (+0x160) = self_illum_color (Armor Lights on legs, back, and chest -> Colors > Lights)
+                    if (lightsRgb && f4Count == 26 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[23 * 4 + 0] - 1.0f) < 0.1f) {
+                        f4[22 * 4 + 0] = lightsRgb[0] * 2.2f;
+                        f4[22 * 4 + 1] = lightsRgb[1] * 2.2f;
+                        f4[22 * 4 + 2] = lightsRgb[2] * 2.2f;
                         f4[22 * 4 + 3] = 1.0f;
                     }
                     // 2) spartan_rubber_suit (21 float4s, f4[1][0] == 18.0f):
@@ -1409,7 +1409,7 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
         std::memcpy(s_prevLightsRgb, sel.lightsRgb.data(), sizeof(float) * 3);
         // undersuitRgb = nullptr: Reach never lets players colour the undersuit and the Armory has no control for
         // it; Noble used to paint it with the hidden "lights" colour, which made it change (2026-11-10).
-        UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), nullptr, visFloats);
+        UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.lightsRgb.data(), nullptr, visFloats);
     }
 
     // The armour colours themselves go through the game's SetChangeColor (SyncArmoryLiveBipedEngineTickSEH), which
@@ -2209,6 +2209,7 @@ void SaveSelectionFile(const ReachArmorySelection& sel) {
     j["accent_index"] = sel.accentColorIndex;
     j["lights_index"] = sel.lightsColorIndex;
     j["visor_index"] = sel.visorColorIndex;
+    j["is_elite"] = sel.isElite;
     j["emblem"] = nlohmann::json::array({ sel.emblemForeground, sel.emblemBackground, sel.emblemFlags,
                                           sel.emblemColors[0], sel.emblemColors[1], sel.emblemColors[2] });
     std::ofstream out(std::filesystem::path(path), std::ios::trunc | std::ios::binary);
@@ -2245,6 +2246,7 @@ void LoadSelectionFile(ReachArmorySelection& sel) {
         if (j.contains("accent_index")) sel.accentColorIndex = j["accent_index"].get<int>();
         if (j.contains("lights_index")) sel.lightsColorIndex = j["lights_index"].get<int>();
         if (j.contains("visor_index")) sel.visorColorIndex = j["visor_index"].get<int>();
+        if (j.contains("is_elite") && j["is_elite"].is_boolean()) sel.isElite = j["is_elite"].get<bool>();
         if (j.contains("emblem") && j["emblem"].is_array() && j["emblem"].size() == 6) {
             sel.emblemForeground = j["emblem"][0].get<int>();
             sel.emblemBackground = j["emblem"][1].get<int>();
@@ -2509,6 +2511,118 @@ void ReachArmory::Tick() {
     }
 }
 
+// haloreach+0x53EF8 = player_mapping_get_unit_by_output_user(0): the local player's unit object datum.
+// Resolved every call so respawns and vehicle enter/exit always return the current unit datum.
+static uint32_t LocalUnitDatum(uintptr_t base) {
+    if (!base) return 0xFFFFFFFFu;
+    __try {
+        using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
+        return static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0xFFFFFFFFu;
+    }
+}
+
+// Per-draw-call Pixel Shader constant buffer override for Spartan armor lights (haloreach+0x262CE8).
+// In campaign and multiplayer maps, Spartan 'rmsh' shader constant blocks live in the shared tag heap and are not
+// exposed in the map-local tag table [hr+0xC1A600], or when modified in-place would affect every Spartan on the map.
+// When haloreach.dll renders a mesh part, hr+0x263FA4 writes the current object datum to [hr+0xB43B38], and
+// hr+0x262CE8 allocates and fills the Pixel Shader constant buffer at [hr+0x4E38968] (byte size [hr+0x4E38974] =
+// numFloat4s * 16). Hooking hr+0x262CE8 lets us override f4[22] (+0x160, self_illum_color) in the transient PS
+// constant buffer for the local player's Spartan (and the Armory preview Spartan) without touching shared tag memory
+// or other players' Spartans.
+using SetupPsConstantsFn = void(__fastcall*)(void* rmshProp, void* templatePass, void* routingInfo);
+static SetupPsConstantsFn s_origSetupPsConstants = nullptr;
+static std::atomic<bool> s_psHookAttempted{false};
+static std::atomic<uint32_t> s_cachedLocalUnitDatum{0xFFFFFFFFu};
+static std::atomic<bool> s_cachedLightsActive{false};
+static std::atomic<float> s_cachedLightsR{0.471f};
+static std::atomic<float> s_cachedLightsG{0.788f};
+static std::atomic<float> s_cachedLightsB{0.808f};
+
+static void ApplySpartanLightsToPsBufferSEH(uintptr_t base, uint32_t localUnit, float r, float g, float b, bool menuMode) {
+    __try {
+        const uint32_t psBytes = *reinterpret_cast<const uint32_t*>(base + 0x4E38974);
+        if (psBytes != 26u * 16u) return; // spartan_armor has 26 float4 PS constants (0x1A0 bytes)
+        float* psBuf = *reinterpret_cast<float* const*>(base + 0x4E38968);
+        if (!psBuf) return;
+        // Verify spartan_armor signature: f4[1].x == 3.0f and f4[23].x == 1.0f (self_illum_intensity)
+        if (std::abs(psBuf[1 * 4 + 0] - 3.0f) >= 0.1f || std::abs(psBuf[23 * 4 + 0] - 1.0f) >= 0.1f) return;
+
+        if (!menuMode) {
+            const uint32_t renderedObj = *reinterpret_cast<const uint32_t*>(base + 0xB43B38);
+            if (localUnit == 0xFFFFFFFFu || renderedObj == 0xFFFFFFFFu) return;
+            if (renderedObj != localUnit) {
+                // Also check if renderedObj is a child object attached to localUnit (e.g., armor attachment)
+                bool isLocalAttachment = false;
+                const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+                const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(
+                    __readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+                if (tlsArray) {
+                    const uint8_t* objTable = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x10);
+                    if (objTable) {
+                        const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
+                        const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(objTable + 0x50);
+                        const uint16_t idx = static_cast<uint16_t>(renderedObj & 0xFFFFu);
+                        if (entries && idx < maxObjects) {
+                            const uint8_t* objPtr = *reinterpret_cast<const uint8_t* const*>(entries + static_cast<size_t>(idx) * 0x18 + 0x10);
+                            if (objPtr) {
+                                const uint32_t parentDatum = *reinterpret_cast<const uint32_t*>(objPtr + 0x10);
+                                if (parentDatum == localUnit) isLocalAttachment = true;
+                            }
+                        }
+                    }
+                }
+                if (!isLocalAttachment) return;
+            }
+        }
+
+        psBuf[22 * 4 + 0] = r * 2.2f;
+        psBuf[22 * 4 + 1] = g * 2.2f;
+        psBuf[22 * 4 + 2] = b * 2.2f;
+        psBuf[22 * 4 + 3] = 1.0f;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+static void __fastcall Hook_SetupPsConstants(void* rmshProp, void* templatePass, void* routingInfo) {
+    if (s_origSetupPsConstants) {
+        s_origSetupPsConstants(rmshProp, templatePass, routingInfo);
+    }
+    if (!s_cachedLightsActive.load(std::memory_order_relaxed)) return;
+    HMODULE hReach = noble::ReachModule();
+    if (!hReach) return;
+    ApplySpartanLightsToPsBufferSEH(
+        reinterpret_cast<uintptr_t>(hReach),
+        s_cachedLocalUnitDatum.load(std::memory_order_relaxed),
+        s_cachedLightsR.load(std::memory_order_relaxed),
+        s_cachedLightsG.load(std::memory_order_relaxed),
+        s_cachedLightsB.load(std::memory_order_relaxed),
+        s_menuMode.load(std::memory_order_relaxed));
+}
+
+static void EnsureSpartanLightsPsHook(uintptr_t base) {
+    if (!base || s_psHookAttempted.exchange(true)) return;
+    static const uint8_t kExpectedPrologue[11] = {
+        0x48, 0x8B, 0xC4,             // mov rax, rsp
+        0x48, 0x89, 0x58, 0x08,       // mov [rax+8], rbx
+        0x48, 0x89, 0x68, 0x10        // mov [rax+10h], rbp
+    };
+    uint8_t* target = reinterpret_cast<uint8_t*>(base + 0x262CE8);
+    uint8_t actual[sizeof(kExpectedPrologue)] = {};
+    if (!SafeCopyMem(actual, target, sizeof(actual)) ||
+        std::memcmp(actual, kExpectedPrologue, sizeof(kExpectedPrologue)) != 0) {
+        NOBLE_WARN("ReachArmory: unexpected prologue at haloreach+0x262CE8; per-draw Spartan lights PS hook skipped.");
+        return;
+    }
+    if (HookManager::InstallHook(target,
+                                 reinterpret_cast<void*>(&Hook_SetupPsConstants),
+                                 reinterpret_cast<void**>(&s_origSetupPsConstants),
+                                 "haloreach_setup_ps_constants")) {
+        NOBLE_INFO("ReachArmory: installed Spartan armor lights PS constant buffer hook at haloreach+0x262CE8.");
+    }
+}
+
 void ReachArmory::NotifyEngineTick() {
     // 2026-11-12 emblem test: write the menu emblem from the first menu tick, before the Armory scene exists, in
     // case the engine builds the armour emblem picture once when the map loads.
@@ -2563,19 +2677,14 @@ void ReachArmory::NotifyEngineTick() {
         permPairsFlat,
         permPairCount,
         permPairsGen);
-    ApplyLocalEmblem(sel);
-}
-
-// haloreach+0x53EF8 = player_mapping_get_unit_by_output_user(0): the local player's unit object datum.
-// Resolved once, outside the __try block (a function containing __try may not need object unwinding, and a
-// function-local static with a dynamic initialiser does).
-static uint32_t LocalUnitDatum(uintptr_t base) {
-    static uint32_t s_datum = 0xFFFFFFFFu;
-    if (base && s_datum == 0xFFFFFFFFu) {
-        using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
-        s_datum = static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
+    if (HMODULE hReach = noble::ReachModule()) {
+        EnsureSpartanLightsPsHook(reinterpret_cast<uintptr_t>(hReach));
     }
-    return s_datum;
+    s_cachedLightsR.store(sel.lightsRgb[0], std::memory_order_relaxed);
+    s_cachedLightsG.store(sel.lightsRgb[1], std::memory_order_relaxed);
+    s_cachedLightsB.store(sel.lightsRgb[2], std::memory_order_relaxed);
+    s_cachedLightsActive.store(!sel.previewElite && !sel.previewMarine, std::memory_order_relaxed);
+    ApplyLocalEmblem(sel);
 }
 
 static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[4], uint32_t localUnitDatum) {
@@ -2668,15 +2777,23 @@ void ReachArmory::SyncMatchLiveBipeds() {
     const bool hasLiveFlags = ReadEngineModeFlagsSEH(base, nullptr, &liveSynchronousSim);
 
     const ReachArmorySelection sel = GetSelection();
+    const uint32_t localUnit = LocalUnitDatum(base);
     {   // every match, also without custom colours; only the local player's own appearance copy (0 = none yet)
-        const uint32_t localUnit = LocalUnitDatum(base);
         ApplyLocalEmblem(sel, localUnit == 0xFFFFFFFFu ? 0u : localUnit);
     }
     // Palette colours (and stock 0..4 visors) travel in the player's appearance record, and the engine
     // renders every player's own choice from it - other players' colours and visors included. Only the
-    // Armory's wheel colours or extended visors (>= 5) need forcing into the local biped's materials.
+    // Armory's wheel colours, extended visors (>= 5), or Spartan armor lights (self_illum_color, which is
+    // not part of the engine's 3-slot player change_color table) need forcing into the local biped's materials.
+    EnsureSpartanLightsPsHook(base);
+    s_cachedLocalUnitDatum.store(localUnit, std::memory_order_relaxed);
+    s_cachedLightsR.store(sel.lightsRgb[0], std::memory_order_relaxed);
+    s_cachedLightsG.store(sel.lightsRgb[1], std::memory_order_relaxed);
+    s_cachedLightsB.store(sel.lightsRgb[2], std::memory_order_relaxed);
+    s_cachedLightsActive.store(!sel.isElite, std::memory_order_relaxed);
     const bool customVisor = (sel.visorColorIndex >= 5);
-    if (!sel.primaryCustom && !sel.secondaryCustom && !sel.accentCustom && !sel.lightsCustom && !customVisor) return;
+    const bool customLights = !sel.isElite && (sel.lightsCustom || sel.lightsColorIndex != 14);
+    if (!sel.primaryCustom && !sel.secondaryCustom && !sel.accentCustom && !sel.lightsCustom && !customVisor && !customLights) return;
 
     // Apply live visor reflection and suit constants to active map shader tags ('rmsh')
     const float visFloats[3] = {
@@ -2705,7 +2822,7 @@ void ReachArmory::SyncMatchLiveBipeds() {
         UpdateTagShaderConstantsSEH(
             sel.previewElite,
             words.data(),
-            sel.accentCustom ? sel.accentRgb.data() : nullptr,
+            !sel.isElite ? sel.lightsRgb.data() : nullptr,
             nullptr,   // undersuit: never painted (see WriteColorsAndSuit)
             customVisor ? visFloats : nullptr);
     }

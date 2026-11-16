@@ -1,0 +1,12 @@
+{
+  "stock_sha256": "738dd2d24ea3aea12e1ee9aa4a61094bf116027d42004c35a19e5048608b0894",
+  "v16_sha256": "b8810c3b9822f5d6563439fc6b8b16c2def6cd7a6f660dd3775c42edcd0a5f24",
+  "stock_file_bytes": 13229016,
+  "v16_file_bytes": 14198784,
+  "append_file_offset": "0x00C9DBD8",
+  "append_byte_count": 969768,
+  "append_sha256": "e2c1366d610f85b26f78cb139ef2f34e749dc18b3a8b6e0892cd4a2f0f4ebd17",
+  "overwrite_rows": 642,
+  "key_fields": 48,
+  "coordinated_operand_rows": 839
+}
