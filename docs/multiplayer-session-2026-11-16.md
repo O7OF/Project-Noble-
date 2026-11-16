@@ -60,6 +60,27 @@ cheapest window mode. Measurements on the pinned build (idle system baseline 12.
   Reaching the 16/32-player acceptance bar needs one of: (a) 3-4 PCs x 4-5 instances (recommended; the harness already
   supports `-connect <host-ip>` and per-machine identities), or (b) a RAM upgrade to 96 GB+ on this machine. The
   session/join layer itself is healthy and proven at 5 players on one machine.
+## Tyler approvals 2026-11-16 11:45 ET (answers to the session report)
+
+1. **Dev-only lower-memory test profile approved** - implemented (commit `a3bc5e4`): `tools/mp-session-test.ps1 -LowMem`
+   selects a 640x360 borderless template, requests the Stock engine-limits layout through the dev-only
+   `NOBLE_ENGINE_LIMITS_PROBE=0` (now accepted inside `NOBLE_DEV_BUILD`; shipped pin untouched) and adds a free-RAM
+   guard plus system/private-memory accounting. **Measured result: 16 players on this machine is not achievable.**
+   One instance costs 5.0-5.8 GB WS / 4.7-5.5 GB private (resolution and window mode do not matter; named pools total
+   0.08 GB), so 16 clients need ~76-88 GB against 31.8 GB installed. 8 instances hit the RAM guard at 30.5 GB used,
+   6 at 31.65 GB. Max proven on this machine stays 5 players. Next step needs Tyler: multi-PC acceptance (3-4 PCs x
+   4-5 instances; harness supports `-connect <host-ip>`) or a RAM upgrade to 96 GB+.
+2. **Lowest resolution + cheapest display mode** - tested: 640x360 windowed 6.1 GB, 640x360 borderless 5.5 GB,
+   1280x720 borderless 5.8 GB, low-mem Stock 5.0 GB. Lower resolution/window mode does not reduce engine memory, so
+   the dev-only profile uses 640x360 borderless + Stock limits purely as the cheapest measured option.
+3. **Lobby/picker/server-browser honesty approved and implemented** (commit `a2c7125`): one seat-capability source
+   (`LobbyPatches::EffectiveMultiplayerSeats()` = 16 stock, 32 only with the dev slot patch + `NOBLE_MP_SLOTS32=1`);
+   `-max-players` is clamped and published as the session target; MAX PLAYERS keeps 4/8/12/16 (16 default) and greys
+   24/32 with a reason; lobby header/adverts/beacon use the effective cap; LAN beacon shows the real player count;
+   in-match scoreboard and loading roster size from the engine game-player table (verified: 2-player LAN run shows
+   2 rows, `live roster 2 player(s)`, screenshot `lobbytest3-20261116-120707-host-cap0.png`); server browser shows
+   real counts, FULL / STALE / NOT HEARD LATELY / 17+ UNSUPPORTED verdicts and blocks JOIN on a full row.
+   Remaining: guest names on direct/LAN launches are placeholders (`PLAYER n`) until the msg-27 identity data is used.
 ## Remaining blockers
 
 1. **High-slot (peer 17 / player 16) join, milestone 2.** With `NOBLE_SLOT_HIGH=1` the host now promotes peer 17 to
