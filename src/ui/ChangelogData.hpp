@@ -138,12 +138,12 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     };
 
     const std::vector<ChangeItem> v02011Items = {
-        {"NETCODE", "Chunked Session Capacity Dispatch",
-         "Implemented chunked peer dispatch simulation and packet routing for expanded lobbies, ensuring smooth synchronization across high player counts."},
+        {"NETCODE", "Piecewise Member Cave Synthesis & Chunked Dispatch",
+         "Added piecewise member and table cave synthesis across all 120 engine sites for chunked session capacities (32, 64, 128), validating register-accurate dispatch and shadow layout boundaries."},
         {"NETCODE", "Peer Seat Mapping & Request Gating",
-         "Added authoritative peer seat allocation and structured join request gating to ensure reliable slot assignment in high-capacity custom games."},
+         "Added authoritative peer seat allocation, chunk-aware shadow record mirrors, and structured join request gating to ensure reliable slot assignment in high-capacity custom games."},
         {"STABILITY", "Headless Capacity Self-Diagnostics",
-         "Integrated automated headless slot capacity validation tests to verify network packet packing, member cave boundaries, and memory alignment."},
+         "Integrated automated headless slot capacity validation tests verifying piecewise cave length, shadow plan coverage, packet packing, and memory alignment."},
     };
 
     const std::vector<ChangeItem> v02010Items = {
