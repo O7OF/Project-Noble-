@@ -222,3 +222,34 @@ copies. Only then can the chunked install and the wire-field widening be exercis
 4. Solve the 128 message-size limit (channel/framing or batched membership updates); 64 fits the current 16-bit length.
 5. Raise engine pools and the session slot count at 64/128; re-measure memory and the setter churn.
 6. Generalize the UI surfaces (dev-gated) and the harness/test plan; measure with the multi-PC rig when available.
+
+## 8. Status 2026-11-16 (mask-widening groundwork rounds)
+
+**Done and validated synthetically (no engine/clients needed).**
+
+- Shadow layout model for 32/64/128: chunk plan, per-range dispatch constants simulated for every record index on both
+  block bases (A and A+0x2210), chunk placement/no-overlap/in-stride checks; shadow ends 0x8614 / 0xEAA4 / 0x21A14.
+- Chunk-aware shadow record handling: init, copy/clear mirrors, peer-table reset and `PeerRecord` all use the plan; at
+  capacity 32 it builds one stock chunk, so the installed 32-player path is unchanged (verified by smoke tests).
+- Piecewise cave synthesis for all 120 caved sites at 32/64/128: registers decoded from the original imul, control flow
+  (dispatch branch targets, jump-back targets) validated; maxima 41 / 70 / 157 bytes, all inside the 256-byte cave entry.
+- Message-capacity model: 32 derives exactly the generated extension (0x2200 / message 0xA300); 64 = 0x6900 / 0xEA00
+  (fits a 16-bit length, player index needs 6 bits); 128 = 0xF700 / 0x17800 (needs framing) and needs 7-bit fields.
+- Effective-seat mapping (stock 16 unless a capacity is installed) and `-slot-players 64|128` request recognition/refusal.
+- Mask widening: storage model (1/2/4 words, high words at shadow+0x28000..), bit helpers validated for every bit at all
+  three capacities, high words wired into the shadow init/clear/copy lifecycle (0/8/24-byte spans validated).
+- Mask site inventory: committed scanner (`tools/limits/scan_mask_sites.py`) + generated inventory + classification pass 1
+  (player mask `+0x170C` and peer mask `+0x5C` are the confirmed widen targets; most raw 0xFFFF hits are sentinels).
+
+**Still blocking anything above 32 players.**
+
+1. Implement the mask widening itself: high-word storage in real session shadows is modelled but no engine mask site is
+   patched yet; every confirmed mask read/write/bit-scan site must be widened, and the membership encoder/decoder mask
+   fields widened with them (inventory + classification pass 1 are the starting list).
+2. Then the chunked install (write synthesised caves + chunked shadow placement), S1/S2 side-area growth with chunk
+   copies, and chunk-hopping step caves.
+3. Then the wire fields (peer/player index bits), 128 message framing, engine pools and the UI surfaces.
+
+**Hardware/acceptance note.** 16-player acceptance needs 3-4 PCs x 4-5 instances or ~96-128 GB RAM on one machine (five
+players is the proven one-machine maximum); 32+ field testing is likewise hardware-gated. No user-facing cap or release
+change was made; version/release line is controlled by the release workflow (now v0.20.11).
