@@ -1352,6 +1352,85 @@ static void UpdateFivePlayerLatch() {
     }
 }
 
+// Identity-check probe: hr+0x40B4C8 compares a local TLS machine identity against the launch-data descriptor returned by
+// the session object's vtable+0x90 getter; a mismatch sets launch status 4 (session-start mode) and is the five-player
+// discriminator. Dump both sides so the differing field can be aligned.
+typedef uint64_t(__fastcall* LaunchIdentityCheckFn)(void* session);
+static LaunchIdentityCheckFn s_originalIdentityCheck = nullptr;
+// POD-only helper: formats the identity-check inputs (SEH lives here to avoid C2712 in the logging hook).
+static int CaptureIdentityProbe(void* session, char* out, size_t outSize) {
+    __try {
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+        const uintptr_t local = block + 0x10;
+        uintptr_t launchData = 0;
+        if (session) {
+            const uintptr_t obj = *reinterpret_cast<const uintptr_t*>(reinterpret_cast<uintptr_t>(session) + 0x49A0);
+            if (obj) {
+                const uintptr_t vtable = *reinterpret_cast<const uintptr_t*>(obj);
+                if (vtable) {
+                    const auto getter = *reinterpret_cast<const uintptr_t*>(vtable + 0x90);
+                    if (getter) {
+                        launchData = reinterpret_cast<uint64_t(__fastcall*)(void*)>(getter)(reinterpret_cast<void*>(obj));
+                    }
+                }
+            }
+        }
+        int n = std::snprintf(out, outSize, "local[");
+        for (int i = 0; i < 0x28 && n > 0 && static_cast<size_t>(n) < outSize; ++i) {
+            n += std::snprintf(out + n, outSize - n, "%02X%s", *reinterpret_cast<const unsigned char*>(local + i),
+                               (i & 3) == 3 && i != 0x27 ? " " : "");
+        }
+        if (n > 0 && static_cast<size_t>(n) < outSize) n += std::snprintf(out + n, outSize - n, "] launch[");
+        for (int i = 0; i < 0x20 && n > 0 && static_cast<size_t>(n) < outSize; ++i) {
+            n += std::snprintf(out + n, outSize - n, "%02X%s", *reinterpret_cast<const unsigned char*>(launchData + i),
+                               (i & 3) == 3 && i != 0x1F ? " " : "");
+        }
+        if (n > 0 && static_cast<size_t>(n) < outSize) n += std::snprintf(out + n, outSize - n, "]");
+        return 1;
+    } __except (1) {
+        return 0;
+    }
+}
+static const bool forceIdentityMatch = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_FORCE_IDENTITY", env, 8) > 0 && env[0] != L'0';
+}();
+static uint64_t __fastcall Hook_IdentityCheck(void* session) {
+    if (forceIdentityMatch && s_campaignCoop.load() && IsNobleHost()) {
+        UpdateFivePlayerLatch();
+        if (s_fivePlayerSeen.load()) {
+            __try {
+                const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+                const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+                const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+                if (block && session) {
+                    const uintptr_t local = block + 0x10;
+                    *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(session) + 0x614DC) =
+                        (*(reinterpret_cast<const char*>(local + 0x1CA)) == 0 &&
+                         *(reinterpret_cast<const char*>(local + 1)) != 1) ? 1 : 0;
+                    const uint64_t id = *reinterpret_cast<const uint64_t*>(block + 0x18);
+                    static std::atomic<int> forceLog{0};
+                    if (forceLog.fetch_add(1) < 10) {
+                        NOBLE_WARN("LobbyPatches: campaign >4 probe: forced identity match, id {:#x}", id);
+                    }
+                    return id;
+                }
+            } __except (1) {
+            }
+        }
+    }
+    static std::atomic<int> logCount{0};
+    const uint64_t result = s_originalIdentityCheck ? s_originalIdentityCheck(session) : ~0ull;
+    if (s_campaignCoop.load() && IsNobleHost() && logCount.fetch_add(1) < 12) {
+        char message[512] = {};
+        const int ok = CaptureIdentityProbe(session, message, sizeof(message));
+        NOBLE_WARN("LobbyPatches: identity_check ret {:#x} {}", result, ok ? message : "(probe fault)");
+    }
+    return result;
+}
+
 // Launch-data change probes: FUN_18044FFE0 writes the "launch data updated" byte that FUN_18040A008 turns into launch
 // status 4 (session-start mode). FUN_18044FC94 applies the launch data and writes a second update byte.
 typedef void(__fastcall* LaunchDataUpdateAFn)(char* state, uint8_t* out);
@@ -1392,21 +1471,320 @@ static const bool forceReadyB = [] {
     wchar_t env[8] = {};
     return GetEnvironmentVariableW(L"NOBLE_COOP_FORCE_READY_B", env, 8) > 0 && env[0] != L'0';
 }();
+// >4-player launch probe: dispatcher B is the direct-launch validator. Its game-mode branch requires an exact player
+// count (mode 1 => exactly 4), so a five-player campaign launch always returns 0 and the caller switches to launch
+// status 4 (session-start mode, which then aborts). Dump the launch context (NOBLE_COOP_DUMP_B) to find every failing
+// gate, and optionally fake the session player count to four just for the duration of the call
+// (NOBLE_COOP_FAKE_COUNT4) so the routine can run its real direct-launch start path instead of being skipped by a
+// forced return value.
+static const bool dumpReadyB = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_DUMP_B", env, 8) > 0 && env[0] != L'0';
+}();
+static const bool fakeLaunchCount4 = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_FAKE_COUNT4", env, 8) > 0 && env[0] != L'0';
+}();
+// The engine reads these accessors as embedded objects: "lea rcx,[ctx+off]; mov rax,[rcx]; call [rax+0x90]", so the
+// object pointer is ctx+off and its first qword is the vtable. Each call is SEH-isolated so one uninitialised accessor
+// cannot discard the whole dump.
+static void* ReadyGetterValue(uintptr_t ctx, uintptr_t fieldOffset) {
+    const uintptr_t obj = ctx + fieldOffset;
+    const uintptr_t vtable = *reinterpret_cast<const uintptr_t*>(obj);
+    if (!vtable) return nullptr;
+    const uintptr_t fn = *reinterpret_cast<const uintptr_t*>(vtable + 0x90);
+    if (!fn) return nullptr;
+    return reinterpret_cast<void*(__fastcall*)(void*)>(fn)(reinterpret_cast<void*>(obj));
+}
+static int SafeGetU32(uintptr_t addr, uint32_t* out) {
+    __try {
+        *out = *reinterpret_cast<const uint32_t*>(addr);
+        return 1;
+    } __except (1) {
+        return 0;
+    }
+}
+static uintptr_t ReadyGetterValueSafe(uintptr_t ctx, uintptr_t fieldOffset, int* ok) {
+    __try {
+        void* result = ReadyGetterValue(ctx, fieldOffset);
+        *ok = 1;
+        return reinterpret_cast<uintptr_t>(result);
+    } __except (1) {
+        *ok = 0;
+        return 0;
+    }
+}
+// POD-only helper: formats the dispatcher-B inputs (SEH lives here to avoid C2712 in the logging hook).
+static int CaptureReadyBProbe(void* ctx, char* out, size_t outSize) {
+    __try {
+        const uintptr_t c = reinterpret_cast<uintptr_t>(ctx);
+        if (!c) return 0;
+        const uint8_t launchValid = static_cast<uint8_t>(*reinterpret_cast<const uint8_t*>(c + 0x4990) & 1);
+        const int mode = launchValid ? *reinterpret_cast<const int*>(c + 0x4998) : -1;
+        const int count = *reinterpret_cast<const int*>(c + 0x1738);
+        const uint32_t mask = *reinterpret_cast<const uint32_t*>(c + 0x173C);
+        const int v28 = *reinterpret_cast<const int*>(c + 0x28);
+        const int v38 = *reinterpret_cast<const int*>(c + 0x38);
+        const int v40 = *reinterpret_cast<const int*>(c + 0x40);
+        const int v58 = *reinterpret_cast<const int*>(c + 0x58);
+        const int v4464 = *reinterpret_cast<const int*>(c + 0x4464);
+        const uint32_t status = *reinterpret_cast<const uint32_t*>(c + 0x47E0);
+        const uint8_t blkB = static_cast<uint8_t>(*reinterpret_cast<const uint8_t*>(c + 0x4BC8) & 1);
+        const uint8_t blkBVal = *reinterpret_cast<const uint8_t*>(c + 0x4BD0);
+        const int blkBCount = *reinterpret_cast<const int*>(c + 0x4BD4);
+        const uint8_t blkB0 = *reinterpret_cast<const uint8_t*>(c + 0x4C48);
+        const uint8_t g6810 = static_cast<uint8_t>(*reinterpret_cast<const uint8_t*>(c + 0x6810) & 1);
+        const uint8_t g6818 = *reinterpret_cast<const uint8_t*>(c + 0x6818);
+        const int g681C = *reinterpret_cast<const int*>(c + 0x681C);
+        const uint8_t f30118 = static_cast<uint8_t>(*reinterpret_cast<const uint8_t*>(c + 0x30118) & 1);
+        const uint8_t f30120 = *reinterpret_cast<const uint8_t*>(c + 0x30120);
+        const uint8_t f3012B = *reinterpret_cast<const uint8_t*>(c + 0x3012B);
+        const uint8_t f60248 = static_cast<uint8_t>(*reinterpret_cast<const uint8_t*>(c + 0x60248) & 1);
+        const uint8_t f5F9B0 = static_cast<uint8_t>(*reinterpret_cast<const uint8_t*>(c + 0x5F9B0) & 1);
+        int ok49A0 = 0, ok60C0 = 0, ok6158 = 0, ok6308 = 0;
+        const uintptr_t p49A0 = ReadyGetterValueSafe(c, 0x49A0, &ok49A0);
+        const uintptr_t p60C0 = ReadyGetterValueSafe(c, 0x60C0, &ok60C0);
+        const uintptr_t p6158 = ReadyGetterValueSafe(c, 0x6158, &ok6158);
+        const uintptr_t p6308 = ReadyGetterValueSafe(c, 0x6308, &ok6308);
+        int v6308 = -1;
+        if (ok6308 && p6308) {
+            uint32_t t = 0;
+            if (SafeGetU32(p6308, &t)) v6308 = static_cast<int>(t);
+        }
+        static const uintptr_t kExtraOffsets[6] = { 0x61E8, 0x6278, 0x6398, 0x64C0, 0x6550, 0x6428 };
+        int extraOk[6] = {0, 0, 0, 0, 0, 0};
+        int extraV[6] = {-1, -1, -1, -1, -1, -1};
+        for (int i = 0; i < 6; ++i) {
+            const uintptr_t ep = ReadyGetterValueSafe(c, kExtraOffsets[i], &extraOk[i]);
+            if (extraOk[i] && ep) {
+                uint32_t t = 0;
+                if (SafeGetU32(ep, &t)) extraV[i] = static_cast<int>(t);
+            }
+        }
+        int d0A4 = -1;
+        int ld[6] = {-1, -1, -1, -1, -1, -1};
+        if (ok49A0 && p49A0) {
+            for (int i = 0; i < 6; ++i) {
+                uint32_t t = 0;
+                if (SafeGetU32(p49A0 + static_cast<uintptr_t>(i) * 4, &t)) ld[i] = static_cast<int>(t);
+            }
+            d0A4 = static_cast<int>(
+                reinterpret_cast<uint8_t(__fastcall*)(int*)>(s_reachBase + 0xD0A4)(reinterpret_cast<int*>(p49A0 + 0x10)));
+        }
+        const uintptr_t launchId = ((c + 0x3012B) & ~static_cast<uintptr_t>(3));
+        int idv[6] = {-1, -1, -1, -1, -1, -1};
+        for (int i = 0; i < 6; ++i) {
+            uint32_t t = 0;
+            if (SafeGetU32(launchId + static_cast<uintptr_t>(i) * 4, &t)) idv[i] = static_cast<int>(t);
+        }
+        int n = std::snprintf(out, outSize, "mode %d count %d mask %08X p28 %d p38 %d p40 %d p58 %d p4464 %d status %08X",
+                              mode, count, static_cast<unsigned>(mask), v28, v38, v40, v58, v4464,
+                              static_cast<unsigned>(status));
+        if (n < 0 || static_cast<size_t>(n) >= outSize) return n;
+        n += std::snprintf(out + n, outSize - static_cast<size_t>(n),
+                           " blkB %d/%02X/%d b0 %02X g %d/%02X/%X f %d/%d/%02X/%d/%d",
+                           static_cast<int>(blkB), static_cast<int>(blkBVal), blkBCount, static_cast<int>(blkB0),
+                           static_cast<int>(g6810), static_cast<int>(g6818), static_cast<unsigned>(g681C),
+                           static_cast<int>(f30118), static_cast<int>(f3012B), static_cast<int>(f30120),
+                           static_cast<int>(f60248), static_cast<int>(f5F9B0));
+        if (n < 0 || static_cast<size_t>(n) >= outSize) return n;
+        n += std::snprintf(out + n, outSize - static_cast<size_t>(n),
+                           " | 49A0 %llX ok %d [%d %d %d %d %d %d] d0A4 %d 60C0 %llX ok %d 6158 %llX ok %d "
+                           "6308 %llX ok %d v %d id %llX [%d %d %d %d %d %d]",
+                           static_cast<unsigned long long>(p49A0), ok49A0, ld[0], ld[1], ld[2], ld[3], ld[4], ld[5],
+                           d0A4, static_cast<unsigned long long>(p60C0), ok60C0,
+                           static_cast<unsigned long long>(p6158), ok6158, static_cast<unsigned long long>(p6308),
+                           ok6308, v6308, static_cast<unsigned long long>(launchId), idv[0], idv[1], idv[2], idv[3],
+                           idv[4], idv[5]);
+        if (n < 0 || static_cast<size_t>(n) >= outSize) return n;
+        n += std::snprintf(out + n, outSize - static_cast<size_t>(n), " | x %d:%d/%d %d:%d/%d %d:%d/%d %d:%d/%d %d:%d/%d %d:%d/%d",
+                           extraOk[0], extraV[0], 0, extraOk[1], extraV[1], 0, extraOk[2], extraV[2], 0, extraOk[3],
+                           extraV[3], 0, extraOk[4], extraV[4], 0, extraOk[5], extraV[5], 0);
+        return n;
+    } __except (1) {
+        return 0;
+    }
+}
 static uint8_t __fastcall Hook_ReadyCheckB(void* ctx, char flag) {
+    if (dumpReadyB && s_campaignCoop.load() && IsNobleHost() && ctx) {
+        static std::atomic<int> dumpLog{0};
+        if (dumpLog.fetch_add(1) < 24) {
+            char message[1024] = {};
+            const int ok = CaptureReadyBProbe(ctx, message, sizeof(message));
+            NOBLE_WARN("LobbyPatches: dispatcher B input flag {} {}", static_cast<int>(flag),
+                       ok > 0 ? message : "(probe fault)");
+        }
+    }
+    int* countField = nullptr;
+    int savedCount = 0;
+    bool patched = false;
+    if (fakeLaunchCount4 && flag == 0 && ctx && s_campaignCoop.load() && IsNobleHost()) {
+        UpdateFivePlayerLatch();
+        if (s_fivePlayerSeen.load()) {
+            __try {
+                countField = reinterpret_cast<int*>(reinterpret_cast<uintptr_t>(ctx) + 0x1738);
+                savedCount = *countField;
+                if (savedCount > 4) {
+                    *countField = 4;
+                    patched = true;
+                }
+            } __except (1) {
+                countField = nullptr;
+            }
+        }
+    }
     const uint8_t result = s_originalReadyCheckB ? s_originalReadyCheckB(ctx, flag) : 0;
+    if (patched && countField) {
+        *countField = savedCount;
+        static std::atomic<int> patchLog{0};
+        if (patchLog.fetch_add(1) < 10) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: faked launch count {} -> 4 during dispatcher B, ret {}", savedCount,
+                       static_cast<int>(result));
+        }
+    }
     static std::atomic<int> logB{0};
     if (s_campaignCoop.load() && IsNobleHost() && logB.fetch_add(1) < 40) {
         NOBLE_WARN("LobbyPatches: probe dispatcher B (40A81C flag {}) -> {}", static_cast<int>(flag),
                    static_cast<int>(result));
     }
-    // The four-player direct launch path has dispatcher B returning 1. Force that result for the five-player case so the
-    // launch-data apply keeps the direct path instead of setting launch status 4 (session-start mode).
     if (forceReadyB && flag == 0 && result == 0 && s_campaignCoop.load() && IsNobleHost()) {
         UpdateFivePlayerLatch();
         if (s_fivePlayerSeen.load()) {
             static std::atomic<int> forceLog{0};
             if (forceLog.fetch_add(1) < 10) {
                 NOBLE_WARN("LobbyPatches: campaign >4 probe: forced dispatcher B result 0 -> 1");
+            }
+            return 1;
+        }
+    }
+    return result;
+}
+// Launch-info validation at the end of dispatcher B's direct-launch path: FUN_180057C90(info) inspects the assembled
+// game-launch structure and returns 0 to reject it. This is where the five-player campaign launch may be refused after
+// every earlier dispatcher gate has passed, so log its verdict, the structure's player-count field (+0x18) and its player
+// mask (+0x254). Probe-only (installed with NOBLE_JIP_PROBE).
+typedef uint8_t(__fastcall* LaunchInfoValidateFn)(void* info);
+static LaunchInfoValidateFn s_originalLaunchInfoValidate = nullptr;
+// POD-only helper: replicates the local checks of FUN_180057C90 on the launch-info structure so the failing test can be
+// named from the log without a debugger. Returns 0 on a probe fault.
+static int CaptureLaunchInfoChecks(void* info, char* out, size_t outSize) {
+    __try {
+        const uintptr_t p = reinterpret_cast<uintptr_t>(info);
+        if (!p) return 0;
+        const int b0 = *reinterpret_cast<const uint8_t*>(p + 0x0);
+        const int b1 = *reinterpret_cast<const uint8_t*>(p + 0x1);
+        const int b3 = *reinterpret_cast<const uint8_t*>(p + 0x3);
+        const int w6 = *reinterpret_cast<const uint16_t*>(p + 0x6);
+        const int i18 = *reinterpret_cast<const int*>(p + 0x18);
+        const int b1ca = *reinterpret_cast<const uint8_t*>(p + 0x1CA);
+        const int b1cb = *reinterpret_cast<const uint8_t*>(p + 0x1CB);
+        const int b1d5 = *reinterpret_cast<const uint8_t*>(p + 0x1D5);
+        const int w1e0 = *reinterpret_cast<const uint16_t*>(p + 0x1E0);
+        const uint32_t mask = *reinterpret_cast<const uint32_t*>(p + 0x254);
+        int pairBad = 0, pairA = -1, pairB = -1;
+        for (int i = 0; i <= 16 && pairBad == 0; ++i) {
+            if (!((mask >> i) & 1u)) continue;
+            for (int j = i + 1; j <= 16; ++j) {
+                if (!((mask >> j) & 1u)) continue;
+                if (std::memcmp(reinterpret_cast<const void*>(p + 0x258 + static_cast<uintptr_t>(i) * 6),
+                                reinterpret_cast<const void*>(p + 0x258 + static_cast<uintptr_t>(j) * 6), 6) != 0) {
+                    pairBad = 1;
+                    pairA = i;
+                    pairB = j;
+                    break;
+                }
+            }
+        }
+        int slotBad = 0, slotFirst = -1, slotCount = 0, datumBad = 0;
+        for (int i = 0; i < 16; ++i) {
+            const uintptr_t slot = p + 0x2C8 + static_cast<uintptr_t>(i) * 0xA0;
+            if (*reinterpret_cast<const uint8_t*>(slot) == 0) continue;
+            ++slotCount;
+            const void* datumRef = reinterpret_cast<const void*>(s_reachBase + 0x98BF40);
+            if (std::memcmp(reinterpret_cast<const void*>(slot + 0x16), datumRef, 8) != 0) {
+                ++datumBad;
+            }
+            if (slotFirst < 0) {
+                slotFirst = i;
+            } else {
+                const uintptr_t first = p + 0x2C8 + static_cast<uintptr_t>(slotFirst) * 0xA0;
+                if (std::memcmp(reinterpret_cast<const void*>(slot + 0x16), reinterpret_cast<const void*>(first + 0x16),
+                                8) != 0) {
+                    slotBad = 1;
+                }
+            }
+        }
+        int n = std::snprintf(out, outSize,
+                              "chk b %d/%d/%d w6 %d i18 %d 1ca %d/%d 1d5 %d w1e0 %d mask %08X pairBad %d(%d,%d) slots %d "
+                              "datumBad %d slotBad %d firstSlot %d | p",
+                              b0, b1, b3, w6, i18, b1ca, b1cb, b1d5, w1e0, static_cast<unsigned>(mask), pairBad, pairA,
+                              pairB, slotCount, datumBad, slotBad, slotFirst);
+        if (n < 0 || static_cast<size_t>(n) >= outSize) return n;
+        for (int i = 0; i <= 16 && static_cast<size_t>(n) + 20 < outSize; ++i) {
+            if (!((mask >> i) & 1u)) continue;
+            n += std::snprintf(out + n, outSize - static_cast<size_t>(n), " %d:", i);
+            for (int b = 0; b < 6; ++b) {
+                n += std::snprintf(out + n, outSize - static_cast<size_t>(n), "%02X",
+                                   static_cast<int>(*reinterpret_cast<const uint8_t*>(p + 0x258 +
+                                                                                       static_cast<uintptr_t>(i) * 6 +
+                                                                                       static_cast<uintptr_t>(b))));
+            }
+        }
+        if (static_cast<size_t>(n) + 60 < outSize) {
+            n += std::snprintf(out + n, outSize - static_cast<size_t>(n), " | s");
+            int shown = 0;
+            for (int i = 0; i < 16 && shown < 6; ++i) {
+                const uintptr_t slot = p + 0x2C8 + static_cast<uintptr_t>(i) * 0xA0;
+                if (*reinterpret_cast<const uint8_t*>(slot) == 0) continue;
+                ++shown;
+                n += std::snprintf(out + n, outSize - static_cast<size_t>(n), " %d:", i);
+                for (int b = 0; b < 8; ++b) {
+                    n += std::snprintf(out + n, outSize - static_cast<size_t>(n), "%02X",
+                                       static_cast<int>(*reinterpret_cast<const uint8_t*>(slot + 0x16 +
+                                                                                          static_cast<uintptr_t>(b))));
+                }
+            }
+        }
+        return n;
+    } __except (1) {
+        return 0;
+    }
+}
+static const bool forceLaunchInfoValid = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_FORCE_VALIDATE", env, 8) > 0 && env[0] != L'0';
+}();
+static uint8_t __fastcall Hook_LaunchInfoValidate(void* info) {
+    const uint8_t result = s_originalLaunchInfoValidate ? s_originalLaunchInfoValidate(info) : 0;
+    static std::atomic<int> readyValidateLog{0};
+    if (s_campaignCoop.load() && IsNobleHost() && readyValidateLog.fetch_add(1) < 12) {
+        int count18 = -1;
+        uint32_t mask254 = 0;
+        __try {
+            count18 = *reinterpret_cast<const int*>(reinterpret_cast<uintptr_t>(info) + 0x18);
+            mask254 = *reinterpret_cast<const uint32_t*>(reinterpret_cast<uintptr_t>(info) + 0x254);
+        } __except (1) {
+            count18 = -1;
+            mask254 = 0;
+        }
+        NOBLE_WARN("LobbyPatches: launch_info_validate -> {} count18 {} mask254 {:08X}", static_cast<int>(result),
+                   count18, mask254);
+    }
+    static std::atomic<int> readyValidateDetail{0};
+    if (s_campaignCoop.load() && IsNobleHost() && readyValidateDetail.fetch_add(1) < 6) {
+        char detail[1024] = {};
+        const int ok = CaptureLaunchInfoChecks(info, detail, sizeof(detail));
+        NOBLE_WARN("LobbyPatches: launch_info_checks {}", ok > 0 ? detail : "(probe fault)");
+    }
+    // Probe: accept the assembled launch info for a five-plus-player campaign session even though the stock validator
+    // rejects it (it requires every present player's campaign data to match). This tests whether validation is the last
+    // blocker in the direct-launch path; the real fix has to make the assembled data consistent instead.
+    if (forceLaunchInfoValid && result == 0 && s_campaignCoop.load() && IsNobleHost()) {
+        UpdateFivePlayerLatch();
+        if (s_fivePlayerSeen.load()) {
+            static std::atomic<int> forceValidateLog{0};
+            if (forceValidateLog.fetch_add(1) < 10) {
+                NOBLE_WARN("LobbyPatches: campaign >4 probe: forced launch_info_validate 0 -> 1");
             }
             return 1;
         }
@@ -2798,6 +3176,67 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
         }
     }
 
+    // 8aa. Campaign co-op launch-mode player-count gate at hr+0x40AD6B.
+    // Dispatcher B (hr+0x40A81C, direct-launch validator) branches on the launch mode: mode 1 (campaign co-op) only
+    // accepts a session with at most four players - "cmp edx,4 / cmovle edi,eax" replaces the routine's overall verdict
+    // (EDI = bVar32) with 0 whenever the session player count (session+0x1738) is greater than four. That is the cap
+    // that turns a five-player campaign launch into launch status 4 (network session-start, then abort). Replace the
+    // conditional move with an unconditional "mov edi,eax" so a campaign session of up to 16 players validates exactly
+    // like the stock four-player one; counts of 1-4 behave identically to before.
+    {
+        uint8_t* atCountGate = reinterpret_cast<uint8_t*>(base + 0x40AD6B);
+        static const uint8_t kExpectedCountGate[3] = { 0x0F, 0x4E, 0xF8 }; // cmovle edi, eax
+        if (0x40AD6B + 3 <= size && std::memcmp(atCountGate, kExpectedCountGate, 3) == 0) {
+            static const uint8_t kUnconditional[3] = { 0x8B, 0xF8, 0x90 }; // mov edi, eax ; nop
+            if (WriteProtectedMemory(atCountGate, kUnconditional, 3)) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: campaign co-op launch count gate lifted at hr+0x40AD6B (0F 4E F8 -> 8B F8 90)");
+            }
+        } else {
+            NOBLE_WARN("LobbyPatches: campaign co-op launch count gate bytes differ at hr+0x40AD6B ({:02X} {:02X} {:02X}); left alone",
+                       static_cast<int>(atCountGate[0]), static_cast<int>(atCountGate[1]), static_cast<int>(atCountGate[2]));
+        }
+    }
+
+    // 8ab. Campaign launch-info player-count check at hr+0x57D7F.
+    // FUN_180057C90 validates the launch-info structure that dispatcher B assembles before it starts the session. Its
+    // +0x18 field carries the campaign session player count and the routine rejects anything above four
+    // ("mov ecx,4 / cmp eax,ecx / jg reject"), which is a second hard four-player cap behind the dispatcher-B gate.
+    // Raise the compare limit to the engine's full sixteen-player capacity; values 1-4 keep their previous behaviour.
+    {
+        uint8_t* atLaunchInfoCap = reinterpret_cast<uint8_t*>(base + 0x57D7F);
+        static const uint8_t kExpectedLaunchInfoCap[5] = { 0xB9, 0x04, 0x00, 0x00, 0x00 }; // mov ecx,4
+        if (0x57D7F + 5 <= size && std::memcmp(atLaunchInfoCap, kExpectedLaunchInfoCap, 5) == 0) {
+            static const uint8_t kRaisedLaunchInfoCap[5] = { 0xB9, 0x10, 0x00, 0x00, 0x00 }; // mov ecx,16
+            if (WriteProtectedMemory(atLaunchInfoCap, kRaisedLaunchInfoCap, 5)) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: campaign launch-info player cap raised at hr+0x57D7F (mov ecx,4 -> mov ecx,16)");
+            }
+        } else {
+            NOBLE_WARN("LobbyPatches: launch-info player cap bytes differ at hr+0x57D7F; left alone");
+        }
+    }
+
+    // 8ac. Campaign launch-info player-count limit at hr+0x5804A.
+    // The tail of the launch-info validator selects the maximum number of players the launch may contain per game mode:
+    // "mov ecx,8 / cmovnz r14d,ecx" keeps 8 for mode 2 (Firefight) and 4 for mode 1 (campaign co-op). The later
+    // "cmp playerCount, r14d" then rejects a fifth player's launch data, which is what stops a five-player campaign
+    // launch from validating. Raise the campaign limit to the engine's sixteen-player buffer capacity so the stock
+    // launch-info validation accepts the full roster; values 1-4 behave exactly as before.
+    {
+        uint8_t* atCampaignLaunchCap = reinterpret_cast<uint8_t*>(base + 0x5804A);
+        static const uint8_t kExpectedCampaignLaunchCap[5] = { 0xB9, 0x04, 0x00, 0x00, 0x00 }; // mov ecx,4
+        if (0x5804A + 5 <= size && std::memcmp(atCampaignLaunchCap, kExpectedCampaignLaunchCap, 5) == 0) {
+            static const uint8_t kRaisedCampaignLaunchCap[5] = { 0xB9, 0x10, 0x00, 0x00, 0x00 }; // mov ecx,16
+            if (WriteProtectedMemory(atCampaignLaunchCap, kRaisedCampaignLaunchCap, 5)) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: campaign launch-info player limit raised at hr+0x5804A (mov ecx,4 -> mov ecx,16)");
+            }
+        } else {
+            NOBLE_WARN("LobbyPatches: campaign launch-info player limit bytes differ at hr+0x5804A; left alone");
+        }
+    }
+
     // 8b. NOP out cmovz ecx, edx at hr+0x40958B (0F 44 CA -> 90 90 90)
     // Prevents ecx from being loaded with reason 1Bh (error_players_incompatible_for_network_coop)
     // when campaign insertion evaluation returns -1.
@@ -2872,10 +3311,14 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
               reinterpret_cast<void**>(&s_originalReadyCheckA), "ready_check_a" },
             { 0x40A81C, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_ReadyCheckB),
               reinterpret_cast<void**>(&s_originalReadyCheckB), "ready_check_b" },
+            { 0x57C90, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchInfoValidate),
+              reinterpret_cast<void**>(&s_originalLaunchInfoValidate), "launch_info_validate" },
             { 0x44FFE0, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchDataUpdateA),
               reinterpret_cast<void**>(&s_originalLaunchDataA), "launch_data_update_a" },
             { 0x44FC94, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchDataUpdateB),
               reinterpret_cast<void**>(&s_originalLaunchDataB), "launch_data_update_b" },
+            { 0x40B4C8, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_IdentityCheck),
+              reinterpret_cast<void**>(&s_originalIdentityCheck), "identity_check" },
             { 0x4076CC, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchProceed),
               reinterpret_cast<void**>(&s_originalLaunchProceed), "launch_proceed" },
             { 0x407438, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchResetStage),
@@ -2903,7 +3346,8 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                    std::strstr(name, "session_start_tick") || std::strstr(name, "launch_state3") ||
                    std::strstr(name, "session_state_set") || std::strstr(name, "transition_request") ||
                    std::strstr(name, "launch_status_get") || std::strstr(name, "ready_check_") ||
-                   std::strstr(name, "launch_data_update_");
+                   std::strstr(name, "launch_data_update_") || std::strstr(name, "identity_check") ||
+                   std::strstr(name, "launch_info_validate");
         };
         for (auto& h : theaterHooks) {
             if (isProbeHook(h.name) && !jipProbe) continue;
