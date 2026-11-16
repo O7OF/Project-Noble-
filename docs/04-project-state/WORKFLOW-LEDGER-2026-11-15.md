@@ -240,3 +240,13 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
   no crash (builder skips it while count=7).
 - Next: asset phase - new particle/effect variants, spartans.biped armor_fx permutations, extended pmcg effect lists,
   rebuild maps; then UI rows + replication. Doc: `docs/project-docs/RE-ARMOR-FX-VARIANTS-2026-11-16.md`.
+
+### 2026-11-16 17:15 - #15-B first colour variant rendering (blue flames)
+- Edited HREK tags (with .bak backups): armor_fx.effect event `legendary_flame_blue` -> `head_fire_blue.particle`;
+  location 4 renamed `armor_fx_06` (new locations do not persist through ManagedBlam Save - workaround); render_model
+  new permutation + marker group `armor_fx_06`; pmcg Spartan+Elite lists +`legendary_flame_blue` -> armor_fx_06 (8).
+- Rebuilt Forge World (tool.exe, 226 s, 796,790,784 B). Tested Noble dev with `-map-override`, `-armor-fx-probe`,
+  `-armor-effect-item 240`: translator maps custom 0xF0 -> pmcg index 7, blue flames render in third person; stock
+  orange flames regression captured unchanged. Screenshots saved in the claude-tests folder.
+- Next: more flame colours, then lightning; then Armory UI + profile persistence/replication, capability gating and
+  distribution decision. Recipe committed: `docs/test-tools/armor_fx_add_variant.py`; doc updated.

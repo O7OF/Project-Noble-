@@ -102,3 +102,36 @@ The engine side is ready for indices 7+, but three asset/data pieces are missing
 * `src/engine/ReachHost.cpp` - `-armor-effect-item <id>` dev override.
 * Evidence logs: `build/bin/Release/armor-fx-probe.log` / `armor-fx-probe2.log`.
 
+
+## RESULT 2026-11-16: blue-flame variant rendering end-to-end (dev map)
+
+**Done:** the first recoloured variant, **legendary_flame_blue** (blue flames), now renders in-game from a rebuilt
+Forge World loaded with `-map-override`, using the dev probes:
+
+1. **Effect tag** (`objects\characters\spartans\fx\armor_fx\armor_fx.effect`): added the event
+   `legendary_flame_blue` (copy of `legendary_flame`) pointing at the existing recoloured particle
+   `particles\head_fire_blue.particle`. ManagedBlam's `Save` drops newly added **location** elements (verified), so the
+   unused location 4 (`armor_fx_03_shoulders`, no stock event uses it) was renamed **`armor_fx_06`** and the new event
+   uses location 4.
+2. **Render model** (`spartans.render_model`): added region `armor_fx` permutation **`armor_fx_06`** and marker group
+   **`armor_fx_06`** (marker bound to permutation index 6, copied from `armor_fx_00`).
+3. **pmcg** (`globals\player_model_customization...`): added selection **`legendary_flame_blue`** ->
+   `armor_fx/armor_fx_06` in **both** the Spartan and Elite armour-effect lists (7 -> 8 entries).
+4. **Rebuild**: `tool.exe build-cache-file levels\multi\forge_halo\forge_halo` -> 796,790,784 B in 226 s.
+5. **Engine**: dev flags `-armor-fx-probe -armor-effect-item 240` put custom item id 0xF0 in the profile; the probe maps
+   it to internal pmcg index 7, the builder now accepts it (list count 8) and applies `armor_fx_06`.
+
+**Captures:**
+* blue variant: `build\bin\Release\data\userdata\claude-tests-2026-11-11\armor-fx-blue-variant-2026-11-16.png`
+  (blue flames around the helmet in third person; log: `CUSTOM armor-fx item 0xF0 -> internal index 7` plus
+  `game session started`),
+* stock regression: `...\armor-fx-stock-flames-regression-2026-11-16.png` (stock orange flames unchanged;
+  translator log `0xAB -> 1`).
+
+**Tag state:** the three tags above were edited in place in HREK with `.bak` backups; the rebuilt map is
+`D:\Steam\steamapps\common\HREK\maps\forge_halo.map` (not copied into MCC or the repo). Reproducible editor:
+`docs/test-tools/armor_fx_add_variant.py` (run through `runmb.ps1`), inspection scripts alongside it.
+
+**Next:** more flame colours (green/purple/white) with the same recipe; then lightning (storm) recolours using the
+plasma palette; then Armory UI rows + profile persistence/replication (custom item ids in the u32 profile fields,
+vanilla fallback to default), capability gating and the map/mod distribution decision.
