@@ -1150,11 +1150,18 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
             : st.lobbyModFolder;
     std::string hostModId =
         !st.lobbyLaunchModId.empty() ? st.lobbyLaunchModId : st.lobbyModId;
+    // Whether the host's lobby declares a Workshop mod / mod folder. A declared mod explains any map
+    // override it serves: a mod may replace stock map 70_boneyard with a file whose own name is something
+    // else (e.g. zenithtest.map), so the override file name does not have to match the scenario name.
+    const bool hostDeclaredMod = !hostModId.empty() || !hostModFolder.empty();
 
     // A map override only applies to the map it belongs to. Leftovers from a
     // previous lobby used to be applied to whatever launched next (a campaign
     // mission loading the previous lobby's mod map, then failing mid-load).
-    if (!hostMapOverride.empty()) {
+    // Only enforce this for lobby launches that do NOT declare a mod: for a declared mod the override is the
+    // host's own content, and 2026-11-16 a legitimate mod map ('zenithtest.map' served as 70_boneyard) was
+    // discarded here as "left over", which made the guest fall back to a DIFFERENT mod and crash.
+    if (!hostMapOverride.empty() && !hostDeclaredMod) {
       const std::string overrideStem = hostMapOverride.stem().string();
       const std::string scenario = choice.map;
       const bool belongs = overrideStem == scenario ||
@@ -1173,7 +1180,9 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     if (!hostMapOverride.empty() || !hostModFolder.empty() ||
         !hostModId.empty()) {
       std::filesystem::path resolvedMap;
-      std::filesystem::path resolvedModFolder = hostModFolder;
+      // Local folder only: never the host's absolute path (different PC). Filled only by a successful local
+      // match, so an unresolved host mod refuses instead of launching with a foreign path.
+      std::filesystem::path resolvedModFolder;
       std::error_code ec;
 
       if (!hostMapOverride.empty() &&
@@ -1181,6 +1190,8 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         resolvedMap = hostMapOverride;
       }
 
+      // wantMapFile: the mod map file name on the host's side when it has one (e.g. zenithtest.map), else the
+      // stock map file the host's content mod overrides (70_boneyard.map).
       const std::string wantMapFile = !hostMapOverride.empty()
                                           ? hostMapOverride.filename().string()
                                           : (choice.map + ".map");
@@ -1188,10 +1199,11 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       if (resolvedMap.empty() && !hostModId.empty()) {
         if (const ModEntry *installed =
                 ModCatalog::FindByWorkshopId(ctx.mods, hostModId)) {
-          resolvedModFolder = installed->folder;
           const auto candidate = installed->folder / "maps" / wantMapFile;
-          if (std::filesystem::exists(candidate, ec))
+          if (std::filesystem::exists(candidate, ec)) {
             resolvedMap = candidate;
+            resolvedModFolder = installed->folder;
+          }
         }
       }
 
@@ -1201,17 +1213,23 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
           if (_stricmp(mod.folder.filename().string().c_str(),
                        folderName.c_str()) == 0 ||
               _stricmp(mod.id.c_str(), folderName.c_str()) == 0) {
-            resolvedModFolder = mod.folder;
             const auto candidate = mod.folder / "maps" / wantMapFile;
             if (std::filesystem::exists(candidate, ec)) {
               resolvedMap = candidate;
+              resolvedModFolder = mod.folder;
               break;
             }
           }
         }
       }
 
-      if (resolvedMap.empty()) {
+      // Last-resort lookup by map file name is ONLY valid when the host did not declare a mod. Otherwise it
+      // silently substitutes a different installed mod that happens to ship a file with the same name - the
+      // 2026-11-16 Custom Game crash: host ran mod 3558313127 (Zenith; zenithtest.map served as 70_boneyard),
+      // the guest substituted mod 3170803257 (Boneyard AI Battleground; maps/70_boneyard.map), so the two ran
+      // different content: the guest saw AI "bots", then took an access violation and the host lost the match.
+      // With a declared-but-missing host mod we leave both paths empty so the refusal below fires instead.
+      if (resolvedMap.empty() && !hostDeclaredMod) {
         for (const ModEntry &mod : ctx.mods) {
           const auto candidate = mod.folder / "maps" / wantMapFile;
           if (std::filesystem::exists(candidate, ec)) {
