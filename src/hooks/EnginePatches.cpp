@@ -13,11 +13,41 @@
 #include <cwchar>
 #include <intrin.h>
 #include <psapi.h>
+#include <shellapi.h>
 
 namespace noble {
 
 bool EnginePatches::s_isApplied = false;
 static uintptr_t s_baseAddress = 0;
+
+// --- Armor-effect variant probe (dev only, 2026-11-16) -------------------
+// The MCC item translator at RVA 0x3B2F4 maps profile item ids to the internal pmcg appearance indices.
+// Effect item ids 166..172 (Spartan) / 173..180 (Elite) map to internal effect indices 0..6; the appearance
+// builder (0x1055EC) then bounds-checks that index against the map's pmcg effect list (count at +0x80 for
+// Spartans, +0x8C for Elites) before applying it. -armor-fx-probe instruments the translator (logs effect item
+// ids/results) and maps the custom id range 0xF0..0xF7 to internal indices 7..14 for the variant work.
+typedef int(__fastcall *MccItemTranslatorFn)(int itemId);
+static MccItemTranslatorFn s_originalMccItemTranslator = nullptr;
+static std::atomic<int> s_itemTranslatorLogs{0};
+static constexpr int kArmorFxCustomItemBase = 0xF0;
+static constexpr int kArmorFxVariantBaseIndex = 7;
+static int __fastcall Hook_MccItemTranslator(int itemId) {
+  const int n = s_itemTranslatorLogs.fetch_add(1);
+  if (itemId >= 0xA6 && itemId <= 0xB4) {
+    const int out = s_originalMccItemTranslator(itemId);
+    if (n < 60) NOBLE_INFO("EnginePatches[fx-translator]: effect item id 0x{:X} -> internal index {}",
+                          static_cast<unsigned>(itemId), out);
+    return out;
+  }
+  if (itemId >= kArmorFxCustomItemBase && itemId < kArmorFxCustomItemBase + 8) {
+    const int idx = kArmorFxVariantBaseIndex + (itemId - kArmorFxCustomItemBase);
+    if (n < 60) NOBLE_INFO("EnginePatches[fx-translator]: CUSTOM armor-fx item 0x{:X} -> internal index {}",
+                          static_cast<unsigned>(itemId), idx);
+    return idx;
+  }
+  return s_originalMccItemTranslator(itemId);
+}
+
 
 // Appearance slots (verified against haloreach.dll 0x2C807C / 0x2EDA08,
 // 2026-10-30):
@@ -1250,6 +1280,26 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
     }
   }
 
+
+  // Dev-only armor-effect variant probe: -armor-fx-probe instruments the MCC item translator.
+  {
+    bool probe = false;
+    int argc = 0;
+    LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; argv && i < argc; ++i)
+      if (_wcsicmp(argv[i], L"-armor-fx-probe") == 0) probe = true;
+    if (argv) LocalFree(argv);
+    if (probe) {
+      void *target = reinterpret_cast<void *>(baseAddress + 0x3B2F4);
+      if (HookManager::InstallHook(target, reinterpret_cast<void *>(&Hook_MccItemTranslator),
+                                   reinterpret_cast<void **>(&s_originalMccItemTranslator),
+                                   "mcc_item_translator"))
+        NOBLE_INFO("EnginePatches: armor-fx probe installed (translator RVA 0x3B2F4, custom item base 0x{:X} -> index {})",
+                   static_cast<unsigned>(kArmorFxCustomItemBase), kArmorFxVariantBaseIndex);
+      else
+        NOBLE_WARN("EnginePatches: armor-fx probe hook failed at RVA 0x3B2F4");
+    }
+  }
   s_isApplied = true;
   return true;
 }

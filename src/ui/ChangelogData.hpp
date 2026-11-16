@@ -137,6 +137,19 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
     };
 
+    const std::vector<ChangeItem> v02012Items = {
+        {"CONTROLLER", "Full Directional Stick Navigation & Thresholds",
+         "Unblocked Left Stick analog navigation across all menus, calibrated cardinal deadzones, and added keyboard arrow key parity so menus navigate cleanly with D-pad, sticks, and keys."},
+        {"CONTROLLER", "Smooth Right-Stick Window Scrolling",
+         "Enabled responsive proportional Right-Stick scrolling in Service Record, Ranks, Challenges, Settings, and Social menus alongside Trigger page scrolling."},
+        {"UI", "Service Record & Menu Hover Snap-Back Fix",
+         "Fixed controller tile selection snapping back to the mouse cursor; mouse hover now requires active physical pointer movement before updating menu focus."},
+        {"UI", "Service Record Layout & Tactical Visual Polish",
+         "Redesigned the tab bar with native bumper prompts ([LB] / [RB]), flattened Ranks into a clean single-container scroll view, eliminated double scrollbars, and improved grid spacing."},
+        {"UI", "Universal Controller Button Activation",
+         "Wired Controller 'A' button to select, activate, and inspect tiles, cards, and dropdown items across Service Record, Challenges, Commendations, and Social menus."},
+    };
+
     const std::vector<ChangeItem> v02011Items = {
         {"NETCODE", "Piecewise Member Cave Synthesis & Chunked Dispatch",
          "Added piecewise member and table cave synthesis across all 120 engine sites for chunked session capacities (32, 64, 128), validating register-accurate dispatch and shadow layout boundaries."},
@@ -211,9 +224,25 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 11) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 13) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "CONTROLLER NAVIGATION, SMOOTH SCROLLING & SERVICE RECORD POLISH",
+                    "Directional Stick Nav, Right-Stick Scrolling, Zero Mouse Snap-Back & UI Visual Polish",
+                    v02012Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 12) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.12",
+                    "CONTROLLER NAVIGATION, SMOOTH SCROLLING & SERVICE RECORD POLISH",
+                    "Directional Stick Nav, Right-Stick Scrolling, Zero Mouse Snap-Back & UI Visual Polish",
+                    v02012Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 11) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.11",
                     "CHUNKED CAPACITY DISPATCH & PEER SEAT NETCODE",
                     "Chunked Slot Dispatch, Peer Seat Mapping & High-Capacity Session Stability",
                     v02011Items,

@@ -329,7 +329,7 @@ void DrawSocialScreen(OverlayContext &ctx, const Ui &ui, float left,
     const bool clicked =
         ImGui::InvisibleButton(btnId, ImVec2(b1.x - b0.x, b1.y - b0.y));
     const bool hov = !modalBlocked && ImGui::IsItemHovered();
-    if (hov) {
+    if (hov && NobleUi::IsMouseMoved(2.5f)) {
       s_focusRow = r;
       s_focusAction = actIdx;
     }

@@ -231,3 +231,12 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
 - Player guide and master list were reviewed for impact: no change needed (their visor wording is the 5-slot fallback,
   and the master-list F7 row already separates Armory mapping from exact per-player colour).
 - Guide re-mirrored to `knowledge\` (hash verified). Repo unchanged (`b2065bd`), version 0.19.103, no release.
+### 2026-11-16 16:50 - #15-B armour effect variants: engine chain proven, probe added
+- Ghidra: item translator 0x3B2F4 mapping (Spartan 0xA6..0xAC, Elite 0xAD..0xB4 -> pmcg indices 0..6); appearance
+  builder 0x1055EC bounds-checks index against the pmcg list count (+0x80/+0x8C) - no hard 0..6 clamp, index 7+ works
+  if the list is extended. pmcg list/entry/change layout documented.
+- Added dev-only `-armor-fx-probe` (translator detour, custom item ids 0xF0..0xF7 -> indices 7..14) and
+  `-armor-effect-item <id>` profile override. Live runs: 0xAB->1 (flames), 0xAD->0 (Elite default), custom 0xF0->7 with
+  no crash (builder skips it while count=7).
+- Next: asset phase - new particle/effect variants, spartans.biped armor_fx permutations, extended pmcg effect lists,
+  rebuild maps; then UI rows + replication. Doc: `docs/project-docs/RE-ARMOR-FX-VARIANTS-2026-11-16.md`.

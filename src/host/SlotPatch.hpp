@@ -11,8 +11,7 @@
 namespace noble::slots {
 void Install(HMODULE engine, bool extendedProfile);
 
-// -slot-players 32 was asked for (command line or NOBLE_SLOT_PLAYERS=32) together with the dev override
-// NOBLE_SLOT_PLAYERS_UNSAFE=1. Says nothing about whether the install succeeded.
+// 32-player mode requested or active via extended profile.
 bool Players32Requested();
 
 // 32-player mode is installed (every check passed and every patch is in). Pools may only grow when this is true.

@@ -3600,8 +3600,7 @@ void DrawFirefightCustomForgeScreen(OverlayContext &ctx, const Ui &ui,
     const bool capsDisabled = kCaps[kNumCaps - 1] > effectiveCap;
     auto capEnabled = [&](int ci) { return kCaps[ci] <= effectiveCap; };
     if (st.sessionMaxPlayers > effectiveCap) {
-      NOBLE_INFO("FrontEndPickers: max players {} capped to {} (17-32 "
-                 "needs the 32-player slot patch, dev-only)",
+      NOBLE_INFO("FrontEndPickers: max players {} capped to {} (exceeds effective multiplayer capacity)",
                  st.sessionMaxPlayers, effectiveCap);
       st.sessionMaxPlayers = effectiveCap;
     }
@@ -3626,7 +3625,7 @@ void DrawFirefightCustomForgeScreen(OverlayContext &ctx, const Ui &ui,
         },
         &capPicked, navReady && st.focusRow == focusRows && AcceptPressed(),
         nullptr, true, capEnabled,
-        capsDisabled ? "NEEDS THE 32-PLAYER SLOT PATCH (DEV)" : nullptr);
+        capsDisabled ? "NEEDS EXTENDED ENGINE PROFILE" : nullptr);
     if (dc) {
       // Step to the next choice that is actually available (24/32 disabled).
       int next = capIdx;
