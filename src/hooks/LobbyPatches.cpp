@@ -1342,6 +1342,47 @@ static void UpdateFivePlayerLatch() {
     }
 }
 
+// Discriminator probes: FUN_18040B67C(ctx) and FUN_18040A81C(ctx, flag) decide whether the launch-data apply function
+// considers the launch finished (=> launch status 4 => session-start mode). Log their results to compare the 4-player
+// direct path with the >4-player session-start path.
+typedef uint8_t(__fastcall* LaunchReadyCheckAFn)(void* ctx);
+typedef uint8_t(__fastcall* LaunchReadyCheckBFn)(void* ctx, char flag);
+static LaunchReadyCheckAFn s_originalReadyCheckA = nullptr;
+static LaunchReadyCheckBFn s_originalReadyCheckB = nullptr;
+static uint8_t __fastcall Hook_ReadyCheckA(void* ctx) {
+    const uint8_t result = s_originalReadyCheckA ? s_originalReadyCheckA(ctx) : 0;
+    static std::atomic<int> logA{0};
+    if (s_campaignCoop.load() && IsNobleHost() && logA.fetch_add(1) < 40) {
+        NOBLE_WARN("LobbyPatches: probe dispatcher A (40B67C) -> {}", static_cast<int>(result));
+    }
+    return result;
+}
+static const bool forceReadyB = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_FORCE_READY_B", env, 8) > 0 && env[0] != L'0';
+}();
+static uint8_t __fastcall Hook_ReadyCheckB(void* ctx, char flag) {
+    const uint8_t result = s_originalReadyCheckB ? s_originalReadyCheckB(ctx, flag) : 0;
+    static std::atomic<int> logB{0};
+    if (s_campaignCoop.load() && IsNobleHost() && logB.fetch_add(1) < 40) {
+        NOBLE_WARN("LobbyPatches: probe dispatcher B (40A81C flag {}) -> {}", static_cast<int>(flag),
+                   static_cast<int>(result));
+    }
+    // The four-player direct launch path has dispatcher B returning 1. Force that result for the five-player case so the
+    // launch-data apply keeps the direct path instead of setting launch status 4 (session-start mode).
+    if (forceReadyB && flag == 0 && result == 0 && s_campaignCoop.load() && IsNobleHost()) {
+        UpdateFivePlayerLatch();
+        if (s_fivePlayerSeen.load()) {
+            static std::atomic<int> forceLog{0};
+            if (forceLog.fetch_add(1) < 10) {
+                NOBLE_WARN("LobbyPatches: campaign >4 probe: forced dispatcher B result 0 -> 1");
+            }
+            return 1;
+        }
+    }
+    return result;
+}
+
 // Launch status getter (hr+0x44F8B4(obj) -> status byte). The state-3 launch update requests the session-start state 4
 // only when this reads 4; status 3 keeps the direct launch path. Probe: fake 4 -> 3 for campaign hosts with >4 players
 // (env NOBLE_COOP_FAKE_STATUS3) to keep the direct path active.
@@ -2789,6 +2830,10 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
               reinterpret_cast<void**>(&s_originalTransitionRequest), "transition_request" },
             { 0x44F8B4, { 0x48, 0x83, 0xEC, 0x28, 0x33 }, reinterpret_cast<void*>(&Hook_LaunchStatusGet),
               reinterpret_cast<void**>(&s_originalLaunchStatusGet), "launch_status_get" },
+            { 0x40B67C, { 0x48, 0x83, 0xEC, 0x28, 0x48 }, reinterpret_cast<void*>(&Hook_ReadyCheckA),
+              reinterpret_cast<void**>(&s_originalReadyCheckA), "ready_check_a" },
+            { 0x40A81C, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_ReadyCheckB),
+              reinterpret_cast<void**>(&s_originalReadyCheckB), "ready_check_b" },
             { 0x4076CC, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchProceed),
               reinterpret_cast<void**>(&s_originalLaunchProceed), "launch_proceed" },
             { 0x407438, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchResetStage),
@@ -2815,7 +2860,7 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                    std::strstr(name, "launch_status_set") || std::strstr(name, "session_compare") ||
                    std::strstr(name, "session_start_tick") || std::strstr(name, "launch_state3") ||
                    std::strstr(name, "session_state_set") || std::strstr(name, "transition_request") ||
-                   std::strstr(name, "launch_status_get");
+                   std::strstr(name, "launch_status_get") || std::strstr(name, "ready_check_");
         };
         for (auto& h : theaterHooks) {
             if (isProbeHook(h.name) && !jipProbe) continue;
