@@ -1352,6 +1352,27 @@ static void UpdateFivePlayerLatch() {
     }
 }
 
+// Launch-data change probes: FUN_18044FFE0 writes the "launch data updated" byte that FUN_18040A008 turns into launch
+// status 4 (session-start mode). FUN_18044FC94 applies the launch data and writes a second update byte.
+typedef void(__fastcall* LaunchDataUpdateAFn)(char* state, uint8_t* out);
+typedef void(__fastcall* LaunchDataUpdateBFn)(void* session, uint64_t id, void* players, uint8_t* out);
+static LaunchDataUpdateAFn s_originalLaunchDataA = nullptr;
+static LaunchDataUpdateBFn s_originalLaunchDataB = nullptr;
+static void __fastcall Hook_LaunchDataUpdateA(char* state, uint8_t* out) {
+    if (s_originalLaunchDataA) s_originalLaunchDataA(state, out);
+    static std::atomic<int> logA{0};
+    if (s_campaignCoop.load() && IsNobleHost() && logA.fetch_add(1) < 30) {
+        NOBLE_WARN("LobbyPatches: launch_data_update A -> {}", out ? static_cast<int>(*out) : -1);
+    }
+}
+static void __fastcall Hook_LaunchDataUpdateB(void* session, uint64_t id, void* players, uint8_t* out) {
+    if (s_originalLaunchDataB) s_originalLaunchDataB(session, id, players, out);
+    static std::atomic<int> logB{0};
+    if (s_campaignCoop.load() && IsNobleHost() && logB.fetch_add(1) < 30) {
+        NOBLE_WARN("LobbyPatches: launch_data_update B -> {}", out ? static_cast<int>(*out) : -1);
+    }
+}
+
 // Discriminator probes: FUN_18040B67C(ctx) and FUN_18040A81C(ctx, flag) decide whether the launch-data apply function
 // considers the launch finished (=> launch status 4 => session-start mode). Log their results to compare the 4-player
 // direct path with the >4-player session-start path.
@@ -2851,6 +2872,10 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
               reinterpret_cast<void**>(&s_originalReadyCheckA), "ready_check_a" },
             { 0x40A81C, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_ReadyCheckB),
               reinterpret_cast<void**>(&s_originalReadyCheckB), "ready_check_b" },
+            { 0x44FFE0, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchDataUpdateA),
+              reinterpret_cast<void**>(&s_originalLaunchDataA), "launch_data_update_a" },
+            { 0x44FC94, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchDataUpdateB),
+              reinterpret_cast<void**>(&s_originalLaunchDataB), "launch_data_update_b" },
             { 0x4076CC, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchProceed),
               reinterpret_cast<void**>(&s_originalLaunchProceed), "launch_proceed" },
             { 0x407438, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchResetStage),
@@ -2877,7 +2902,8 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                    std::strstr(name, "launch_status_set") || std::strstr(name, "session_compare") ||
                    std::strstr(name, "session_start_tick") || std::strstr(name, "launch_state3") ||
                    std::strstr(name, "session_state_set") || std::strstr(name, "transition_request") ||
-                   std::strstr(name, "launch_status_get") || std::strstr(name, "ready_check_");
+                   std::strstr(name, "launch_status_get") || std::strstr(name, "ready_check_") ||
+                   std::strstr(name, "launch_data_update_");
         };
         for (auto& h : theaterHooks) {
             if (isProbeHook(h.name) && !jipProbe) continue;
