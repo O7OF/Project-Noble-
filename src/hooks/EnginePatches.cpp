@@ -177,6 +177,20 @@ static bool IsDistributedMultiplayerGameSEH(uintptr_t base) {
 
 static void __fastcall Hook_AiPlace(uint32_t aiValue, int32_t count,
                                     int32_t flag) {
+  // Diagnostic for the "bots joined my Custom Game" reports (2026-11-16): Noble deliberately enables AI in
+  // Forge/Custom Games (ForgePatches NOPs the engine's AI biped/vehicle spawn check; the Forge palette ships
+  // Spartan AI). Scenario scripts then call ai_place on the host and the AI is replicated to everyone. Log the
+  // placements (rate-limited) so a host log shows whether "bots" are Forge AI units (this hook) rather than
+  // players - a player join never appears here.
+  if (IsDistributedMultiplayerGameSEH(s_baseAddress)) {
+    static std::atomic<int> aiPlaceLogCount{0};
+    if (aiPlaceLogCount.fetch_add(1) < 30) {
+      NOBLE_WARN("EnginePatches: AI place in a Custom Game: ai_place(0x{:08X}, count {}, flag {}) [{}] - this is "
+                 "Forge/scenario AI, not a player",
+                 aiValue, count, flag,
+                 NetworkTransport::Get().IsActive() ? (NetworkTransport::Get().IsHost() ? "host" : "client") : "local");
+    }
+  }
   if (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost() &&
       !IsCliSynchronousMode() &&
       IsDistributedMultiplayerGameSEH(s_baseAddress)) {

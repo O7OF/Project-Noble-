@@ -123,7 +123,19 @@ bool SessionManager::StartHosting(const HostConfig& config) {
     NOBLE_INFO("SessionManager: Self-hosting session '{}' on port {} (Mode: {}, Map: {})", 
         config.sessionName, config.port, config.gameMode, config.mapName);
 
-    m_beaconThread = std::thread(&SessionManager::BeaconLoop, this);
+    // Test-only kill switch: automated test runs must not be discoverable at all. The LAN beacon is a UDP broadcast to
+    // the local network segment, so without this a short-lived test host could appear in a colleague's LAN server
+    // browser (it can never add players to another match - guests still only connect to the address they are given -
+    // but tests should be invisible anyway). Gated by an environment variable, never on for normal play.
+    static const bool testNoBeacon = [] {
+        wchar_t env[8] = {};
+        return GetEnvironmentVariableW(L"NOBLE_TEST_NO_BEACON", env, 8) > 0 && env[0] != L'0';
+    }();
+    if (testNoBeacon) {
+        NOBLE_WARN("SessionManager: NOBLE_TEST_NO_BEACON=1 - test session: LAN discovery beacon suppressed (this match is not advertised anywhere)");
+    } else {
+        m_beaconThread = std::thread(&SessionManager::BeaconLoop, this);
+    }
 
     return true;
 }
