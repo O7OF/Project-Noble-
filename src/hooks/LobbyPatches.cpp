@@ -201,6 +201,7 @@ static SessionAbortFn s_originalSessionAbort = nullptr;
 static std::atomic<bool> s_campaignCoop{false};
 static uintptr_t s_slotWatchAddr;                              // external-launch slot state word, Dr1 slot-watch probe
 static std::atomic<size_t> s_playerCreateSuccess{0};           // successful player_create calls this launch (host)
+static std::atomic<int> s_currentLaunchState{-1};               // last launch state set by FUN_180407438 (0..N)
 static void ArmPlayer0Watch();                                 // defined below
 bool LobbyPatches::IsCampaignCoop() { return s_campaignCoop.load(); }
 size_t LobbyPatches::GetPlayerCreateSuccessCount() { return s_playerCreateSuccess.load(); }
@@ -739,6 +740,7 @@ static void DumpGamePlayers(char* out, size_t cap);            // defined below 
 static void ForceCampaignPlayerSyncTick();                     // defined below (16-player campaign probe)
 static void SafeHexDump(char* out, size_t cap, uintptr_t addr, size_t len);   // defined below
 static int SafeReadU8Ptr(uintptr_t addr);                                     // defined below
+static void InitializeCampaignSessionSlots();                                // defined below
 static void DumpGuestPlayerStateProbe(uint8_t* param);         // defined below (16-player campaign probe)
 static void CallGuestPlayerSyncProbe();                        // defined below (16-player campaign probe)
 static uintptr_t s_player0Flags;                               // defined below (game-player flags watch target)
@@ -756,6 +758,14 @@ static void ArmCampaignPlayerFlagsWatch() {
         const uintptr_t data = arr ? *reinterpret_cast<const uintptr_t*>(arr + 0x50) : 0;
         if (data && size >= 0x80 && size <= 0x4000) {
             s_player0Flags = data + 4;
+            wchar_t ctxEnv[8] = {};
+            if (GetEnvironmentVariableW(L"NOBLE_COOP_CTX_WATCH", ctxEnv, 8) > 0 && ctxEnv[0] != L'0') {
+                // Watch the launch context's requested-state field (DAT_1827CD400 + 0xEC = int index 0x3B) to catch
+                // whoever requests the launch state 4 transition for a >4-player launch.
+                s_slotWatchAddr = s_reachBase + 0x27CD400 + 0xEC;
+                ArmPlayer0Watch();
+                return;
+            }
             wchar_t slotEnv[8] = {};
             if (GetEnvironmentVariableW(L"NOBLE_COOP_SLOT_WATCH", slotEnv, 8) > 0 && slotEnv[0] != L'0') {
                 // Watch the external-launch slot-0 state word (the pair must read 7/5 for player_create to work).
@@ -918,6 +928,7 @@ static uint8_t __fastcall Hook_LaunchReady(uint8_t* param) {
     const uint8_t result = s_originalLaunchReady ? s_originalLaunchReady(param) : 0;
     // 16-player campaign probe: a mid-mission campaign guest's game-engine state (DAT_184E0E908 + 0x20) stays 3 while
     // the host is 4, which keeps the guest's per-player update/activation loop shut. Promote it to 4 on the guest.
+    if (s_campaignCoop.load() && IsNobleHost()) InitializeCampaignSessionSlots();
     if (s_campaignCoop.load() && !IsNobleHost()) DumpGuestPlayerStateProbe(param);
     if (s_campaignCoop.load() && !IsNobleHost()) PromoteGuestEngineStateProbe(param);
     ForceCampaignPlayerSyncTick();   // 16-player campaign probe: drive the guest's game-player sync path
@@ -1255,6 +1266,49 @@ static void __fastcall Hook_LaunchState3(int64_t* ctx) {
     if (s_originalLaunchState3) s_originalLaunchState3(ctx);
 }
 
+// Session state setter (hr+0x4025F8(session, newState, size, payload)): the campaign launch switches to the network
+// session-start mode only when the session is already in state 6..9 while the launch sits in state 3. Probe: while the
+// launch is still early (state <= 3), hold the session below 6 so the direct launch path stays active with 5 players.
+typedef void(__fastcall* SessionStateSetFn)(void* session, int32_t newState, int32_t size, void* payload);
+static SessionStateSetFn s_originalSessionStateSet = nullptr;
+static const bool holdSessionState = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_HOLD_SESSION_STATE", env, 8) > 0 && env[0] != L'0';
+}();
+// Probe: initialise the campaign network session slot counts to the expanded maximum before peers join, so the engine
+// does not see a max-players mismatch when a fifth player appears (env NOBLE_COOP_INIT_SLOTS=1).
+static const bool initSlots = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_INIT_SLOTS", env, 8) > 0 && env[0] != L'0';
+}();
+static void InitializeCampaignSessionSlots() {
+    static std::atomic<bool> done{false};
+    if (!initSlots || done.load() || !s_campaignCoop.load() || !IsNobleHost() || !s_reachBase || !s_originalSetSlotCounts) {
+        return;
+    }
+    __try {
+        const uintptr_t session = *reinterpret_cast<const uintptr_t*>(s_reachBase + 0x2A1FE08);
+        if (!session) return;
+        done.store(true);
+        s_originalSetSlotCounts(reinterpret_cast<void*>(session + 0x30), 0, 16, false);
+        NOBLE_WARN("LobbyPatches: campaign >4 probe: initialised session slot counts to 16");
+    } __except (1) {
+    }
+}
+
+static void __fastcall Hook_SessionStateSet(void* session, int32_t newState, int32_t size, void* payload) {
+    if (holdSessionState && s_campaignCoop.load() && IsNobleHost() && newState >= 6 && s_currentLaunchState.load() >= 0 &&
+        s_currentLaunchState.load() <= 3) {
+        static std::atomic<int> holdLog{0};
+        if (holdLog.fetch_add(1) < 12) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: held session state {} -> 5 during launch state {}",
+                       newState, s_currentLaunchState.load());
+        }
+        newState = 5;
+    }
+    if (s_originalSessionStateSet) s_originalSessionStateSet(session, newState, size, payload);
+}
+
 // Session-start tick (hr+0x40C0C0(ctx)): when every player is ready this routine starts the network session, sets the
 // context bit 0x400 and pushes launch status 1 - the mode switch that then trips the state-4 abort for >4 players.
 // Probe: skip the routine entirely (env NOBLE_COOP_SKIP_SESSIONSTART) and see whether the direct-launch path continues.
@@ -1273,6 +1327,92 @@ static void __fastcall Hook_SessionStartTick(int64_t* ctx) {
         return;
     }
     if (s_originalSessionStartTick) s_originalSessionStartTick(ctx);
+}
+
+// Sticky latch: true once the campaign session has held >=5 players (popcount of the session player mask).
+static std::atomic<bool> s_fivePlayerSeen{false};
+static void UpdateFivePlayerLatch() {
+    if (s_fivePlayerSeen.load() || !s_campaignCoop.load() || !IsNobleHost() || !s_reachBase) return;
+    __try {
+        const uintptr_t session = *reinterpret_cast<const uintptr_t*>(s_reachBase + 0x2A1FE08);
+        if (session && __popcnt(*reinterpret_cast<const uint32_t*>(session + 0x173C)) >= 5) {
+            s_fivePlayerSeen.store(true);
+        }
+    } __except (1) {
+    }
+}
+
+// Launch status getter (hr+0x44F8B4(obj) -> status byte). The state-3 launch update requests the session-start state 4
+// only when this reads 4; status 3 keeps the direct launch path. Probe: fake 4 -> 3 for campaign hosts with >4 players
+// (env NOBLE_COOP_FAKE_STATUS3) to keep the direct path active.
+typedef uint8_t(__fastcall* LaunchStatusGetFn)(void* obj);
+static LaunchStatusGetFn s_originalLaunchStatusGet = nullptr;
+static const bool fakeStatus3 = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_FAKE_STATUS3", env, 8) > 0 && env[0] != L'0';
+}();
+static uint8_t __fastcall Hook_LaunchStatusGet(void* obj) {
+    const uint8_t result = s_originalLaunchStatusGet ? s_originalLaunchStatusGet(obj) : 0;
+    // Keep the launch on the direct path only once the true >4-player condition is present (session player mask has at
+    // least five players), so normal 1-4 player launches are untouched.
+    UpdateFivePlayerLatch();
+    const bool fivePlayerCondition = s_fivePlayerSeen.load();
+    if (fakeStatus3 && fivePlayerCondition && result != 2 && result != 3 && result != 0x15) {
+        static std::atomic<int> fakeLog{0};
+        if (fakeLog.fetch_add(1) < 10) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: faked launch status {} -> 3 to keep direct launch path",
+                       static_cast<int>(result));
+        }
+        return 3;
+    }
+    return result;
+}
+
+// Launch transition requester (hr+0x4073E8(ctx, state, substate, payloadSize, payload)): stores a requested launch state
+// transition into the launch context (state at ctx+0xEC, substate ctx+0xF0, pending flag ctx+0xE8) which the launch tick
+// then applies. Probe: log every request with caller stack - this shows who requests the state-4 session-start mode.
+typedef void(__fastcall* LaunchTransitionRequestFn)(void* ctx, uint32_t state, uint32_t subState, uint32_t payloadSize,
+                                                   void* payload);
+static LaunchTransitionRequestFn s_originalTransitionRequest = nullptr;
+static std::atomic<int> s_transitionRequestLog{0};
+static const bool blockState4Request = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_BLOCK_STATE4_REQ", env, 8) > 0 && env[0] != L'0';
+}();
+static void __fastcall Hook_TransitionRequest(void* ctx, uint32_t state, uint32_t subState, uint32_t payloadSize,
+                                              void* payload) {
+    // Keep the real launch status for the data handshake but refuse the engine's state-4 (session-start) transition while
+    // the five-player condition holds (env NOBLE_COOP_BLOCK_STATE4_REQ).
+    if (blockState4Request && state == 4 && s_campaignCoop.load() && IsNobleHost()) {
+        UpdateFivePlayerLatch();
+        if (s_fivePlayerSeen.load()) {
+            static std::atomic<int> blockReqLog{0};
+            if (blockReqLog.fetch_add(1) < 10) {
+                NOBLE_WARN("LobbyPatches: campaign >4 probe: blocked transition request state 4 sub {}", subState);
+            }
+            return;
+        }
+    }
+    const int n = s_transitionRequestLog.fetch_add(1);
+    if (n < 60 || state == 4) {
+        void* frames[16] = {};
+        const USHORT count = CaptureStackBackTrace(0, 16, frames, nullptr);
+        const uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandleW(L"haloreach.dll"));
+        std::string out;
+        for (USHORT i = 0; i < count && i < 10; ++i) {
+            const uint64_t addr = reinterpret_cast<uint64_t>(frames[i]);
+            char buf[40];
+            if (base && addr >= base && addr < base + 0x278EE90) {
+                std::snprintf(buf, sizeof(buf), " hr+0x%llX", static_cast<unsigned long long>(addr - base));
+            } else {
+                std::snprintf(buf, sizeof(buf), " 0x%llX", static_cast<unsigned long long>(addr));
+            }
+            out += buf;
+        }
+        NOBLE_WARN("LobbyPatches: [{} pid {}] transition_request state {} sub {} size {} stack:{}", RefuseRole(),
+                   GetCurrentProcessId(), state, subState, payloadSize, out);
+    }
+    if (s_originalTransitionRequest) s_originalTransitionRequest(ctx, state, subState, payloadSize, payload);
 }
 
 // Launch status setter (hr+0x3FBEB8(obj, status)): writes the launch-data status byte (obj+0x88) and pushes it out via
@@ -1451,8 +1591,22 @@ static void __fastcall Hook_LaunchProceed(int* params) {
 typedef void(__fastcall* LaunchStageFn)(int* params, int32_t newState, int32_t newSubState, uint32_t a4, uint64_t a5);
 static LaunchStageFn s_originalLaunchResetStage = nullptr;
 static std::atomic<int> s_launchResetStageLog{0};
+static const bool blockState4 = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_BLOCK_STATE4", env, 8) > 0 && env[0] != L'0';
+}();
 static void __fastcall Hook_LaunchResetStage(int* params, int32_t newState, int32_t newSubState, uint32_t a4, uint64_t a5) {
+    // 16-player campaign probe: block the 3->4 launch transition (the engine's network-session-start mode switch) so the
+    // launch stays on the direct path and may create the extra players (env NOBLE_COOP_BLOCK_STATE4).
+    if (blockState4 && s_campaignCoop.load() && IsNobleHost() && newState == 4 && params && params[0] == 3) {
+        static std::atomic<int> blockLog{0};
+        if (blockLog.fetch_add(1) < 8) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: blocked launch transition 3 -> 4 (sub {})", newSubState);
+        }
+        return;
+    }
     const int n = s_launchResetStageLog.fetch_add(1);
+    if (newState >= 0) s_currentLaunchState.store(newState);
     if (n < 30) {
         NOBLE_WARN("LobbyPatches: [{} pid {}] launch_reset_stage cur {} -> state {} sub {} a4 {} a5 {:#x} caller hr+0x{:X}",
                    RefuseRole(), GetCurrentProcessId(), params ? params[0] : -1, newState, newSubState, a4, a5,
@@ -2629,6 +2783,12 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
               reinterpret_cast<void**>(&s_originalSessionStartTick), "session_start_tick" },
             { 0x40BBC0, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchState3),
               reinterpret_cast<void**>(&s_originalLaunchState3), "launch_state3" },
+            { 0x4025F8, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_SessionStateSet),
+              reinterpret_cast<void**>(&s_originalSessionStateSet), "session_state_set" },
+            { 0x4073E8, { 0x48, 0x83, 0xEC, 0x28, 0x89 }, reinterpret_cast<void*>(&Hook_TransitionRequest),
+              reinterpret_cast<void**>(&s_originalTransitionRequest), "transition_request" },
+            { 0x44F8B4, { 0x48, 0x83, 0xEC, 0x28, 0x33 }, reinterpret_cast<void*>(&Hook_LaunchStatusGet),
+              reinterpret_cast<void**>(&s_originalLaunchStatusGet), "launch_status_get" },
             { 0x4076CC, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchProceed),
               reinterpret_cast<void**>(&s_originalLaunchProceed), "launch_proceed" },
             { 0x407438, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchResetStage),
@@ -2653,7 +2813,9 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                    std::strstr(name, "restart_ctx") || std::strstr(name, "launch_decision") ||
                    std::strstr(name, "launch_proceed") || std::strstr(name, "launch_reset_stage") ||
                    std::strstr(name, "launch_status_set") || std::strstr(name, "session_compare") ||
-                   std::strstr(name, "session_start_tick") || std::strstr(name, "launch_state3");
+                   std::strstr(name, "session_start_tick") || std::strstr(name, "launch_state3") ||
+                   std::strstr(name, "session_state_set") || std::strstr(name, "transition_request") ||
+                   std::strstr(name, "launch_status_get");
         };
         for (auto& h : theaterHooks) {
             if (isProbeHook(h.name) && !jipProbe) continue;
