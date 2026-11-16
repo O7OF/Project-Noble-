@@ -137,6 +137,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
     };
 
+    const std::vector<ChangeItem> v0207Items = {
+        {"NETCODE", "Firefight & Match Join-in-Progress",
+         "Suppressed premature match aborts (reason 6) and dropped join-in-progress refusal gates during active host sessions so late-joining players smoothly complete handshakes without kicking guests back to the main menu."},
+        {"SETTINGS", "Settings Reset & Startup Migration Fix",
+         "Prevented settings resets caused by startup mirror sync overwriting saved settings.json with stale defaults; migration now only executes on fresh installs when no existing configuration is present."},
+        {"MULTIPLAYER", "Lobby Roster & Scoreboard Visibility",
+         "Guests now see the full player roster on loading screens, only the local client is tagged 'YOU' on the scoreboard, service tags are accurately mapped per player, and invite connections display the host's actual profile name."},
+        {"PERFORMANCE", "CPU Priority & Thread Scheduling",
+         "Disabled OS power throttling, elevated render thread priority, and optimized background power state handling for smoother frame delivery on multi-core processors."},
+    };
+
     const std::vector<ChangeItem> v0204Items = {
         {"PERFORMANCE", "Binary Optimization & Load Times",
          "Applied advanced link-time code folding and footprint optimization for reduced memory overhead and faster client startup."},
@@ -168,9 +179,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 4) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 7) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "JOIN-IN-PROGRESS STABILITY, SETTINGS MIGRATION FIX & PERFORMANCE",
+                    "Smooth Match Handshakes, Settings Reset Prevention, Loading Roster & CPU Optimizations",
+                    v0207Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 4) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.4",
                     "CLIENT PERFORMANCE, MEMORY EFFICIENCY & CRASH DIAGNOSTICS",
                     "Advanced Binary Code Folding, Memory Overhead Reduction & Streamlined Diagnostics",
                     v0204Items,
