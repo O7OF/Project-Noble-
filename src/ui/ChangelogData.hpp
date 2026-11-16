@@ -30,6 +30,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02016Items = {
+        {"GAMEPLAY", "In-Match Multi-Team Tactical Selector",
+         "Replaced the binary team toggle in the Pause Menu with a full tactical team selector modal supporting all 8 multiplayer teams with live color accents and squad badges."},
+        {"ENGINE", "Native Team Synchronization & Instant Respawn",
+         "Integrated instant engine team synchronization and clean biped respawn cycles when changing teams mid-match, updating spawn points, armor team colors, scoreboard rows, and voice chat channels."},
+        {"FORGE", "Seamless Forge Team Switching",
+         "Enabled instant team switching across all 8 teams in Forge without respawn interruption or simulation pause."},
+        {"CONTROLS", "Tactical Team Menu Controller & Keyboard Parity",
+         "Full D-Pad, thumbstick, face button, arrow key, and mouse navigation for selecting squads in-game."},
+    };
+
     const std::vector<ChangeItem> v02015Items = {
         {"UI", "Party Widget & Lobby Player Card Overhaul",
          "Redesigned the top-right party card and lobby player rows into unified tactical cards, integrating rank badges, emblem frames, and status indicators with zero alignment jitter."},
@@ -248,9 +259,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 15) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 16) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "IN-MATCH MULTI-TEAM SELECTION & SEAMLESS TEAM SWITCHING",
+                    "8-Team Tactical Selector Modal, Native Team Datum Sync, Instant Respawn & Forge Parity",
+                    v02016Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 15) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.15",
                     "EXTENDED PARTY CARDS, NAMEPLATE FIXES & ONLINE LOGIN FLOW",
                     "Unified Lobby Player Cards, Zero Nameplate Cutoff, First-Start Login & Auto Local Play Mode",
                     v02015Items,

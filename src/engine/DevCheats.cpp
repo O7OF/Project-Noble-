@@ -661,6 +661,20 @@ void DevCheats::GameTick(int32_t userIndex) {
     s_localVehicleDatum.store(player.vehicleHandle);
 
     if (havePlayer && player.biped) {
+        // 0. Process Suicide request (e.g. Pause Menu CHANGE TEAM)
+        if (s_suicideRequested.exchange(false)) {
+            __try {
+                *reinterpret_cast<float*>(player.biped + 0xDC) = 0.0f; // shield
+                *reinterpret_cast<float*>(player.biped + 0xE0) = 0.0f; // health
+                int16_t healthOffset = *reinterpret_cast<const int16_t*>(player.biped + 0x186);
+                if (healthOffset > 0 && healthOffset < 0x2000) {
+                    uint8_t* healthComp = player.biped + healthOffset;
+                    *reinterpret_cast<float*>(healthComp + 0x10) = 0.0f;
+                    *reinterpret_cast<float*>(healthComp + 0x14) = 0.0f;
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+
         // 1. Apply Godmode
         if (s_godmode.load()) {
             if (s_shieldRestore && player.unitHandle != -1) {
@@ -795,7 +809,6 @@ void DevCheats::GameTick(int32_t userIndex) {
         }
 
         // 6. Process Item Spawn & Give requests
-        s_suicideRequested.store(false);
         ProcessActions(s_baseAddress, pool, player);
     }
 }
