@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include "common/Types.hpp"
 #include "common/Version.hpp"
+#include "common/BuildStamp.hpp"
 #include "host/SteamLocator.hpp"
 #include "host/SteamWorkshop.hpp"
 #include "host/OwnershipVerifier.hpp"
@@ -939,6 +940,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         noble::Logger::Init(logName);
     }
     NOBLE_INFO("Starting {} - {}", noble::APP_NAME, noble::VERSION_STRING);
+    // Provenance for support: which source tree/exe this log came from. Log-only, dev builds only.
+    NOBLE_INFO("Build: {}", noble::BuildStamp());
 
     // "-crash-test": throw an unhandled C++ exception so the terminate handler's minidump can be verified
     // (the CRT answers an escaping exception with a fail-fast, which the SEH filter never sees).
