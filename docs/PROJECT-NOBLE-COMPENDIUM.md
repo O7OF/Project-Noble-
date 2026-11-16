@@ -6,7 +6,7 @@
 
 > **How to read it.** Sections 1-4 are the current state and the multiplayer workstream; sections 5-6 are engine subsystem references; 7 is the day-to-day runbook; 8 is the failure archive and the genuinely open questions; the appendices are quick-reference tables. Claims carry a confidence tag; when two notes disagree the newer one wins and the discrepancy is called out.
 
-> **Version stamp.** Project Noble **v0.20.7**, repo `D:\Project-Noble-Closed-Source`, branch `wip-merge`, HEAD **`9952b10`** (a merge of `wip-merge` @ `838b41c` and `origin/main` @ `e812995`). Both branches are pushed and identical at that commit. Engine reference: MCC `haloreach.dll` build 1.3528.0.0, SHA-256 `738dd2d2...0894`, image base `0x180000000`. Document built 2026-11-16. All RVAs are `haloreach.dll` RVAs (Ghidra address = `0x180000000` + RVA); a game update invalidates them.
+> **Version stamp.** Project Noble **v0.20.8**, repo `D:\Project-Noble-Closed-Source`, branch `wip-merge`, HEAD **`911414b`** (a merge of `wip-merge` @ `7e62153` - multiplayer work plus this document - and `origin/main` @ `6cc4312`, the v0.20.8 release line). Both branches are pushed and identical at that commit. Engine reference: MCC `haloreach.dll` build 1.3528.0.0, SHA-256 `738dd2d2...0894`, image base `0x180000000`. Document built 2026-11-16. All RVAs are `haloreach.dll` RVAs (Ghidra address = `0x180000000` + RVA); a game update invalidates them.
 
 **Confidence legend**
 
@@ -61,13 +61,13 @@ Only `noble-dev` and `noble-client` are release gates. The dedicated server must
 
 | Fact | Value |
 |---|---|
-| Version | **0.20.7** in `src/common/Version.hpp`; dev builds report `0.20.7-dev (Closed Source)` |
+| Version | **0.20.8** in `src/common/Version.hpp`; dev builds report `0.20.8-dev (Closed Source)` |
 | Branch | `wip-merge` @ **`9952b10`** (tracked tree clean; large maps/packs/saves are not in git) |
-| Merge | `9952b10` merges `wip-merge` `838b41c` (high-slot docs + membership fix) with `origin/main` `e812995` (v0.20.7 release line) |
+| Merge | `911414b` merges `wip-merge` `7e62153` (multiplayer work + published compendium) with `origin/main` `6cc4312` (v0.20.8 release line) |
 | Branch parity | `main` and `wip-merge` are pushed and identical at `9952b10` |
 | Release tags | the `v0.20.*` line is published through the release repo; the local clone carries tags only up to the `v0.19.x` line |
 
-### 1.4 The v0.20.0-v0.20.7 release line
+### 1.4 The v0.20.0-v0.20.8 release line
 
 Everything below is shipped in the merged `origin/main` line at HEAD. Sources: `release-notes\v0.20.*.md` and `src/ui/ChangelogData.hpp` (in-client changelog).
 
@@ -81,6 +81,7 @@ Everything below is shipped in the merged `origin/main` line at HEAD. Sources: `
 | 0.20.5 | Firefight join-in-progress: host refusal reason 3 (join in progress) is dropped while a Noble session is active so the engine handshake can complete |
 | 0.20.6 | Settings migration now first-run only (stale mirror no longer overwrites saved settings); Firefight JIP refusal-3 fix carried |
 | 0.20.7 | Firefight JIP: host `AbortGame(reason=6)` suppressed while a Noble network transport is active (logged as `SUPPRESSED AbortGame(reason=6) for join-in-progress`); settings migration fix; changelog notes |
+| 0.20.8 | Custom-game join-in-progress: a guest resolves the host's content mod on a stock map instead of dropping it (the modded-Custom-Game desync/abort path); join/connect refusal suppression now respects the engine's launch join lock (`publicSlots == 0`); version bump |
 
 The line also contains a substantial **front-end UI rework**: `FrontEndPickers.cpp`, `PauseMenu.cpp`, `SettingsPanel.cpp`, `FrontEndLobby.cpp` and the new shared drawing layer `NobleUi.cpp/.hpp` were rewritten or heavily reworked, and the ElitePack/ReachHost engine integrations were wired into the UI (commit `f28a98f`: 17 files, roughly +4.2k/-3.4k lines). *observed (diffstat)*.
 
@@ -118,7 +119,7 @@ History: upstream force-disabled the Extended profiles (commit `4407101`) after 
 
 | Area | State | Confidence |
 |---|---|---|
-| Release line v0.20.0-v0.20.7 | shipped and pushed; `main` = `wip-merge` = `9952b10` | proven |
+| Release line v0.20.0-v0.20.8 | shipped and pushed; `main` = `wip-merge` = `911414b` | proven |
 | Shipped multiplayer path (16-slot engine session) | works at **2 and 5 players** on one machine with stock engine limits; join/leave/rejoin proven | proven |
 | 16-player multiplayer acceptance | not yet run - blocked by one-machine RAM, needs 3-4 PCs (see 4.5) | proven absence |
 | High-slot (peer 17 / player 16) membership layer | fixed; peer 17 reaches peer state 8 and the membership delta is accepted | proven |
@@ -288,7 +289,7 @@ Noble forces ACCEPT on the engine's refusal paths so players can join an in-prog
 
 Refusal codes seen: 15 join-abort, 0x16/22 duplicate identifier, 0x1B co-op save mismatch, 6 match simulation, 5 campaign in-progress, 0x1C peer disconnect, 0x20 Firefight. Session state lives at `+0x60EF8` (6 = in game).
 
-Two host-side fixes shipped in the 0.20.x line (release notes 0.20.5 / 0.20.7, implemented in `src/hooks/LobbyPatches.cpp`): the host no longer sends refusal reason 3 for an active Noble session, and `AbortGame(reason=6)` is suppressed while a Noble network transport is active (Firefight JIP). *observed (shipped release note; not independently re-tested here).*
+Three host-side fixes shipped in the 0.20.x line (release notes 0.20.5 / 0.20.7 / 0.20.8, implemented in `src/hooks/LobbyPatches.cpp`): the host no longer sends refusal reason 3 for an active Noble session, `AbortGame(reason=6)` is suppressed while a Noble network transport is active (Firefight JIP), and from 0.20.8 both overrides respect the engine's launch join lock (`publicSlots == 0`) so a guest is never forced into a session the engine has locked. *observed (shipped release note; not independently re-tested here).*
 
 ### 3.6 Close reasons and refusal semantics
 
