@@ -331,6 +331,68 @@ analysis for host-probe and a few minutes each for the rest.
 - External coverage of RR at launch (32-player era): noobfeed.com coverage of Halo: Reach Renaissance, 2026-10-23
   (https://www.noobfeed.com/news/halo-reach-renaissance-pc). No source found for an 88-player claim.
 
+## 8. Trade-offs: RR's architecture vs Noble's architecture
+
+Short version: **RR bought full control by building its own game client and network stack; Noble buys ecosystem
+integration by extending MCC in-process.** RR gets big lobbies and services today but pays a large maintenance/
+version-lock/ops bill; Noble starts from MCC's accounts, networking, voice, moderation and matchmaking, but is boxed
+in by MCC's 32-bit masks and session limits until the engine is widened. Neither is strictly better; the right
+choice depends on whether Noble wants to own networking or stay a patch-on-MCC client.
+
+| Dimension | RR (own client + own stack) | Noble (MCC in-process patches) |
+|---|---|---|
+| Control of session/network | total: own lobby, session, membership transport, masks, capacity profiles, directory, relay, voice | bounded by MCC's session format/network path; >32 needs engine-internal widening |
+| Capacity beyond 16 | shipped 64, M81 (81 machines), 128 experimental (2 players/machine over 64 machines), dedicated `big_lobby=81` | 16 stock, 32 dev-gated; 64/128 modelled but blocked by 32-bit masks + install not done |
+| Big-lobby UX (parties, scoreboard, roster, browser facts) | built for 81/128 (party 81, own scoreboard/roster/browser) | UI is engine/MCC-shaped; our lobby/picker/browser work is incremental and clamped to seats |
+| Services (master, relay, dedicated, voice) | all owned and operated; big-lobby/join/relay/dedicated-server features possible | relies on MCC networking; no own directory/relay/dedicated server |
+| Accounts/credits/challenges/ranks/chat/moderation | RR has its own; duplicates MCC progression | **already provided by MCC/Noble (owner-confirmed)** - no need to build |
+| Version/update fragility | launcher + launch block + build check: only the exact supported MCC Reach build works; every MCC update needs an RR release | RVAs/bytes are version-specific too, but our all-or-nothing byte checks fail safe; fewer moving parts, no launch-block/version handshake |
+| Patch risk | big patch tables (e.g. M128 installer over 28 RVAs) + transport replacement: powerful, but a wrong site can break sessions; experimental profiles | 120-site slot patch + caves, shadow sessions, mirror hooks: big but byte-checked, gated, self-tested; regression found and fixed (gShadow) shows the risk is real either way |
+| Host migration/reliability | no host migration in big lobbies (game ends if host leaves); documented | sessions end/close similarly today; no host migration work yet |
+| Ops/security burden | operators run master/relay/voice; players' IPs are visible to peers (RR README warns); moderation/abuse handling is ours | MCC handles networking/auth/anti-cheat surface; no central servers to run; less privacy/moderation burden |
+| UI velocity | WebView2 HTML/JS: fast iteration, themes, animation, guides, bug-report bundles | in-engine UI: slower, but native look/feel and no WebView2 dependency |
+| Platform reach | Windows + Proton/Steam Deck paths, own launcher | MCC-supported platforms only (Windows; no official Linux) |
+| Content pipeline | custom tag packs with per-pack metadata (`.rrreloc`/`.rrneeds`/`.rrpmcg`/`.rremotes`), map sharing | mod VFS/packs; metadata/portability simpler but less structured |
+| Testing burden | must test own network/services across versions and platforms | must test engine patches across MCC updates and big lobbies; hardware-limited (one-machine 16-player ~RAM bound) |
+| Legal/distribution | standalone fan client that patches MCC + ships ~740 MB packs + own services | thinner footprint: MCC integration + mod packs; closer to the shipped product's terms |
+
+**Good in RR's way (worth borrowing as design, not code):**
+
+1. **A capacity profile is a first-class object.** Choose a profile (default/M64/M81/M128/FF32) per session, gate the
+   engine patch groups per profile, and keep the stock path untouched when the profile is default. This is exactly the
+   abstraction Noble's `-slot-players` should grow into.
+2. **Machine count and player count are separate.** M128 (two players per machine) keeps the machine/mask set smaller
+   than the player count. Noble currently assumes peers == players for capacity; adding a machine/player split could
+   make 64 players achievable with 32 machines before touching 64-machine masks.
+3. **Explicit mask/membership model.** `machine_index_bits`/`machine_set_bytes`, u64 full/delta membership updates,
+   resync/checksum, recipient sets - a clear blueprint for our high-word mask plan (we already built the storage model
+   and lifecycle; the transport/reporting side is the next comparable piece).
+4. **Install by patch table, not in-place resizing.** RR's `install_stream128`/`p64::Batch`/`m64_join` code-site pattern
+   is the same shape as our piecewise-cave synthesis + synthesized install; the difference is scale and naming.
+5. **Roster/scoreboard/UI built for the profile count**, not clamped after the fact (RR scoreboard modules; our UI work
+   currently clamps and scales within engine limits).
+
+**Bad in RR's way (not worth copying):**
+
+1. **Owning the whole network stack is a permanent second product**: master/relay/voice/dedicated/browser, version
+   handshakes, platform/Proton support and player-IP exposure all become Noble's job forever.
+2. **Version lock + launch block**: an MCC update can (and does) break the client until they ship a matching release.
+   Noble's byte-checked patches fail safe but must be regenerated; neither approach is update-proof.
+3. **Big experimental surfaces without full validation**: M128 two-per-machine, 81-machine parties and `big_lobby=81`
+   are documented as experimental; host migration is unsupported; the 35th-player crash history shows the cost.
+4. **Deep transport/session replacement is hard to debug and test**; failures are cross-machine and intermittent - the
+   opposite of our headless self-test + 2-instance smoke verification loop.
+5. **Duplicating MCC's accounts/credits/chat/voice/moderation** increases surface area for little player benefit;
+   Noble already has those (owner-confirmed), so RR is a reference for the *capacity/roster* layers only.
+
+**Takeaway for Noble.** Stay an MCC in-process client: keep MCC's accounts, networking, voice, moderation and
+matchmaking, and take RR's ideas where they map onto engine patching - capacity profiles with machine/player split,
+mask/set config, full/delta membership updates, patch-table installs and big-roster UI. Do not take on the
+master/relay/dedicated/voice/launcher stack unless the product goal becomes "host 64/128 without MCC networking";
+that is a much larger, permanent operations commitment and the part of RR with the most experimental/version-lock
+fragility.
+
+
 ## 7. Open questions
 
 - Where does the **88** figure come from? Not in RR 0.1.50; likely 81/128 confusion. Need a source link.
