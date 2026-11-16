@@ -187,6 +187,16 @@ bool MigrateNewestFile(const std::filesystem::path &relativeFilePath) {
   const auto primary = PrimaryDataDir() / relativeFilePath;
   const auto dirs = KnownDataDirs();
 
+  std::error_code presenceEc;
+  // Never overwrite a file that already exists in this install. This is what made saved settings
+  // "reset to default": the launcher mirrored settings.json into Documents/AppData, and on the next
+  // start the migration picked the copy with the newest timestamp - which could be an old default file
+  // from another install or a failed mirror - and copied it back over the player's saved settings.
+  // Migration is only for first run (no local file yet).
+  if (std::filesystem::is_regular_file(primary, presenceEc)) {
+    return false;
+  }
+
   std::filesystem::path newestPath;
   std::filesystem::file_time_type newestTime{};
   bool foundAny = false;

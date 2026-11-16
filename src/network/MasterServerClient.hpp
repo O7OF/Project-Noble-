@@ -42,6 +42,7 @@ struct LobbyPlayer {
 // Snapshot of a pre-game lobby session.
 struct LobbyState {
     bool ok = false;
+    std::string gameVersion;   // host's display version
     int httpStatus = 0;   // 0 when the request never completed; otherwise the server's status code
     std::string sessionId;
     std::string name;
@@ -98,7 +99,8 @@ struct MasterSession {
     std::string modTitle;
     bool isPrivate = false;
     std::string lanAddress;
-    std::string build;
+    std::string build;        // wire build tag (compatibility)
+    std::string gameVersion;  // display version shown in the main menu (e.g. "0.20.4 (Closed Source)")
     std::string regionUrl;
     std::string regionName;
 };

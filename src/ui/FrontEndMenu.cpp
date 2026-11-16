@@ -7373,6 +7373,16 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
           // unconnected local match (main.cpp's in-process path for the
           // Noble-drawn menu reads choice.connectAddress itself).
           args += L" -connect \"" + ToWide(choice.connectAddress) + L"\"";
+          // The loading screen roster is not host-only: every joiner shows the same lobby
+          // roster (host first) while the match loads.
+          if (!choice.rosterNames.empty()) {
+            std::wstring rosterCsv;
+            for (size_t r = 0; r < choice.rosterNames.size(); ++r) {
+              if (r) rosterCsv += L"|";
+              rosterCsv += ToWide(choice.rosterNames[r]);
+            }
+            args += L" -loading-roster \"" + rosterCsv + L"\"";
+          }
           if (!choice.sessionId.empty())
             args += L" -session-id \"" + ToWide(choice.sessionId) + L"\"";
           if (!choice.sessionToken.empty())

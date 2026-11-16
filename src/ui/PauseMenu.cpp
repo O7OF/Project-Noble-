@@ -2455,6 +2455,23 @@ static void UpdateLiveScoreboard() {
     }
   }
 
+  // A guest often has only the engine's results table, so a row can arrive without a machine id. Match
+  // the name against the names the lobby/voice layer already tracks so its measured RTT is used instead
+  // of "-".
+  {
+    const auto knownNames = SocialOverlay::GetPlayerNames();
+    for (auto &row : s_boardRows) {
+      if (row.machine != 0) continue;
+      for (const auto &entry : knownNames) {
+        if (entry.first != 0 && !entry.second.empty() &&
+            _stricmp(entry.second.c_str(), row.name.c_str()) == 0) {
+          row.machine = entry.first;
+          break;
+        }
+      }
+    }
+  }
+
   // Real per-player RTT only. No round-robin fallback: attaching another peer's number to a row is worse
   // than showing "-". The roster seed carries each player's machine id and the match transport now uses
   // the same id the lobby published.
@@ -2484,6 +2501,29 @@ static void UpdateLiveScoreboard() {
       row.ping = ms; // -1 means unknown and is drawn as "-"
     } else if (row.ping < 0) {
       row.ping = 0;
+    }
+  }
+
+  // Exactly one row may be "you". The engine's results table and the TLS player array can both flag a
+  // slot, and on a guest that used to mark every row local - the panel then drew "YOU" on everyone.
+  // Prefer the row whose name is this player, then the local machine id, then the first flagged row.
+  {
+    int localIndex = -1;
+    for (size_t i = 0; i < s_boardRows.size(); ++i) {
+      const auto &row = s_boardRows[i];
+      if (!row.local) continue;
+      if (localIndex < 0) localIndex = static_cast<int>(i);
+      if (!snap.playerName.empty() &&
+          _stricmp(row.name.c_str(), snap.playerName.c_str()) == 0) {
+        localIndex = static_cast<int>(i);
+        break;
+      }
+    }
+    for (size_t i = 0; i < s_boardRows.size(); ++i) {
+      s_boardRows[i].local = static_cast<int>(i) == localIndex;
+    }
+    if (localIndex >= 0 && !snap.serviceTag.empty()) {
+      s_boardRows[static_cast<size_t>(localIndex)].tag = snap.serviceTag;
     }
   }
 }

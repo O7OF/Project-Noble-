@@ -444,6 +444,15 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
     }
 
     if (!s_originalSwapChainPresent) return DXGI_ERROR_INVALID_CALL;
+    // The engine presents from its own render thread. On Ryzen CPUs Windows happily leaves that thread on a
+    // parked/slow core (and may demote it under power throttling), which shows up as low frame rate on AMD
+    // desktops while Intel machines on the same GPU are fine. Raise it once, above normal only so the
+    // engine's worker threads are not starved.
+    static thread_local bool s_presentPriorityRaised = false;
+    if (!s_presentPriorityRaised) {
+        s_presentPriorityRaised = true;
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+    }
     const HRESULT presentHr = s_originalSwapChainPresent(swapChain, effectiveSyncInterval, flags);
 
     // The graphics driver reset or removed the device (a driver timeout, crash or hang recovery). Nothing can

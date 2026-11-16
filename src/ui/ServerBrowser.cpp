@@ -382,6 +382,7 @@ void ServerBrowser::RefreshServers() {
             e.isOwn = true;
             e.isMod = IsModdedGame(cfg.mapName, cfg.sessionName) || !cfg.modId.empty();
             e.build = std::string(kBuildTag);
+            e.gameVersion = std::string(noble::VERSION_STRING);
             e.modId = cfg.modId;
             e.modTitle = cfg.modTitle;
             e.source = "YOU";
@@ -459,6 +460,7 @@ void ServerBrowser::RefreshServers() {
         e.modTitle = m.modTitle;
         e.isMod = IsModdedGame(m.map, m.name, m.isMod) || !m.modId.empty();
         e.build = m.build;
+        e.gameVersion = m.gameVersion;
         e.source = m.regionName.empty() ? "ONLINE" : m.regionName;
         e.region = m.regionName.empty() ? "ONLINE" : m.regionName;
         add(e);
@@ -1344,14 +1346,16 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::Spacing();
         if (buildMismatch) {
             wrappedLine(true, ImVec4{0.97f, 0.38f, 0.38f, 1.0f},
-                        std::string("VERSION MISMATCH: host runs ") + std::string(noble::ExtractBaseVersion(s.build)) +
-                            " and you have " + std::string(noble::ExtractBaseVersion(noble::kBuildTag)) +
+                        std::string("VERSION MISMATCH: host runs ") +
+                            (!s.gameVersion.empty() ? s.gameVersion : std::string(noble::ExtractBaseVersion(s.build))) +
+                            " and you have " + std::string(noble::VERSION_STRING) +
                             " - you cannot join until one of you updates.");
         } else {
             // Different build string on the same release line (usually dev vs release): allowed, but say so.
             wrappedLine(true, ImVec4{1.0f, 0.82f, 0.35f, 1.0f},
-                        std::string("Host ") + std::string(noble::ExtractBaseVersion(s.build)) + " (yours " +
-                            std::string(noble::ExtractBaseVersion(noble::kBuildTag)) + ") - compatible.");
+                        std::string("Host ") +
+                            (!s.gameVersion.empty() ? s.gameVersion : std::string(noble::ExtractBaseVersion(s.build))) +
+                            " (yours " + std::string(noble::VERSION_STRING) + ") - compatible.");
         }
     }
     if (s.isMod || !s.modId.empty()) {
@@ -1402,12 +1406,15 @@ void ServerBrowser::RenderServerDetails() {
     }
     {
         const bool compat = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
-        std::string verStr = s.build.empty() ? "-" : s.build;
-        if (!s.build.empty() && !compat) verStr += " (Incompatible)";
+        // Show the same version string the main menu shows. The wire build tag (0.19.x) is only for
+        // compatibility; players were seeing it here and thought the browser was on another version.
+        std::string shown = !s.gameVersion.empty() ? s.gameVersion
+                                                   : (s.build.empty() ? std::string("-") : s.build);
+        if (!s.build.empty() && !compat) shown += " (Incompatible)";
         const ImU32 verCol = !compat ? IM_COL32(245, 95, 85, 255)
                            : (s.build.find("-dev") != std::string::npos) ? IM_COL32(255, 212, 72, 255)
                                                                          : IM_COL32(226, 236, 245, 255);
-        drawInfoRow("VERSION", verStr, verCol);
+        drawInfoRow("VERSION", shown, verCol);
     }
     {
         std::string pingStr = s.ping >= 0 ? (std::to_string(s.ping) + " ms") : "-";
@@ -1655,7 +1662,14 @@ void ServerBrowser::JoinByCode() {
     ServerEntry s;
     s.id = info.sessionId;
     s.name = lobby.name.empty() ? "Invite code lobby" : lobby.name;
+    for (const auto& p : lobby.roster) {
+        if (!p.isHost) continue;
+        s.hostPlayerName = p.username;
+        s.hostServiceTag = p.serviceTag;
+        break;
+    }
     s.hostAddress = lobby.hostIp;
+    s.gameVersion = lobby.gameVersion;
     s.port = lobby.hostPort ? lobby.hostPort : 11774;
     s.mapName = lobby.map;
     s.gameMode = lobby.mode;

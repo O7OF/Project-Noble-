@@ -219,7 +219,7 @@ void EnterLobby(OverlayContext &ctx, const ServerEntry &s,
   } else {
     LobbyPlayer hostP;
     hostP.peerId = 1;
-    hostP.username = s.name.empty() ? "Host" : s.name;
+    hostP.username = s.hostPlayerName.empty() ? "Host" : s.hostPlayerName;
     hostP.isHost = true;
     hostP.ping = s.ping; // unknown stays -1 (drawn as "-"), never a made-up 25 ms
     ctx.st.lobbyRoster.push_back(hostP);

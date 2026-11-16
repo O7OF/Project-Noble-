@@ -228,25 +228,38 @@ static void __fastcall Hook_AcknowledgeJoinRequest(void* thisPtr, void* targetAd
 }
 
 static void __fastcall Hook_JoinRefuse(void* a1, void* a2, void* a3) {
+    uint32_t reason = 0;
+    if (a3) std::memcpy(&reason, static_cast<uint8_t*>(a3) + 8, 4);
     if (a3 && s_refuseLogCount.fetch_add(1) < 50) {
-        uint64_t session = 0; uint32_t reason = 0;
+        uint64_t session = 0;
         std::memcpy(&session, a3, 8);
-        std::memcpy(&reason, static_cast<uint8_t*>(a3) + 8, 4);
         NOBLE_WARN("LobbyPatches: [{} pid {}] JOIN REFUSED: session 0x{:X} reason {} (0x{:X}) caller hr+0x{:X} a1={} a2={}",
             RefuseRole(), GetCurrentProcessId(), session, reason, reason, CallerRva(_ReturnAddress()), a1, a2);
         NOBLE_WARN("LobbyPatches: JOIN REFUSED stack: {}", ReachStack());
+    }
+    // Join-in-progress (Firefight survival especially) is refused by the host with reason 3 even after the
+    // can_accept overrides, which sends the joiner home. When Noble is the host of an active transport,
+    // drop that refusal so the engine's own join handshake continues and the player can drop in.
+    if (reason == 3 && IsNobleHost() && IsTransportActive()) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED join refusal reason 3 (join in progress) to keep the guest connected");
+        return;
     }
     if (s_originalJoinRefuse) s_originalJoinRefuse(a1, a2, a3);
 }
 
 static void __fastcall Hook_ConnectRefuse(void* a1, void* a2, void* a3) {
+    uint32_t reason = 0;
+    if (a3) std::memcpy(&reason, static_cast<uint8_t*>(a3) + 4, 4);
     if (a3 && s_refuseLogCount.fetch_add(1) < 50) {
-        uint32_t id = 0, reason = 0;
+        uint32_t id = 0;
         std::memcpy(&id, a3, 4);
-        std::memcpy(&reason, static_cast<uint8_t*>(a3) + 4, 4);
         NOBLE_WARN("LobbyPatches: [{} pid {}] CONNECT REFUSED: id 0x{:X} reason {} (0x{:X}) caller hr+0x{:X}",
             RefuseRole(), GetCurrentProcessId(), id, reason, reason, CallerRva(_ReturnAddress()));
         NOBLE_WARN("LobbyPatches: CONNECT REFUSED stack: {}", ReachStack());
+    }
+    if (reason == 3 && IsNobleHost() && IsTransportActive()) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED connect refusal reason 3 (join in progress) to keep the guest connected");
+        return;
     }
     if (s_originalConnectRefuse) s_originalConnectRefuse(a1, a2, a3);
 }
@@ -616,6 +629,15 @@ static void __fastcall Hook_AbortGame(uint32_t reason) {
         return;
     }
 #endif
+    // Join-in-progress (Firefight especially): when a late joiner connects to a running match the engine
+    // aborts the game with reason 6, which ends the host's match and kicks the joiner back to the main menu.
+    // Keep the game alive while a Noble transport is active so the join handshake can insert the player;
+    // logged so a genuine failure is still visible.
+    if (reason == 6 && IsTransportActive()) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED AbortGame(reason=6) for join-in-progress; match stays running "
+                   "(caller hr+0x{:X})", CallerRva(_ReturnAddress()));
+        return;
+    }
     if (s_originalAbortGame) s_originalAbortGame(reason);
 }
 

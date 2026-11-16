@@ -872,6 +872,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     _set_purecall_handler(&NoblePureCallHandler);
     DisableProcessWindowsGhosting();
     timeBeginPeriod(1);
+    // Windows power throttling (EcoQoS) parks/slows the process when it is not the foreground window and,
+    // on Ryzen systems, keeps the whole process on a low-power core budget: frame times then collapse to
+    // a fraction of the Intel result on the same GPU. Opt the process out explicitly and run it above
+    // normal priority; the engine's own worker threads keep their own relative priorities.
+    {
+        PROCESS_POWER_THROTTLING_STATE throttling{};
+        throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+        throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+        throttling.StateMask = 0;   // never throttle execution speed
+        SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &throttling,
+                              sizeof(throttling));
+        SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+        // Keep the system and the display awake while Noble is running; a sleeping monitor lets the CPU
+        // drop into a low clock state that some Ryzen parts take a long time to leave.
+        SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
+    }
 
     // 1. Initialize logging. The shipped client has no log at all (Logger::Init is a no-op there), so the
     // "-log <file>" override is a development-only switch and is ignored in release.
@@ -1472,11 +1488,16 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         // waits for. A direct/solo launch falls back to the local player's name.
         {
             std::vector<std::string> roster = loadingRoster;
+            const bool haveRoster = !roster.empty();
             if (roster.empty()) {
                 std::string me = noble::Settings::Get().Snapshot().playerName;
                 roster.push_back(me.empty() ? std::string("NobleSix") : me);
             }
-            const int total = launchHost ? (1 + expectedPeers) : 0;
+            // Every process that received the lobby roster (host and guests alike) knows how many players
+            // this launch is for. Guests used to pass 0 here, so their loading screen showed an empty
+            // roster even though the lobby had sent them the names.
+            const int total = haveRoster ? static_cast<int>(roster.size())
+                                         : (launchHost ? (1 + expectedPeers) : 0);
             noble::PauseMenu::SetLoadingSession(launchMode, std::move(roster), total, launchHost,
                                                 !connectAddress.empty());
         }
