@@ -767,6 +767,9 @@ static void DrawLobbyMapPickerModal(OverlayContext &ctx, const Ui &ui,
       st.lobbyModTitle.clear();
       st.lobbyModFolder.clear();
     }
+    NOBLE_INFO("FrontEndMenu: lobby mod selected '{}' id '{}' folder '{}' version '{}'",
+               st.lobbyModTitle, st.lobbyModId, st.lobbyModFolder.string(),
+               chosen.mod ? chosen.mod->VersionString() : std::string());
     // Keep game type valid on stock maps
     if (st.lobbyMode == "multiplayer" && st.lobbyMapOverride.empty() &&
         !st.lobbyVariantPath.empty() && !ctx.variants.empty()) {
@@ -1267,9 +1270,12 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         choice.modFolder = resolvedModFolder;
         st.lobbyMapOverride = resolvedMap;
         st.lobbyModFolder = resolvedModFolder;
+        std::string guestModVersion;
+        for (const ModEntry &m : ctx.mods)
+          if (m.folder == choice.modFolder) guestModVersion = m.VersionString();
         NOBLE_INFO(
-            "FrontEndMenu: Guest resolved modded map: '{}' (folder: '{}')",
-            choice.mapOverride.string(), choice.modFolder.string());
+            "FrontEndMenu: Guest resolved modded map: '{}' (folder: '{}', locally installed mod version '{}')",
+            choice.mapOverride.string(), choice.modFolder.string(), guestModVersion);
       } else if (!resolvedModFolder.empty()) {
         // The host's mod does not ship its own map (content/tag overrides on a stock map). Launch the stock
         // map with this PC's installed copy of the same mod; dropping the mod here is what desynced the
@@ -1278,9 +1284,12 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         choice.modFolder = resolvedModFolder;
         st.lobbyMapOverride.clear();
         st.lobbyModFolder = resolvedModFolder;
+        std::string guestModVersion;
+        for (const ModEntry &m : ctx.mods)
+          if (m.folder == resolvedModFolder) guestModVersion = m.VersionString();
         NOBLE_INFO("FrontEndMenu: guest uses its installed copy of the host's content mod '{}' on stock map "
-                   "'{}' (no mod map file needed)",
-                   resolvedModFolder.filename().string(), choice.map);
+                   "'{}' (no mod map file needed; locally installed mod version '{}')",
+                   resolvedModFolder.filename().string(), choice.map, guestModVersion);
       } else {
         // The host is on a mod map this PC does not have. Launching the plain
         // map anyway puts the guest in a match on a different map than the host

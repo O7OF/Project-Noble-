@@ -167,6 +167,16 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
         // Workshop folders are named after the published-file id. Some older manifests omit ModIdentifier;
         // the folder name still identifies the item in that case.
         if (mod.workshopId.empty() && workshop && AllDigits(mod.id)) mod.workshopId = mod.id;
+        if (hasInfo && info.contains("ModIdentifier") && info["ModIdentifier"].is_object()) {
+            mod.modGuid = info["ModIdentifier"].value("ModGuid", std::string());
+        }
+        if (hasInfo && info.contains("ModVersion") && info["ModVersion"].is_object()) {
+            const json& v = info["ModVersion"];
+            mod.versionMajor = v.value("Major", 0);
+            mod.versionMinor = v.value("Minor", 0);
+            mod.versionPatch = v.value("Patch", 0);
+            mod.hasVersion = true;
+        }
         mod.title = hasInfo ? Text(info, "Title") : std::string();
         mod.description = hasInfo ? Text(info, "Description") : std::string();
         if (mod.title.empty()) mod.title = workshop ? "Workshop item " + mod.id : mod.id;
@@ -241,6 +251,11 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
 }
 
 } // namespace
+
+std::string ModEntry::VersionString() const {
+    if (!hasVersion) return {};
+    return std::to_string(versionMajor) + "." + std::to_string(versionMinor) + "." + std::to_string(versionPatch);
+}
 
 const ModEntry* FindByWorkshopId(const std::vector<ModEntry>& mods, const std::string& workshopId) {
     if (workshopId.empty()) return nullptr;

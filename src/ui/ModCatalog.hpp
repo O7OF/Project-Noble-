@@ -40,6 +40,12 @@ struct ModMap {
 struct ModEntry {
     std::string id;           // Workshop id or folder name
     std::string workshopId;   // Steam published-file id from ModIdentifier.HostedModIds (empty for local-only mods)
+    std::string modGuid;      // ModIdentifier.ModGuid from ModInfo.json (empty on old manifests)
+    // ModInfo.json's ModVersion. Two PCs can have the same Workshop item at different versions (mods update), which
+    // makes their tag content differ even though the id matches - the engine then aborts or resets the session.
+    bool hasVersion = false;
+    int versionMajor = 0, versionMinor = 0, versionPatch = 0;
+    std::string VersionString() const;   // "0.9.0", empty when the manifest has no ModVersion
     std::string title;
     std::string description;
     std::filesystem::path folder;
