@@ -30,7 +30,7 @@ struct AppearanceProfile {
     int primaryColor = 1;    // Steel
     int secondaryColor = 10; // Green
     int accentColor = 14;    // Cyan (the third / detail colour)
-    int lightsColor = 10;    // 4th slot: lights / illumination colour
+    int lightsColor = 14;    // 4th slot: lights / illumination colour (Cyan default)
     // Custom picker wheel (Armory preview). appearance.json stores both the exact RGB and the nearest
     // Reach palette index, because the in-game profile only accepts palette item ids.
     bool primaryCustom = false, secondaryCustom = false, accentCustom = false, lightsCustom = false;

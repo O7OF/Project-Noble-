@@ -1321,7 +1321,7 @@ void ArmorCustomizer::SyncToReachArmory() const {
     const bool priCust = previewingElite ? m_profile.elitePrimaryCustom : m_profile.primaryCustom;
     const bool secCust = previewingElite ? m_profile.eliteSecondaryCustom : m_profile.secondaryCustom;
     const bool accCust = false;
-    const bool lgtCust = false;
+    const bool lgtCust = previewingElite ? m_profile.eliteLightsCustom : m_profile.lightsCustom;
     const auto& priRgbArr = previewingElite ? m_profile.elitePrimaryCustomRgb : m_profile.primaryCustomRgb;
     const auto& secRgbArr = previewingElite ? m_profile.eliteSecondaryCustomRgb : m_profile.secondaryCustomRgb;
     const auto& accRgbArr = previewingElite ? m_profile.eliteAccentCustomRgb : m_profile.accentCustomRgb;
@@ -2516,6 +2516,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         q.options = s_reachColorOptions;
         rows.push_back(std::move(p));
         rows.push_back(std::move(q));
+        if (!isElite) {
+            SlotRow l{ "COLORS", "Lights", RowKind::Colour, &m_profile.lightsColor };
+            l.scene = "c_full_spartan";
+            l.options = s_reachColorOptions;
+            rows.push_back(std::move(l));
+        }
         // 2026-11-12 (Tyler): Lights row hidden - the Honor Guard glow is fixed gold until the Lights colour can
         // drive it (see HANDOFF-ELITE-2026-11-12-NIGHT, "Lights idea"). Flip kShowEliteLights to bring it back.
         constexpr bool kShowEliteLights = false;
