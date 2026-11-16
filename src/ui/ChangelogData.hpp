@@ -224,9 +224,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 12) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 13) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "CONTROLLER NAVIGATION, SMOOTH SCROLLING & SERVICE RECORD POLISH",
+                    "Directional Stick Nav, Right-Stick Scrolling, Zero Mouse Snap-Back & UI Visual Polish",
+                    v02012Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 12) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.12",
                     "CONTROLLER NAVIGATION, SMOOTH SCROLLING & SERVICE RECORD POLISH",
                     "Directional Stick Nav, Right-Stick Scrolling, Zero Mouse Snap-Back & UI Visual Polish",
                     v02012Items,
