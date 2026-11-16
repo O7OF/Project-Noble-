@@ -1,5 +1,10 @@
 # Reach Renaissance (RR) reference notes for Project Noble
 
+> **Scope update 2026-11-16 (owner):** Noble's own **multiplayer work is stopped** - O7 is taking the multiplayer
+> workstream. **Visors and lighting are removed from our task list.** This document remains as clean-room reference
+> material only; it is not an active work queue. The take-list companion marks the affected items as out of scope.
+
+
 > **What this is.** A clean-room reference study of **Reach Renaissance 0.1.50** (released 2026-11-15, commit
 > c9c8e3e7b) for the Noble multiplayer/scaling workstream: what RR has that Noble does not, how RR got past the
 > 16-player ceiling (and what its shipped player limits actually are), and which of its architectural choices are

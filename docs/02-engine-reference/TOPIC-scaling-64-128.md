@@ -1,5 +1,9 @@
 # TOPIC - Scaling multiplayer past 32 players (64 / 128)
 
+> **Scope update 2026-11-16 (owner):** our multiplayer scaling work is stopped; O7 owns the multiplayer
+> workstream. This document is kept as reference/evidence for whoever picks it up.
+
+
 > Companion reference: [`RR-REFERENCE-2026-11-16.md`](RR-REFERENCE-2026-11-16.md) - clean-room study of Reach
 > Renaissance 0.1.50's capacity profiles (M64/M81/M128), features Noble does not have, and the shipped player-limit
 > facts (81 / 128 experimental; no 88 claim found).

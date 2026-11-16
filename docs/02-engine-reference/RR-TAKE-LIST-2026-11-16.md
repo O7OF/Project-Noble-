@@ -1,5 +1,10 @@
 # Reach Renaissance: what we can take, what we cannot
 
+> **Scope update 2026-11-16 (owner):** Noble's own **multiplayer work is stopped** - O7 is taking the multiplayer
+> workstream. **Visors and lighting are removed from our task list.** This document remains as clean-room reference
+> material only; it is not an active work queue. The take-list companion marks the affected items as out of scope.
+
+
 > Companion to RR-REFERENCE-2026-11-16.md. Explicit list of reference material and ideas Noble can use from the RR
 > study, and the items that are off-limits or not worth taking. Clean-room rule stays absolute: no RR code, binaries,
 > assets, strings, tag packs, UI text, names or ports are copied into Noble. Taking an idea means writing our own
@@ -42,9 +47,9 @@ not.
 
 | # | Idea / reference | What RR shows | How Noble can use it |
 |---|---|---|---|
-| 11 | Armour-light glow + brightness UX | exact-RGB look.glow + level table 1,2,3,5,8,12,16,24,32,50,64; draw-hook replaces the light colour; sRGB conversion; menu preview glow | spec our own armour-light colour/brightness customiser if desired; implementation approach (hook + colour conversion) is a valid design reference, not code |
-| 12 | Per-piece exact-RGB armour colours / colour wheel | per-piece primary/secondary, exact RGB beyond palette, Elite piece colours | UI/feature requirements for our armory if we extend beyond palette colours |
-| 13 | Tag-pack metadata model | .rrneeds deps, .rrreloc relocation/patch records, .rrpmcg model customisation, .rremotes animation remotes | design our own pack manifest with dependency/relocation sections for portable mod packs |
+| 11 | ~~Armour-light glow + brightness UX~~ **OUT OF SCOPE (visors/lighting removed 2026-11-16)** | exact-RGB look.glow + level table 1,2,3,5,8,12,16,24,32,50,64; draw-hook replaces the light colour; sRGB conversion; menu preview glow | spec our own armour-light colour/brightness customiser if desired; implementation approach (hook + colour conversion) is a valid design reference, not code |
+| 12 | ~~Per-piece exact-RGB armour colours / colour wheel~~ **OUT OF SCOPE (visors/lighting removed 2026-11-16; reference only)** | per-piece primary/secondary, exact RGB beyond palette, Elite piece colours | UI/feature requirements for our armory if we extend beyond palette colours |
+| 13 | ~~Visor/lighting-related appearance items in 11-12~~ **OUT OF SCOPE**; tag-pack metadata model | .rrneeds deps, .rrreloc relocation/patch records, .rrpmcg model customisation, .rremotes animation remotes | design our own pack manifest with dependency/relocation sections for portable mod packs |
 | 14 | Dedicated-server requirements list | config options (big_lobby, playlists, admin dashboard, bans, restart/next-game), player-hosted servers | keep as a future Noble dedicated-server requirement list if scope expands; no need to copy the service |
 | 15 | Relay/NAT fallback pattern | direct-first connections, optional relay for NAT failures, UI warns about IP visibility | if we ever add relay, use direct-first + explicit privacy warning; do not build it now |
 | 16 | Network-mode UX | Offline / Host Online (LAN) / Host on Server Browser as explicit host choices | simplify Noble hosting UX around the same three intents (we already have LAN/host options) |
