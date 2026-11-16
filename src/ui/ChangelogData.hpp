@@ -30,111 +30,196 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02014Items = {
+        {"MULTIPLAYER", "Extended 32-Player Matches",
+         "Custom Games and Forge lobbies now support expanded matches up to 32 players with full roster and scoreboard tracking."},
+        {"NETCODE", "High-Capacity Discovery & Sync",
+         "Upgraded network beacon and server browser discovery to seamlessly discover, list, and sync high-capacity lobbies up to 32 players without truncation."},
+        {"SERVER BROWSER", "Dynamic Capacity Filters",
+         "Updated the Server Browser to accurately reflect live server capacity, allowing players to filter and join expanded community lobbies without capacity restriction warnings."},
+        {"LOBBY", "Max Players Picker",
+         "Host lobby settings now allow directly selecting up to 32 players for Custom Games and Forge sessions."},
+        {"UI", "Loading Screen Multi-Column Roster",
+         "Enhanced in-match loading screens with responsive multi-column roster formatting to cleanly present all players in expanded matches."},
+    };
+
     const std::vector<ChangeItem> currentUiOverhaulItems = {
         {"UI", "Social Menu Overhaul",
          "Redesigned Friends, Requests, and Player Search into sleek tactical cards with prioritized Invite banners, live online/in-match presence, and instant Join/Invite/Remove actions."},
         {"UI", "Service Record & Ranks Overhaul",
          "Unified Service Record, Weekly Challenges, Commendations, and the 50-rank Progression Matrix into clean 2-column Reach tactical tiles with a pinned rank inspector."},
-        {"UI", "Armory Overhaul",
+        {"ARMORY", "Armory Customization Overhaul",
          "Added two-pane Slot-to-Grid customization for Spartan, Elite, and Marine gear with 3D model rotation, two-step preview/purchase, and a controller-friendly RGB & hue wheel color picker."},
         {"CONTROLLER", "Full Gamepad & M&K Support",
          "D-pad, analog sticks, LB/RB tabs, LT/RT mode filters, and Y/X contextual actions now navigate every panel cleanly alongside full mouse and keyboard support."},
-        {"FEATURE", "Update Changelog Popup",
+        {"UI", "Update Changelog Popup",
          "Added this What's New briefing on first launch after updating, plus a Main Menu button so you can review update notes anytime."},
     };
 
     const std::vector<ChangeItem> v01994Items = {
         {"UI", "Futuristic Rounded Halo Styling",
          "Smoothed corners across panels, tiles, buttons, scrollbars, sliders, and toggles for a cleaner sci-fi Reach interface."},
-        {"FIX", "Interactive Scrollbars & Smooth List Scrolling",
+        {"UI", "Interactive Scrollbars & Smooth List Scrolling",
          "Upgraded pre-game map grid, variant drawers, options, lobby roster, scoreboard, and list scrollbars for full mouse drag/wheel and right-stick scrolling without focus collisions or snap-back."},
         {"CONTROLLER", "Virtual Cursor Mode & Anti-Hop Navigation",
-         "Added toggleable analog Controller UI Cursor (Settings > Controller or L3 click) plus dominant-axis stick filtering and unified UiPad navigation so scrolling never hops windows or accidentally opens submenus."},
-        {"FIX", "Post-Match UI Stability",
+         "Added toggleable analog Controller UI Cursor (Settings > Controller or L3 click) plus dominant-axis stick filtering and unified navigation so scrolling never jumps windows or accidentally opens submenus."},
+        {"STABILITY", "Post-Match UI Stability",
          "Cleared lingering match inputs, cursor state, and render-thread overlap when returning from a game so menus stay calm and responsive."},
-        {"NETCODE", "Join-in-Progress & Anti-Boot Fixes",
-         "Prevented engine peer boots on active transport sessions, fixed host relay broadcasts/deduplication for joining clients, added reconnect grace windows, and materialized host map variants cleanly on join."},
+        {"NETCODE", "Join-in-Progress & Reconnect Fixes",
+         "Fixed connection stability for joining players during active matches, improved host relay broadcasts, added reconnect grace windows, and ensured host map variants download cleanly on join."},
     };
 
     const std::vector<ChangeItem> v01993Items = {
         {"UI", "Tile-Based Map & Gamemode Pickers",
          "Overhauled Multiplayer, Custom Games, Campaign, Firefight, Forge, and Modded map pickers with cover-art tiles, inline map variant lists, and duplicate-launch guards."},
-        {"UI", "Server Browser Redesign",
+        {"SERVER BROWSER", "Server Browser Redesign",
          "Modernized the live Server Browser with filter pills, controller-ready server tiles, live player counts, ping display, and fast host details."},
-        {"NETCODE", "Host-Driven Lobby Chat & Low-Bandwidth Netcode",
-         "Moved lobby chat and match traffic to the host's direct connection so backend servers handle matchmaking and accounts with minimal bandwidth and disk overhead."},
+        {"NETCODE", "Direct Host Lobby Chat & Low-Bandwidth Traffic",
+         "Optimized lobby chat and match traffic to connect directly with match hosts for lower latency and minimal backend bandwidth overhead."},
     };
 
     const std::vector<ChangeItem> v019100Items = {
-        {"FIX", "Smooth Local 3rd-Person & Zoom Camera",
-         "Fixed third-person camera and zoom jitter across variable/sub-60 FPS frames by removing Present-frame skips, switching zoom interpolation to smooth QPC timing, caching zoom settings, and forwarding controller zoom state."},
-        {"FIX", "Per-Client Local Vehicle 1st-Person Camera",
-         "Kept third-person and vehicle first-person cameras strictly local per client with unit/seat validation and finite coordinate guards so cockpit cameras stay locked without snapping."},
+        {"CAMERA", "Smooth Local 3rd-Person & Zoom Camera",
+         "Fixed third-person camera and zoom jitter across variable frame rates, ensuring smooth zoom transitions, responsive camera adjustments, and controller zoom support."},
+        {"CAMERA", "Per-Client Vehicle 1st-Person Camera",
+         "Kept third-person and vehicle first-person cameras strictly local per player with seat validation so cockpit views stay locked without snapping."},
         {"UI", "Post-Match Control & Focus Stability",
-         "Fixed match-end Game Over focus highlights jumping wildly, reset post-game button/input/countdown states between matches, and ordered Virtual Cursor before physical mouse input to stop pointer fighting across M&K and controller."},
+         "Fixed match-end Game Over focus highlights jumping wildly, reset post-game button/input/countdown states between matches, and resolved pointer fighting between mouse and controller."},
         {"UI", "Smooth Screen Transitions & Menu Return",
          "Settled focus transitions cleanly when returning to the Pre-Game Lobby or Main Menu and added smooth fade transitions while clearing leftover pickers across screens."},
     };
 
     const std::vector<ChangeItem> v019101Items = {
         {"UI", "New In-Match Loading & Waiting Screen",
-         "Campaign, Custom Games, Forge and Firefight now get a WAITING FOR PLAYERS screen with the lobby roster, per-player status, progress and mode label; the map picture is shown complete (no more zoomed stretch) over Reach's moving diamond grid with the Noble and UNSC emblems. Hosts waiting for remote players keep this screen instead of a black frame."},
-        {"UI", "Server Browser Blue-Glass Layout & Mod Awareness",
-         "Larger blue-glass server cards are now the default. Modded sessions show MOD / MOD - NOT INSTALLED, the details pane names the required Workshop item, version differences are called out, and DOWNLOAD MOD & JOIN opens the Workshop download prompt. Warnings wrap inside the pane."},
-        {"UI", "Lobby-Sized Loading Roster",
-         "The loading roster scales from small lobbies to 16 / 32 / 64 / 128-player sessions with a compact multi-column grid and a joined/expected count."},
-        {"FIX", "Smooth Local Cameras & Match-End UI",
-         "Includes the v0.19.100 work: jitter-free third-person and vehicle first-person cameras, smooth QPC zoom blending, controller zoom, and stable post-match focus/cursor handling."},
+         "Campaign, Custom Games, Forge and Firefight now get an improved Waiting For Players screen with the lobby roster, per-player status, progress and mode label, displaying full map artwork over the tactical background."},
+        {"SERVER BROWSER", "Mod Awareness & Workshop Integration",
+         "Server cards now clearly indicate required mods, call out version differences, and provide direct in-app download prompts for missing Steam Workshop content."},
+        {"UI", "Dynamic Loading Roster",
+         "The loading roster dynamically scales from small lobbies up to high-capacity sessions with a compact multi-column grid and player count tracking."},
+        {"CAMERA", "Camera Polish & Post-Match Controls",
+         "Includes jitter-free third-person and vehicle first-person cameras, smooth zoom blending, and stable post-match focus handling."},
     };
 
     const std::vector<ChangeItem> v019102Items = {
-        {"UI", "Collapsed Mod Sections & Fold in Map Pickers",
-         "The MODDED tabs (Campaign, Custom Game, Firefight, lobby map select) list one compact section per mod with its map count; click to expand, click the mod heading (FOLD) to collapse. Search still expands and filters everything."},
-        {"UI", "Campaign MAX PLAYERS & Search Fix",
-         "Campaign now has a MAX PLAYERS row (4/8/12/16) wired into HOST CO-OP instead of a hard-coded 16, the campaign search box is clamped on-screen, and the expanded-map header no longer shows a '?' placeholder for the missing em-dash glyph."},
-        {"FIX", "Extended Visor Finishes No Longer White",
-         "haloreach.dll only has five real visor slots; the extra Armory finishes were stored as out-of-range slots and drew white. Every finish now maps to a valid stock slot (nearest colour) - the Armory still previews the exact finish."},
-        {"FIX", "Game Options Sliders Aligned",
-         "All camera sliders in SETTINGS > GAME OPTIONS share one start, length and value column (they used to shrink by their value text width), and long labels are ellipsised instead of running under the track."},
-        {"FIX", "Front-End FOV No Longer Zooms the Armory",
-         "Saving a FOV change from the front-end no longer writes the match FOV into the Armory's engine camera; it is applied when a match starts, and in-match changes still apply live."},
+        {"UI", "Collapsible Mod Sections in Map Pickers",
+         "The Modded tabs now group maps by mod package with collapsible sections and map counts for easy navigation, fully supported by search."},
+        {"MULTIPLAYER", "Campaign Max Players & Navigation Fixes",
+         "Campaign lobbies now allow selecting player limits up to 16 players, search boxes are properly bounded on-screen, and text rendering glitches have been resolved."},
+        {"VISORS", "Custom Visor Color Mapping",
+         "Resolved color rendering inconsistencies on custom visor finishes so every helmet finish displays accurately in-game and in menus."},
+        {"SETTINGS", "Aligned Game Options Sliders",
+         "All camera sliders in Settings > Game Options share unified alignment and clear value columns with clean text truncation for long labels."},
+        {"CAMERA", "Independent FOV Configuration",
+         "Adjusting match Field of View in Settings no longer affects Armory preview cameras, ensuring clean character inspection."},
     };
 
     const std::vector<ChangeItem> v019103Items = {
-        {"FEATURE", "Lobby Share Codes & Join with Code",
-         "Hosts of public and private lobbies get a 23-character NB1-XXXX-XXXX-XXXX-XXXX code with COPY CODE in the HOSTING panel; join from Main Menu, the Server Browser, or the Social screen. Private lobbies stay unlisted but the code still joins them."},
+        {"LOBBY", "Lobby Share Codes & Quick Join",
+         "Hosts of public and private lobbies can generate shareable lobby invite codes with a one-click copy button, allowing friends to join directly from any menu."},
         {"UI", "Variant Drawer Search & Category Filters",
-         "The expanded base-map/variant drawer now has a search box and a category cycler with an N OF M VARIANTS count, so 353-variant Forge World AI Battlegrounds collapses to the matching entries instead of a long scroll."},
-        {"FIX", "Server Browser Refresh & Pinned Actions",
-         "Refresh shows its working status again, and FAVOURITE / COPY INVITE are pinned in a footer under the details pane so they stay visible and clickable."},
-        {"FIX", "Click Fixes in Menus & Options",
-         "Game Options rows are clickable anywhere on the row again, and the main-menu What's New hint is clickable."},
+         "The expanded base-map and variant drawer now includes real-time search and category filters with variant count tracking for fast selection."},
+        {"SERVER BROWSER", "Server Browser Refresh & Pinned Actions",
+         "Server list refresh indicator is restored, and server action buttons are permanently pinned in the details footer for instant access."},
+        {"UI", "Menu Navigation & Click Area Fixes",
+         "Settings rows are now fully clickable across the entire row width, and notification hints are responsive."},
         {"CONTROLLER", "Toggle Crouch & Toggle Zoom Bindings",
-         "Controller toggle crouch and mouse/keyboard toggle zoom are now available in Settings > Controls."},
+         "Controller toggle crouch and mouse/keyboard toggle zoom options are now available in Settings > Controls."},
     };
 
     const std::vector<ChangeItem> v01999Items = {
-        {"NETCODE", "All-Mode Netcode & Sync Hardening",
-         "Verified bidirectional UDP routes before skipping relay, added Blam! membership handshake waits before host launch, SHA-256 verified preset JSON/binary game variants and .mvar map variants, and fixed join-in-progress kicks across Campaign, Firefight, Forge, and Custom Games."},
-        {"FEATURE", "Smooth In-App Workshop Downloader",
-         "Downloading Steam Workshop mods now subscribes and downloads in-app with a live progress bar (downloaded / total, MB/s, ETA, stage), full mod metadata, creator name, tags, and scrollable description without popping open Steam."},
-        {"FIX", "Engine Hook Register Safety & Stability",
-         "Preserved volatile CPU/SSE registers across GameFinish, IsWhitespace, and VariantSource detours, fixed UI null-slot guard jumps, fixed Campaign intro black-screens, and restored real per-player ping IDs on the scoreboard."},
-        {"FIX", "Mode Options, Map Picker & Lobby Integrity",
-         "Fixed Firefight & Custom Games option editing inside the lobby, cleared stale Workshop mod flags when switching back to stock maps, and hardened host-only WebSocket controls and leave cleanup on the master server."},
+        {"NETCODE", "Multi-Mode Netcode & Connection Hardening",
+         "Enhanced network routing validation, improved game variant verification, and resolved join-in-progress disconnects across Campaign, Firefight, Forge, and Custom Games."},
+        {"MODS", "Seamless In-App Workshop Downloader",
+         "Steam Workshop mods now download entirely in-app with live transfer rate and progress tracking, displaying creator metadata and full descriptions."},
+        {"STABILITY", "Crash Prevention & Match Settlement Fixes",
+         "Fixed intermittent crashes during match completion, resolved Campaign intro transition issues, and restored accurate player latency indicators on scoreboards."},
+        {"LOBBY", "Lobby Options & Map Selection Polish",
+         "Fixed Firefight and Custom Game option editing inside the lobby, cleared stale mod flags when switching to official maps, and improved host lobby controls."},
     };
 
     const std::vector<ChangeItem> v0200Items = {
-        {"ARMORY", "Elite Armor Pieces & Full Customization",
-         "All Elite armor sets and pieces (Honor Guard, Counselor, H2A Ranger, H2A armor, Schism) now display in the Armory, render properly in-match for whoever equips them, and sync cleanly across multiplayer."},
+        {"ARMORY", "Elite Armor Permutations & Customization",
+         "All Elite armor sets (Honor Guard, Counselor, Ranger, Schism) display in the Armory, render properly in matches, and replicate across multiplayer."},
         {"ARMORY", "Armor Abilities on Elites",
-         "Equipped Armor Abilities (Jet Pack, Evade, Drop Shield, Armor Lock, Active Camo, Hologram, Sprint) now visibly display and mount correctly on Elites during matches."},
-        {"VISORS", "Custom Visor Colors In-Match & Over Network",
-         "All custom and preset visor colors render accurately in-match on both Spartans and Elites and replicate over the network across multiplayer clients."},
-        {"FORGE", "Forge AI Spawning Fix & Net Sync",
-         "Fixed non-host clients spawning duplicate or static invincible AI clones in Forge; AI spawning is now authoritatively handled with clean network synchronization."},
+         "Equipped Armor Abilities visibly mount and animate correctly on Elite player models during matches."},
+        {"VISORS", "Custom Visor Network Replication",
+         "All custom visor colors render accurately in-match on both Spartans and Elites and synchronize across all players."},
+        {"FORGE", "Forge AI Network Synchronization",
+         "Fixed AI companion and enemy spawning in Forge mode for non-host players, ensuring synced positions and health."},
         {"UI", "Loading Screen & Pause Menu Polish",
-         "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
+         "Enhanced loading screen emblems and artwork framing, and redesigned the in-game pause menu with tactical challenges and smooth scrolling."},
+    };
+
+    const std::vector<ChangeItem> v0202Items = {
+        {"SETTINGS", "Reliable Settings Persistence",
+         "Upgraded configuration saving pipeline to prevent settings like volume and custom keybinds from reverting to defaults, with instant feedback if a save fails."},
+        {"CONTROLLER", "Gamepad Apply in Settings",
+         "Controller A button activates Apply with clear focus highlighting, and menus automatically refresh to prevent overwriting settings."},
+        {"UI", "Post-Match Transition Polish",
+         "Fixed post-game focus locks and menu navigation conflicts, ensuring smooth return to the main menu with mouse, keyboard, or controller."},
+        {"STABILITY", "Post-Game Summary Crash Fix",
+         "Resolved game-over crashes and scoreboard sync failures for guests upon mission completion, ensuring accurate challenge progress and rewards."},
+        {"GAMEPLAY", "Match Completion Watchdog",
+         "Ensured Campaign mission cutscenes transition cleanly into the post-match summary without skipping progression screens."},
+    };
+
+    const std::vector<ChangeItem> v0203Items = {
+        {"PERFORMANCE", "Binary Footprint & Startup Speed",
+         "Optimized application binary size and cleaned distribution packaging for faster startup and lower disk usage."},
+        {"DIAGNOSTICS", "Streamlined Diagnostics",
+         "Added lightweight diagnostic reporting and system info in Settings."},
+    };
+
+    const std::vector<ChangeItem> v0204Items = {
+        {"PERFORMANCE", "Memory Footprint Optimization",
+         "Reduced runtime memory overhead and improved asset caching across long multiplayer sessions."},
+        {"DIAGNOSTICS", "Automated Crash Diagnostics",
+         "Integrated lightweight automated crash diagnostics for faster issue identification."},
+        {"STABILITY", "System Stability & Settings Polish",
+         "Refined runtime error handling and diagnostic reporting across all game modes."},
+    };
+
+    const std::vector<ChangeItem> v0207Items = {
+        {"NETCODE", "Firefight Join-in-Progress Stability",
+         "Resolved early match disconnects and handshaking issues so late-joining players can join active Firefight and Custom Game sessions smoothly."},
+        {"SETTINGS", "Settings Reset Protection",
+         "Fixed an issue where user preferences could be reset on launch, ensuring all custom controls and audio settings remain intact."},
+        {"MULTIPLAYER", "Lobby Roster & Scoreboard Visibility",
+         "Loading screen roster now displays all joined players, service tags correctly display per player, and your local player is distinctly highlighted on scoreboards."},
+        {"PERFORMANCE", "Thread Scheduling & CPU Priority",
+         "Optimized background thread scheduling and CPU priority for smoother, stutter-free frame delivery."},
+    };
+
+    const std::vector<ChangeItem> v0208Items = {
+        {"NETCODE", "Modded Custom Game Join-in-Progress",
+         "Joining players automatically resolve host mod content on official maps, preventing content mismatch errors and disconnects."},
+        {"NETCODE", "Session Slot Protection",
+         "Ensured sessions accurately respect public slot availability and lobby locks, preventing connection errors when lobbies fill up."},
+    };
+
+    const std::vector<ChangeItem> v0209Items = {
+        {"CAMERA", "3rd-Person Perspective & Dynamic Reticle",
+         "Added third-person perspective with an accurate dynamic crosshair, smooth aiming adjustments, vehicle first-person mode, and field-of-view controls."},
+        {"UI", "All-Mode Scoreboard Synchronization",
+         "Scoreboards in Campaign, Multiplayer, Firefight, and Forge now display accurate player names, service tags, and mode-specific team standings."},
+    };
+
+    const std::vector<ChangeItem> v02010Items = {
+        {"UI", "Post-Match Mouse & Keyboard Navigation",
+         "Eliminated mouse cursor drift and unintended item selection on the post-match results screen, ensuring keyboard and mouse input remain stable and responsive."},
+        {"UI", "Input Transition Guards",
+         "Added click release guards when transitioning between matches and menus, preventing accidental button activations from in-game fire inputs."},
+        {"MULTIPLAYER", "High-Capacity Match Stability",
+         "Optimized session memory allocation and roster handling for high-capacity multiplayer and custom game sessions."},
+    };
+
+    const std::vector<ChangeItem> v02011Items = {
+        {"NETCODE", "High-Capacity Session Architecture",
+         "Upgraded internal network synchronization and session state handling to support expanded lobby capacities up to 32 players."},
+        {"NETCODE", "Lobby Slot Assignment & Joining Reliability",
+         "Improved player slot assignment and join request queuing to ensure reliable matchmaking in high-capacity games."},
+        {"STABILITY", "Lobby Capacity Verification Suite",
+         "Added automated verification checks for high-capacity sessions to guarantee network packet integrity and connection stability."},
     };
 
     const std::vector<ChangeItem> v02012Items = {
@@ -150,83 +235,19 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Wired Controller 'A' button to select, activate, and inspect tiles, cards, and dropdown items across Service Record, Challenges, Commendations, and Social menus."},
     };
 
-    const std::vector<ChangeItem> v02011Items = {
-        {"NETCODE", "Piecewise Member Cave Synthesis & Chunked Dispatch",
-         "Added piecewise member and table cave synthesis across all 120 engine sites for chunked session capacities (32, 64, 128), validating register-accurate dispatch and shadow layout boundaries."},
-        {"NETCODE", "Peer Seat Mapping & Request Gating",
-         "Added authoritative peer seat allocation, chunk-aware shadow record mirrors, and structured join request gating to ensure reliable slot assignment in high-capacity custom games."},
-        {"STABILITY", "Headless Capacity Self-Diagnostics",
-         "Integrated automated headless slot capacity validation tests verifying piecewise cave length, shadow plan coverage, packet packing, and memory alignment."},
-    };
-
-    const std::vector<ChangeItem> v02010Items = {
-        {"UI", "Post-Match Keyboard & Mouse Focus Stabilization",
-         "Eliminated mouse hover jitter and unintended selection triggers on the post-match results panel and main menu by adding intentional mouse motion deadzone filtering and preventing sub-pixel sensor noise from fighting keyboard navigation."},
-        {"UI", "Post-Match Input Settling & Click Leak Prevention",
-         "Introduced transition settle periods and physical mouse button release guards when returning from a game, preventing gameplay firing inputs or reveal skip clicks from accidentally activating post-game menu buttons."},
-        {"ENGINE", "High-Capacity Session Slot Management",
-         "Optimized 32-player peer seat structure math and memory alignment safeguards for high-capacity multiplayer and custom game sessions."},
-    };
-
-    const std::vector<ChangeItem> v0209Items = {
-        {"CAMERA", "3rd-Person Camera & Dynamic Reticle",
-         "Implemented engine-level 3rd-person camera hooks with dynamic reticle screen projection, aiming raycasts, vehicle first-person support, and smooth field-of-view interpolation."},
-        {"UI", "All-Mode Roster & Scoreboard Sync",
-         "Multiplayer, Campaign, Firefight, and Forge scoreboards now seed real player names and tags from the launch roster, correctly identifying local players and displaying mode-accurate team columns."},
-    };
-
-    const std::vector<ChangeItem> v0208Items = {
-        {"NETCODE", "Modded Custom Games Join-in-Progress",
-         "Guests now resolve host mod content overrides on stock maps and launch matches with their matching local mod installed, preventing content mismatch aborts and desyncs."},
-        {"NETCODE", "Join-Lock Gating & Slot Parity",
-         "Refusal overrides are now cleanly gated on public slot availability (respecting the engine's launch join-locks) preventing guests from being forced into locked sessions."},
-    };
-
-    const std::vector<ChangeItem> v0207Items = {
-        {"NETCODE", "Firefight & Match Join-in-Progress",
-         "Suppressed premature match aborts (reason 6) and dropped join-in-progress refusal gates during active host sessions so late-joining players smoothly complete handshakes without kicking guests back to the main menu."},
-        {"SETTINGS", "Settings Reset & Startup Migration Fix",
-         "Prevented settings resets caused by startup mirror sync overwriting saved settings.json with stale defaults; migration now only executes on fresh installs when no existing configuration is present."},
-        {"MULTIPLAYER", "Lobby Roster & Scoreboard Visibility",
-         "Guests now see the full player roster on loading screens, only the local client is tagged 'YOU' on the scoreboard, service tags are accurately mapped per player, and invite connections display the host's actual profile name."},
-        {"PERFORMANCE", "CPU Priority & Thread Scheduling",
-         "Disabled OS power throttling, elevated render thread priority, and optimized background power state handling for smoother frame delivery on multi-core processors."},
-    };
-
-    const std::vector<ChangeItem> v0204Items = {
-        {"PERFORMANCE", "Binary Optimization & Load Times",
-         "Applied advanced link-time code folding and footprint optimization for reduced memory overhead and faster client startup."},
-        {"DIAGNOSTICS", "Streamlined Crash Reporting",
-         "Enhanced standalone minidump generation (noble-crash.dmp) for fast, lightweight crash capture without disk logging overhead."},
-        {"STABILITY", "Settings & Runtime Polish",
-         "Refined settings diagnostics and status reporting for streamlined troubleshooting across all game modes."},
-    };
-
-    const std::vector<ChangeItem> v0203Items = {
-        {"OPTIMIZATION", "Binary Footprint & Code Efficiency",
-         "Optimized executable code generation and removed auxiliary build files from distribution packages."},
-        {"DIAGNOSTICS", "Streamlined Crash & Diagnostics",
-         "Lightweight minidump handling and direct Settings diagnostics reporting."},
-    };
-
-    const std::vector<ChangeItem> v0202Items = {
-        {"SETTINGS", "Settings Menu Save Fix & Diagnostics",
-         "Added settingsVersion 2 gating so music volume (50%) and custom paddle keys never revert to defaults on load; hardened save pipeline with per-process temp files (settings.json.<pid>.tmp), MoveFileExW replace, in-place fallbacks, on-screen failure warnings, and full save diagnostics."},
-        {"CONTROLLER", "Controller Apply in Settings Panel",
-         "Gamepad 'A' button now directly activates APPLY when focused on the bottom action box with full focus-ring highlighting, and the panel automatically reloads from disk on re-open to prevent overwriting settings with stale cached edits."},
-        {"UI", "End-Match UI & Transition Polish",
-         "Fixed end-of-match UI focus losing control, eliminated erratic option highlights and pointer fighting upon game over, ensured smooth transitions back to the main menu with full keyboard, mouse, and controller control."},
-        {"CRASH FIX", "Non-Host After-Action Report Crash Fix",
-         "Unified post-game match settlement for hosts and guests, eliminated double-payouts and scoreboard misidentifications, fixed guest challenge/commendation calculations, and eliminated non-host post-match report crashes and black screens upon mission completion."},
-        {"ENGINE", "Match-Over Lifecycle & Watchdog",
-         "Hardened engine cutscene transitions so campaign post-mission cinematics no longer swallow game-over reports, and added watchdog detection for unreported match ends to reliably surface the post-match summary."},
-    };
-
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 13) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 14) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "EXTENDED 32-PLAYER LOBBIES, HIGH-CAPACITY NETCODE & BROWSER FILTERS",
+                    "32-Player Custom Games & Forge, Widened Network Discovery, Dynamic Browser Filters & Multi-Column Rosters",
+                    v02014Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 13) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.13",
                     "CONTROLLER NAVIGATION, SMOOTH SCROLLING & SERVICE RECORD POLISH",
                     "Directional Stick Nav, Right-Stick Scrolling, Zero Mouse Snap-Back & UI Visual Polish",
                     v02012Items,
@@ -243,16 +264,16 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
             if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 11) {
                 notes.push_back(ReleaseNotes{
                     "v0.20.11",
-                    "CHUNKED CAPACITY DISPATCH & PEER SEAT NETCODE",
-                    "Chunked Slot Dispatch, Peer Seat Mapping & High-Capacity Session Stability",
+                    "HIGH-CAPACITY SESSION NETCODE & LOBBY EXPANSION",
+                    "High-Capacity Network Sync, Reliable Slot Assignment & Lobby Stability",
                     v02011Items,
                 });
             }
             if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 10) {
                 notes.push_back(ReleaseNotes{
                     "v0.20.10",
-                    "POST-MATCH INPUT STABILIZATION & HIGH-SLOT SESSION EXPANSION",
-                    "Keyboard & Mouse Focus Fixes, Input Leak Suppression & 32-Player Peer Seat Math",
+                    "POST-MATCH INPUT STABILIZATION & HIGH-CAPACITY LOBBIES",
+                    "Keyboard & Mouse Focus Fixes, Input Leak Suppression & 32-Player Session Support",
                     v02010Items,
                 });
             }
@@ -260,7 +281,7 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
                 notes.push_back(ReleaseNotes{
                     "v0.20.9",
                     "3RD-PERSON CAMERA, DYNAMIC RETICLE & SCOREBOARD SYNC",
-                    "3rd-Person Engine Hooks, Raycasted Dynamic Reticle, Seated Cameras & Mode-Correct Scoreboards",
+                    "3rd-Person Camera, Dynamic Reticle, Seated Perspectives & Mode-Correct Scoreboards",
                     v0209Items,
                 });
             }
@@ -284,7 +305,7 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
                 notes.push_back(ReleaseNotes{
                     "v0.20.4",
                     "CLIENT PERFORMANCE, MEMORY EFFICIENCY & CRASH DIAGNOSTICS",
-                    "Advanced Binary Code Folding, Memory Overhead Reduction & Streamlined Diagnostics",
+                    "Advanced Binary Code Optimization, Memory Overhead Reduction & Streamlined Diagnostics",
                     v0204Items,
                 });
             }
@@ -323,14 +344,14 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
             notes.push_back(ReleaseNotes{
                 "v0.19.102",
                 "MAP PICKERS, VISOR & GAME OPTIONS FIXES",
-                "Collapsed Mod Sections, Campaign MAX PLAYERS, Visor Slots, Aligned Options Sliders",
+                "Collapsed Mod Sections, Campaign Max Players, Visor Colors, Aligned Options Sliders",
                 v019102Items,
             });
         }
         notes.push_back(ReleaseNotes{
             "v0.19.99",
             "ALL-MODE NETCODE SYNC, STABILITY & IN-APP WORKSHOP",
-            "Bidirectional UDP Guards, Variant/Map Verification & Smooth Workshop Downloads",
+            "Reliable Network Routing, Variant Verification & Smooth Workshop Downloads",
             v01999Items,
         });
     }
