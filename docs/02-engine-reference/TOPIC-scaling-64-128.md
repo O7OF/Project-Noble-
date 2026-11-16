@@ -135,7 +135,10 @@ The high-word area sits after the chunked shadow arrays (ends 0x8614 / 0xEAA4 / 
 `kSessionStride` (0x61668), so it fits with room to spare. The bit operations the patched sites will use
 (`MaskBitTest`/`MaskBitSet`/`MaskBitClear`/`MaskPopcount`/`MaskFirstSet` over N words) are implemented and validated
 synthetically by `-test-slot-capacity` for every bit 0..capacity-1 at all three capacities (set/test/clear/popcount/
-first-set round-trips pass).
+first-set round-trips pass). The high words are now part of the shadow lifecycle: `InitShadowRecords` zeroes the peer/player
+high-mask span per shadow object, and the whole-session copy/clear mirrors carry it with the block (cleared when the
+source is not a session block). At capacity 32 the span is 0 bytes, so the path is unchanged; the self-test checks the
+spans (0 / 8 / 24 bytes at 32 / 64 / 128) and their placement after the chunked arrays.
 
 Patch forms planned for the site inventory: (a) mask reads (`test`/`and` with a DWORD mask) keep the 32-bit path for
 bits 0..31 and add a high-word check behind an index compare, the same piecewise-cave shape as the slot caves; (b) mask

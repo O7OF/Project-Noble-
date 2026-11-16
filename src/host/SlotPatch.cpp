@@ -301,6 +301,16 @@ int StaticSession(const void* p, uint32_t& offset) {
 uint8_t* ShadowSlots(int k, const Array& a) { return gShadow + k * kSessionStride + a.offset; }
 size_t ShadowBytes(const Array& a) { return static_cast<size_t>(kSlots32 - a.firstShadowSlot) * a.record; }
 
+// High words of the widened peer/player valid masks live in the shadow object, after the chunked arrays (see
+// MakeCapacityMaskPlan in the capacity model section). These helpers are used by the shadow init/mirror lifecycle, so
+// they are declared before it; at capacity 32 they are 0 bytes and every call is a no-op (the 32 path is unchanged).
+constexpr uint32_t kMaskHighBase = 0x28000;
+constexpr uint32_t MaskWordsForCapacity(uint32_t capacity) { return (capacity + 31) / 32; }
+constexpr uint32_t MaskHighBytes(uint32_t capacity) {
+    const uint32_t words = MaskWordsForCapacity(capacity);
+    return words > 1 ? 2 * (words - 1) * 4 : 0;   // peer high words followed by player high words
+}
+
 // Chunk-aware shadow access. Capacity 32 keeps the proven stock-relative layout (one contiguous chunk at the array
 // offset); a 64/128 install uses the chunked layout (chunk A at a cursor, its block-B twin implied by +0x2210). Record
 // init, the whole-array copy/clear mirrors and the dev diagnostics all go through this plan, so the future install can
@@ -404,6 +414,12 @@ void MirrorClear(void* dst, int value, size_t n) {
         }
         if (value == 0) ResetShadowPeerTables(k, a);
     });
+    // The high mask words are session-level state next to the masks, so a whole-block clear clears them too. At capacity
+    // 32 the span is empty and this is a no-op.
+    if (o == 0 && value == 0) {
+        if (const uint32_t maskBytes = MaskHighBytes(gCapacity))
+            std::memset(gShadow + static_cast<size_t>(k) * kSessionStride + kMaskHighBase, 0, maskBytes);
+    }
 }
 
 void MirrorCopy(void* dst, const void* src, size_t n) {
@@ -435,6 +451,15 @@ void MirrorCopy(void* dst, const void* src, size_t n) {
             cleared = true;
         }
     });
+    // High mask words follow the block: copied between two session shadows, cleared when the source is not a session.
+    // At capacity 32 the span is empty and this is a no-op.
+    if (const uint32_t maskBytes = MaskHighBytes(gCapacity); maskBytes && od == 0) {
+        uint8_t* dstMasks = gShadow + static_cast<size_t>(kd) * kSessionStride + kMaskHighBase;
+        if (ks >= 0 && os == 0)
+            std::memcpy(dstMasks, gShadow + static_cast<size_t>(ks) * kSessionStride + kMaskHighBase, maskBytes);
+        else
+            std::memset(dstMasks, 0, maskBytes);
+    }
     // Network-decoded blocks (#1) carry no shadow slots yet: drop slots 16..31 rather than keep stale players.
     static LONG logged = 0;
     if (cleared && InterlockedIncrement(&logged) <= 20)
@@ -911,6 +936,7 @@ void InitShadowRecords(uintptr_t base, uint8_t* shadow, bool players32) {
             }
             if (plan.count) ResetShadowPeerTables(k, a);
         }
+        if (const uint32_t maskBytes = MaskHighBytes(gCapacity)) std::memset(object + kMaskHighBase, 0, maskBytes);
     }
 }
 
@@ -1480,7 +1506,6 @@ struct CapacityMaskPlan {
     uint32_t peerHighOffset;    // shadow offset of peer-mask word 1 (0 when words == 1)
     uint32_t playerHighOffset;  // shadow offset of player-mask word 1 (0 when words == 1)
 };
-constexpr uint32_t kMaskHighBase = 0x28000;   // after the chunked shadow arrays (max end 0x261C8 at 128)
 constexpr CapacityMaskPlan MakeCapacityMaskPlan(uint32_t capacity) {
     CapacityMaskPlan plan{};
     plan.capacity = capacity;
@@ -1670,6 +1695,36 @@ int ValidateMaskWidths(int& peerMaskSites) {
     }
     return failures;
 }
+// Mask high words are session-level shadow state: they must be zeroed when a shadow object is initialised and follow
+// the block on whole-block copies/clears. At capacity 32 the span is empty (no-op), so this check also guards the
+// 32-player path against accidentally touching mask storage.
+int ValidateMaskShadowLifecycle() {
+    int failures = 0;
+    struct Case { uint32_t capacity, wantBytes, shadowEnd; };
+    const Case cases[] = { { 32, 0, 0x8614 }, { 64, 8, 0xEAA4 }, { 128, 24, 0x21A14 } };
+    for (const Case& c : cases) {
+        const uint32_t bytes = MaskHighBytes(c.capacity);
+        const uint32_t end = kMaskHighBase + bytes;
+        if (bytes != c.wantBytes) { ++failures; NOBLE_WARN("SlotLayout: mask high span for cap {} is {} B, want {}",
+                                                              c.capacity, bytes, c.wantBytes); }
+        if (end > kSessionStride || (bytes && kMaskHighBase < c.shadowEnd)) {
+            ++failures;
+            NOBLE_WARN("SlotLayout: mask high span for cap {} [0x{:X},0x{:X}) invalid (arrays end 0x{:X}, stride 0x{:X})",
+                       c.capacity, kMaskHighBase, end, c.shadowEnd, static_cast<uint32_t>(kSessionStride));
+        }
+        uint8_t src[32] = {}, dst[32] = {};
+        for (uint32_t b = 0; b < bytes && b < sizeof(src); ++b) src[b] = static_cast<uint8_t>(b + 1);
+        if (bytes) {
+            std::memcpy(dst, src, bytes);
+            if (std::memcmp(dst, src, bytes) != 0) ++failures;
+            std::memset(dst, 0, bytes);
+            for (uint32_t b = 0; b < bytes; ++b) if (dst[b] != 0) ++failures;
+        }
+        NOBLE_INFO("SlotLayout: cap={:>3} mask high words span {} B at shadow+0x{:X} (arrays end 0x{:X}) - init/clear/copy "
+                   "lifecycle ok", c.capacity, bytes, kMaskHighBase, c.shadowEnd);
+    }
+    return failures;
+}
 int SlotLayoutSelfTest() {
     int failures = 0;
     const SlotShadowLayout layouts[] = { kSlotLayout32, kSlotLayout64, kSlotLayout128 };
@@ -1714,6 +1769,7 @@ int SlotLayoutSelfTest() {
         int peerMaskSites = 0;
         failures += ValidateMaskWidths(peerMaskSites);
         failures += ValidateMaskModel();
+        failures += ValidateMaskShadowLifecycle();
     }
     failures += ValidateShadowPlanCoverage();
     failures += ValidatePiecewiseCaves();
