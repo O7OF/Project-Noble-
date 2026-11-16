@@ -1,5 +1,9 @@
 # TOPIC - Scaling multiplayer past 32 players (64 / 128)
 
+> Companion reference: [`RR-REFERENCE-2026-11-16.md`](RR-REFERENCE-2026-11-16.md) - clean-room study of Reach
+> Renaissance 0.1.50's capacity profiles (M64/M81/M128), features Noble does not have, and the shipped player-limit
+> facts (81 / 128 experimental; no 88 claim found).
+
 Status: 2026-11-16. 32-player mode is dev-gated and works at install + 2-client level; the high-slot seat is
 proven. 64/128 are planned, dev-gated, and are being built so they can be validated *without* fielding 64 or 128
 clients. This note is the design reference for that work; the executable evidence is the headless self-test
