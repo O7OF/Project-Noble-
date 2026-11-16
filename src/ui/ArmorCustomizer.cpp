@@ -2549,7 +2549,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 for (int i = 0; i <= 130; ++i) {
                     char lbl[16];
                     std::snprintf(lbl, sizeof(lbl), "x%.1f", 0.5f + static_cast<float>(i) * 0.5f);
-                    opts.push_back({ lbl, "Armor lights brightness multiplier (x0.5 to x65.5, 0.5 intervals)." });
+                    opts.push_back({ lbl, "Spartan armor lights brightness multiplier (x0.5 to x65.5 in 0.5 intervals)." });
                 }
                 return opts;
             }();
@@ -3124,18 +3124,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     float y = origin.y + pad;
     std::string heading = row.label;
     for (char& c : heading) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    TextAt(dl, titleFont, 26.0f * s, ImVec2(pickX + pad, y), kWhiteCol, heading.c_str());
 
     // Pane status chip top-right of picker header
     {
         const char* paneLbl = row.kind == RowKind::Tag ? "IDENTITY" : (m_pane == 1 ? "PICKING OPTION  [B: SLOTS]" : "QUICK STEP  [A: BROWSE GRID]");
         const float pw = TextW(smallFont, 12.5f * s, paneLbl);
-        const float maxHeadW = std::max(80.0f * s, (k1.x - pad - pw - 10.0f * s) - (pickX + pad));
-        float headPx = 26.0f * s;
-        const float rawHeadW = TextW(titleFont, headPx, heading.c_str());
-        if (rawHeadW > maxHeadW && rawHeadW > 1.0f) {
-            headPx = std::max(16.0f * s, headPx * (maxHeadW / rawHeadW));
-        }
-        TextAt(dl, titleFont, headPx, ImVec2(pickX + pad, y + (26.0f * s - headPx) * 0.4f), kWhiteCol, heading.c_str());
         TextAt(dl, smallFont, 12.5f * s, ImVec2(k1.x - pad - pw, y + 6.0f * s),
                m_pane == 1 ? NobleUi::kAmber : IM_COL32(143, 216, 255, 190), paneLbl);
     }
