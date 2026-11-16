@@ -151,7 +151,7 @@ of this is installed.
 inside the known session/player regions** to classify first (peer/player/team masks) and 9 of the 23 `kPeerMasks32`
 entries as mask-immediate patches (the rest are bounds/shift/field-width patches outside the scan's scope). Re-run with
 `python tools/limits/scan_mask_sites.py` after any engine update; the scan is heuristic, so each candidate must be
-confirmed by reading its function.
+confirmed by reading its function. Pass 1 of that classification is in [MASK-CLASSIFICATION-2026-11-16.md](MASK-CLASSIFICATION-2026-11-16.md) (player mask `+0x170C` and peer mask `+0x5C` are the confirmed widen targets; most raw `0xFFFF` hits are sentinels).
 
 Message-capacity model (`SlotMessage`): the extension builder's counts are now derived from `kSlotCapacity` (32 ->
 15 peer + 16 player entries) with static asserts pinning the generated tables, and the same `-test-slot-capacity`

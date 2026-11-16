@@ -8,6 +8,9 @@ capacities above 32 need every mask read/write/bit-scan site widened.
 contiguous low-bit masks (0x7FFF and above) plus the stock 16-bit test r16,r16 form. Every candidate must be
 checked by hand before patching.
 
+
+Hand classification of the candidates below: [MASK-CLASSIFICATION-2026-11-16.md](MASK-CLASSIFICATION-2026-11-16.md).
+
 ## Summary
 
 - mask-like immediate sites found in `.text`: **3905**
@@ -34,35 +37,38 @@ checked by hand before patching.
 | 0x1FFFF | 16 |
 | 0x3FFFF | 15 |
 
+By category: mask operations 1260 (and/test/or/xor with the immediate), 16-bit tests 1151,
+mov-immediate constants 1494 (many are sentinels such as -1/0xFFFF, not masks - check before use).
+
 ## Candidates inside session/player code (classify first)
 
-| RVA | region | kind | immediate |
-|---|---|---|---|
-| 0x38DF9C | 0x38D-393 join/peer-mask code | test r16,r16 | 0xFFFF |
-| 0x38DFA1 | 0x38D-393 join/peer-mask code | test r16,r16 | 0xFFFF |
-| 0x38EF59 | 0x38D-393 join/peer-mask code | mov r32,imm32 | 0xFFFF |
-| 0x391103 | 0x38D-393 join/peer-mask code | test r16,r16 | 0xFFFF |
-| 0x3913E7 | 0x38D-393 join/peer-mask code | test r16,r16 | 0xFFFF |
-| 0x391B4A | 0x38D-393 join/peer-mask code | mov r32,imm32 | 0x1FFFF |
-| 0x3C6F2F | 0x3C1-3C8 peer masks + game player event encoder | mov r32,imm32 | 0xFFFFFFFF |
-| 0x405D16 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
-| 0x4085DF | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
-| 0x4086F0 | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
-| 0x4087E2 | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
-| 0x408885 | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
-| 0x408B6C | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
-| 0x408CAB | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
-| 0x408F48 | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
-| 0x408F84 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
-| 0x409084 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
-| 0x409293 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
-| 0x4092F9 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
-| 0x414CF1 | 0x411-415 local player count, peer scans | test r16,r16 | 0xFFFF |
-| 0x414D08 | 0x411-415 local player count, peer scans | test r16,r16 | 0xFFFF |
-| 0x414DB2 | 0x411-415 local player count, peer scans | test r16,r16 | 0xFFFF |
-| 0x44CE42 | 0x44B-451 membership message + session checks | mov r32,imm32 | 0x7FFFFFFF |
-| 0x44F666 | 0x44B-451 membership message + session checks | mov r32,imm32 | 0xFFFF |
-| 0x450F1A | 0x44B-451 membership message + session checks | mov r32,imm32 | 0xFFFF |
+| RVA | category | region | kind | immediate |
+|---|---|---|---|---|
+| 0x38DF9C | test16 | 0x38D-393 join/peer-mask code | test r16,r16 | 0xFFFF |
+| 0x38DFA1 | test16 | 0x38D-393 join/peer-mask code | test r16,r16 | 0xFFFF |
+| 0x38EF59 | const | 0x38D-393 join/peer-mask code | mov r32,imm32 | 0xFFFF |
+| 0x391103 | test16 | 0x38D-393 join/peer-mask code | test r16,r16 | 0xFFFF |
+| 0x3913E7 | test16 | 0x38D-393 join/peer-mask code | test r16,r16 | 0xFFFF |
+| 0x391B4A | const | 0x38D-393 join/peer-mask code | mov r32,imm32 | 0x1FFFF |
+| 0x3C6F2F | const | 0x3C1-3C8 peer masks + game player event encoder | mov r32,imm32 | 0xFFFFFFFF |
+| 0x405D16 | test16 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
+| 0x4085DF | const | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
+| 0x4086F0 | const | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
+| 0x4087E2 | const | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
+| 0x408885 | const | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
+| 0x408B6C | const | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
+| 0x408CAB | const | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
+| 0x408F48 | const | 0x403-40A player-mask scans / peer masks | mov r32,imm32 | 0xFFFF |
+| 0x408F84 | test16 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
+| 0x409084 | test16 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
+| 0x409293 | test16 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
+| 0x4092F9 | test16 | 0x403-40A player-mask scans / peer masks | test r16,r16 | 0xFFFF |
+| 0x414CF1 | test16 | 0x411-415 local player count, peer scans | test r16,r16 | 0xFFFF |
+| 0x414D08 | test16 | 0x411-415 local player count, peer scans | test r16,r16 | 0xFFFF |
+| 0x414DB2 | test16 | 0x411-415 local player count, peer scans | test r16,r16 | 0xFFFF |
+| 0x44CE42 | const | 0x44B-451 membership message + session checks | mov r32,imm32 | 0x7FFFFFFF |
+| 0x44F666 | const | 0x44B-451 membership message + session checks | mov r32,imm32 | 0xFFFF |
+| 0x450F1A | const | 0x44B-451 membership message + session checks | mov r32,imm32 | 0xFFFF |
 
 ## Already-catalogued peer-mask operands found by the scan
 

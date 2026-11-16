@@ -60,9 +60,9 @@ def known_entries():
 def scan(data, text_va, text_raw, text_size):
     hits = []
     end = text_raw + text_size
-    def emit(rva, kind, imm, size):
+    def emit(rva, kind, imm, size, category="mask"):
         if mask_like(imm):
-            hits.append({"rva": rva, "kind": kind, "imm": imm, "size": size})
+            hits.append({"rva": rva, "kind": kind, "imm": imm, "size": size, "category": category})
     i = text_raw
     while i < end - 8:
         b = data[i]
@@ -72,7 +72,7 @@ def scan(data, text_va, text_raw, text_size):
         elif b == 0x25:
             emit(rva, "and eax,imm32", struct.unpack_from("<I", data, i + 1)[0], 5)
         elif 0xB8 <= b <= 0xBF:
-            emit(rva, "mov r32,imm32", struct.unpack_from("<I", data, i + 1)[0], 5)
+            emit(rva, "mov r32,imm32", struct.unpack_from("<I", data, i + 1)[0], 5, "const")
         elif b == 0x81:
             modrm = data[i + 1]
             if ((modrm >> 3) & 7) in (1, 4, 5, 6):
@@ -87,7 +87,7 @@ def scan(data, text_va, text_raw, text_size):
             elif data[i + 1] == 0xF7 and ((data[i + 2] >> 3) & 7) == 0 and data[i + 2] >= 0xC0:
                 emit(rva, "REX test r/m32,imm32", struct.unpack_from("<I", data, i + 3)[0], 7)
         elif b == 0x66 and data[i + 1] == 0x85 and (data[i + 2] & 0xC0) == 0xC0:
-            emit(rva, "test r16,r16", 0xFFFF, 3)
+            emit(rva, "test r16,r16", 0xFFFF, 3, "test16")
         i += 1
     seen = {}
     for h in hits:
@@ -130,6 +130,9 @@ def main():
     L.append("contiguous low-bit masks (0x7FFF and above) plus the stock 16-bit test r16,r16 form. Every candidate must be")
     L.append("checked by hand before patching.")
     L.append("")
+    L.append("")
+    L.append("Hand classification of the candidates below: [MASK-CLASSIFICATION-2026-11-16.md](MASK-CLASSIFICATION-2026-11-16.md).")
+    L.append("")
     L.append("## Summary")
     L.append("")
     L.append("- mask-like immediate sites found in `.text`: **{}**".format(len(hits)))
@@ -143,13 +146,17 @@ def main():
     for imm, n in sorted(by_imm.items(), key=lambda kv: -kv[1])[:15]:
         L.append("| 0x{:X} | {} |".format(imm, n))
     L.append("")
+    cats = {c: sum(1 for h in hits if h["category"] == c) for c in ("mask", "test16", "const")}
+    L.append("By category: mask operations {} (and/test/or/xor with the immediate), 16-bit tests {},".format(cats["mask"], cats["test16"]))
+    L.append("mov-immediate constants {} (many are sentinels such as -1/0xFFFF, not masks - check before use).".format(cats["const"]))
+    L.append("")
     L.append("## Candidates inside session/player code (classify first)")
     L.append("")
     if in_region:
-        L.append("| RVA | region | kind | immediate |")
-        L.append("|---|---|---|---|")
+        L.append("| RVA | category | region | kind | immediate |")
+        L.append("|---|---|---|---|---|")
         for h in in_region:
-            L.append("| 0x{:X} | {} | {} | 0x{:X} |".format(h["rva"], region_of(h["rva"]), h["kind"], h["imm"]))
+            L.append("| 0x{:X} | {} | {} | {} | 0x{:X} |".format(h["rva"], h["category"], region_of(h["rva"]), h["kind"], h["imm"]))
     else:
         L.append("(none)")
     L.append("")
