@@ -373,6 +373,14 @@ void SettingsPanel::SyncBuffers() {
 }
 
 void SettingsPanel::Render() {
+  // A fresh open (the panel was not drawn last frame) reloads from the file. Another part of Noble
+  // may have written settings in the meantime (the identity auto-save, the L3 virtual-cursor toggle,
+  // the launcher's last-played record), and applying a copy captured minutes ago would write those
+  // newer values back to their old ones.
+  const int frame = ImGui::GetFrameCount();
+  if (m_lastRenderFrame == 0 || frame - m_lastRenderFrame > 1)
+    m_loaded = false;
+  m_lastRenderFrame = frame;
   if (!m_loaded) {
     m_saved = Settings::Get().Snapshot();
     // Old saved menu-music values ("shuffle", piece names) play Reach's menu
@@ -516,6 +524,7 @@ void SettingsPanel::Render() {
       m_focus = 0;
       m_search[0] = 0;
       m_scrollToFocus = true;
+      m_resetRowsScroll = true;
       MenuSounds::Tab(-1);
     }
     if (UiPad::TabNext()) {
@@ -523,6 +532,7 @@ void SettingsPanel::Render() {
       m_focus = 0;
       m_search[0] = 0;
       m_scrollToFocus = true;
+      m_resetRowsScroll = true;
       MenuSounds::Tab(1);
     }
     if (TotalChanges() > 0) {
@@ -567,10 +577,13 @@ void SettingsPanel::Render() {
       if (m_focus > 0)
         m_focus = 0;
       m_scrollToFocus = true;
+      m_resetRowsScroll = true;
       MenuSounds::Tab(right ? 1 : -1);
     }
   }
-  if (m_navAllowed && m_enterAppliesHere && TotalChanges() > 0 &&
+  // Enter applies when the focus is off the rows (the APPLY/DISCARD box at the bottom). Read the
+  // focus here rather than from the value cached before the navigation above ran.
+  if (m_navAllowed && m_focus < 0 && TotalChanges() > 0 &&
       (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
        ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
     Apply();
@@ -645,8 +658,10 @@ void SettingsPanel::RenderCategories(float width, float height) {
     if (hovered)
       MenuSounds::Hover(ImGui::GetItemID());
     if (clicked) {
-      if (static_cast<int>(m_cat) != i)
+      if (static_cast<int>(m_cat) != i) {
         MenuSounds::Tab(i > static_cast<int>(m_cat) ? 1 : -1);
+        m_resetRowsScroll = true;
+      }
       m_cat = static_cast<Cat>(i);
       m_focus = 0;
       m_search[0] = 0;
@@ -683,7 +698,11 @@ void SettingsPanel::RenderCategories(float width, float height) {
     Text(dl, NobleStyle::SmallFont(), 14.0f * s,
          ImVec2(b0.x + 24.0f * s, b0.y + 30.0f * s), kTextDim, where.c_str(),
          width - 30.0f * s);
-    // Controller button and key side by side, both rows clickable.
+    // Controller button and key side by side, both rows clickable. These are not settings rows, so
+    // the controller's own A/Y has to be handled here: with the focus on the box (m_focus < 0) the
+    // gamepad A press had no consumer, which made APPLY work with the mouse and Enter but not with
+    // a controller.
+    const bool footerFocused = m_navAllowed && m_focus < 0;
     auto action = [&](const char *id, float y, InputPrompts::Button button,
                       const char *key, const char *label) {
       const ImVec2 r0(b0.x + 10.0f * s, y),
@@ -696,6 +715,10 @@ void SettingsPanel::RenderCategories(float width, float height) {
                         over ? IM_COL32(70, 110, 150, 220)
                              : IM_COL32(30, 44, 58, 220),
                         2.0f * s);
+      if (over)
+        MenuSounds::Hover(ImGui::GetItemID());
+      if (footerFocused)
+        NobleUi::DrawFocusHighlight(dl, r0, r1, s, true);
       ImFont *font = ImGui::GetFont();
       const float glyph = 22.0f * s;
       float x = r0.x + 6.0f * s;
@@ -709,8 +732,13 @@ void SettingsPanel::RenderCategories(float width, float height) {
            kText, label);
       return clicked;
     };
-    if (action("##apply", b1.y - 72.0f * s, InputPrompts::Button::Y, "ENTER",
-               "APPLY"))
+    bool apply = action("##apply", b1.y - 72.0f * s, InputPrompts::Button::Y,
+                        "ENTER", "APPLY");
+    if (!apply && footerFocused && m_keyAccept) {
+      apply = true;
+      m_keyAccept = false;   // consumed: the navigation rows must not see this press too
+    }
+    if (apply)
       Apply();
     if (action("##discard", b1.y - 37.0f * s, InputPrompts::Button::X, "ESC",
                "DISCARD"))
@@ -747,8 +775,10 @@ void SettingsPanel::RenderRows(float width, float height) {
   const float s = Scale();
   ImGui::BeginChild("##setrows", ImVec2(width, height), ImGuiChildFlags_None,
                     ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
-  if (m_focus < 0 && m_scrollToFocus)
+  if (m_resetRowsScroll || (m_focus < 0 && m_scrollToFocus)) {
     ImGui::SetScrollY(0.0f);
+    m_resetRowsScroll = false;
+  }
   UiPad::ScrollWindow(false,
                       false); // right stick reads ahead of the focused row
   m_rowCount = 0;
@@ -2992,7 +3022,9 @@ void SettingsPanel::Apply() {
       m_saved.borderless != m_edit.borderless ||
       m_saved.exclusiveFullscreen != m_edit.exclusiveFullscreen ||
       m_saved.monitor != m_edit.monitor;
-  Settings::Get().Update(m_edit);
+  const bool saved = Settings::Get().Update(m_edit);
+  NOBLE_INFO("SettingsPanel: apply - {} change(s), settings.json {}",
+             TotalChanges(), saved ? "written" : "NOT written (see the log)");
   UiPad::SetVirtualCursorEnabled(m_edit.padVirtualCursor);
   Window::SetMonitorSetting(m_edit.monitor);
   if (displayChanged) {
@@ -3033,9 +3065,15 @@ void SettingsPanel::Apply() {
       UIManager::GetArmorCustomizer().SetServiceTag(m_saved.serviceTag);
     }
   }
-  m_message = displayChanged ? "Display updated." : "Saved.";
+  if (saved) {
+    m_message = displayChanged ? "Display updated." : "Saved.";
+    MenuSounds::Click();
+  } else {
+    m_message = "Could not write settings.json - check the log file.";
+    MenuSounds::Error();
+    NOBLE_ERROR("SettingsPanel: the settings could not be saved to disk");
+  }
   m_messageTime = ImGui::GetTime();
-  MenuSounds::Click();
 }
 
 void SettingsPanel::Discard() {
@@ -3280,12 +3318,21 @@ void SettingsPanel::RenderSystem() {
           When::Info, version, false, true)) {
     InfoValue(version.c_str());
   }
+#ifdef NOBLE_DEV_BUILD
   if (Row("LOG FILE",
-          "noble-client.log, next to the program. It is what a bug report "
-          "needs.",
-          When::Info, "noble-client.log", false, true)) {
-    InfoValue("noble-client.log");
+          "noble-dev.log, next to the program. Development builds are the "
+          "only builds that keep a log.",
+          When::Info, "noble-dev.log", false, true)) {
+    InfoValue("noble-dev.log");
   }
+#else
+  if (Row("CRASH DUMP",
+          "If Noble crashes it writes noble-crash.dmp next to the program. "
+          "Attach that file to a bug report.",
+          When::Info, "noble-crash.dmp", false, true)) {
+    InfoValue("noble-crash.dmp");
+  }
+#endif
   action("OPEN LOGS FOLDER",
          "Opens the folder that holds the log, the crash dump and this "
          "settings file.",
@@ -3295,13 +3342,14 @@ void SettingsPanel::RenderSystem() {
            s_note = "Opened " + exeDir.string();
          });
   action("COPY DIAGNOSTICS",
-         "Puts the version and the last 40 log lines on the clipboard, ready "
+         "Puts the version and the crash-dump status on the clipboard, ready "
          "to paste into a report. Your player name and Windows user name are "
          "replaced first.",
          "Clipboard", [&] {
            std::string text = std::string("Project Noble ") + version + "\n" +
                               exeDir.string() + "\n";
-           std::ifstream log(exeDir / "noble-client.log");
+#ifdef NOBLE_DEV_BUILD
+           std::ifstream log(exeDir / "noble-dev.log");
            if (log) {
              std::vector<std::string> lines;
              for (std::string line; std::getline(log, line);) {
@@ -3313,6 +3361,12 @@ void SettingsPanel::RenderSystem() {
              for (const std::string &line : lines)
                text += line + "\n";
            }
+#else
+           std::error_code dumpEc;
+           text += std::filesystem::exists(exeDir / "noble-crash.dmp", dumpEc)
+                       ? "\n--- crash dump present: noble-crash.dmp ---\n"
+                       : "\n--- no crash dump ---\n";
+#endif
            const auto scrub = [&text](const std::string &secret,
                                       const char *stand) {
              if (secret.size() < 2)

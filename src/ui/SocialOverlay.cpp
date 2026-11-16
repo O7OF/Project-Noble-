@@ -569,4 +569,9 @@ void SetPlayerName(uint64_t machineId, const std::string& name) {
     s_names[machineId] = Clean(name, 32);
 }
 
+std::map<uint64_t, std::string> GetPlayerNames() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_names;
+}
+
 } // namespace noble::SocialOverlay

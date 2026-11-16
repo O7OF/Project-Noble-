@@ -14,6 +14,7 @@
 #include "audio/VoiceChat.hpp"
 #include "career/Career.hpp"
 #include "common/Logger.hpp"
+#include "common/EngineModule.hpp"
 #include "common/MapNames.hpp"
 #include "common/Relaunch.hpp"
 #include "common/Settings.hpp"
@@ -60,6 +61,7 @@ namespace noble {
 namespace {
 
 std::atomic<bool> s_open{false};
+std::atomic<bool> s_isLoadingActive{false};
 // The challenge list shown on the pause menu is built once when the menu opens
 // and then every two seconds, not on every frame (building it takes the career
 // lock and may read the career file).
@@ -70,7 +72,17 @@ std::atomic<bool> s_boardPointer{false}; // scoreboard actions own the pointer
 std::atomic<bool> s_boardReport{false};  // the Report window is up
 std::atomic<bool> s_showSettings{
     false};               // the SETTINGS page opened from the pause menu
-std::mutex s_renderMutex; // Render (engine thread) vs HoldFrame (main thread)
+// Render (engine thread) vs HoldFrame (main thread). Recursive because the post-game state is also
+// touched from inside RenderImpl (guest match_over handling) and by ShowGameOver /
+// RefreshGameOverAward, which must not interleave with a frame being drawn.
+std::recursive_mutex s_renderMutex;
+std::mutex s_rtvMutex;    // protects cached DX11 RTV / back buffer across ResizeBuffers & Shutdown
+IDXGISwapChain *s_cachedSwapChain = nullptr;
+ID3D11Texture2D *s_cachedBackBuffer = nullptr;
+ID3D11RenderTargetView *s_cachedRtv = nullptr;
+UINT s_cachedRtvWidth = 0;
+UINT s_cachedRtvHeight = 0;
+DXGI_FORMAT s_cachedRtvFormat = DXGI_FORMAT_UNKNOWN;
 std::atomic<IDXGISwapChain *> s_swapChain{
     nullptr}; // last swap chain the engine presented
 std::atomic<ULONGLONG> s_lastEngineFrame{
@@ -81,6 +93,12 @@ ULONGLONG s_gameOverSettleUntil = 0;
 int s_gameOverPadButton = -1;
 double s_gameOverPadArmedAt = 0.0;
 bool s_guestAutoReturned = false;
+// Set by the transport callbacks (relay thread) and handled on the render thread or, once the engine
+// has stopped drawing, on the main thread (PauseMenu::PollHostMatchState).
+std::atomic<bool> s_guestShouldReturnLobby{false};
+std::atomic<bool> s_guestShouldDisband{false};
+std::atomic<bool> s_lobbyCallbacksRegistered{false};
+std::atomic<bool> s_guestReturnedToLobby{false};   // PollHostMatchState started a relaunch
 bool s_gameOverWaitRelease = false;
 bool s_autoCancelled = false;
 double s_autoAt = 0.0;
@@ -171,6 +189,17 @@ std::string Upper(std::string s) {
   for (char &c : s)
     c = static_cast<char>(::toupper(static_cast<unsigned char>(c)));
   return s;
+}
+
+std::string LoadingModeLabel(const std::string &mode) {
+  if (_stricmp(mode.c_str(), "campaign") == 0)
+    return "CAMPAIGN";
+  if (_stricmp(mode.c_str(), "firefight") == 0)
+    return "FIREFIGHT";
+  if (_stricmp(mode.c_str(), "forge") == 0 ||
+      _stricmp(mode.c_str(), "sandbox") == 0)
+    return "FORGE";
+  return "CUSTOM GAME";
 }
 
 // Starts a new Noble (empty args = front-end menu) and closes this one.
@@ -436,6 +465,14 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   const bool keepHostSession =
       args.find(L"-lobby-return host") != std::wstring::npos;
   const bool isMainMenu = (args == L"-main-menu");
+  // A host going back to the lobby (or on to the next mission) tells the party right away, so the
+  // guests' post-game panels unlock RETURN TO LOBBY instead of waiting for the master server to
+  // notice the session is out of its match.
+  if (keepHostSession && NetworkTransport::Get().IsActive() &&
+      NetworkTransport::Get().IsHost()) {
+    NetworkTransport::Get().SendLobbyControlJson(
+        "{\"type\":\"host_return_to_lobby\"}");
+  }
   if (args.empty() || isMainMenu) {
     // Leaving match to menu: notify master server and peers immediately without
     // blocking the UI thread.
@@ -624,6 +661,9 @@ void SetLocalSimulationPaused(bool paused) {
 
 static ULONGLONG s_openedAt = 0;
 static int s_focus = 0;
+static int s_pausePane = 0;       // 0 = action list, 1 = challenges panel
+static int s_challengeFocus = 0;
+static bool s_resetPauseScroll = false;
 static bool s_waitForRelease = true;
 static bool s_confirmRestart = false;
 static std::string
@@ -915,6 +955,24 @@ std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string &name) {
 }
 bool PauseMenu::IsOpen() { return s_open.load(); }
 
+bool PauseMenu::IsLoading() { return s_isLoadingActive.load(); }
+
+void PauseMenu::Shutdown() {
+  std::lock_guard<std::mutex> lock(s_rtvMutex);
+  if (s_cachedRtv) {
+    s_cachedRtv->Release();
+    s_cachedRtv = nullptr;
+  }
+  if (s_cachedBackBuffer) {
+    s_cachedBackBuffer->Release();
+    s_cachedBackBuffer = nullptr;
+  }
+  s_cachedSwapChain = nullptr;
+  s_cachedRtvWidth = 0;
+  s_cachedRtvHeight = 0;
+  s_cachedRtvFormat = DXGI_FORMAT_UNKNOWN;
+}
+
 void PauseMenu::Toggle() {
   if (s_gameOver.load())
     return; // the post-game panel replaces the pause menu
@@ -941,8 +999,12 @@ void PauseMenu::Toggle() {
   const bool nowOpen = !s_open.load();
   s_openedAt = nowOpen ? GetTickCount64() : 0;
   s_focus = 0;
+  s_pausePane = 0;
+  s_challengeFocus = 0;
+  s_resetPauseScroll = nowOpen;
   s_waitForRelease = true;
   s_confirmRestart = false;
+  (void)Window::TakeWheelSteps(); // forget scroll notches accumulated before transition
   if (nowOpen)
     Window::TakeLeftClicks(); // forget clicks made in game (shots) before the
                               // menu opened
@@ -956,9 +1018,13 @@ void PauseMenu::Toggle() {
 void PauseMenu::Close() {
   s_openedAt = 0;
   s_focus = 0;
+  s_pausePane = 0;
+  s_challengeFocus = 0;
+  s_resetPauseScroll = false;
   s_waitForRelease = true;
   s_confirmRestart = false;
   s_showSettings.store(false);
+  (void)Window::TakeWheelSteps();
   if (s_open.exchange(false)) {
     SetLocalSimulationPaused(false);
     NOBLE_INFO("PauseMenu: closed");
@@ -966,6 +1032,9 @@ void PauseMenu::Close() {
 }
 
 void PauseMenu::ShowGameOver() {
+  // May be called from the engine thread (hooks / slot 6) or the main thread (guest match_over while
+  // the engine no longer draws): serialise against the frame that reads this state.
+  std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
   if (noble::BlamEngine::IsSavedFilmPlayback()) {
     NOBLE_INFO(
         "PauseMenu: suppressing game over during Theater saved film playback");
@@ -987,12 +1056,14 @@ void PauseMenu::ShowGameOver() {
     s_gameOverSettleUntil = now + 350;
     s_resetGameOverImGui.store(true);
     Window::TakeLeftClicks();
+    (void)Window::TakeWheelSteps();
     Window::FlushInputEvents();
     NOBLE_INFO("PauseMenu: game over, showing post-game panel");
   }
 }
 
 void PauseMenu::CancelGameOver() {
+  std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
   if (s_gameOver.exchange(false)) {
     s_autoAt = 0.0;
     s_autoCancelled = true;
@@ -1003,6 +1074,67 @@ void PauseMenu::CancelGameOver() {
     s_gameOverWaitRelease = false;
     s_gameOverSettleUntil = 0;
     NOBLE_INFO("PauseMenu: game over dismissed - gameplay resumed");
+  }
+}
+
+void PauseMenu::RefreshGameOverAward() {
+  std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
+  if (!s_gameOver.load())
+    return;
+  s_gameOverAt.store(GetTickCount64());
+  s_gameOverPadButton = -1;
+  s_gameOverPadArmedAt = 0.0;
+  s_gameOverWaitRelease = true;
+  s_resetGameOverImGui.store(true);
+  NOBLE_INFO("PauseMenu: post-game award refreshed (host results replaced the live numbers)");
+}
+
+void PauseMenu::PollHostMatchState() {
+  if (!NetworkTransport::Get().IsActive() || NetworkTransport::Get().IsHost())
+    return;
+  if (NetworkTransport::Get().TakeMatchOverRequest()) {
+    // The relay thread only flags it: career/UI work happens here, after the match stopped touching
+    // the session. Always consume the packet, even when the panel is already up: the host's numbers
+    // replace this client's provisional settlement.
+    const bool panelOpen = s_gameOver.load();
+    const std::string matchOverJson = NetworkTransport::Get().TakeMatchOverJson();
+    NOBLE_INFO("PauseMenu: host match_over received; {} the post-game panel",
+               panelOpen ? "refreshing" : "showing");
+    try {
+      if (!matchOverJson.empty())
+        Career::OnMatchOverJson(matchOverJson);
+      else
+        Career::EnsureMatchSaved("match_over");
+    } catch (...) {
+      NOBLE_ERROR("PauseMenu: could not settle the host's match_over");
+    }
+    if (panelOpen)
+      RefreshGameOverAward();
+    else
+      ShowGameOver();
+  }
+  if (s_guestShouldReturnLobby.exchange(false)) {
+    NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to "
+               "pre-game lobby");
+    Career::EnsureMatchSaved("host_returned_to_lobby");
+    SetHostBackInLobby(1);
+    if (!s_gameOver.load()) {
+      s_guestReturnedToLobby.store(true);
+      RelaunchAndClose(Window::ActiveHwnd(), LobbyReturnArgs(false),
+                       "host returned to pre-game lobby");
+      return;
+    }
+  }
+  if (s_guestShouldDisband.exchange(false)) {
+    NOBLE_INFO("PauseMenu: host disbanded lobby / quit game, returning guest "
+               "to main menu");
+    Career::EnsureMatchSaved("host_disbanded_lobby");
+    SetHostBackInLobby(2);
+    if (!s_gameOver.load()) {
+      s_guestReturnedToLobby.store(true);
+      RelaunchAndClose(Window::ActiveHwnd(), L"-main-menu",
+                       "host disbanded lobby");
+    }
   }
 }
 
@@ -1109,10 +1241,12 @@ void PauseMenu::SetLoadingMap(const std::string &scenario) {
   s_loadingImage.clear();
   s_loadingThumb.clear();
   s_loadingDescription.clear();
-  // Read the career file and build today's challenge list now, off the render
-  // thread, so the first time the pause menu opens it does not stall on that
-  // work.
-  std::thread([] { (void)Career::Challenges(); }).detach();
+  // Read the career file and build today's challenge list once off the render
+  // thread so the first time the pause menu opens it does not stall.
+  static std::once_flag s_warmChallengesOnce;
+  std::call_once(s_warmChallengesOnce, [] {
+    std::thread([] { (void)Career::Challenges(); }).detach();
+  });
 }
 
 void PauseMenu::SetLoadingMapInfo(const std::string &title,
@@ -1176,25 +1310,26 @@ void PauseMenu::SetLoadingSession(const std::string &mode,
 }
 
 void PauseMenu::DrawMenu(HWND hwnd) {
+  using namespace NobleUi;
   ImGuiIO &io = ImGui::GetIO();
+  ImDrawList *bg = ImGui::GetBackgroundDrawList();
+  const float W = io.DisplaySize.x;
+  const float H = io.DisplaySize.y;
 
-  // Dim the game behind the menu.
-  ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
-                                                IM_COL32(0, 0, 0, 150));
+  // Atmospheric Halo: Reach gradient dim scrim over live gameplay.
+  bg->AddRectFilledMultiColor(ImVec2(0.0f, 0.0f), ImVec2(W, H),
+                              IM_COL32(4, 9, 16, 198), IM_COL32(4, 9, 16, 198),
+                              IM_COL32(7, 14, 24, 218), IM_COL32(7, 14, 24, 218));
 
   if (s_showSettings.load()) {
     DrawSettingsPage(hwnd);
     return;
   }
 
-  // A held game pauses; a match with other players in it must not - MCC reaches
-  // the same conclusion and just shows the menu. Noble cannot stop the engine's
-  // simulation itself (no pause command has been found), so the header says
-  // which of the two this is instead of pretending.
   if (s_openedAt == 0)
     s_openedAt = GetTickCount64();
   const bool timeReady =
-      (GetTickCount64() - s_openedAt) > 250; // ignore the opening frames
+      (GetTickCount64() - s_openedAt) > 220; // ignore the opening frames
   if (s_waitForRelease && timeReady) {
     const bool anyHeld = ImGui::IsMouseDown(0) ||
                          (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 ||
@@ -1204,7 +1339,10 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     if (!anyHeld)
       s_waitForRelease = false;
   }
+  const bool modalOpen =
+      s_saveVariantOpen || ImGui::IsPopupOpen("##save_map_variant");
   const bool interactive = timeReady && !s_waitForRelease;
+  const bool navInteractive = interactive && !modalOpen && !io.WantTextInput;
 
   const size_t peers = NetworkTransport::Get().GetGamePeerCount();
   const bool solo = peers == 0;
@@ -1212,73 +1350,37 @@ void PauseMenu::DrawMenu(HWND hwnd) {
       NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
   const std::wstring restartArgs = Relaunch::CurrentGameArgs();
 
-  // ImGui works in a logical space (1280x720 here even on a 1920x1080 buffer),
-  // so scale from 720 to keep the panel the size the reference screens suggest
-  // (about 84% of the width). No 2.0 cap: a 2160p back buffer needs 3.0, and
-  // the cap left the panel at two-thirds size on 4K. Also keep the 1080-wide
-  // panel on screen when the window is narrower than 3:2. The player's UI SCALE
-  // setting applies here too, as long as the panel still fits on screen.
-  const float s =
-      std::clamp(std::min(io.DisplaySize.y / 720.0f * Settings::UiScale(),
-                          io.DisplaySize.x * 0.96f / 1080.0f),
-                 0.8f, 4.0f);
-  const ImVec2 size(1080.0f * s, 560.0f * s);
+  const float s = Scale();
+  const ImVec2 size(std::min(W - 36.0f * s, 1280.0f * s),
+                    std::min(H - 36.0f * s, 748.0f * s));
+  const ImVec2 winPos((W - size.x) * 0.5f, (H - size.y) * 0.5f);
+
+  // Outer Halo: Reach tactical container background + L-corner reticle brackets.
+  bg->AddRectFilledMultiColor(winPos, ImVec2(winPos.x + size.x, winPos.y + size.y),
+                              IM_COL32(10, 17, 27, 240), IM_COL32(10, 17, 27, 240),
+                              IM_COL32(7, 12, 20, 245), IM_COL32(7, 12, 20, 245));
+  DrawTacticalFrame(bg, winPos, ImVec2(winPos.x + size.x, winPos.y + size.y), s,
+                    false, true, false, false);
+  bg->AddRectFilled(winPos, ImVec2(winPos.x + size.x, winPos.y + 3.0f * s),
+                    kAccent);
+
+  ImGui::SetNextWindowPos(winPos, ImGuiCond_Always);
   ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-  ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - size.x) * 0.5f,
-                                 (io.DisplaySize.y - size.y) * 0.5f),
-                          ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                      ImVec2(24.0f * s, 20.0f * s));
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+  ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 0, 0, 0));
   if (!ImGui::Begin("##NoblePauseMenu", nullptr, kPanelFlags)) {
     ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
     return;
   }
 
-  // Header: the match type and map, like MCC's pause header.
-  NobleStyle::Header(solo ? "PAUSED" : "MENU");
-  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-  if (solo) {
-    SetLocalSimulationPaused(true);
-    ImGui::TextUnformatted("The game is paused.");
-  } else {
-    ImGui::Text("The match keeps running for the other %zu player%s.", peers,
-                peers == 1 ? "" : "s");
-  }
-  ImGui::PopStyleColor();
-  ImGui::Spacing();
+  ImDrawList *dl = ImGui::GetWindowDrawList();
+  ImFont *titleFont = NobleStyle::TitleFont();
+  ImFont *smallFont = NobleStyle::SmallFont();
 
-  const float availW = ImGui::GetContentRegionAvail().x;
-  const float listW = 330.0f * s;
-  const float gap = 18.0f * s;
-  const float contentH = 420.0f * s;
-
-  // ---- Left: the action list (selection + description, like Reach's pause
-  // menu) ----
-  ImGui::BeginGroup();
-  struct Entry {
-    const char *label;
-    const char *description;
-    bool danger;
-    bool enabled;
-  };
-  const bool canRestart = !restartArgs.empty() && !isGuest;
-  std::vector<Entry> entries = {
-      {"RESUME", "Resume the game.", false, true},
-      {s_confirmRestart ? "CONFIRM RESTART?" : "RESTART MATCH",
-       canRestart
-           ? (s_confirmRestart ? "Select again to confirm restarting the match "
-                                 "from the beginning."
-                               : "Starts this match again from the beginning.")
-           : (isGuest ? "Only the host can restart a multiplayer match."
-                      : "Needs the match arguments (only available in a "
-                        "launched match)."),
-       s_confirmRestart, canRestart},
-      {"SETTINGS", "Change any setting without leaving the match.", false,
-       true},
-      {"CONTROLS",
-       "Change key, mouse and controller bindings and look speed without "
-       "leaving the match.",
-       false, true},
-  };
-  int teamEntry = -1;
   std::string currentMode = s_boardMode;
   if (currentMode.empty()) {
     std::wstring wmode = ArgValue(Relaunch::CurrentGameArgs(), L"-mode");
@@ -1289,123 +1391,150 @@ void PauseMenu::DrawMenu(HWND hwnd) {
                         nullptr, nullptr);
     currentMode = mb;
   }
+  std::string headerMap;
+  {
+    std::lock_guard<std::mutex> lock(s_mapMutex);
+    headerMap = s_loadingMapName;
+  }
+  if (headerMap.empty()) {
+    std::lock_guard<std::mutex> lock(s_boardMutex);
+    if (!s_boardMap.empty())
+      headerMap = Upper(DisplayName(s_boardMap));
+  }
+
+  // ---- Header Bar ----
+  const float padX = 24.0f * s;
+  const float padY = 20.0f * s;
+  const float innerW = size.x - padX * 2.0f;
+  const float headerTop = winPos.y + padY;
+  const float headerH = 58.0f * s;
+
+  if (solo)
+    SetLocalSimulationPaused(true);
+
+  const char *mainTitle = solo ? "PAUSED" : "MATCH MENU";
+  Text(dl, titleFont, 32.0f * s, ImVec2(winPos.x + padX, headerTop), kText,
+       mainTitle);
+  char subBuf[128];
+  if (solo) {
+    std::snprintf(subBuf, sizeof(subBuf), "Local simulation paused.");
+  } else {
+    std::snprintf(subBuf, sizeof(subBuf),
+                  "Match stays live for %zu other player%s.", peers,
+                  peers == 1 ? "" : "s");
+  }
+  Text(dl, smallFont, 14.5f * s,
+       ImVec2(winPos.x + padX + 2.0f * s, headerTop + 34.0f * s), kTextDim,
+       subBuf);
+
+  // Right-side map + mode + session status pill
+  {
+    const std::string modeTag =
+        currentMode.empty() ? std::string("HALO: REACH")
+                            : ("HALO: REACH  \xC2\xB7  " +
+                               LoadingModeLabel(currentMode));
+    const std::string rightTop =
+        headerMap.empty() ? modeTag : (modeTag + "  \xC2\xB7  " + headerMap);
+    const float rtw = TextWidth(titleFont, 15.0f * s, rightTop.c_str());
+    const float pillPadX = 12.0f * s;
+    const float pillW = std::min(innerW * 0.56f, rtw + pillPadX * 2.0f);
+    const ImVec2 hp1(winPos.x + padX + innerW, headerTop + 44.0f * s);
+    const ImVec2 hp0(hp1.x - pillW, headerTop + 4.0f * s);
+    dl->AddRectFilled(hp0, hp1, IM_COL32(16, 28, 44, 215), 3.0f * s);
+    dl->AddRect(hp0, hp1, IM_COL32(143, 216, 255, 75), 3.0f * s);
+    Text(dl, titleFont, 15.0f * s,
+         ImVec2(hp0.x + pillPadX, hp0.y + 6.0f * s), kAccent, rightTop.c_str(),
+         pillW - pillPadX * 1.5f);
+
+    const char *stateLabel = solo ? "OFFLINE / SOLO" : "ONLINE SESSION";
+    const ImU32 stateCol =
+        solo ? IM_COL32(143, 216, 255, 220) : IM_COL32(118, 220, 152, 240);
+    const float slw = TextWidth(smallFont, 12.5f * s, stateLabel);
+    Text(dl, smallFont, 12.5f * s,
+         ImVec2(hp1.x - slw - 4.0f * s, hp0.y + 24.0f * s), stateCol,
+         stateLabel);
+  }
+
+  const float ruleY = headerTop + headerH;
+  dl->AddLine(ImVec2(winPos.x + padX, ruleY),
+              ImVec2(winPos.x + padX + innerW, ruleY),
+              IM_COL32(143, 216, 255, 70), 1.0f);
+
+  const float bodyTop = ruleY + 14.0f * s;
+  const float footerH = 38.0f * s;
+  const float bodyH = std::max(260.0f * s,
+                               (winPos.y + size.y - padY - footerH) - bodyTop);
+  const float listW = std::clamp(innerW * 0.34f, 290.0f * s, 410.0f * s);
+  const float gap = 20.0f * s;
+  const float sideW = innerW - listW - gap;
+
+  // ---- Build left action deck entries ----
+  struct Entry {
+    const char *label;
+    const char *subtitle;
+    const char *description;
+    const char *badge;
+    bool danger;
+    bool enabled;
+  };
+  const bool canRestart = !restartArgs.empty() && !isGuest;
+  const int curTeam = LocalTeamFromBoard();
+  const char *teamBadge = (curTeam == 2) ? "BLUE TEAM" : "RED TEAM";
+  std::vector<Entry> entries = {
+      {"RESUME", nullptr, "Return to gameplay immediately.", nullptr, false,
+       true},
+      {s_confirmRestart ? "CONFIRM RESTART?" : "RESTART MATCH", nullptr,
+       canRestart
+           ? (s_confirmRestart
+                  ? "Select again to confirm restarting from the beginning."
+                  : "Reload this match from the beginning.")
+           : (isGuest ? "Only the session host can restart the match."
+                      : "Unavailable: match launch arguments were not passed."),
+       s_confirmRestart ? "CONFIRM" : nullptr, s_confirmRestart, canRestart},
+      {"SETTINGS", nullptr,
+       "Adjust video, audio, HUD, and gameplay options live.", nullptr, false,
+       true},
+      {"CONTROLS", nullptr,
+       "Configure key bindings, mouse sensitivity, and controller layout.",
+       nullptr, false, true},
+  };
   int saveMapVariantEntry = -1;
   if (_stricmp(currentMode.c_str(), "forge") == 0) {
     saveMapVariantEntry = static_cast<int>(entries.size());
-    entries.push_back({"SAVE MAP VARIANT",
-                       "Saves the Forge map you have built as a map variant, "
-                       "under its base map in the maps menu.",
-                       false, true});
+    entries.push_back(
+        {"SAVE MAP VARIANT", nullptr,
+         "Save your Forge map to data\\map_variants for reuse in Custom Games "
+         "and Forge.",
+         "FORGE", false, true});
   }
+  int teamEntry = -1;
   const bool isMultiOrForge = (currentMode == "multiplayer" ||
                                currentMode == "forge" || currentMode.empty());
   if (BlamEngine::GameTeamsEnabled() || isMultiOrForge) {
     teamEntry = static_cast<int>(entries.size());
-    entries.push_back(
-        {"CHANGE TEAM", "Switch between red and blue team.", false, true});
+    entries.push_back({"CHANGE TEAM", nullptr,
+                       "Swap your team assignment between Red Team and Blue Team.",
+                       teamBadge, false, true});
   }
   const int leaveEntry = static_cast<int>(entries.size());
   if (noble::BlamEngine::IsSavedFilmPlayback()) {
-    entries.push_back({"LEAVE THEATER",
-                       "Stop watching the film and return to the Theater menu.",
-                       false, true});
+    entries.push_back({"LEAVE THEATER", nullptr,
+                       "Stop Theater playback and return to the front-end.",
+                       nullptr, false, true});
   } else {
-    entries.push_back({"LEAVE GAME",
-                       "Close this match and go back to the front-end menu.",
-                       false, true});
+    entries.push_back(
+        {"LEAVE GAME", nullptr,
+         isGuest ? "Disconnect from this match and return to the menu."
+                 : "End this match and return to the front-end menu.",
+         nullptr, false, true});
   }
   const int quitEntry = static_cast<int>(entries.size());
-  entries.push_back({"QUIT", "Close Noble and end the match.", true, true});
+  entries.push_back(
+      {"QUIT", nullptr, "Close Project Noble and exit to desktop.", nullptr, true,
+       true});
   const int entryCount = static_cast<int>(entries.size());
 
-  static ULONGLONG s_lastMove = 0;
-  const ULONGLONG now = GetTickCount64();
-  const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up();
-  const bool down =
-      ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down();
-  if (interactive && (up || down) && now - s_lastMove > 120) {
-    s_lastMove = now;
-    s_focus = (s_focus + (down ? 1 : entryCount - 1)) % entryCount;
-    if (s_focus != 1)
-      s_confirmRestart = false;
-    MenuSounds::Scroll();
-  }
-  s_focus = std::clamp(s_focus, 0, entryCount - 1);
-  if (s_focus != 1)
-    s_confirmRestart = false;
-
-  const float rowH = 46.0f * s;
-  int activated = -1;
-  // Centre each label in its row (ImGui's default puts it at the top of the
-  // tall row).
-  ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
-  for (int i = 0; i < entryCount; ++i) {
-    ImGui::PushID(i);
-    const bool focused = i == s_focus;
-    const bool enabled = entries[i].enabled;
-    ImGui::PushStyleColor(
-        ImGuiCol_Text, enabled ? (focused ? NobleStyle::Accent()
-                                          : ImVec4(0.86f, 0.90f, 0.94f, 1.0f))
-                               : NobleStyle::TextMuted());
-    if (ImGui::Selectable(entries[i].label, focused, ImGuiSelectableFlags_None,
-                          ImVec2(listW, rowH + 6.0f * s)) &&
-        enabled && interactive) {
-      s_focus = i;
-      activated = i;
-    }
-    if (ImGui::IsItemHovered()) {
-      MenuSounds::Hover(ImGui::GetItemID());
-      // Only a moving mouse takes the focus: a pointer resting here used to pin
-      // the row against the D-pad.
-      if (interactive && enabled &&
-          (ImGui::GetIO().MouseDelta.x != 0.0f ||
-           ImGui::GetIO().MouseDelta.y != 0.0f)) {
-        s_focus = i;
-        if (s_focus != 1)
-          s_confirmRestart = false;
-      }
-    }
-    ImGui::PopStyleColor();
-    // Underline & crisp focus highlight.
-    const ImVec2 p = ImGui::GetItemRectMin();
-    const ImVec2 q = ImGui::GetItemRectMax();
-    if (focused) {
-      NobleUi::DrawFocusHighlight(ImGui::GetWindowDrawList(), p, q, s, true);
-    } else {
-      ImGui::GetWindowDrawList()->AddLine(
-          ImVec2(p.x + 8.0f * s, q.y - 4.0f * s),
-          ImVec2(p.x + listW - 8.0f * s, q.y - 4.0f * s),
-          IM_COL32(90, 105, 120, 120), 1.0f);
-    }
-    ImGui::PopID();
-  }
-  ImGui::PopStyleVar();
-  if (interactive && UiPad::AcceptPressed()) {
-    UiPad::ConsumeAccept();
-    if (entries[s_focus].enabled)
-      activated = s_focus;
-  }
-  ImGui::Spacing();
-  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + listW);
-  ImGui::TextWrapped("%s", entries[s_focus].description);
-  ImGui::PopTextWrapPos();
-  ImGui::PopStyleColor();
-  ImGui::EndGroup();
-
-  // ---- Right: daily and weekly challenges, scrollable (the reference screens'
-  // sidebar) ----
-  ImGui::SameLine(0.0f, gap);
-  ImGui::BeginGroup();
-  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-  ImGui::TextUnformatted(
-      ("Daily challenges - " + Career::DailyResetText()).c_str());
-  ImGui::PopStyleColor();
-  const float sideW = availW - listW - gap;
-  ImGui::BeginChild("##pausechallenges", ImVec2(sideW, contentH),
-                    ImGuiChildFlags_Borders);
-  if (interactive)
-    UiPad::ScrollWindow(false, true);
+  // ---- Refresh cached challenges cleanly (built once on open + every 2s) ----
   static std::vector<Career::Challenge> s_cachedChallenges;
   static ULONGLONG s_cachedChallengesAt = 0;
   {
@@ -1417,71 +1546,263 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     }
   }
   const std::vector<Career::Challenge> &challenges = s_cachedChallenges;
-  int shown = 0;
+  const int chCount = static_cast<int>(challenges.size());
+  if (chCount > 0)
+    s_challengeFocus = std::clamp(s_challengeFocus, 0, chCount - 1);
+  else if (s_pausePane == 1)
+    s_pausePane = 0;
+
+  // ---- Unified Keyboard + Controller Navigation across Left (0) & Right (1) ----
+  static ULONGLONG s_lastMove = 0;
+  const ULONGLONG now = GetTickCount64();
+  bool challengeNavMoved = false;
+  if (navInteractive) {
+    const bool goLeft =
+        ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) || UiPad::Left();
+    const bool goRight =
+        ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) || UiPad::Right();
+    const bool goUp =
+        ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up();
+    const bool goDown =
+        ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down();
+
+    if (s_pausePane == 0 && goRight && chCount > 0) {
+      s_pausePane = 1;
+      challengeNavMoved = true;
+      s_lastMove = now;
+      MenuSounds::Scroll();
+    } else if (s_pausePane == 1 && goLeft) {
+      s_pausePane = 0;
+      s_lastMove = now;
+      MenuSounds::Scroll();
+    } else if ((goUp || goDown) && now - s_lastMove > 110) {
+      s_lastMove = now;
+      if (s_pausePane == 0) {
+        s_focus = (s_focus + (goDown ? 1 : entryCount - 1)) % entryCount;
+        if (s_focus != 1)
+          s_confirmRestart = false;
+      } else if (chCount > 0) {
+        s_challengeFocus =
+            (s_challengeFocus + (goDown ? 1 : chCount - 1)) % chCount;
+        challengeNavMoved = true;
+      }
+      MenuSounds::Scroll();
+    }
+  }
+  s_focus = std::clamp(s_focus, 0, entryCount - 1);
+  if (s_focus != 1)
+    s_confirmRestart = false;
+
+  // ---- Left Column: Tactical Command Deck + Info Card ----
+  const float descBoxH = 62.0f * s;
+  const float deckAvailH = bodyH - descBoxH - 10.0f * s;
+  const float rowGap = 5.0f * s;
+  const float rowH = std::clamp(
+      (deckAvailH - rowGap * static_cast<float>(std::max(1, entryCount - 1))) /
+          static_cast<float>(entryCount),
+      34.0f * s, 48.0f * s);
+  const float leftX = winPos.x + padX;
+  int activated = -1;
+
+  for (int i = 0; i < entryCount; ++i) {
+    ImGui::PushID(i);
+    const float ry = bodyTop + static_cast<float>(i) * (rowH + rowGap);
+    const ImVec2 t0(leftX, ry);
+    const ImVec2 t1(leftX + listW, ry + rowH);
+    const bool enabled = entries[i].enabled;
+    const bool focused = (s_pausePane == 0 && s_focus == i);
+
+    ImGui::SetCursorScreenPos(t0);
+    if (DrawTile(dl, "##pause_tile", t0, t1, entries[i].label, nullptr, focused,
+                 s_confirmRestart && i == 1, enabled, entries[i].badge) &&
+        enabled && navInteractive) {
+      s_pausePane = 0;
+      s_focus = i;
+      activated = i;
+    }
+    if (ImGui::IsItemHovered() && navInteractive &&
+        (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f)) {
+      s_pausePane = 0;
+      s_focus = i;
+      if (s_focus != 1)
+        s_confirmRestart = false;
+    }
+    // Red/Blue team color strip accent on CHANGE TEAM, crimson edge on QUIT.
+    if (i == teamEntry) {
+      const ImU32 teamCol = (curTeam == 2) ? IM_COL32(95, 165, 255, 255)
+                                           : IM_COL32(235, 92, 82, 255);
+      dl->AddRectFilled(ImVec2(t1.x - 4.0f * s, t0.y + 6.0f * s),
+                        ImVec2(t1.x - 1.0f * s, t1.y - 6.0f * s), teamCol);
+    } else if (entries[i].danger && focused) {
+      dl->AddRect(t0, t1, IM_COL32(255, 130, 82, 210), 3.0f * s, 0, 1.5f);
+    }
+    ImGui::PopID();
+  }
+
+  if (navInteractive && s_pausePane == 0 &&
+      (UiPad::AcceptPressed() ||
+       ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+       ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
+    UiPad::ConsumeAccept();
+    if (entries[s_focus].enabled)
+      activated = s_focus;
+  }
+
+  // Focused action description card anchored neatly at bottom-left.
+  {
+    const ImVec2 d0(leftX, bodyTop + bodyH - descBoxH);
+    const ImVec2 d1(leftX + listW, bodyTop + bodyH);
+    dl->AddRectFilled(d0, d1, IM_COL32(12, 20, 32, 220), 3.0f * s);
+    dl->AddRectFilled(d0, ImVec2(d0.x + 3.0f * s, d1.y),
+                      s_confirmRestart ? kAmber : kAccent);
+    dl->AddRect(d0, d1, IM_COL32(143, 216, 255, 48), 3.0f * s);
+    const char *descText = entries[s_focus].description;
+    if (s_focus == saveMapVariantEntry && !s_saveMapVariantResult.empty())
+      descText = s_saveMapVariantResult.c_str();
+    Text(dl, smallFont, 13.5f * s,
+         ImVec2(d0.x + 12.0f * s, d0.y + 10.0f * s), kTextDim, descText,
+         listW - 24.0f * s);
+  }
+
+  // ---- Right Column: Service-Record Style Challenges Panel ----
+  const float rightX = leftX + listW + gap;
+  const ImVec2 chBox0(rightX, bodyTop);
+  const ImVec2 chBox1(rightX + sideW, bodyTop + bodyH);
+  dl->AddRectFilled(chBox0, chBox1, IM_COL32(11, 18, 29, 226), 3.0f * s);
+  DrawTacticalFrame(dl, chBox0, chBox1, s, s_pausePane == 1, false, false,
+                    false);
+
+  int dailyDone = 0, dailyCount = 0, weeklyDone = 0, weeklyCount = 0;
+  for (const Career::Challenge &c : challenges) {
+    if (c.weekly) {
+      ++weeklyCount;
+      if (c.done)
+        ++weeklyDone;
+    } else {
+      ++dailyCount;
+      if (c.done)
+        ++dailyDone;
+    }
+  }
+
+  // Fixed challenges header strip (never scrolls out of view).
+  const float chHdrH = 52.0f * s;
+  {
+    dl->AddRectFilled(chBox0, ImVec2(chBox1.x, chBox0.y + chHdrH),
+                      IM_COL32(15, 25, 40, 238), 3.0f * s,
+                      ImDrawFlags_RoundCornersTop);
+    Text(dl, titleFont, 16.5f * s,
+         ImVec2(chBox0.x + 14.0f * s, chBox0.y + 8.0f * s), kAccent,
+         "CHALLENGES");
+
+    char countsBuf[96];
+    std::snprintf(countsBuf, sizeof(countsBuf), "DAILY %d/%d   \xC2\xB7   WEEKLY %d/%d",
+                  dailyDone, dailyCount, weeklyDone, weeklyCount);
+    Text(dl, smallFont, 13.0f * s,
+         ImVec2(chBox0.x + 14.0f * s, chBox0.y + 29.0f * s), kTextDim,
+         countsBuf);
+
+    const std::string resetDaily = "Daily: " + Career::DailyResetText();
+    const std::string resetWeekly = "Weekly: " + Career::WeeklyResetText();
+    const float rdw = TextWidth(smallFont, 12.5f * s, resetDaily.c_str());
+    const float rww = TextWidth(smallFont, 12.5f * s, resetWeekly.c_str());
+    Text(dl, smallFont, 12.5f * s,
+         ImVec2(chBox1.x - 14.0f * s - rdw, chBox0.y + 9.0f * s), kTextDim,
+         resetDaily.c_str());
+    Text(dl, smallFont, 12.5f * s,
+         ImVec2(chBox1.x - 14.0f * s - rww, chBox0.y + 28.0f * s), kTextDim,
+         resetWeekly.c_str());
+    dl->AddLine(ImVec2(chBox0.x, chBox0.y + chHdrH),
+                ImVec2(chBox1.x, chBox0.y + chHdrH),
+                IM_COL32(143, 216, 255, 58), 1.0f);
+  }
+
+  // Scrollable Service-Record challenge cards body (starts unscrolled at top).
+  const float chPad = 12.0f * s;
+  const float chScrollTop = chBox0.y + chHdrH + 6.0f * s;
+  const float chScrollH =
+      std::max(100.0f * s, (chBox1.y - 8.0f * s) - chScrollTop);
+  ImGui::SetCursorScreenPos(ImVec2(chBox0.x + chPad, chScrollTop));
+  if (s_resetPauseScroll) {
+    ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
+    s_resetPauseScroll = false;
+  }
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
+  ImGui::BeginChild("##pausechallenges",
+                    ImVec2(sideW - chPad * 2.0f, chScrollH),
+                    ImGuiChildFlags_None, ImGuiWindowFlags_None);
+  if (navInteractive)
+    UiPad::ScrollWindow(false, true);
+
+  const float cardW =
+      std::max(160.0f * s, ImGui::GetContentRegionAvail().x - 4.0f * s);
+  int cardIdx = 0;
   for (int weekly = 0; weekly <= 1; ++weekly) {
-    bool heading = false;
+    const int secDone = weekly ? weeklyDone : dailyDone;
+    const int secTotal = weekly ? weeklyCount : dailyCount;
+    if (secTotal == 0)
+      continue;
+    char head[64];
+    std::snprintf(head, sizeof(head), "%s  %d / %d",
+                  weekly ? "WEEKLY CHALLENGES" : "DAILY CHALLENGES", secDone,
+                  secTotal);
+    SectionHeader(head, cardW);
     for (const Career::Challenge &c : challenges) {
       if (static_cast<int>(c.weekly) != weekly)
         continue;
-      if (!heading) {
-        heading = true;
-        ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Text,
-                              weekly ? ImVec4(1.0f, 0.75f, 0.47f, 1.0f)
-                                     : NobleStyle::Accent());
-        ImGui::TextUnformatted(weekly ? "WEEKLY" : "DAILY");
-        ImGui::PopStyleColor();
+      ImGui::PushID(cardIdx);
+      const bool focused = (s_pausePane == 1 && cardIdx == s_challengeFocus);
+      bool hovered = false, clicked = false;
+      ImGui::BeginGroup();
+      DrawChallengeCard(c, cardW, focused, hovered, clicked, true);
+      ImGui::EndGroup();
+      if (clicked ||
+          (hovered && navInteractive &&
+           (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f))) {
+        s_challengeFocus = cardIdx;
+        if (clicked) {
+          s_pausePane = 1;
+          MenuSounds::Click();
+        }
       }
-      ImGui::PushID(shown++);
-      const ImVec4 accent =
-          c.done ? ImVec4(0.55f, 0.85f, 0.55f, 1.0f) : NobleStyle::Accent();
-      ImGui::PushStyleColor(ImGuiCol_Text, accent);
-      ImGui::TextUnformatted(c.title.c_str());
-      ImGui::PopStyleColor();
-      ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-      ImGui::TextWrapped("%s", c.description.c_str());
-      const float fraction =
-          c.target > 0 ? std::clamp(static_cast<float>(c.progress) / c.target,
-                                    0.0f, 1.0f)
-                       : 0.0f;
-      char bar[64];
-      std::snprintf(bar, sizeof(bar), "%lld / %lld   %lld XP",
-                    static_cast<long long>(c.progress),
-                    static_cast<long long>(c.target),
-                    static_cast<long long>(c.reward));
-      ImGui::ProgressBar(fraction, ImVec2(-1.0f, 4.0f * s), "");
-      ImGui::TextUnformatted(bar);
-      ImGui::PopStyleColor();
-      ImGui::Separator();
+      if (focused && challengeNavMoved)
+        ImGui::SetScrollHereY(0.45f);
+      ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
       ImGui::PopID();
+      ++cardIdx;
     }
   }
-  if (shown == 0)
-    ImGui::TextDisabled("No challenges yet - finish a match to start them.");
+  if (cardIdx == 0) {
+    ImGui::Dummy(ImVec2(0.0f, 12.0f * s));
+    Paragraph("No active challenges yet - complete a match to track daily "
+              "and weekly challenge progress.");
+  }
   ImGui::EndChild();
-  ImGui::EndGroup();
+  ImGui::PopStyleColor();
 
-  // ---- Act on the selection ----
+  // ---- Act on selected action (never early-return before End()) ----
   if (activated == 0) {
     Close();
   } else if (activated == 1) {
-    if (!canRestart)
-      return;
-    MenuSounds::Click();
-    if (!s_confirmRestart) {
-      s_confirmRestart = true;
-    } else {
-      Close();
-      RelaunchAndClose(hwnd, restartArgs, "restart match");
+    if (canRestart) {
+      MenuSounds::Click();
+      if (!s_confirmRestart) {
+        s_confirmRestart = true;
+      } else {
+        Close();
+        RelaunchAndClose(hwnd, restartArgs, "restart match");
+      }
     }
   } else if (activated == 2) {
     MenuSounds::Click();
     Window::TakeLeftClicks();
+    (void)Window::TakeWheelSteps();
     s_showSettings.store(true);
     NOBLE_INFO("PauseMenu: settings opened from the pause menu");
   } else if (activated == 3) {
     MenuSounds::Click();
     Window::TakeLeftClicks();
+    (void)Window::TakeWheelSteps();
     PauseSettings().SetTab(InputPrompts::Current() ==
                                    InputPrompts::Device::Gamepad
                                ? 5
@@ -1489,8 +1810,6 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     s_showSettings.store(true);
     NOBLE_INFO("PauseMenu: controls opened from the pause menu");
   } else if (saveMapVariantEntry >= 0 && activated == saveMapVariantEntry) {
-    // Ask for a name first: it becomes the variant's title in the maps menu and
-    // its file name.
     MenuSounds::Click();
     s_saveMapVariantResult.clear();
     {
@@ -1506,10 +1825,9 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     s_saveVariantNeedsFocus = true;
     ImGui::OpenPopup("##save_map_variant");
   } else if (teamEntry >= 0 && activated == teamEntry) {
+    MenuSounds::Click();
     ChangeLocalTeam();
   } else if (activated == leaveEntry) {
-    // The engine can't switch maps once started, so start a fresh Noble with no
-    // -map: that opens the menu.
     MenuSounds::Click();
     Close();
     const bool isHost =
@@ -1522,7 +1840,6 @@ void PauseMenu::DrawMenu(HWND hwnd) {
       wSession = ArgValue(GetCommandLineW(), L"-session-id");
     if (isHost &&
         (!wSession.empty() || MasterServerClient::Get().IsAdvertising())) {
-      // Host leaving match returns the entire party to the Pre-Game Lobby
       char sessUtf8[128] = {};
       if (!wSession.empty()) {
         WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8,
@@ -1542,17 +1859,21 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   } else if (activated == quitEntry) {
     Close();
     QuitFromMatch(hwnd, "quit requested");
-  } else if (interactive &&
-             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
-    // B resumes. Esc is not read here: the input poll already toggles on Esc,
-    // and closing here as well reopened the menu when both saw the same press.
-    Close();
+  } else if (navInteractive &&
+             (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+              (s_pausePane == 1 && UiPad::BackPressed()))) {
+    if (s_pausePane == 1) {
+      UiPad::ConsumeBack();
+      s_pausePane = 0;
+      MenuSounds::Back();
+    } else {
+      // B resumes. Esc is not read here: the input poll already toggles on Esc,
+      // and closing here as well reopened the menu when both saw the same press.
+      Close();
+    }
   }
 
   // ---- Name this map variant (SAVE MAP VARIANT, Forge only) ----
-  // A small box over the pause menu: type the name, SAVE writes the variant
-  // under it. The name is also written into the variant's title, which is what
-  // the maps menu shows under the base map.
   ImGui::SetNextWindowSize(ImVec2(520.0f * s, 0.0f), ImGuiCond_Appearing);
   if (ImGui::BeginPopupModal(
           "##save_map_variant", nullptr,
@@ -1574,8 +1895,6 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     const bool typed = s_saveVariantName[0] != 0;
     const std::filesystem::path library =
         ReachHost::Get().GetDataDir() / "map_variants";
-    // Only variants inside the user's map_variants library can be overwritten;
-    // stock MCC variants must be saved as a new copy.
     const std::filesystem::path sessionPath = noble::SessionMapVariantPath();
     std::error_code overEc;
     const bool inUserLibrary =
@@ -1644,15 +1963,46 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     ImGui::EndPopup();
   }
 
-  ImGui::Spacing();
-  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
-  ImGui::TextUnformatted(
-      UiPad::HasGamepad()
-          ? "[A] Select   [B / Start] Resume   [D-Pad / Stick] Navigate   "
-            "[Right Stick] Scroll Challenges"
-          : "Enter / Click Select   Esc Resume   Arrow Keys Navigate");
-  ImGui::PopStyleColor();
+  // ---- Bottom Input Prompts Strip ----
+  {
+    const float fy = winPos.y + size.y - padY - footerH + 4.0f * s;
+    const float fh = 22.0f * s;
+    float fx = leftX;
+    dl->AddLine(ImVec2(leftX, fy - 8.0f * s),
+                ImVec2(leftX + innerW, fy - 8.0f * s),
+                IM_COL32(143, 216, 255, 42), 1.0f);
+    fx += InputPrompts::Draw(dl, smallFont, ImVec2(fx, fy), fh,
+                             InputPrompts::Prompt::Accept) +
+          10.0f * s;
+    Text(dl, smallFont, 13.5f * s, ImVec2(fx, fy + 3.0f * s), kTextDim,
+         "Select");
+    fx += TextWidth(smallFont, 13.5f * s, "Select") + 22.0f * s;
+
+    fx += InputPrompts::Draw(dl, smallFont, ImVec2(fx, fy), fh,
+                             InputPrompts::Prompt::Back) +
+          10.0f * s;
+    Text(dl, smallFont, 13.5f * s, ImVec2(fx, fy + 3.0f * s), kTextDim,
+         "Resume");
+    fx += TextWidth(smallFont, 13.5f * s, "Resume") + 22.0f * s;
+
+    fx += InputPrompts::Draw(dl, smallFont, ImVec2(fx, fy), fh,
+                             InputPrompts::Prompt::Change) +
+          10.0f * s;
+    Text(dl, smallFont, 13.5f * s, ImVec2(fx, fy + 3.0f * s), kTextDim,
+         chCount > 0 ? "Switch Deck / Challenges" : "Navigate");
+
+    const char *scrollHint =
+        (InputPrompts::Current() == InputPrompts::Device::Gamepad)
+            ? "Right Stick: Scroll Challenges"
+            : "Mouse Wheel: Scroll Challenges";
+    const float sw = TextWidth(smallFont, 13.0f * s, scrollHint);
+    Text(dl, smallFont, 13.0f * s,
+         ImVec2(leftX + innerW - sw, fy + 3.0f * s), kTextDim, scrollHint);
+  }
+
   ImGui::End();
+  ImGui::PopStyleColor(2);
+  ImGui::PopStyleVar();
 }
 
 // The front-end SETTINGS panel, reused while paused so settings can be changed
@@ -1676,7 +2026,8 @@ void DrawSettingsPage(HWND hwnd) {
                                  ImGuiWindowFlags_NoSavedSettings;
   if (ImGui::Begin("##NoblePauseSettings", nullptr, flags)) {
     NobleStyle::Header("SETTINGS");
-    if (ImGui::Button("< BACK", ImVec2(110, 0))) {
+    const float ps = NobleUi::Scale();
+    if (ImGui::Button("< BACK", ImVec2(110.0f * ps, 0))) {
       s_showSettings.store(false);
       MenuSounds::Back();
       NOBLE_INFO("PauseMenu: settings closed");
@@ -2015,7 +2366,7 @@ static std::string WideToUtf8Short(const wchar_t *w) {
 // table so that player roster, kills, assists, deaths, scores, and ping update
 // live in real time across Firefight, Custom Games, Campaign, and Forge.
 static void UpdateLiveScoreboard() {
-  HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+  HMODULE reach = noble::ReachModule();
   if (!reach)
     return;
   const uint8_t *reachBase = reinterpret_cast<const uint8_t *>(reach);
@@ -2112,6 +2463,23 @@ static void UpdateLiveScoreboard() {
       row.assists = scores[i].assists;
       row.deaths = scores[i].deaths;
       row.score = scores[i].score;
+    }
+  }
+
+  // A guest often has only the engine's results table, so a row can arrive without a machine id. Match
+  // the name against the names the lobby/voice layer already tracks so its measured RTT is used instead
+  // of "-".
+  {
+    const auto knownNames = SocialOverlay::GetPlayerNames();
+    for (auto &row : s_boardRows) {
+      if (row.machine != 0) continue;
+      for (const auto &entry : knownNames) {
+        if (entry.first != 0 && !entry.second.empty() &&
+            _stricmp(entry.second.c_str(), row.name.c_str()) == 0) {
+          row.machine = entry.first;
+          break;
+        }
+      }
     }
   }
 
@@ -2215,6 +2583,29 @@ static void UpdateLiveScoreboard() {
                    s_boardRows.size(), transportPeers,
                    LobbyPatches::GetRemotePlayerAddCount());
       }
+    }
+  }
+
+  // Exactly one row may be "you". The engine's results table and the TLS player array can both flag a
+  // slot, and on a guest that used to mark every row local - the panel then drew "YOU" on everyone.
+  // Prefer the row whose name is this player, then the local machine id, then the first flagged row.
+  {
+    int localIndex = -1;
+    for (size_t i = 0; i < s_boardRows.size(); ++i) {
+      const auto &row = s_boardRows[i];
+      if (!row.local) continue;
+      if (localIndex < 0) localIndex = static_cast<int>(i);
+      if (!snap.playerName.empty() &&
+          _stricmp(row.name.c_str(), snap.playerName.c_str()) == 0) {
+        localIndex = static_cast<int>(i);
+        break;
+      }
+    }
+    for (size_t i = 0; i < s_boardRows.size(); ++i) {
+      s_boardRows[i].local = static_cast<int>(i) == localIndex;
+    }
+    if (localIndex >= 0 && !snap.serviceTag.empty()) {
+      s_boardRows[static_cast<size_t>(localIndex)].tag = snap.serviceTag;
     }
   }
 }
@@ -2609,7 +3000,12 @@ static void DrawScoreboardPanel() {
             ImVec2(cx + colW, p0.y + headerH + subHeaderH + totalListH),
             false) &&
         io.MouseWheel != 0.0f) {
-      s_boardScroll[col] -= static_cast<int>(io.MouseWheel);
+      static const char *const kBoardWheelIds[2] = {"##sb_wheel_0",
+                                                    "##sb_wheel_1"};
+      const int wheelSteps =
+          NobleUi::ConsumeWheelSteps(kBoardWheelIds[col & 1], io.MouseWheel);
+      if (wheelSteps != 0)
+        s_boardScroll[col] -= wheelSteps;
     }
     s_boardScroll[col] =
         std::clamp(s_boardScroll[col], 0, std::max(0, count - visibleRows));
@@ -3515,13 +3911,14 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       }
       const float k = Ease((t - (0.6f + i * 0.25f)) / 0.9f);
       const ImVec2 r0(margin, y), r1(margin + leftW, y + rowH - 6.0f * s);
+      const int kind = std::clamp(p.kind, 0, 2);
       const bool done = p.completed && k >= 1.0f;
       const ImU32 green = IM_COL32(140, 217, 140, 255);
       dl->AddRectFilled(
           r0, r1, done ? IM_COL32(30, 52, 36, 200) : IM_COL32(22, 30, 40, 200),
           3.0f * s);
       float x = margin + 12.0f * s;
-      if (p.kind == 2) {
+      if (kind == 2 && !p.art.empty()) {
         const UiTexture art = UiArt::ReachArt("commendations", p.art);
         if (art) {
           const float bh = rowH - 16.0f * s, bw = bh * (287.0f / 90.0f);
@@ -3532,12 +3929,12 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       }
       const float chipPx = 13.0f * s;
       const float chipW =
-          TextWidth(smallFont, chipPx, kKind[p.kind]) + 10.0f * s;
+          TextWidth(smallFont, chipPx, kKind[kind]) + 10.0f * s;
       dl->AddRect(ImVec2(x, y + 8.0f * s),
                   ImVec2(x + chipW, y + 12.0f * s + chipPx), kTextDim,
                   2.0f * s);
       Text(dl, smallFont, chipPx, ImVec2(x + 5.0f * s, y + 10.0f * s), kTextDim,
-           kKind[p.kind]);
+           kKind[kind]);
       Text(dl, body, 18.0f * s, ImVec2(x + chipW + 10.0f * s, y + 6.0f * s),
            done ? green : kText, p.title.c_str());
       // Bar from the old value to the new one (old part blue-grey, this game's
@@ -3550,7 +3947,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       const float f = fBefore + (fAfter - fBefore) * k;
       std::string label;
       if (done)
-        label = p.kind == 2
+        label = kind == 2
                     ? Upper(Career::CommendationTierName(p.tier)) + " REACHED"
                     : "COMPLETE";
       else
@@ -3833,9 +4230,17 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   syncButtonFocus(kPadQuit);
   bx -= bw + gap;
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
-  if ((ImGui::Button("RETURN TO MENU", ImVec2(bw, bh)) && interactive) ||
+  // The label says what the button really does: a host that leaves takes the party's session with
+  // it (disband), a guest only leaves, and a local match simply goes back to the menu.
+  const char *const menuLabel = hostRole ? "DISBAND LOBBY"
+                                  : guestRole ? "LEAVE LOBBY"
+                                              : "RETURN TO MENU";
+  const char *const menuReason = hostRole ? "host disband lobby from the after-action report"
+                                  : guestRole ? "guest leave lobby from the after-action report"
+                                              : "return to menu";
+  if ((ImGui::Button(menuLabel, ImVec2(bw, bh)) && interactive) ||
       (padPress && s_gameOverPadButton == kPadMenu))
-    RelaunchAndClose(hwnd, L"-main-menu", "return to menu");
+    RelaunchAndClose(hwnd, L"-main-menu", menuReason);
   syncButtonFocus(kPadMenu);
   if (canPlayAgain) {
     bx -= bw + gap;
@@ -4014,13 +4419,6 @@ float TrackedTextWidth(ImFont *font, float px, const std::string &text, float tr
   return width;
 }
 
-std::string LoadingModeLabel(const std::string &mode) {
-  if (_stricmp(mode.c_str(), "campaign") == 0) return "CAMPAIGN";
-  if (_stricmp(mode.c_str(), "firefight") == 0) return "FIREFIGHT";
-  if (_stricmp(mode.c_str(), "forge") == 0 || _stricmp(mode.c_str(), "sandbox") == 0) return "FORGE";
-  return "CUSTOM GAME";
-}
-
 } // namespace
 
 void PauseMenu::DrawLoading() {
@@ -4028,7 +4426,7 @@ void PauseMenu::DrawLoading() {
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
   const float w = io.DisplaySize.x;
   const float h = io.DisplaySize.y;
-  const float s = (std::max)(0.6f, h / 1080.0f);   // layout scale (1080p reference)
+  const float s = (std::max)(0.6f, h / 1080.0f); // layout scale (1080p reference)
 
   std::string mapName, scenario, description, mode;
   std::filesystem::path modImage, modThumb;
@@ -4048,22 +4446,22 @@ void PauseMenu::DrawLoading() {
     host = s_loadingHost;
     joiner = s_loadingJoiner;
   }
-  if (mapName.empty() && !scenario.empty()) mapName = Upper(DisplayName(scenario));
+  if (mapName.empty() && !scenario.empty())
+    mapName = Upper(DisplayName(scenario));
 
-  // ---- Background. The map picture is shown complete (native aspect, never cropped or stretched); a dim, soft copy
-  // fills the screen behind it so the letterbox never reads as a hard black bar. Reach only ships 1920x1080 loading
-  // art for campaign missions - map previews are 668x292, and stretching those full screen is the "zoomed in" look.
+  // ---- Atmosphere Backdrop (very subtle dimmed scene + Auntie Dot diamond lattice) ----
   const ImVec2 full0(0.0f, 0.0f), full1(w, h);
-  dl->AddRectFilled(full0, full1, IM_COL32(4, 7, 11, 255));
-  const UiTexture scene = modImage.empty() ? UiArt::LoadingBackground(scenario) : UiArt::ImageFile(modImage);
+  dl->AddRectFilled(full0, full1, IM_COL32(4, 7, 12, 255));
+  const UiTexture scene =
+      modImage.empty() ? UiArt::LoadingBackground(scenario) : UiArt::ImageFile(modImage);
   if (scene) {
-    UiArt::DrawCover(dl, scene, full0, full1, IM_COL32(92, 106, 128, 255));
-    dl->AddRectFilled(full0, full1, IM_COL32(5, 9, 14, 200));
+    UiArt::DrawCover(dl, scene, full0, full1, IM_COL32(70, 86, 108, 255));
+    dl->AddRectFilled(full0, full1, IM_COL32(4, 8, 14, 218));
   }
+  dl->AddRectFilledMultiColor(full0, ImVec2(w * 0.55f, h), IM_COL32(3, 6, 11, 210),
+                              IM_COL32(3, 6, 11, 0), IM_COL32(3, 6, 11, 0),
+                              IM_COL32(3, 6, 11, 210));
 
-  // Reach's loading-screen "Auntie Dot" diamond grid. It is the backdrop, so it is drawn before the map picture
-  // (Tyler: "the grid behind the photo of the map"): the lattice drifts slowly diagonally and a brighter wave travels
-  // along it, like the moving grid screen in the reference video.
   {
     const float cell = 138.0f * s;
     const float t = static_cast<float>(ImGui::GetTime());
@@ -4073,61 +4471,42 @@ void PauseMenu::DrawLoading() {
       const float cc = c + drift;
       const float d = std::abs(c - wave);
       const float lift = (std::max)(0.0f, 1.0f - d / (cell * 2.2f));
-      const ImU32 gridCol = IM_COL32(120, 180, 216, static_cast<int>(22.0f + 52.0f * lift));
+      const ImU32 gridCol =
+          IM_COL32(120, 180, 216, static_cast<int>(18.0f + 44.0f * lift));
       const float thick = (1.0f + 0.7f * lift) * s;
       dl->AddLine(ImVec2(cc, 0.0f), ImVec2(cc + h, h), gridCol, thick);
       dl->AddLine(ImVec2(cc, 0.0f), ImVec2(cc - h, h), gridCol, thick);
       if (lift > 0.05f) {
-        const ImU32 crest = IM_COL32(150, 205, 240, static_cast<int>(90.0f * lift));
-        dl->AddLine(ImVec2(cc + 1.0f * s, 0.0f), ImVec2(cc + h + 1.0f * s, h), crest, 0.8f * s);
-        dl->AddLine(ImVec2(cc + 1.0f * s, 0.0f), ImVec2(cc - h + 1.0f * s, h), crest, 0.8f * s);
+        const ImU32 crest =
+            IM_COL32(150, 205, 240, static_cast<int>(72.0f * lift));
+        dl->AddLine(ImVec2(cc + 1.0f * s, 0.0f), ImVec2(cc + h + 1.0f * s, h),
+                    crest, 0.8f * s);
+        dl->AddLine(ImVec2(cc + 1.0f * s, 0.0f), ImVec2(cc - h + 1.0f * s, h),
+                    crest, 0.8f * s);
       }
     }
   }
 
-  if (scene) {
-    const float aspect = scene.height > 0 ? static_cast<float>(scene.width) / static_cast<float>(scene.height)
-                                          : 16.0f / 9.0f;
-    float drawW = w * 0.84f;
-    float drawH = drawW / aspect;
-    const float maxH = h * 0.60f;
-    if (drawH > maxH) {
-      drawH = maxH;
-      drawW = drawH * aspect;
-    }
-    const ImVec2 c0((w - drawW) * 0.5f, h * 0.52f - drawH * 0.5f);
-    const ImVec2 c1(c0.x + drawW, c0.y + drawH);
-    dl->AddRect(ImVec2(c0.x - 1.0f, c0.y - 1.0f), ImVec2(c1.x + 1.0f, c1.y + 1.0f), IM_COL32(0, 0, 0, 160),
-                0.0f, 0, 2.0f);
-    dl->AddImage(scene.id, c0, c1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 255));
-    dl->AddRect(c0, c1, IM_COL32(150, 190, 220, 64), 0.0f, 0, 1.0f);
-    // Readability scrims: top, bottom, and a wash under the text block on the left.
-    dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w, h * 0.40f), IM_COL32(3, 6, 10, 245), IM_COL32(3, 6, 10, 245),
-                                IM_COL32(3, 6, 10, 0), IM_COL32(3, 6, 10, 0));
-    dl->AddRectFilledMultiColor(ImVec2(0, h * 0.60f), ImVec2(w, h), IM_COL32(3, 6, 10, 0), IM_COL32(3, 6, 10, 0),
-                                IM_COL32(3, 6, 10, 245), IM_COL32(3, 6, 10, 245));
-    dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w * 0.55f, h), IM_COL32(3, 6, 10, 170),
-                                IM_COL32(3, 6, 10, 0), IM_COL32(3, 6, 10, 0), IM_COL32(3, 6, 10, 170));
-  }
-
-  // Live loading progress: LoadScreen's own value, improved by the engine's progress float when it reports one.
+  // ---- Live Progress & Lobby Membership ----
   float progress = LoadScreen::Get().GetLoadProgress();
-  const HMODULE engineMod = GetModuleHandleW(L"haloreach.dll");
+  const HMODULE engineMod = noble::ReachModule();
   if (engineMod) {
-    float engineProg = *reinterpret_cast<const float *>(reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
+    float engineProg = *reinterpret_cast<const float *>(
+        reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
     if (engineProg >= 0.0f && engineProg <= 1.0f && engineProg > progress) {
       progress = engineProg;
       LoadScreen::Get().SetLoadProgress(progress);
     }
   }
-  progress = (std::max)(0.0f, (std::min)(progress, 1.0f));
+  progress = std::clamp(progress, 0.0f, 1.0f);
   const int progressPct = static_cast<int>(progress * 100.0f);
 
-  // Session state: who is here, how many players this launch waits for. The engine's membership count is the most
-  // direct answer while waiting for remote players; the transport count covers the earlier connection stage.
-  const size_t peers = (std::max)(NetworkTransport::Get().GetGamePeerCount(), LobbyPatches::GetRemotePlayerAddCount());
-  const size_t engineExpected = static_cast<size_t>((std::max)(0, BlamEngine::WaitingRemotePlayersExpected()));
-  const size_t engineJoined = static_cast<size_t>((std::max)(0, BlamEngine::WaitingRemotePlayersJoined()));
+  const size_t peers = (std::max)(NetworkTransport::Get().GetGamePeerCount(),
+                                  LobbyPatches::GetRemotePlayerAddCount());
+  const size_t engineExpected =
+      static_cast<size_t>((std::max)(0, BlamEngine::WaitingRemotePlayersExpected()));
+  const size_t engineJoined =
+      static_cast<size_t>((std::max)(0, BlamEngine::WaitingRemotePlayersJoined()));
   const size_t joined = 1 + (std::max)(peers, engineJoined);
   // The row count comes from live session membership too: a direct/LAN launch has no lobby roster (main.cpp
   // only knows the local name), so sizing from `players` alone drew 1 row while N were already in the session.
@@ -4145,12 +4524,15 @@ void PauseMenu::DrawLoading() {
     }
   }
   const size_t total = static_cast<size_t>(wanted);
-  const bool online = expectedPlayers > 1 || peers > 0 || joiner || engineExpected > 0;
-  const bool waitingForPlayers = expectedPlayers > static_cast<int>(joined) || engineExpected > engineJoined;
-  const bool waitingForHost = joiner && peers == 0 && progress < 0.97f && !waitingForPlayers;
+  const bool online =
+      expectedPlayers > 1 || peers > 0 || joiner || engineExpected > 0;
+  const bool waitingForPlayers =
+      expectedPlayers > static_cast<int>(joined) || engineExpected > engineJoined;
+  const bool waitingForHost =
+      joiner && peers == 0 && progress < 0.97f && !waitingForPlayers;
   const char *titleText = waitingForPlayers ? "WAITING FOR PLAYERS"
-                           : waitingForHost  ? "WAITING FOR HOST"
-                                             : "LOADING";
+                          : waitingForHost  ? "WAITING FOR HOST"
+                                            : "LOADING";
 
   const ImU32 white = IM_COL32(238, 243, 248, 255);
   const ImU32 muted = IM_COL32(158, 174, 188, 255);
@@ -4158,103 +4540,167 @@ void PauseMenu::DrawLoading() {
   const ImU32 good = IM_COL32(118, 214, 142, 255);
   ImFont *font = ImGui::GetFont();
   ImFont *titleFont = NobleStyle::TitleFont();
-  if (!titleFont) titleFont = font;
-  const float titlePx = 49.0f * s;
-  const float statusPx = 17.0f * s;
-  const float rowNamePx = 18.0f * s;
-  const float rowStatusPx = 13.0f * s;
-  const float margin = 84.0f * s;
+  ImFont *smallFont = NobleStyle::SmallFont();
+  if (!titleFont)
+    titleFont = font;
+  if (!smallFont)
+    smallFont = font;
 
-  // Mode label, top right, letter-spaced caps.
-  if (!mode.empty()) {
-    const std::string label = LoadingModeLabel(mode);
-    const float labelPx = 17.0f * s;
-    const float tracking = 4.5f * s;
-    const float labelW = TrackedTextWidth(titleFont, labelPx, label, tracking);
-    AddTrackedText(dl, titleFont, labelPx, ImVec2(w - margin - labelW, 56.0f * s),
-                   IM_COL32(228, 233, 239, 235), label, tracking);
-  }
+  // ---- Non-Overlapping Two-Column Tactical Layout ----
+  // Left column strictly owns status + progress + roster; right column strictly
+  // owns map preview art + briefing card; bottom corner logos stay clear below.
+  const float outerX = 64.0f * s;
+  const float topY = 54.0f * s;
+  const float availW = w - 2.0f * outerX;
+  const float colGap = 36.0f * s;
+  const float leftW = std::clamp(availW * 0.36f, 320.0f * s, 540.0f * s);
+  const float leftX = outerX;
+  const float rightX = leftX + leftW + colGap;
+  const float rightW = (std::max)(260.0f * s, (w - outerX) - rightX);
 
-  // Top-left block: title, status line, roster, chat hint (the reference screen's layout).
-  const float titleTop = 104.0f * s;
-  AddTrackedText(dl, titleFont, titlePx, ImVec2(margin, titleTop), white, titleText, 1.2f * s);
+  const float logoSize = 86.0f * s;
+  const float logoBottom = h - 38.0f * s;
+  const float contentBottom = logoBottom - logoSize - 18.0f * s;
+
+  // 1. Left Column: Title, Map/Status Line, Progress Bar, Framed Player Roster
+  float titlePx = 42.0f * s;
+  const float titleEstW = TrackedTextWidth(titleFont, titlePx, titleText, 1.2f * s);
+  if (titleEstW > leftW && titleEstW > 1.0f)
+    titlePx *= leftW / titleEstW;
+  AddTrackedText(dl, titleFont, titlePx, ImVec2(leftX, topY), white, titleText,
+                 1.2f * s);
 
   std::string status;
   char countBuf[96];
   if (waitingForPlayers) {
-    std::snprintf(countBuf, sizeof(countBuf), "%d OF %d IN", static_cast<int>(joined), static_cast<int>(total));
+    std::snprintf(countBuf, sizeof(countBuf), "%d OF %d IN",
+                  static_cast<int>(joined), static_cast<int>(total));
     status = mapName.empty() ? std::string(countBuf) : mapName + "  -  " + countBuf;
   } else if (waitingForHost) {
-    status = mapName.empty() ? std::string("FINDING HOST") : mapName + "  -  FINDING HOST";
+    status = mapName.empty() ? std::string("FINDING HOST")
+                             : mapName + "  -  FINDING HOST";
   } else if (progress > 0.0f) {
     std::snprintf(countBuf, sizeof(countBuf), "%d%%", progressPct);
-    status = mapName.empty() ? std::string(countBuf) : mapName + "  -  LOADING " + countBuf;
+    status = mapName.empty() ? std::string(countBuf)
+                             : mapName + "  -  LOADING " + countBuf;
   } else {
     status = mapName;
   }
-  const float statusTop = titleTop + titlePx + 12.0f * s;
+  const float statusTop = topY + titlePx + 10.0f * s;
+  const float statusPx = 16.5f * s;
   if (!status.empty()) {
-    AddTrackedText(dl, font, statusPx, ImVec2(margin, statusTop), muted, status, 2.0f * s);
+    dl->AddText(font, statusPx, ImVec2(leftX, statusTop), muted, status.c_str(),
+                nullptr, leftW);
   }
 
-  // Loading progress lives in the top-left block too (thin accent bar + percentage), under the status line. While the
-  // host is still waiting for players the load is finished, so the bar would only read a confusing 100%.
-  const float barW = (std::min)(0.22f * w, 420.0f * s);
-  const float barH = 3.0f * s;
-  const float barY = statusTop + statusPx + 22.0f * s;
+  const float barY = statusTop + 28.0f * s;
+  const float barH = 6.0f * s;
   if (!waitingForPlayers) {
-    const ImVec2 b0(margin, barY), b1(margin + barW, barY + barH);
-    dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 26));
-    if (progress > 0.001f) dl->AddRectFilled(b0, ImVec2(b0.x + barW * progress, b1.y), accent);
     char pctBuf[16];
     std::snprintf(pctBuf, sizeof(pctBuf), "%d%%", progressPct);
-    AddTrackedText(dl, font, 14.0f * s, ImVec2(b1.x + 10.0f * s, barY - 5.0f * s), accent, pctBuf, 1.5f * s);
+    const float pctW = smallFont->CalcTextSizeA(15.0f * s, FLT_MAX, 0.0f, pctBuf).x;
+    const float barRight = leftX + leftW - pctW - 12.0f * s;
+    NobleUi::DrawTacticalBar(dl, ImVec2(leftX, barY), ImVec2(barRight, barY + barH),
+                             progress, accent, s);
+    dl->AddText(smallFont, 15.0f * s, ImVec2(barRight + 10.0f * s, barY - 4.0f * s),
+                accent, pctBuf);
+  } else {
+    const float joinFrac = total > 0 ? std::clamp(static_cast<float>(joined) /
+                                                  static_cast<float>(total),
+                                              0.0f, 1.0f)
+                                     : 0.0f;
+    NobleUi::DrawTacticalBar(dl, ImVec2(leftX, barY), ImVec2(leftX + leftW, barY + barH),
+                             joinFrac, good, s);
   }
 
-  // Player rows, host first; slots that have not joined yet are dimmed placeholders.
+  // Framed Player Roster strictly constrained inside [leftX, leftX + leftW]
+  const float rosterCardTop = barY + 24.0f * s;
+  const float chatHintReserve = online ? 26.0f * s : 0.0f;
+  const float rosterCardBottom =
+      (std::max)(rosterCardTop + 110.0f * s, contentBottom - chatHintReserve);
+  const ImVec2 rc0(leftX, rosterCardTop);
+  const ImVec2 rc1(leftX + leftW, rosterCardBottom);
+  dl->AddRectFilled(rc0, rc1, IM_COL32(8, 14, 23, 212), 4.0f * s);
+  NobleUi::DrawTacticalFrame(dl, rc0, rc1, s, false, false, false, false);
+
+  const float rHdrH = 32.0f * s;
+  dl->AddRectFilled(rc0, ImVec2(rc1.x, rc0.y + rHdrH),
+                    IM_COL32(14, 24, 38, 235), 4.0f * s,
+                    ImDrawFlags_RoundCornersTop);
+  dl->AddText(titleFont, 15.0f * s, ImVec2(rc0.x + 12.0f * s, rc0.y + 8.0f * s),
+              accent, "PLAYERS");
+  {
+    char pCount[48];
+    std::snprintf(pCount, sizeof(pCount), "%zu / %zu ACTIVE",
+                  (std::min)(joined, total), total);
+    const float pcw =
+        smallFont->CalcTextSizeA(13.0f * s, FLT_MAX, 0.0f, pCount).x;
+    dl->AddText(smallFont, 13.0f * s,
+                ImVec2(rc1.x - 12.0f * s - pcw, rc0.y + 9.0f * s), muted,
+                pCount);
+  }
+  dl->AddLine(ImVec2(rc0.x, rc0.y + rHdrH), ImVec2(rc1.x, rc0.y + rHdrH),
+              IM_COL32(143, 216, 255, 55), 1.0f);
+
   const SettingsData &settings = Settings::Get().Snapshot();
-  const std::string localName = settings.playerName.empty() ? std::string("NobleSix") : settings.playerName;
-  // Roster grid. It follows the lobby size: one column for a normal lobby, two for 16 players, and a compact
-  // multi-column grid for 32 / 64 / 128-player lobbies so every player still fits above the corner logos.
-  const float gridTop = barY + 38.0f * s;
-  const float gridBottom = h - 230.0f * s;
-  const bool compactGrid = wanted > 18;
-  const bool denseGrid = wanted > 64;
-  const float cellH = (denseGrid ? 24.0f : compactGrid ? 26.0f : 40.0f) * s;
-  const float cellGap = (denseGrid ? 3.0f : compactGrid ? 4.0f : 7.0f) * s;
-  const float namePx = (denseGrid ? 12.0f : compactGrid ? 13.5f : rowNamePx / s) * s;
-  const float cellStatusPx = (denseGrid ? 9.5f : compactGrid ? 10.5f : rowStatusPx / s) * s;
-  const float rowWMax = (std::min)(0.30f * w, 560.0f * s);
-  const float colGap = 12.0f * s;
-  const float availGridW = w - 2.0f * margin;
-  int rowsPerCol = (std::max)(1, static_cast<int>((gridBottom - gridTop) / (cellH + cellGap)));
-  int cols = (std::max)(1, (wanted + rowsPerCol - 1) / rowsPerCol);
-  cols = (std::min)(cols, 6);
-  rowsPerCol = (wanted + cols - 1) / cols;
-  const int capacity = cols * rowsPerCol;
-  std::string moreText;
+  const std::string localName =
+      settings.playerName.empty() ? std::string("NobleSix") : settings.playerName;
+  const float rPad = 10.0f * s;
+  const float gridTop = rc0.y + rHdrH + rPad;
+  const float gridBottom = rc1.y - rPad;
+  const float gridAvailH = (std::max)(40.0f * s, gridBottom - gridTop);
+  const float gridAvailW = (std::max)(120.0f * s, leftW - 2.0f * rPad);
+
+  const int rosterCols = wanted > 64 ? 4 : wanted > 32 ? 3 : wanted > 12 ? 2 : 1;
+  const float cellGap = (wanted > 32 ? 4.0f : 6.0f) * s;
+  const float colGapInner = 8.0f * s;
+  const float colW =
+      (gridAvailW - colGapInner * static_cast<float>(rosterCols - 1)) /
+      static_cast<float>(rosterCols);
+  const float maxCellH = (wanted > 32 ? 28.0f : wanted > 12 ? 34.0f : 42.0f) * s;
+  int rowsPerColNeeded = (wanted + rosterCols - 1) / rosterCols;
+  float cellH =
+      (gridAvailH - cellGap * static_cast<float>((std::max)(0, rowsPerColNeeded - 1))) /
+      static_cast<float>((std::max)(1, rowsPerColNeeded));
+  cellH = std::clamp(cellH, 22.0f * s, maxCellH);
+  int maxRowsPerCol = (std::max)(
+      1, static_cast<int>((gridAvailH + cellGap) / (cellH + cellGap)));
+  rowsPerColNeeded = (std::min)(rowsPerColNeeded, maxRowsPerCol);
+  const int capacity = rosterCols * maxRowsPerCol;
   int visiblePlayers = wanted;
+  std::string moreText;
   if (capacity < wanted) {
-    visiblePlayers = capacity - 1;   // the last cell becomes "+N MORE"
+    visiblePlayers = capacity - 1;
     moreText = "+" + std::to_string(wanted - visiblePlayers) + " MORE";
   }
-  const float colW = (std::min)(rowWMax, (availGridW - colGap * (cols - 1)) / cols);
+
+  const bool compactRow = cellH < 30.0f * s || rosterCols >= 2;
+  const float namePx = (cellH < 26.0f * s ? 12.0f : compactRow ? 14.0f : 16.5f) * s;
+  const float cellStatusPx = (cellH < 26.0f * s ? 10.5f : compactRow ? 11.5f : 13.0f) * s;
+
+  dl->PushClipRect(ImVec2(rc0.x + rPad * 0.5f, gridTop),
+                   ImVec2(rc1.x - rPad * 0.5f, gridBottom), true);
   for (int i = 0; i < visiblePlayers + (moreText.empty() ? 0 : 1); ++i) {
-    const int col = i / rowsPerCol;
-    const int rowInCol = i % rowsPerCol;
-    const ImVec2 r0(margin + col * (colW + colGap), gridTop + rowInCol * (cellH + cellGap));
+    const int col = i % rosterCols;
+    const int rowInCol = i / rosterCols;
+    const ImVec2 r0(rc0.x + rPad + col * (colW + colGapInner),
+                    gridTop + rowInCol * (cellH + cellGap));
     const ImVec2 r1(r0.x + colW, r0.y + cellH);
     if (!moreText.empty() && i == visiblePlayers) {
-      dl->AddRectFilled(r0, r1, IM_COL32(8, 14, 20, 190), 4.0f * s);
-      const float textPx = cellStatusPx + 1.0f * s;
-      const float textW = TrackedTextWidth(font, textPx, moreText, 1.5f * s);
-      AddTrackedText(dl, font, textPx, ImVec2(r0.x + (colW - textW) * 0.5f, r0.y + (cellH - textPx) * 0.5f - 1.0f * s),
-                     IM_COL32(160, 176, 190, 230), moreText, 1.5f * s);
+      dl->AddRectFilled(r0, r1, IM_COL32(12, 20, 30, 210), 3.0f * s);
+      const float mw =
+          smallFont->CalcTextSizeA(cellStatusPx, FLT_MAX, 0.0f, moreText.c_str()).x;
+      dl->AddText(smallFont, cellStatusPx,
+                  ImVec2(r0.x + (colW - mw) * 0.5f,
+                         r0.y + (cellH - cellStatusPx) * 0.5f),
+                  muted, moreText.c_str());
       continue;
     }
-    const bool isLocal = (i == 0 && players.empty()) ||
-                         (i < static_cast<int>(players.size()) &&
-                          players[static_cast<size_t>(i)] == localName);
+
+    const bool isLocal =
+        (i == 0 && players.empty()) ||
+        (i < static_cast<int>(players.size()) &&
+         players[static_cast<size_t>(i)] == localName);
     std::string name;
     if (i < static_cast<int>(players.size())) {
       name = players[static_cast<size_t>(i)];
@@ -4263,8 +4709,9 @@ void PauseMenu::DrawLoading() {
     } else {
       name = "PLAYER " + std::to_string(i + 1);
     }
-    if (isLocal) name += " (YOU)";
-    if (compactGrid && name.size() > 22) name = name.substr(0, 20) + "...";
+    if (isLocal)
+      name += " (YOU)";
+
     const bool present = isLocal || static_cast<size_t>(i) < joined;
     std::string rowStatus;
     ImU32 rowStatusCol = muted;
@@ -4275,50 +4722,150 @@ void PauseMenu::DrawLoading() {
       rowStatus = "READY";
       rowStatusCol = accent;
     } else {
-      rowStatus = compactGrid ? "WAIT" : "WAITING...";
-      rowStatusCol = IM_COL32(120, 132, 145, 255);
+      rowStatus = compactRow ? "WAIT" : "WAITING...";
+      rowStatusCol = IM_COL32(120, 134, 148, 255);
     }
-    dl->AddRectFilled(r0, r1, present ? IM_COL32(10, 16, 22, 224) : IM_COL32(8, 12, 18, 160), 4.0f * s);
-    dl->AddRectFilled(ImVec2(r0.x, r0.y + 6.0f * s), ImVec2(r0.x + 3.0f * s, r1.y - 6.0f * s),
-                      present ? accent : IM_COL32(90, 104, 118, 180), 1.5f * s);
-    dl->AddRect(r0, r1, IM_COL32(255, 255, 255, present ? 30 : 16), 4.0f * s, 0, 1.0f);
-    AddTrackedText(dl, font, namePx,
-                   ImVec2(r0.x + 12.0f * s, r0.y + (cellH - namePx) * 0.5f - (compactGrid ? 1.0f : 2.0f) * s),
-                   present ? white : IM_COL32(150, 162, 174, 235), name, (compactGrid ? 0.8f : 1.2f) * s);
-    const float statusW = TrackedTextWidth(font, cellStatusPx, rowStatus, 1.5f * s);
-    AddTrackedText(dl, font, cellStatusPx,
-                   ImVec2(r1.x - 10.0f * s - statusW, r0.y + (cellH - cellStatusPx) * 0.5f - 1.0f * s),
-                   rowStatusCol, rowStatus, 1.5f * s);
+
+    dl->AddRectFilled(r0, r1,
+                      present ? IM_COL32(14, 22, 34, 232)
+                              : IM_COL32(10, 16, 24, 175),
+                      3.0f * s);
+    dl->AddRectFilled(ImVec2(r0.x, r0.y + 4.0f * s),
+                      ImVec2(r0.x + 3.0f * s, r1.y - 4.0f * s),
+                      present ? (isLocal && host ? good : accent)
+                              : IM_COL32(90, 104, 118, 170),
+                      1.5f * s);
+    dl->AddRect(r0, r1, IM_COL32(255, 255, 255, present ? 32 : 16), 3.0f * s);
+
+    const float statusW =
+        smallFont->CalcTextSizeA(cellStatusPx, FLT_MAX, 0.0f, rowStatus.c_str()).x;
+    const float statusX = r1.x - 8.0f * s - statusW;
+    dl->AddText(smallFont, cellStatusPx,
+                ImVec2(statusX, r0.y + (cellH - cellStatusPx) * 0.5f),
+                rowStatusCol, rowStatus.c_str());
+
+    const ImVec2 nameClipMax(std::max(r0.x + 20.0f * s, statusX - 8.0f * s),
+                             r1.y);
+    dl->PushClipRect(r0, nameClipMax, true);
+    dl->AddText(font, namePx,
+                ImVec2(r0.x + 10.0f * s, r0.y + (cellH - namePx) * 0.5f),
+                present ? white : IM_COL32(150, 162, 174, 235), name.c_str());
+    dl->PopClipRect();
   }
-  const float gridBottomY = gridTop + rowsPerCol * (cellH + cellGap);
+  dl->PopClipRect();
+
   if (online) {
-    AddTrackedText(dl, font, 13.0f * s, ImVec2(margin, gridBottomY + 6.0f * s),
-                   IM_COL32(140, 154, 168, 230), "PRESS T FOR CHAT", 2.5f * s);
+    AddTrackedText(dl, smallFont, 13.0f * s,
+                   ImVec2(leftX, rosterCardBottom + 8.0f * s),
+                   IM_COL32(145, 162, 180, 235), "PRESS T FOR CHAT", 2.0f * s);
   }
 
-  // The mod map's own description, under the roster block.
+  // 2. Right Column: Mode Pill, Aspect-Preserved Map Artwork Showcase, Mod Briefing
+  {
+    const std::string modeLabel =
+        mode.empty() ? std::string("HALO: REACH") : LoadingModeLabel(mode);
+    const float modePx = 15.5f * s;
+    const float tracking = 3.5f * s;
+    const float labelW =
+        TrackedTextWidth(titleFont, modePx, modeLabel, tracking);
+    const float badgeW = labelW + 22.0f * s;
+    const ImVec2 mb0(rightX + rightW - badgeW, topY + 2.0f * s);
+    const ImVec2 mb1(rightX + rightW, topY + 32.0f * s);
+    dl->AddRectFilled(mb0, mb1, IM_COL32(12, 22, 36, 220), 3.0f * s);
+    dl->AddRect(mb0, mb1, IM_COL32(143, 216, 255, 80), 3.0f * s);
+    AddTrackedText(dl, titleFont, modePx, ImVec2(mb0.x + 12.0f * s, mb0.y + 7.0f * s),
+                   white, modeLabel, tracking);
+  }
+
+  const float descCardH = description.empty() ? 0.0f : 96.0f * s;
+  const float captionH = 44.0f * s;
+  const float artBoxTop = topY + 46.0f * s;
+  const float artBoxBottom = contentBottom -
+                             (descCardH > 0.0f ? descCardH + 12.0f * s : 0.0f);
+  const float maxArtW = rightW;
+  const float maxArtH = (std::max)(140.0f * s, artBoxBottom - artBoxTop - captionH);
+
+  float drawW = maxArtW;
+  float drawH = maxArtH;
+  if (scene) {
+    const float aspect = scene.height > 0
+                             ? static_cast<float>(scene.width) /
+                                   static_cast<float>(scene.height)
+                             : 16.0f / 9.0f;
+    drawW = maxArtW;
+    drawH = drawW / aspect;
+    if (drawH > maxArtH) {
+      drawH = maxArtH;
+      drawW = drawH * aspect;
+    }
+  }
+  const float cardTotalH = drawH + captionH;
+  const ImVec2 art0(rightX + (rightW - drawW) * 0.5f,
+                    artBoxTop + (artBoxBottom - artBoxTop - cardTotalH) * 0.5f);
+  const ImVec2 art1(art0.x + drawW, art0.y + drawH);
+  const ImVec2 frame1(art1.x, art1.y + captionH);
+
+  dl->AddRectFilled(art0, frame1, IM_COL32(8, 14, 22, 232), 4.0f * s);
+  if (scene) {
+    dl->AddImage(scene.id, art0, art1, ImVec2(0, 0), ImVec2(1, 1),
+                 IM_COL32(255, 255, 255, 255));
+  } else {
+    const char *noArt = mapName.empty() ? "HALO: REACH" : mapName.c_str();
+    const float nw =
+        titleFont->CalcTextSizeA(26.0f * s, FLT_MAX, 0.0f, noArt).x;
+    dl->AddText(titleFont, 26.0f * s,
+                ImVec2(art0.x + (drawW - nw) * 0.5f, art0.y + drawH * 0.5f - 13.0f * s),
+                IM_COL32(143, 216, 255, 110), noArt);
+  }
+  // Caption footer beneath map image (zero overlap over artwork pixels)
+  dl->AddRectFilled(ImVec2(art0.x, art1.y), frame1, IM_COL32(11, 19, 31, 245));
+  dl->AddLine(ImVec2(art0.x, art1.y), ImVec2(art1.x, art1.y),
+              IM_COL32(143, 216, 255, 70), 1.0f);
+  if (!mapName.empty()) {
+    dl->AddText(titleFont, 19.0f * s, ImVec2(art0.x + 14.0f * s, art1.y + 12.0f * s),
+                white, mapName.c_str(), nullptr, (std::max)(80.0f * s, drawW * 0.68f));
+  }
+  if (!scenario.empty()) {
+    const std::string scenTag = Upper(scenario);
+    const float stw =
+        smallFont->CalcTextSizeA(12.5f * s, FLT_MAX, 0.0f, scenTag.c_str()).x;
+    dl->AddText(smallFont, 12.5f * s,
+                ImVec2(frame1.x - 14.0f * s - stw, art1.y + 16.0f * s),
+                muted, scenTag.c_str());
+  }
+  NobleUi::DrawTacticalFrame(dl, art0, frame1, s, false, false, false, false);
+
   if (!description.empty()) {
-    const float wrap = (std::max)(rowWMax * 1.4f, w * 0.30f);
-    const ImVec2 at(margin, gridBottomY + (online ? 34.0f * s : 8.0f * s));
-    dl->AddText(font, 15.0f * s, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 190), description.c_str(),
-                nullptr, wrap);
-    dl->AddText(font, 15.0f * s, at, IM_COL32(200, 212, 224, 225), description.c_str(), nullptr, wrap);
+    const ImVec2 d0(rightX, contentBottom - descCardH);
+    const ImVec2 d1(rightX + rightW, contentBottom);
+    dl->AddRectFilled(d0, d1, IM_COL32(9, 15, 24, 216), 3.0f * s);
+    dl->AddRectFilled(d0, ImVec2(d0.x + 3.0f * s, d1.y), accent);
+    dl->AddRect(d0, d1, IM_COL32(143, 216, 255, 50), 3.0f * s);
+    dl->AddText(titleFont, 13.0f * s, ImVec2(d0.x + 12.0f * s, d0.y + 8.0f * s),
+                accent, "MAP BRIEFING");
+    dl->PushClipRect(ImVec2(d0.x + 10.0f * s, d0.y + 24.0f * s),
+                     ImVec2(d1.x - 10.0f * s, d1.y - 6.0f * s), true);
+    dl->AddText(smallFont, 14.5f * s,
+                ImVec2(d0.x + 12.0f * s, d0.y + 26.0f * s),
+                IM_COL32(204, 216, 228, 240), description.c_str(), nullptr,
+                rightW - 24.0f * s);
+    dl->PopClipRect();
   }
 
-  // Reach's own loading-screen corner marks: Noble Team emblem bottom-left, UNSC bottom-right.
+  // ---- Corner Emblems (strictly below contentBottom, never overlapping) ----
   const UiTexture nobleLogo = UiArt::LoadingLogoNoble();
   const UiTexture unscLogo = UiArt::LoadingLogoUnsc();
-  const float logoSize = 112.0f * s;
-  const float logoBottom = h - 48.0f * s;
-  const float logoLeft = 72.0f * s;
-  const float logoRight = w - 72.0f * s - logoSize;
+  const float logoLeft = outerX;
+  const float logoRight = w - outerX - logoSize;
   if (nobleLogo) {
-    dl->AddImage(nobleLogo.id, ImVec2(logoLeft, logoBottom - logoSize), ImVec2(logoLeft + logoSize, logoBottom),
-                 ImVec2(0, 0), ImVec2(1, 1), IM_COL32(172, 202, 230, 200));
+    dl->AddImage(nobleLogo.id, ImVec2(logoLeft, logoBottom - logoSize),
+                 ImVec2(logoLeft + logoSize, logoBottom), ImVec2(0, 0),
+                 ImVec2(1, 1), IM_COL32(172, 202, 230, 195));
   }
   if (unscLogo) {
-    dl->AddImage(unscLogo.id, ImVec2(logoRight, logoBottom - logoSize), ImVec2(logoRight + logoSize, logoBottom),
-                 ImVec2(0, 0), ImVec2(1, 1), IM_COL32(150, 186, 220, 190));
+    dl->AddImage(unscLogo.id, ImVec2(logoRight, logoBottom - logoSize),
+                 ImVec2(logoRight + logoSize, logoBottom), ImVec2(0, 0),
+                 ImVec2(1, 1), IM_COL32(150, 186, 220, 185));
   }
 }
 
@@ -4327,13 +4874,16 @@ void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading,
   if (swapChain)
     s_swapChain.store(swapChain);
   s_lastEngineFrame.store(GetTickCount64());
-  std::lock_guard<std::mutex> lock(s_renderMutex);
+  std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
   RenderImpl(swapChain, loading, false, extraOverlay);
   if (s_scoreboardShotRequest.exchange(false) && swapChain)
     FrameCapture::SaveNow(swapChain, 888888);
 }
 
 bool PauseMenu::HoldFrame() {
+  // The engine may stop pumping frames at the exact moment the host sends the results: handle the
+  // packet here so a guest always gets its after-action report and never argues with a dead session.
+  PollHostMatchState();
   if (!s_gameOver.load())
     return false;
   const ULONGLONG now = GetTickCount64();
@@ -4354,7 +4904,7 @@ bool PauseMenu::HoldFrame() {
   static unsigned long long s_holdFrames = 0;
   ++s_holdFrames;
   {
-    std::lock_guard<std::mutex> lock(s_renderMutex);
+    std::lock_guard<std::recursive_mutex> lock(s_renderMutex);
     RenderImpl(swapChain, false, true, {});
     // Test runs: one screenshot of the held panel, and -quit-after keeps
     // working (it is normally checked from slot 1, which no longer runs).
@@ -4370,6 +4920,9 @@ bool PauseMenu::HoldFrame() {
 
 void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
                            const std::function<void()> &extraOverlay) {
+  const bool waitingForPlayersScreen = LoadingWaitingForPlayers();
+  s_isLoadingActive.store(loading || waitingForPlayersScreen);
+
   const bool gameOver = s_gameOver.load();
   // -postgame-test: force the clean GAME OVER panel so its composition over the
   // engine's post-game UI can be captured without playing a match to its score
@@ -4426,11 +4979,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   // frames but the session is dead. Show a panel instead of freezing in the
   // mission.
   static bool s_connectionLost = false;
-  static std::atomic<bool> s_guestShouldReturnLobby{false};
-  static std::atomic<bool> s_guestShouldDisband{false};
-  static bool s_callbacksRegistered = false;
-  if (!s_callbacksRegistered) {
-    s_callbacksRegistered = true;
+  if (!s_lobbyCallbacksRegistered.exchange(true)) {
     NetworkTransport::Get().SetLobbyReturnCallback([]() {
       NOBLE_INFO("PauseMenu: received host_return_to_lobby");
       s_guestShouldReturnLobby.store(true);
@@ -4445,38 +4994,9 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   const bool guest =
       NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
   if (guest) {
-    if (NetworkTransport::Get().TakeMatchOverRequest() && !s_gameOver.load()) {
-      // The relay thread only flags it now: career/UI work happens here, on the render thread,
-      // after the match has stopped touching the session.
-      NOBLE_INFO("PauseMenu: host match_over received; showing the post-game panel");
-      const std::string matchOverJson = NetworkTransport::Get().TakeMatchOverJson();
-      if (!matchOverJson.empty())
-        Career::OnMatchOverJson(matchOverJson);
-      else
-        Career::EnsureMatchSaved("match_over");
-      ShowGameOver();
-    }
-    if (s_guestShouldReturnLobby.exchange(false)) {
-      NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to "
-                 "pre-game lobby");
-      Career::EnsureMatchSaved("host_returned_to_lobby");
-      SetHostBackInLobby(1);
-      if (!s_gameOver.load()) {
-        std::wstring returnArgs = LobbyReturnArgs(false);
-        RelaunchAndClose(hwnd, returnArgs, "host returned to pre-game lobby");
-        return;
-      }
-    }
-    if (s_guestShouldDisband.exchange(false)) {
-      NOBLE_INFO("PauseMenu: host disbanded lobby / quit game, returning guest "
-                 "to main menu");
-      Career::EnsureMatchSaved("host_disbanded_lobby");
-      SetHostBackInLobby(2);
-      if (!s_gameOver.load()) {
-        RelaunchAndClose(hwnd, L"-main-menu", "host disbanded lobby");
-        return;
-      }
-    }
+    PollHostMatchState();
+    if (s_guestReturnedToLobby.exchange(false))
+      return;
   }
 
   const double hostSilence =
@@ -4527,7 +5047,6 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   const bool isTheater = noble::BlamEngine::IsSavedFilmPlayback();
   // The engine's loading screen is gone before an online co-op host has all its players: keep drawing our screen as
   // WAITING FOR PLAYERS until the game session starts (otherwise this is a black frame with the FPS counter).
-  const bool waitingForPlayersScreen = LoadingWaitingForPlayers();
   if (!(open || gameOver || loading || waitingForPlayersScreen || showFps || scoreboardHeld ||
         connectionLost || extraOverlay || SocialOverlay::WantsFrame() ||
         isTheater) ||
@@ -4542,10 +5061,6 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   ID3D11DeviceContext *context = nullptr;
   device->GetImmediateContext(&context);
 
-  static IDXGISwapChain *s_cachedSwapChain = nullptr;
-  static ID3D11Texture2D *s_cachedBackBuffer = nullptr;
-  static ID3D11RenderTargetView *s_cachedRtv = nullptr;
-
   ID3D11Texture2D *backBuffer = nullptr;
   if (FAILED(swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D),
                                   reinterpret_cast<void **>(&backBuffer))) ||
@@ -4556,27 +5071,38 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     return;
   }
 
-  if (s_cachedSwapChain != swapChain || s_cachedBackBuffer != backBuffer ||
-      !s_cachedRtv) {
-    if (s_cachedRtv) {
-      s_cachedRtv->Release();
-      s_cachedRtv = nullptr;
+  D3D11_TEXTURE2D_DESC bbDesc{};
+  backBuffer->GetDesc(&bbDesc);
+
+  ID3D11RenderTargetView *rtv = nullptr;
+  {
+    std::lock_guard<std::mutex> rtvLock(s_rtvMutex);
+    if (s_cachedSwapChain != swapChain || s_cachedBackBuffer != backBuffer ||
+        !s_cachedRtv || s_cachedRtvWidth != bbDesc.Width ||
+        s_cachedRtvHeight != bbDesc.Height ||
+        s_cachedRtvFormat != bbDesc.Format) {
+      if (s_cachedRtv) {
+        s_cachedRtv->Release();
+        s_cachedRtv = nullptr;
+      }
+      if (s_cachedBackBuffer) {
+        s_cachedBackBuffer->Release();
+        s_cachedBackBuffer = nullptr;
+      }
+      s_cachedSwapChain = swapChain;
+      s_cachedBackBuffer = backBuffer;
+      s_cachedBackBuffer->AddRef();
+      s_cachedRtvWidth = bbDesc.Width;
+      s_cachedRtvHeight = bbDesc.Height;
+      s_cachedRtvFormat = bbDesc.Format;
+      device->CreateRenderTargetView(backBuffer, nullptr, &s_cachedRtv);
     }
-    if (s_cachedBackBuffer) {
-      s_cachedBackBuffer->Release();
-      s_cachedBackBuffer = nullptr;
-    }
-    s_cachedSwapChain = swapChain;
-    s_cachedBackBuffer = backBuffer;
-    s_cachedBackBuffer->AddRef();
-    device->CreateRenderTargetView(backBuffer, nullptr, &s_cachedRtv);
+    rtv = s_cachedRtv;
+    if (rtv)
+      rtv->AddRef();
   }
-  ID3D11RenderTargetView *rtv = s_cachedRtv;
 
   if (context && rtv) {
-    D3D11_TEXTURE2D_DESC bbDesc{};
-    backBuffer->GetDesc(&bbDesc);
-
     // Feed ImGui ourselves on this thread (the Win32 backend's message handler
     // runs on the window thread and its event queue is not thread safe).
     ImGuiIO &io = ImGui::GetIO();
@@ -4600,10 +5126,12 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     io.DeltaTime = dt;
 
     const bool pointerUiActive =
-        open || gameOver || boardPointer || extraOverlay != nullptr;
+        open || gameOver || boardPointer || connectionLost ||
+        extraOverlay != nullptr;
     const bool gameOverJustReset = s_resetGameOverImGui.exchange(false);
     if (gameOverJustReset) {
       Window::TakeLeftClicks();
+      (void)Window::TakeWheelSteps();
       Window::FlushInputEvents();
       UiPad::ResetAfterMatch();
       io.ClearInputKeys();
@@ -4617,12 +5145,19 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     GetClientRect(hwnd, &client);
     POINT cursor{};
     static bool s_boardWasPointerFrame = false;
+    const bool focused = Window::IsForeground(hwnd);
     if (UiPad::IsVirtualCursorControllingMouse()) {
       s_boardWasPointerFrame = boardPointer;
-    } else if ((pointerUiActive || isTheater) &&
-               Window::IsForeground(hwnd) && GetCursorPos(&cursor) &&
-               ScreenToClient(hwnd, &cursor) && client.right > 0 &&
-               client.bottom > 0) {
+      if ((pointerUiActive || isTheater) && focused) {
+        const float wheel = Window::TakeWheelSteps();
+        if (wheel != 0.0f)
+          io.AddMouseWheelEvent(0.0f, wheel);
+      } else if (loading || waitingForPlayersScreen) {
+        (void)Window::TakeWheelSteps();
+      }
+    } else if ((pointerUiActive || isTheater) && focused &&
+               GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) &&
+               client.right > 0 && client.bottom > 0) {
       // Window may be resized while the back buffer stays the same size: scale
       // to back-buffer pixels.
       const float sx = io.DisplaySize.x / static_cast<float>(client.right);
@@ -4654,10 +5189,19 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       } else {
         io.AddMouseButtonEvent(0, down);
       }
+      const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+      io.AddMouseButtonEvent(1, rDown);
+      const float wheel = Window::TakeWheelSteps();
+      if (wheel != 0.0f)
+        io.AddMouseWheelEvent(0.0f, wheel);
     } else {
       s_boardWasPointerFrame = false;
       io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
       io.AddMouseButtonEvent(0, false);
+      io.AddMouseButtonEvent(1, false);
+      if (pointerUiActive || isTheater || loading || waitingForPlayersScreen) {
+        (void)Window::TakeWheelSteps();
+      }
     }
     // Keyboard/WM_CHAR events are already forwarded to ImGui by
     // UIManager::HandleWndProc -> ImGui_ImplWin32_WndProcHandler. Plain ImGui
@@ -4669,6 +5213,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     io.FontGlobalScale = NobleUi::Scale();
     ImGui_ImplDX11_NewFrame();
     ImGui::NewFrame();
+    InputPrompts::Update();
     if (gameOverJustReset)
       ImGui::SetWindowFocus(nullptr);
     if (SocialOverlay::IsTyping())
@@ -4730,9 +5275,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
         ImGui::PopStyleColor(6);
         ImGui::PopStyleVar(3);
       }
-      if (connectionLost && DrawConnectionLostPanel(hwnd))
-        return;
-      if (scoreboardHeld && !connectionLost) {
+      bool relaunched = false;
+      if (connectionLost)
+        relaunched = DrawConnectionLostPanel(hwnd);
+      if (scoreboardHeld && !connectionLost && !relaunched) {
         DrawScoreboardPanel();
         // -scoreboard-demo: one screenshot about 30 s in, so the match is on
         // screen behind the panel, not a loading frame.
@@ -4777,6 +5323,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       oldDsv->Release();
   }
 
+  if (rtv)
+    rtv->Release();
   if (backBuffer)
     backBuffer->Release();
   if (context)

@@ -32,7 +32,7 @@ std::wstring Widen(const std::string& narrow) {
 std::string ResolveMasterUrl() {
     std::string url = Settings::Get().Snapshot().masterServerUrl;
     if (url.empty()) {
-        url = std::string(kMasterDefault);
+        url = MasterDefaultUrl();
     }
     return url;
 }

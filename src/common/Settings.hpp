@@ -124,7 +124,7 @@ struct SettingsData {
     std::string lastPlayedMod;          // mod folder, empty when the game was vanilla
     std::string playerName = "NobleSix";
     std::string serviceTag = "NOBL";  // Reach service tag: 1-4 letters/digits, upper case (profile +0x1AC)
-    std::string masterServerUrl = std::string(kMasterDefault); // empty = LAN only
+    std::string masterServerUrl = MasterDefaultUrl(); // empty = LAN only
     std::vector<std::string> favorites;
 
     // Account / Auth
@@ -144,7 +144,7 @@ public:
     bool Save();
 
     SettingsData Snapshot() const;
-    void Update(const SettingsData& data);   // replace and save
+    bool Update(const SettingsData& data);   // replace and save; false when the file could not be written
     // The saved UI size (SettingsData::uiScale), cheap enough to read every frame: no lock, no copy of the settings.
     static float UiScale();
     // FRAME-RATE LIMIT default: the primary display's refresh rate, rounded down to the nearest offered limit

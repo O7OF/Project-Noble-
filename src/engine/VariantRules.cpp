@@ -1,6 +1,7 @@
 #include "engine/VariantRules.hpp"
 
 #include "common/Logger.hpp"
+#include "common/EngineModule.hpp"
 #include "vfs/VFS.hpp"
 
 #include <nlohmann/json.hpp>
@@ -203,7 +204,7 @@ void Apply(const Preset& preset, uint8_t* decoded) {
 }
 
 bool Decode(const std::filesystem::path& file, std::vector<uint8_t>& decoded) {
-    const HMODULE module = GetModuleHandleW(L"haloreach.dll");
+    const HMODULE module = noble::ReachModule();
     if (!module) return false;
     std::ifstream in(file, std::ios::binary);
     if (!in) return false;

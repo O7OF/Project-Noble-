@@ -2,6 +2,7 @@
 #include "ElitePack.hpp"
 #include "SharedTagCache.hpp"
 #include "common/Logger.hpp"
+#include "common/EngineModule.hpp"
 #include "common/ArmoryVisor.hpp"
 #include "network/NetworkTransport.hpp"
 #include "ui/FrontEndMenu.hpp"
@@ -857,7 +858,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                                         const float accentRgb[3],
                                         const float undersuitRgb[3],
                                         const float visorRgb[3]) {
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
     int matchedVisorMaterials = 0;
@@ -974,7 +975,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
 // screens set it as a side effect of drawing an emblem (haloreach+0x504314); Noble's menu draws its own, so it stayed
 // 0 = "Seventh Column" (the "7" on the Armory Spartan). It is set here as well.
 static bool ApplyLocalEmblemSEH(const uint8_t want[8]) {
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return false;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
     __try {
@@ -997,7 +998,7 @@ static bool ApplyLocalEmblemSEH(const uint8_t want[8]) {
 // so the local player(s) get it directly too: every player in the menu, only the one driving `onlyUnit` in a match.
 static int ApplyPlayerEmblemSEH(const uint8_t want[8], uint32_t onlyUnit) {
     int written = 0;
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return 0;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
     __try {
@@ -1031,7 +1032,7 @@ static void PatchEmblemCallbackCheckOnce() {
     if (s_done) return;
     s_done = true;
     if (!std::wcsstr(GetCommandLineW(), L"-emblem-patch")) return;
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) { s_done = false; return; }
     uint8_t* p = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(hReach) + 0x261C20);
     if (p[0] != 0x0F || p[1] != 0x85) { NOBLE_WARN("ReachArmory: emblem patch skipped (bytes {:02X} {:02X})", p[0], p[1]); return; }
@@ -1078,7 +1079,7 @@ static ExternFn s_origExtern = nullptr;
 static std::atomic<int> s_externLogs{0};
 static void __fastcall ExternDetour(int32_t ext, int32_t arg) {
     if (ext >= 0x10 && ext <= 0x14 && s_externLogs.load() < 40) {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+        const uintptr_t base = reinterpret_cast<uintptr_t>(noble::ReachModule());
         const int32_t obj = *reinterpret_cast<const int32_t*>(base + 0xB43B38);
         const uintptr_t cb = *reinterpret_cast<const uintptr_t*>(base + 0x4E38990);
         const uint8_t mode = GameModeByteSEH(base);
@@ -1097,7 +1098,7 @@ static void __fastcall ExternDetour(int32_t ext, int32_t arg) {
 static void InstallEmblemTraceOnce() {
     static bool s_done = false;
     if (s_done || !std::wcsstr(GetCommandLineW(), L"-emblem-trace")) return;
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
     s_done = true;
     void* target = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hReach) + 0x261B00);
@@ -1148,7 +1149,7 @@ static void ApplyLocalEmblem(const ReachArmorySelection& sel, uint32_t onlyUnit 
 // [haloreach+0xC1A230] is set. Noble used to write the hidden accent colour (stock teal) into both, and on the
 // Elite those two slots cover most of the armour, so it stayed teal whatever the player picked (2026-11-11).
 static bool EliteFixedChangeColorsSEH(float slot2[3], float slot3[3]) {
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return false;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
     __try {
@@ -1192,7 +1193,7 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
                                              const uint32_t* permPairsFlat,
                                              size_t permPairCount,
                                              uint64_t permPairsGen) {
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
     __try {
@@ -1680,7 +1681,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     }
     SafeWriteI32(base + 0x27 * stride, turnStep);
 
-    if (HMODULE hReach = GetModuleHandleW(L"haloreach.dll")) {
+    if (HMODULE hReach = noble::ReachModule()) {
         const uintptr_t rotAddr = reinterpret_cast<uintptr_t>(hReach) + 0xBE5AD8;
         uint32_t baseBits = s_rotationBaseBits.load();
         if (baseBits == 0xFFFFFFFFu) {
@@ -2655,7 +2656,7 @@ static bool ReadEngineModeFlagsSEH(uintptr_t base, bool* outIsCampaign, bool* ou
 }
 
 void ReachArmory::SyncMatchLiveBipeds() {
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
 
@@ -2930,7 +2931,7 @@ void ReachArmory::SyncMarine() {
         if (!s_logged) { s_logged = true; NOBLE_INFO("MarineArmor: other players in the session - Marine pieces are not applied (lockstep safety)"); }
         return;
     }
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
 
@@ -3075,7 +3076,7 @@ void ReachArmory::TickFlashlight() {
     for (auto& at : s_checkAt) {
         if (at && GetTickCount64() >= at) {
             at = 0;
-            HMODULE h = GetModuleHandleW(L"haloreach.dll");
+            HMODULE h = noble::ReachModule();
             if (h) NOBLE_INFO("Flashlight: open value now {:.2f}", FlashlightValueSEH(reinterpret_cast<uintptr_t>(h), s_checkUnit));
         }
     }
@@ -3087,7 +3088,7 @@ void ReachArmory::TickFlashlight() {
     s_wasDown = down;
     if (!pressed) {
         if (s_on) {   // keep it on (new body after a respawn = light off again)
-            HMODULE hR = GetModuleHandleW(L"haloreach.dll");
+            HMODULE hR = noble::ReachModule();
             const uintptr_t b = reinterpret_cast<uintptr_t>(hR);
             if (!hR || LocalUnitDatumNowSEH(b) != s_onUnit) { s_on = false; return; }
             FlashlightSetSEH(b, s_onUnit, true, false);
@@ -3101,7 +3102,7 @@ void ReachArmory::TickFlashlight() {
     // Same lockstep caution as the Marine pieces: a local-only state change, so not with other players in.
     if (NetworkTransport::Get().IsActive() &&
         (!NetworkTransport::Get().IsHost() || NetworkTransport::Get().GetGamePeerCount() > 0)) return;
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
     const uint32_t unit = LocalUnitDatumNowSEH(base);
@@ -3123,7 +3124,7 @@ void ReachArmory::NotifyMatchTick() {
         unit = s_simMarineUnit; pairs = s_simMarinePairs;
     }
     if (unit == 0xFFFFFFFFu || pairs.empty()) return;
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
     MarineApplySEH(reinterpret_cast<uintptr_t>(hReach), unit, pairs.data(), pairs.size() / 2, nullptr, nullptr, nullptr, nullptr,
                    nullptr, 0);

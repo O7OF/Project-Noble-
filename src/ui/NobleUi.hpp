@@ -1,5 +1,6 @@
 #pragma once
 
+#include "career/Career.hpp"
 #include <imgui.h>
 
 namespace noble {
@@ -57,6 +58,18 @@ bool DrawTile(ImDrawList* dl, const char* id, ImVec2 min, ImVec2 max, const char
 void DrawInteractiveScrollbar(ImDrawList* dl, const char* id, ImVec2 trackMin, ImVec2 trackMax,
                               float& scrollY, float maxScroll, float visibleExtent, float totalExtent,
                               float scale = 0.0f);
+
+// Accumulates fractional mouse-wheel deltas per widget ID and returns whole wheel notches
+// (positive = wheel up, negative = wheel down), keeping precision/trackpad remainders.
+int ConsumeWheelSteps(const char* id, float wheelDelta);
+
+// Tactical Halo: Reach segmented progress bar (shared by Service Record and Pause Menu).
+void DrawTacticalBar(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float fraction, ImU32 fillCol, float s);
+
+// Shared Service-Record-style Challenge card (DAILY / WEEKLY); renders tactical frame, mode chip,
+// reward badge, wrapped description, and progress bar. Advances ImGui cursor by card height.
+void DrawChallengeCard(const Career::Challenge& c, float width, bool focused,
+                       bool& outHovered, bool& outClicked, bool compact = false);
 
 // Text helpers (font may be nullptr = current font).
 float TextWidth(ImFont* font, float px, const char* text);

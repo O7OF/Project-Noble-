@@ -1002,35 +1002,88 @@ using BuilderFn = uint64_t(__fastcall*)(uint8_t*, uint32_t, void*, void*);
 // Armory presets, in ArmorCustomizer's kEliteSets order: 0..8 Reach's own + Honor Guard, 9 Counselor (10 = Custom).
 constexpr int kArmorySets = 10;
 
-// Noble's own pack (elite_noble, 2026-11-11): its pmcg is HREK's stock one, whose piece lists carry no Elite
-// changes, and the engine keeps the map's pmcg anyway. AddNoblePieces appends one selection per permutation of the
-// pack Elite's piece regions to the map's six lists; a pick is then s_nobleBase[slot] + the permutation's position.
-// Region order / permutation names as in tags\objects\characters\elite_noble\elite_noble.render_model.
-const std::vector<const char*> kNoblePerms[6] = {
-    {"council", "general", "honor_guard", "minor", "officer", "ossoona", "space", "spec_ops", "story_elite", "ultra", "zealot"},
-    {"combat", "general", "honor_guard", "minor", "officer", "schism", "space", "spec_ops", "story_elite", "ultra", "zealot"},
-    {"combat", "general", "honor_guard", "minor", "officer", "schism", "space", "spec_ops", "story_elite", "ultra", "zealot"},
-    {"general", "honor_guard", "minor", "officer", "space", "spec_ops", "story_elite", "ultra", "zealot"},
-    {"default", "general", "honor_guard", "officer", "space", "spec_ops", "story_elite", "ultra", "zealot"},
-    {"general", "honor_guard", "minor", "officer", "space", "spec_ops", "story_elite", "ultra", "zealot"},
-};
-constexpr int kNobleRegionOf[6] = {5, 6, 8, 2, 3, 7};          // helmet, left/right shoulder, chest, forearms, legs
-constexpr int kNobleRegionPerms[9] = {6, 1, 9, 9, 1, 11, 11, 9, 11};
+// Appends one selection per permutation of the pack Elite's piece regions (discovered dynamically via the engine's
+// string_id table so both 8-region elite_armor.map and 9-region noble_elite_pack.map layouts work) to the map's
+// six piece lists (`0x20..0x5C`). A pick is then `s_nobleBase[slot] + permIndex`.
+constexpr uintptr_t kStringIdName = 0x09D91C;   // const char* __fastcall string_id_get_string_const(uint32_t id)
+using StringIdNameFn = const char*(__fastcall*)(uint32_t);
 constexpr size_t kPieceLists[6] = {0x20, 0x2C, 0x38, 0x44, 0x50, 0x5C};
-int s_nobleBase[6] = {-1, -1, -1, -1, -1, -1};
+
+std::mutex s_packMutex;
+std::atomic<int> s_nobleBase[6] = {-1, -1, -1, -1, -1, -1};
+std::vector<std::string> s_packPerms[6];
 std::atomic<int> s_nobleGen{0};
 
-bool NobleActive() { return s_nobleBase[0] >= 0; }
+bool StringIdTableReady() {
+    if (!s_base) return false;
+    static constexpr uint8_t kPrologue[8] = {0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x83, 0x4C};
+    return std::memcmp(At<const void*>(kStringIdName), kPrologue, sizeof(kPrologue)) == 0;
+}
 
-int NoblePick(int slot, std::string want) {
-    if (slot == 4 && want == "minor") want = "default";
-    const auto& l = kNoblePerms[slot];
-    for (size_t j = 0; j < l.size(); ++j)
-        if (want == l[j]) return s_nobleBase[slot] + static_cast<int>(j);
+std::string LowerAscii(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+std::string StringIdLower(uint32_t id) {
+    if (id == 0 || !StringIdTableReady()) return {};
+    const char* raw = At<StringIdNameFn>(kStringIdName)(id);
+    return raw ? LowerAscii(raw) : std::string();
+}
+
+int SlotForRegionName(const std::string& name, bool* preferred) {
+    struct Rule {
+        int slot;
+        const char* name;
+        bool pref;
+    };
+    static constexpr Rule kRules[] = {
+        {0, "elite_helmet",         true},
+        {0, "helmet",               false},
+        {1, "elite_left_shoulder",  true},
+        {1, "left_shoulder",        false},
+        {2, "elite_right_shoulder", true},
+        {2, "right_shoulder",       false},
+        {3, "elite_chest",          true},
+        {3, "chest",                false},
+        {4, "elite_forearms",       true},
+        {4, "elite_arms",           true},
+        {4, "forearms",             false},
+        {4, "arms",                 false},
+        {5, "elite_legs",           true},
+        {5, "legs",                 false},
+    };
+    for (const auto& r : kRules) {
+        if (name == r.name) {
+            *preferred = r.pref;
+            return r.slot;
+        }
+    }
+    *preferred = false;
     return -1;
 }
 
-// Armory set (kEliteSets order) -> piece name per slot, for the Noble pack.
+bool NobleActive() { return s_nobleBase[0].load() >= 0; }
+
+int NoblePick(int slot, std::string want) {
+    if (slot < 0 || slot >= 6 || want.empty()) return -1;
+    want = LowerAscii(std::move(want));
+    std::lock_guard<std::mutex> lock(s_packMutex);
+    const int base = s_nobleBase[slot].load();
+    if (base < 0) return -1;
+    const auto& perms = s_packPerms[slot];
+    auto findExact = [&](const std::string& target) -> int {
+        for (size_t j = 0; j < perms.size(); ++j)
+            if (perms[j] == target) return base + static_cast<int>(j);
+        return -1;
+    };
+    int idx = findExact(want);
+    if (idx < 0 && want == "minor") idx = findExact("default");
+    else if (idx < 0 && want == "default") idx = findExact("minor");
+    return idx;
+}
+
+// Armory set (kEliteSets order) -> piece name per slot, for the pack.
 std::string NobleSetPiece(int set, int slot) {
     static const char* kSet[9] = {"minor", "spec_ops", "space", "ultra", "zealot", "general", "story_elite", "officer",
                                   "honor_guard"};
@@ -1045,53 +1098,123 @@ uint8_t SetPick(int set, int slot) {
     if (NobleActive()) {
         int idx = NoblePick(slot, NobleSetPiece(set, slot));
         if (idx < 0) idx = NoblePick(slot, "minor");
-        return static_cast<uint8_t>(idx);
+        if (idx < 0) idx = NoblePick(slot, "default");
+        if (idx < 0) idx = s_nobleBase[slot].load();
+        if (idx >= 0) return static_cast<uint8_t>(idx);
     }
-    return 0;   // not Noble's pack: no Elite pieces to pick
+    return 0;   // no Elite pieces added to pick
 }
 
-// Appends the Noble pack Elite's pieces to the map's armour lists. Returns false (and changes nothing) when the
-// pack Elite's render model isn't elite_noble's layout (e.g. RR's pack).
+// Discovers the pack Elite's six armour regions on `render` by resolved string_id and appends one selection per
+// permutation to the map's pmcg piece lists. Stages all six allocations before committing so failure leaves `pmcg` intact.
 bool AddNoblePieces(const TagTable& tt, uint32_t render, uint8_t* mapList) {
-    for (int& b : s_nobleBase) b = -1;
+    {
+        std::lock_guard<std::mutex> lock(s_packMutex);
+        for (int s = 0; s < 6; ++s) {
+            s_nobleBase[s].store(-1);
+            s_packPerms[s].clear();
+        }
+    }
     if (!mapList || !tt.Is(render, kMode)) return false;
+    if (!StringIdTableReady()) {
+        NOBLE_WARN("ElitePack: string_id lookup at 0x{:X} doesn't match expected prologue; can't index pack Elite pieces",
+                   kStringIdName);
+        return false;
+    }
     uint8_t* mode = TagAt(tt.Address(render & 0xFFFF));
     int32_t regions = 0;
     uint32_t regionsPtr = 0;
     std::memcpy(&regions, mode + 0x0C, 4);
     std::memcpy(&regionsPtr, mode + 0x10, 4);
-    if (regions != 9 || !regionsPtr) return false;
-    uint8_t* reg = TagAt(regionsPtr);
-    for (int r = 0; r < 9; ++r) {
-        int32_t n = 0;
-        std::memcpy(&n, reg + r * 16 + 4, 4);
-        if (n != kNobleRegionPerms[r]) return false;
+    if (regions <= 0 || regions > 64 || !regionsPtr) {
+        NOBLE_WARN("ElitePack: pack render model 0x{:X} has invalid region count {}", render, regions);
+        return false;
     }
-    int bases[6];
+    uint8_t* reg = TagAt(regionsPtr);
+    int regionOf[6] = {-1, -1, -1, -1, -1, -1};
+    bool regionPref[6] = {};
+    std::string regionSummary;
+    for (int32_t r = 0; r < regions; ++r) {
+        uint32_t regionName = 0;
+        int32_t permCount = 0;
+        std::memcpy(&regionName, reg + r * 16, 4);
+        std::memcpy(&permCount, reg + r * 16 + 4, 4);
+        const std::string rname = StringIdLower(regionName);
+        if (!regionSummary.empty()) regionSummary += ", ";
+        regionSummary += "[" + std::to_string(r) + "] \"" + (rname.empty() ? "?" : rname) + "\"(" +
+                         std::to_string(permCount) + ")";
+        bool pref = false;
+        const int slot = SlotForRegionName(rname, &pref);
+        if (slot >= 0 && (regionOf[slot] < 0 || (pref && !regionPref[slot]))) {
+            regionOf[slot] = r;
+            regionPref[slot] = pref;
+        }
+    }
     for (int slot = 0; slot < 6; ++slot) {
-        uint8_t* region = reg + kNobleRegionOf[slot] * 16;
+        if (regionOf[slot] < 0) {
+            NOBLE_WARN("ElitePack: pack render model 0x{:X} missing piece slot {} (matched {}/{}/{}/{}/{}/{}; regions: {})",
+                       render, slot, regionOf[0], regionOf[1], regionOf[2], regionOf[3], regionOf[4], regionOf[5],
+                       regionSummary);
+            return false;
+        }
+    }
+
+    struct StagedList {
+        uint8_t* mem = nullptr;
+        int32_t total = 0;
+        uint32_t packed = 0;
+        int base = -1;
+        int32_t added = 0;
+    };
+    StagedList staged[6]{};
+    std::vector<std::string> packPerms[6];
+    auto cleanup = [&]() {
+        for (auto& s : staged) {
+            if (s.mem) VirtualFree(s.mem, 0, MEM_RELEASE);
+        }
+    };
+
+    for (int slot = 0; slot < 6; ++slot) {
+        uint8_t* region = reg + regionOf[slot] * 16;
         uint32_t regionName = 0, permsPtr = 0;
         int32_t n = 0;
         std::memcpy(&regionName, region, 4);
         std::memcpy(&n, region + 4, 4);
         std::memcpy(&permsPtr, region + 8, 4);
+        if (n <= 0 || n > 64 || !permsPtr) {
+            NOBLE_WARN("ElitePack: pack region {} (slot {}) has invalid permutations (count {})", regionOf[slot], slot, n);
+            cleanup();
+            return false;
+        }
         const uint8_t* perms = TagAt(permsPtr);
         uint8_t* list = mapList + kPieceLists[slot];
         int32_t mc = 0;
         uint32_t msPtr = 0;
         std::memcpy(&mc, list, 4);
         std::memcpy(&msPtr, list + 4, 4);
-        if (mc < 0 || mc > 0xC0 || (mc && !msPtr)) return false;
+        // AppearanceBuilder (0x1055EC) loads each byte index with movsx, so valid positive indices are 0..127.
+        if (mc < 0 || mc > 0x7F || mc + n > 0x7F || (mc && !msPtr)) {
+            NOBLE_WARN("ElitePack: armour list {} overflow ({} existing + {} pack pieces > 127 signed limit)",
+                       slot, mc, n);
+            cleanup();
+            return false;
+        }
         const size_t selBytes = static_cast<size_t>(mc + n) * 16;
         auto* mem = static_cast<uint8_t*>(VirtualAlloc(nullptr, selBytes + static_cast<size_t>(n) * 12,
                                                        MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-        if (!mem) return false;
+        if (!mem) {
+            cleanup();
+            return false;
+        }
+        staged[slot].mem = mem;
         if (mc) std::memcpy(mem, TagAt(msPtr), static_cast<size_t>(mc) * 16);
         uint8_t* changes = mem + selBytes;
         bool ok = true;
+        packPerms[slot].reserve(static_cast<size_t>(n));
         for (int32_t j = 0; j < n && ok; ++j) {
             uint32_t permName = 0;
             std::memcpy(&permName, perms + j * kPermSize, 4);
+            packPerms[slot].push_back(StringIdLower(permName));
             uint8_t* ch = changes + j * 12;
             const uint32_t zero = 0, one = 1;
             std::memcpy(ch, &regionName, 4);
@@ -1106,16 +1229,34 @@ bool AddNoblePieces(const TagTable& tt, uint32_t render, uint8_t* mapList) {
             ok = chPacked != 0;
         }
         const uint32_t packed = ok ? EncodePointer(mem) : 0;
-        if (!packed) { VirtualFree(mem, 0, MEM_RELEASE); NOBLE_WARN("ElitePack: couldn't address the Noble Elite pieces"); return false; }
-        const int32_t total = mc + n;
-        std::memcpy(list, &total, 4);
-        std::memcpy(list + 4, &packed, 4);
-        bases[slot] = mc;
+        if (!packed) {
+            cleanup();
+            NOBLE_WARN("ElitePack: couldn't address the pack Elite pieces (slot {})", slot);
+            return false;
+        }
+        staged[slot].total = mc + n;
+        staged[slot].packed = packed;
+        staged[slot].base = mc;
+        staged[slot].added = n;
     }
-    std::memcpy(s_nobleBase, bases, sizeof(bases));
+
+    for (int slot = 0; slot < 6; ++slot) {
+        uint8_t* list = mapList + kPieceLists[slot];
+        std::memcpy(list, &staged[slot].total, 4);
+        std::memcpy(list + 4, &staged[slot].packed, 4);
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_packMutex);
+        for (int slot = 0; slot < 6; ++slot) {
+            s_nobleBase[slot].store(staged[slot].base);
+            s_packPerms[slot] = std::move(packPerms[slot]);
+        }
+    }
     s_nobleGen.fetch_add(1);
-    NOBLE_INFO("ElitePack: Noble Elite pieces added to the armour lists (first index helmet {}, shoulders {}/{}, chest {}, "
-               "forearms {}, legs {})", bases[0], bases[1], bases[2], bases[3], bases[4], bases[5]);
+    NOBLE_INFO("ElitePack: pack Elite pieces added to the armour lists (base helmet {}+{}, shoulders {}+{}/{}+{}, chest {}+{}, "
+               "forearms {}+{}, legs {}+{})",
+               staged[0].base, staged[0].added, staged[1].base, staged[1].added, staged[2].base, staged[2].added,
+               staged[3].base, staged[3].added, staged[4].base, staged[4].added, staged[5].base, staged[5].added);
     return true;
 }
 
@@ -1128,12 +1269,15 @@ int PieceIndex(int slot, const std::string& id) {
 // piece has none (Honor Guard, Council, Ossoona, Schism, Combat). slot: 1 left shoulder, 4 forearms.
 int SetOfPiece(int slot, int index) {
     static const char* kSetIds[8] = {"minor", "spec_ops", "space", "ultra", "zealot", "general", "story_elite", "officer"};
-    if (!NobleActive() || (slot != 1 && slot != 4)) return -1;
-    const int j = index - s_nobleBase[slot];
-    if (j < 0 || j >= int(kNoblePerms[slot].size())) return -1;
-    const char* id = kNoblePerms[slot][j];
-    if (std::strcmp(id, "default") == 0) id = "minor";
-    for (int k = 0; k < 8; ++k) if (std::strcmp(kSetIds[k], id) == 0) return k;
+    if (slot != 1 && slot != 4) return -1;
+    std::lock_guard<std::mutex> lock(s_packMutex);
+    const int base = s_nobleBase[slot].load();
+    if (base < 0) return -1;
+    const int j = index - base;
+    if (j < 0 || j >= static_cast<int>(s_packPerms[slot].size())) return -1;
+    std::string id = s_packPerms[slot][j];
+    if (id == "default") id = "minor";
+    for (int k = 0; k < 8; ++k) if (id == kSetIds[k]) return k;
     return -1;
 }
 std::filesystem::path s_appearancePath;
@@ -1165,11 +1309,16 @@ void RefreshLocalPicks() {
     try {
         const auto& el = j.at("elite");
         s_localSpeciesElite = j.value("species", 0) == 1;
-        const int set = std::clamp(el.value("armor_set", 0), 0, kArmorySets - 1);
+        const int rawSet = el.value("armor_set", 0);
+        const int set = (rawSet >= 0 && rawSet < kArmorySets) ? rawSet : 0;
         static const char* kKeys[6] = {"helmet_id", "left_shoulder_id", "right_shoulder_id", "chest_id", "arms_id", "legs_id"};
-        for (int k = 0; k < 6; ++k) {
-            const int idx = PieceIndex(k, el.value(kKeys[k], std::string()));
-            s_localPicks[k] = static_cast<uint8_t>(idx >= 0 ? idx : SetPick(set, k));
+        if (NobleActive()) {
+            for (int k = 0; k < 6; ++k) {
+                const int idx = PieceIndex(k, el.value(kKeys[k], std::string()));
+                s_localPicks[k] = static_cast<uint8_t>(idx >= 0 ? idx : SetPick(set, k));
+            }
+        } else {
+            std::fill(std::begin(s_localPicks), std::end(s_localPicks), uint8_t{0xFF});
         }
         s_localSet = set;
 
@@ -1297,29 +1446,31 @@ void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
         std::lock_guard<std::mutex> lock(s_picksMutex);
         RefreshLocalPicks();
         if (s_localSpeciesElite) {
-            const int set = (s_localSet >= 0 && s_localSet < kArmorySets)
-                                ? s_localSet : 0;
-            uint8_t picks[6];
-            for (int k = 0; k < 6; ++k)
-                picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : SetPick(set, k);
-            std::memcpy(block, picks, 6);
-            block[6] = kElitePiecesMarker;
-            block[7] = static_cast<uint8_t>(set);
-            if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) block[9] = s_localEliteEffect;
-            block[10] = s_localColors[0];
-            block[11] = s_localColors[1];
-            block[12] = s_localColors[2];
-            block[13] = s_localColors[3];
-            block[14] = s_localCustomFlags;
-            for (int c = 0; c < 4; ++c) {
-                block[16 + c * 3 + 0] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][0] * 255.0f), 0L, 255L));
-                block[16 + c * 3 + 1] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][1] * 255.0f), 0L, 255L));
-                block[16 + c * 3 + 2] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][2] * 255.0f), 0L, 255L));
+            if (NobleActive()) {
+                const int set = (s_localSet >= 0 && s_localSet < kArmorySets)
+                                    ? s_localSet : 0;
+                uint8_t picks[6];
+                for (int k = 0; k < 6; ++k)
+                    picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : SetPick(set, k);
+                std::memcpy(block, picks, 6);
+                block[6] = kElitePiecesMarker;
+                block[7] = static_cast<uint8_t>(set);
+                if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) block[9] = s_localEliteEffect;
+                block[10] = s_localColors[0];
+                block[11] = s_localColors[1];
+                block[12] = s_localColors[2];
+                block[13] = s_localColors[3];
+                block[14] = s_localCustomFlags;
+                for (int c = 0; c < 4; ++c) {
+                    block[16 + c * 3 + 0] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][0] * 255.0f), 0L, 255L));
+                    block[16 + c * 3 + 1] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][1] * 255.0f), 0L, 255L));
+                    block[16 + c * 3 + 2] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][2] * 255.0f), 0L, 255L));
+                }
+                static std::atomic<int> s_synced{0};
+                if (s_synced.fetch_add(1) < 6)
+                    NOBLE_INFO("ElitePack: Elite pieces & colors written to settings sync block (player index {}):{}", index,
+                               Hex(block, 0x20));
             }
-            static std::atomic<int> s_synced{0};
-            if (s_synced.fetch_add(1) < 6)
-                NOBLE_INFO("ElitePack: Elite pieces & colors written to settings sync block (player index {}):{}", index,
-                           Hex(block, 0x20));
         } else {
             // Replicate Spartan visor index (0..29) and custom RGB in settings sync block
             block[15] = s_localSpartanVisorIndex;
@@ -1373,7 +1524,7 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
     if (record && s_recordsLogged.fetch_add(1) < 12)
         NOBLE_INFO("ElitePack: appearance record (caller 0x{:X}, mode {}, elite {}, local {}):{}",
                    caller, mode, elite, localRecord, Hex(record, 0x28));
-    if (!elite || !s_loaded || !s_haveActive) {
+    if (!elite || !s_loaded || !s_haveActive || !NobleActive()) {
         if (!elite && player && record) {
             if (localRecord) {
                 record[15] = s_localSpartanVisorIndex;

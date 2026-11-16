@@ -243,7 +243,7 @@ void MasterServerClient::SetUrl(const std::string& url) {
 
 std::string MasterServerClient::Url() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_url.empty() ? std::string(kMasterDefault) : m_url;
+    return m_url.empty() ? MasterDefaultUrl() : m_url;
 }
 
 std::string MasterServerClient::GetSessionRegionUrl(const std::string& sessionId) const {
@@ -279,7 +279,7 @@ std::vector<std::string> MasterServerClient::GetCandidateUrls(const std::string&
         addUnique(m_url);
     }
     if (urls.empty()) {
-        addUnique(kMasterMain);
+        addUnique(MasterDefaultUrl());
     }
     return urls;
 }
@@ -350,7 +350,7 @@ void MasterServerClient::EnsureThread() {
 
 void MasterServerClient::RequestList() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) m_url = std::string(kMasterDefault);
+    if (m_url.empty()) m_url = MasterDefaultUrl();
     m_listRequested = true;
     EnsureThread();
     m_wake.notify_all();
@@ -358,7 +358,7 @@ void MasterServerClient::RequestList() {
 
 void MasterServerClient::RequestOnlineCount() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) m_url = std::string(kMasterDefault);
+    if (m_url.empty()) m_url = MasterDefaultUrl();
     m_onlineRequested = true;
     EnsureThread();
     m_wake.notify_all();
@@ -366,7 +366,7 @@ void MasterServerClient::RequestOnlineCount() {
 
 void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) m_url = std::string(kMasterDefault);
+    if (m_url.empty()) m_url = MasterDefaultUrl();
     m_advert = advert;
     std::string pub = UPnP::Get().GetExternalIP();
     if (UPnP::Get().IsPublicIP(pub)) {
@@ -689,6 +689,7 @@ void MasterServerClient::DoList() {
                     s.isPrivate = item.value("is_private", false);
                     s.lanAddress = Str(item, "lan_address", 64);
                     s.build = Str(item, "build", 32);
+                    s.gameVersion = Str(item, "game_version", 64);
                     if (s.address.empty()) continue;
 
                     const bool isFederated = item.value("federated", false);
@@ -768,7 +769,7 @@ void MasterServerClient::DoRegister() {
         {"name", advert.name}, {"port", advert.port}, {"player_count", advert.playerCount},
         {"max_players", advert.maxPlayers}, {"map", advert.map}, {"mode", advert.mode},
         {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"mod_id", advert.modId}, {"mod_title", advert.modTitle},
-        {"is_private", advert.isPrivate}, {"address", advert.address}, {"lan_address", UPnP::Get().GetInternalIP()}, {"build", std::string(kBuildTag)}, {"protocol", kClientProtocol},
+        {"is_private", advert.isPrivate}, {"address", advert.address}, {"lan_address", UPnP::Get().GetInternalIP()}, {"build", std::string(kBuildTag)}, {"game_version", std::string(noble::VERSION_STRING)}, {"protocol", kClientProtocol},
         {"variant", advert.variant}, {"difficulty", advert.difficulty}, {"skulls", std::to_string(advert.skulls)}, {"in_progress", advert.inProgress},
         {"host_peer_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId}, {"player_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId},
         {"host_machine_id", advert.hostMachineId.empty() ? "0x484F535400000001" : advert.hostMachineId},
@@ -848,7 +849,7 @@ void MasterServerClient::DoHeartbeat() {
         token = m_sessionToken;
         body = {
             {"session_id", id},
-            {"build", std::string(kBuildTag)},
+            {"build", std::string(kBuildTag)}, {"game_version", std::string(noble::VERSION_STRING)},
             {"protocol", kClientProtocol},
             {"player_count", m_advert.playerCount},
             {"in_progress", m_advertInProgress},
@@ -964,7 +965,7 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
     }
 
     nlohmann::json body = {
-        { "build", std::string(kBuildTag) },
+        { "build", std::string(kBuildTag) }, { "game_version", std::string(noble::VERSION_STRING) },
         { "protocol", kClientProtocol },
         { "guest_port", guestPort },
         { "guest_machine_id", std::to_string(guestMachineId) },
@@ -1073,7 +1074,9 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
         state.ok = true;
         state.sessionId = j.value("session_id", resolvedId);
         state.name = j.value("name", "Reach Lobby");
+        state.gameVersion = j.value("game_version", std::string{});
         state.map = j.value("map", "20_sword_slayer");
+        state.gameVersion = j.value("game_version", std::string{});
         state.mode = j.value("mode", "multiplayer");
         state.variant = j.value("variant", "");
         state.modId = Str(j, "mod_id", 32);
@@ -1252,7 +1255,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
 
     const int measuredPing = NetworkTransport::Get().GetPeerPingMs(0);
     nlohmann::json body = {
-        { "build", std::string(kBuildTag) },
+        { "build", std::string(kBuildTag) }, { "game_version", std::string(noble::VERSION_STRING) },
         { "protocol", kClientProtocol },
         { "peer_id", peerId },
         { "player_id", peerId },
@@ -1322,6 +1325,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         state.closeReason = j.value("close_reason", "");
         if (j.contains("limits_id") && j["limits_id"].is_number_integer()) state.limitsId = j["limits_id"].get<int64_t>();
         state.map = j.value("map", "20_sword_slayer");
+        state.gameVersion = j.value("game_version", std::string{});
         state.mode = j.value("mode", "multiplayer");
         state.variant = j.value("variant", "");
         state.modId = Str(j, "mod_id", 32);

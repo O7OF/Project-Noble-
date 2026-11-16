@@ -12,6 +12,7 @@
 #define NOBLE_WARN(...) ((void)0)
 #else
 #include "common/Logger.hpp"
+#include "common/EngineModule.hpp"
 #include <windows.h>
 #include <psapi.h>
 #endif
@@ -338,7 +339,7 @@ bool WriteCopy(const fs::path& target, const Bytes& data, fs::path& written, std
             // Clean up per-process copies left by earlier runs (skipped while still loaded).
             for (const auto& entry : fs::directory_iterator(target.parent_path(), ec)) {
                 const std::wstring name = entry.path().filename().wstring();
-                if (name.rfind(L"haloreach.", 0) == 0 && name != L"haloreach.dll" && entry.path().extension() == L".dll") {
+                if (name.rfind(L"haloreach.", 0) == 0 && name != noble::ReachModuleFileName() && entry.path().extension() == L".dll") {
                     std::error_code rmEc;
                     fs::remove(entry.path(), rmEc);
                 }
@@ -407,7 +408,7 @@ PrepareResult PrepareEngineDll(const fs::path& stockDll, Profile requested) {
         }
 
         const std::string outHex = DigestHex(patch.outputSha);
-        const fs::path target = CacheRoot() / (std::string(ProfileFileStem(requested)) + "-" + outHex.substr(0, 12)) / L"haloreach.dll";
+        const fs::path target = CacheRoot() / (std::string(ProfileFileStem(requested)) + "-" + outHex.substr(0, 12)) / noble::ReachModuleFileName();
 
         // Reuse a copy built earlier, but only if it is exactly the expected output.
         std::error_code ec;

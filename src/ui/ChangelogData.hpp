@@ -124,11 +124,104 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Fixed Firefight & Custom Games option editing inside the lobby, cleared stale Workshop mod flags when switching back to stock maps, and hardened host-only WebSocket controls and leave cleanup on the master server."},
     };
 
+    const std::vector<ChangeItem> v0200Items = {
+        {"ARMORY", "Elite Armor Pieces & Full Customization",
+         "All Elite armor sets and pieces (Honor Guard, Counselor, H2A Ranger, H2A armor, Schism) now display in the Armory, render properly in-match for whoever equips them, and sync cleanly across multiplayer."},
+        {"ARMORY", "Armor Abilities on Elites",
+         "Equipped Armor Abilities (Jet Pack, Evade, Drop Shield, Armor Lock, Active Camo, Hologram, Sprint) now visibly display and mount correctly on Elites during matches."},
+        {"VISORS", "Custom Visor Colors In-Match & Over Network",
+         "All custom and preset visor colors render accurately in-match on both Spartans and Elites and replicate over the network across multiplayer clients."},
+        {"FORGE", "Forge AI Spawning Fix & Net Sync",
+         "Fixed non-host clients spawning duplicate or static invincible AI clones in Forge; AI spawning is now authoritatively handled with clean network synchronization."},
+        {"UI", "Loading Screen & Pause Menu Polish",
+         "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
+    };
+
+    const std::vector<ChangeItem> v0207Items = {
+        {"NETCODE", "Firefight & Match Join-in-Progress",
+         "Suppressed premature match aborts (reason 6) and dropped join-in-progress refusal gates during active host sessions so late-joining players smoothly complete handshakes without kicking guests back to the main menu."},
+        {"SETTINGS", "Settings Reset & Startup Migration Fix",
+         "Prevented settings resets caused by startup mirror sync overwriting saved settings.json with stale defaults; migration now only executes on fresh installs when no existing configuration is present."},
+        {"MULTIPLAYER", "Lobby Roster & Scoreboard Visibility",
+         "Guests now see the full player roster on loading screens, only the local client is tagged 'YOU' on the scoreboard, service tags are accurately mapped per player, and invite connections display the host's actual profile name."},
+        {"PERFORMANCE", "CPU Priority & Thread Scheduling",
+         "Disabled OS power throttling, elevated render thread priority, and optimized background power state handling for smoother frame delivery on multi-core processors."},
+    };
+
+    const std::vector<ChangeItem> v0204Items = {
+        {"PERFORMANCE", "Binary Optimization & Load Times",
+         "Applied advanced link-time code folding and footprint optimization for reduced memory overhead and faster client startup."},
+        {"DIAGNOSTICS", "Streamlined Crash Reporting",
+         "Enhanced standalone minidump generation (noble-crash.dmp) for fast, lightweight crash capture without disk logging overhead."},
+        {"STABILITY", "Settings & Runtime Polish",
+         "Refined settings diagnostics and status reporting for streamlined troubleshooting across all game modes."},
+    };
+
+    const std::vector<ChangeItem> v0203Items = {
+        {"OPTIMIZATION", "Binary Footprint & Code Efficiency",
+         "Optimized executable code generation and removed auxiliary build files from distribution packages."},
+        {"DIAGNOSTICS", "Streamlined Crash & Diagnostics",
+         "Lightweight minidump handling and direct Settings diagnostics reporting."},
+    };
+
+    const std::vector<ChangeItem> v0202Items = {
+        {"SETTINGS", "Settings Menu Save Fix & Diagnostics",
+         "Added settingsVersion 2 gating so music volume (50%) and custom paddle keys never revert to defaults on load; hardened save pipeline with per-process temp files (settings.json.<pid>.tmp), MoveFileExW replace, in-place fallbacks, on-screen failure warnings, and full save diagnostics."},
+        {"CONTROLLER", "Controller Apply in Settings Panel",
+         "Gamepad 'A' button now directly activates APPLY when focused on the bottom action box with full focus-ring highlighting, and the panel automatically reloads from disk on re-open to prevent overwriting settings with stale cached edits."},
+        {"UI", "End-Match UI & Transition Polish",
+         "Fixed end-of-match UI focus losing control, eliminated erratic option highlights and pointer fighting upon game over, ensured smooth transitions back to the main menu with full keyboard, mouse, and controller control."},
+        {"CRASH FIX", "Non-Host After-Action Report Crash Fix",
+         "Unified post-game match settlement for hosts and guests, eliminated double-payouts and scoreboard misidentifications, fixed guest challenge/commendation calculations, and eliminated non-host post-match report crashes and black screens upon mission completion."},
+        {"ENGINE", "Match-Over Lifecycle & Watchdog",
+         "Hardened engine cutscene transitions so campaign post-mission cinematics no longer swallow game-over reports, and added watchdog detection for unreported match ends to reliably surface the post-match summary."},
+    };
+
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MINOR == 19 && noble::VERSION_PATCH >= 103) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 7) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "JOIN-IN-PROGRESS STABILITY, SETTINGS MIGRATION FIX & PERFORMANCE",
+                    "Smooth Match Handshakes, Settings Reset Prevention, Loading Roster & CPU Optimizations",
+                    v0207Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 4) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.4",
+                    "CLIENT PERFORMANCE, MEMORY EFFICIENCY & CRASH DIAGNOSTICS",
+                    "Advanced Binary Code Folding, Memory Overhead Reduction & Streamlined Diagnostics",
+                    v0204Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 3) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.3",
+                    "BINARY OPTIMIZATION & DIAGNOSTICS POLISH",
+                    "Executable Footprint Optimization, Package Cleanup & Direct Settings Diagnostics",
+                    v0203Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 2) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.2",
+                    "SETTINGS SAVE FIXES, END-MATCH UI & POST-GAME CRASH FIXES",
+                    "Settings File Versioning, Controller Apply, Post-Match Report Stability & Non-Host Crash Fixes",
+                    v0202Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR >= 20) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.0",
+                    "ELITE ARMOR, CUSTOM VISORS, FORGE AI & UI OVERHAUL",
+                    "Elite Sets, Armor Abilities, Custom Visor Colors, Forge AI Sync, Pause Menu & Loading Polish",
+                    v0200Items,
+                });
+            }
+            if (noble::VERSION_MINOR == 19 && noble::VERSION_PATCH >= 103) {
+                notes.push_back(ReleaseNotes{
+                    "v0.19.103",
                     "LOBBY SHARE CODES, CLICK FIXES & INPUT TOGGLES",
                     "Shareable Lobby Codes, Variant Drawer Filters, Pinned Server Actions, Toggle Crouch/Zoom",
                     v019103Items,

@@ -57,9 +57,12 @@ bool UIManager::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext*
 void UIManager::Shutdown() {
     if (!s_isInitialized) return;
 
+    s_missionLauncher.reset();
     s_serverBrowser.reset();
     s_armorCustomizer.reset();
     s_workshopManager.reset();
+    s_device = nullptr;
+    s_context = nullptr;
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

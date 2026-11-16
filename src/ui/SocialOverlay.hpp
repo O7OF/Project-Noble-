@@ -3,6 +3,7 @@
 #include <imgui.h>
 
 #include <cstdint>
+#include <map>
 #include <string>
 
 namespace noble {
@@ -46,6 +47,10 @@ void DrawPlayerVoiceIcon(ImDrawList *dl, ImVec2 center, float scale,
 // Names for the voice panel, from the session roster. The id is the player's
 // machine id.
 void SetPlayerName(uint64_t machineId, const std::string &name);
+
+// Snapshot of the known machine id -> player name map. The scoreboard uses it to attach a peer's
+// measured RTT to the row the engine reported by name.
+std::map<uint64_t, std::string> GetPlayerNames();
 
 } // namespace SocialOverlay
 } // namespace noble

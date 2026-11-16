@@ -54,6 +54,22 @@ static bool SafeCallGameVariantDecode(HMODULE hModule, const void* fileData, voi
     }
 }
 
+// Re-sanitizes a decoded c_game_variant (0xFC04 bytes) and recomputes its embedded 20-byte SHA-1 hash
+// at +0x10..0x23 (RVA 0x42D4C -> 0x36F48 -> 0x374CC). Must be called whenever decoded variant fields
+// are modified in-place after SafeCallGameVariantDecode so the engine's launch validation and Megalo
+// runtime see a valid, matching hash.
+static bool SafeCallGameVariantFinalize(HMODULE hModule, void* decodedVariant) {
+    if (!hModule || !decodedVariant) return false;
+    __try {
+        typedef char (__fastcall *FinalizeGameVariantFn)(void* decodedVariant);
+        auto pFinalize = reinterpret_cast<FinalizeGameVariantFn>(
+            reinterpret_cast<uintptr_t>(hModule) + 0x42D4C);
+        return pFinalize(decodedVariant) != 0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 static bool SafeCallMapVariantParse(HMODULE hModule, const void* fileData, size_t fileSize, void* outVariant, char* outStatus) {
     if (!hModule || !fileData || !outVariant) return false;
     __try {
@@ -674,8 +690,12 @@ static std::filesystem::path ResolveVariantFile(const std::string& requested) {
 
     const auto reachDir = ReachHost::Get().GetReachDir();
     const auto dataDir = ReachHost::Get().GetDataDir();
+    const auto userStorage = VFS::GetUserStoragePath();
     const std::filesystem::path name = direct.filename();
-    const std::filesystem::path candidates[] = {
+    std::vector<std::filesystem::path> candidates = {
+        VariantRules::Directory() / name,
+        userStorage / "game_variants" / direct,
+        userStorage / "game_variants" / name,
         reachDir / "game_variants" / direct,
         reachDir / "game_variants" / name,
         dataDir / "game_variants" / direct,
@@ -684,8 +704,25 @@ static std::filesystem::path ResolveVariantFile(const std::string& requested) {
         std::filesystem::current_path() / direct,
         std::filesystem::current_path() / name,
     };
+    wchar_t userProfile[MAX_PATH] = {};
+    if (GetEnvironmentVariableW(L"USERPROFILE", userProfile, MAX_PATH) > 0) {
+        const std::filesystem::path uProf(userProfile);
+        candidates.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "Temporary" /
+                             "UserContent" / "HaloReach" / "GameType" / name);
+        const std::filesystem::path localVariants =
+            uProf / "AppData" / "LocalLow" / "MCC" / "LocalFiles";
+        if (std::filesystem::is_directory(localVariants, ec)) {
+            for (const auto& sub : std::filesystem::directory_iterator(localVariants, ec)) {
+                if (sub.is_directory()) {
+                    candidates.push_back(sub.path() / "HaloReach" / "GameType" / name);
+                }
+            }
+        }
+        ec.clear();
+    }
     for (const auto& candidate : candidates) {
         if (std::filesystem::is_regular_file(candidate, ec)) return candidate;
+        ec.clear();
     }
     return {};
 }
@@ -1566,6 +1603,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                         }
                         if (argv) LocalFree(argv);
                     }
+                    SafeCallGameVariantFinalize(m_hModule, decoded.data());
                     memcpy(&block[0x300], decoded.data(), decoded.size());
                     NOBLE_INFO("BlamEngine: Decoded game variant '{}' into launch block (+0x300)", variantPath.string());
                 } else {

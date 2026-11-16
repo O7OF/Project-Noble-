@@ -9,7 +9,9 @@ namespace noble {
 
 struct ServerEntry {
     std::string id;
-    std::string name;
+    std::string name;              // lobby/advert name (never a player name)
+    std::string hostPlayerName;    // the host's player name, when the source knows it
+    std::string hostServiceTag;    // the host's service tag, when the source knows it
     std::string hostAddress;
     uint16_t port = 11774;
     int ping = 0;               // -1 = not measured
@@ -25,7 +27,8 @@ struct ServerEntry {
     bool isMod = false;
     std::string modId;          // Steam Workshop published-file id the lobby requires (empty = none)
     std::string modTitle;
-    std::string build;          // host build string, to spot version mismatches
+    std::string build;          // wire build tag, for compatibility checks
+    std::string gameVersion;    // host's display version, as shown in the main menu
     std::string source;         // "LAN", "ONLINE", "FAVORITE", "YOU"
     std::string region;         // "US East", "US West", "UK", "LAN", "YOU"
     std::string mapDescription; // player-facing map blurb (stock) or mod map blurb

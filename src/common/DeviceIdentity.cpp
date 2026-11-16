@@ -187,6 +187,16 @@ bool MigrateNewestFile(const std::filesystem::path &relativeFilePath) {
   const auto primary = PrimaryDataDir() / relativeFilePath;
   const auto dirs = KnownDataDirs();
 
+  std::error_code presenceEc;
+  // Never overwrite a file that already exists in this install. This is what made saved settings
+  // "reset to default": the launcher mirrored settings.json into Documents/AppData, and on the next
+  // start the migration picked the copy with the newest timestamp - which could be an old default file
+  // from another install or a failed mirror - and copied it back over the player's saved settings.
+  // Migration is only for first run (no local file yet).
+  if (std::filesystem::is_regular_file(primary, presenceEc)) {
+    return false;
+  }
+
   std::filesystem::path newestPath;
   std::filesystem::file_time_type newestTime{};
   bool foundAny = false;
@@ -255,10 +265,19 @@ void MirrorSaveFile(const std::filesystem::path &relativeFilePath) {
       if (dest.has_parent_path()) {
         std::filesystem::create_directories(dest.parent_path(), ec);
       }
+      ec.clear();
       std::filesystem::copy_file(
           primary, dest, std::filesystem::copy_options::overwrite_existing, ec);
-      if (!ec && primaryTime != std::filesystem::file_time_type{}) {
-        std::filesystem::last_write_time(dest, primaryTime, ec);
+      if (ec) {
+        // Say so instead of failing silently: a stale copy in another install is otherwise blamed
+        // on "settings not saving".
+        NOBLE_WARN("DeviceIdentity: could not mirror '{}' to '{}': {}", relativeFilePath.string(),
+                   dest.string(), ec.message());
+        continue;
+      }
+      if (primaryTime != std::filesystem::file_time_type{}) {
+        std::error_code timeEc;
+        std::filesystem::last_write_time(dest, primaryTime, timeEc);
       }
     }
   }

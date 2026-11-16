@@ -146,9 +146,28 @@ std::filesystem::path VariantBasePath(const std::filesystem::path &reachDir,
                                       const std::string &base) {
   std::error_code ec;
   const std::filesystem::path name = std::filesystem::path(base).filename();
-  for (const std::filesystem::path &folder :
-       {reachDir / "game_variants",
-        VFS::GetUserStoragePath() / "game_variants"}) {
+  std::vector<std::filesystem::path> folders = {
+      reachDir / "game_variants",
+      VFS::GetUserStoragePath() / "game_variants",
+      ReachHost::Get().GetDataDir() / "game_variants",
+  };
+  wchar_t userProfile[MAX_PATH] = {};
+  if (GetEnvironmentVariableW(L"USERPROFILE", userProfile, MAX_PATH) > 0) {
+    const std::filesystem::path uProf(userProfile);
+    folders.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "Temporary" /
+                      "UserContent" / "HaloReach" / "GameType");
+    const std::filesystem::path localVariants =
+        uProf / "AppData" / "LocalLow" / "MCC" / "LocalFiles";
+    if (std::filesystem::is_directory(localVariants, ec)) {
+      for (const auto &sub :
+           std::filesystem::directory_iterator(localVariants, ec)) {
+        if (sub.is_directory())
+          folders.push_back(sub.path() / "HaloReach" / "GameType");
+      }
+    }
+    ec.clear();
+  }
+  for (const std::filesystem::path &folder : folders) {
     const std::filesystem::path candidate = folder / name;
     if (std::filesystem::is_regular_file(candidate, ec))
       return candidate;
@@ -1877,8 +1896,9 @@ int DrawList(const Ui &ui, const char *id, ImVec2 pos, float width,
     const ImVec2 area0 = pos,
                  area1(pos.x + width + 14.0f * ui.s, pos.y + maxRows * rh);
     const float wheel = ImGui::GetIO().MouseWheel;
-    if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false))
-      first -= static_cast<int>(wheel);
+    if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false)) {
+      first -= NobleUi::ConsumeWheelSteps(id ? id : "##list_wheel", wheel);
+    }
     static std::unordered_map<ImGuiID, float> s_stickAccumMap;
     float &stickAccum = s_stickAccumMap[key];
     const float rStick = UiPad::AnalogScrollY(false);
@@ -4728,16 +4748,21 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
   static bool s_waitMouseRelease = false;
   if (resetEdges) {
     (void)Window::TakeLeftClicks();
-    (void)Window::TakeWheelNotches();
+    (void)Window::TakeWheelSteps();
     (void)Window::TakeTypedChars();
     s_waitMouseRelease = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
   }
 
   const bool vcOwnsPointer = UiPad::IsVirtualCursorControllingMouse();
   if (vcOwnsPointer) {
-    if (resetEdges || settling) {
+    if (resetEdges || settling || !focused) {
       (void)Window::TakeLeftClicks();
-      (void)Window::TakeWheelNotches();
+      (void)Window::TakeWheelSteps();
+    } else {
+      const float wheel = Window::TakeWheelSteps();
+      if (wheel != 0.0f) {
+        io.AddMouseWheelEvent(0.0f, wheel);
+      }
     }
   } else if (!settling && focused && GetCursorPos(&cursor) &&
              ScreenToClient(hwnd, &cursor) && client.right > 0 &&
@@ -4752,7 +4777,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
       s_waitMouseRelease = false;
     if (resetEdges || s_waitMouseRelease) {
       (void)Window::TakeLeftClicks();
-      (void)Window::TakeWheelNotches();
+      (void)Window::TakeWheelSteps();
       io.AddMouseButtonEvent(0, false);
       io.AddMouseButtonEvent(1, false);
     } else {
@@ -4765,10 +4790,9 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
       const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
       io.AddMouseButtonEvent(1, rDown);
 
-      const int wheel = Window::TakeWheelNotches();
-      if (wheel != 0) {
-        const float dampened = static_cast<float>(std::clamp(wheel, -1, 1));
-        io.AddMouseWheelEvent(0.0f, dampened);
+      const float wheel = Window::TakeWheelSteps();
+      if (wheel != 0.0f) {
+        io.AddMouseWheelEvent(0.0f, wheel);
       }
     }
   } else {
@@ -4777,7 +4801,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
     io.AddMouseButtonEvent(1, false);
     if (resetEdges || settling) {
       (void)Window::TakeLeftClicks();
-      (void)Window::TakeWheelNotches();
+      (void)Window::TakeWheelSteps();
     }
   }
 
@@ -7401,6 +7425,16 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
           // unconnected local match (main.cpp's in-process path for the
           // Noble-drawn menu reads choice.connectAddress itself).
           args += L" -connect \"" + ToWide(choice.connectAddress) + L"\"";
+          // The loading screen roster is not host-only: every joiner shows the same lobby
+          // roster (host first) while the match loads.
+          if (!choice.rosterNames.empty()) {
+            std::wstring rosterCsv;
+            for (size_t r = 0; r < choice.rosterNames.size(); ++r) {
+              if (r) rosterCsv += L"|";
+              rosterCsv += ToWide(choice.rosterNames[r]);
+            }
+            args += L" -loading-roster \"" + rosterCsv + L"\"";
+          }
           if (!choice.sessionId.empty())
             args += L" -session-id \"" + ToWide(choice.sessionId) + L"\"";
           if (!choice.sessionToken.empty())

@@ -1,6 +1,7 @@
 #include "common/RecommendedMaps.hpp"
 
 #include "common/Logger.hpp"
+#include "common/ObfuscatedString.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -23,7 +24,7 @@ namespace {
 constexpr const wchar_t kUserAgent[] = L"ProjectNoble";
 // Newest-first list. Looking past the newest release matters: a maintainer can publish a base-only release (v0.19.90
 // was one), and the optional pack must still be found in an older release instead of leaving the row broken.
-constexpr const char kReleaseApi[] = "https://api.github.com/repos/O7OF/Project-Noble-/releases?per_page=10";
+const std::string kReleaseApi = NOBLE_OBF("https://api.github.com/repos/O7OF/Project-Noble-/releases?per_page=10");
 
 std::wstring Widen(const std::string& s) {
     if (s.empty()) return L"";

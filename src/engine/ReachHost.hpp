@@ -29,6 +29,17 @@ public:
     // GetTickCount64 of the last engine frame (0 until the first), for the stall watchdog.
     static uint64_t GetLastFrameTickMs();
 
+    // Sends the settled award to every connected guest as a match_over packet (host only). Called
+    // after any settlement, including the fallback used when the engine never produced results, so
+    // every client can pay its own cR/challenges/commendations and show the after-action report.
+    static void BroadcastMatchAward();
+
+    // The engine's map state (haloreach+0xC1A118): 0 none, 1 loading, 2 running, 3 ending. -1 unknown.
+    static int GetMapState();
+    // The engine's launch state (haloreach+0xC1A114): 11 = a launched map is in progress. -1 unknown.
+    static int GetLaunchState();
+
+
     void* GetInterface() { return m_hostObject; }
     void* GetSecondInterface() { return m_secondObject; }
 

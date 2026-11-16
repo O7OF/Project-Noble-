@@ -77,6 +77,8 @@ private:
 
     Cat m_cat = Cat::Graphics;
     bool m_loaded = false;
+    int m_lastRenderFrame = 0;   // ImGui frame the panel was last drawn on (0 = never)
+
     SettingsData m_edit;
     SettingsData m_saved;
     int m_rebindAction = -1;      // action waiting for a key press
@@ -105,6 +107,7 @@ private:
     bool m_valueTookLeftRight = false;  // a focused value row used left/right this frame, so the tabs must not
     bool m_enterAppliesHere = false;    // the focused row has no use for Enter
     bool m_scrollToFocus = false;
+    bool m_resetRowsScroll = false;
     int m_curRow = -1;
     bool m_rowFocused = false, m_rowHovered = false, m_rowDisabled = false;
     ImVec2 m_valMin, m_valMax;

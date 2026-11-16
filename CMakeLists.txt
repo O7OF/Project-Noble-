@@ -9,7 +9,7 @@ if(WIN32)
     set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
     set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
 endif()
-project(ProjectNoble VERSION 0.19.103 LANGUAGES C CXX)
+project(ProjectNoble VERSION 0.20.7 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -227,6 +227,7 @@ set(SOURCES
 set(HEADERS
     src/engine/EmbeddedBlocks.hpp
     src/common/Logger.hpp
+    src/common/ObfuscatedString.hpp
     src/common/Types.hpp
     src/common/Version.hpp
     src/host/SteamLocator.hpp
@@ -363,7 +364,24 @@ target_link_libraries(noble-client PRIVATE
     windowscodecs
 )
 
-target_link_options(noble-client PRIVATE /MAP)
+# Release hardening for the shipped client. COMDAT folding and no RTTI strip the function boundaries a
+# decompiler uses; symbols are never emitted next to the executable. Whole-program optimisation (/GL +
+# /LTCG) makes the link much slower, so it is opt-in: -DNOBLE_LTO=ON for a packaging build, off for the
+# normal edit/build loop.
+option(NOBLE_LTO "Whole-program optimisation for the release client (slower link)" OFF)
+if(MSVC)
+    target_compile_options(noble-client PRIVATE /O2 /Ob3 /Oi /Ot /Gy /Gw /GR- /MP)
+    if(NOBLE_LTO)
+        target_compile_options(noble-client PRIVATE /GL)
+        target_link_options(noble-client PRIVATE /LTCG)
+    endif()
+    target_link_options(noble-client PRIVATE /OPT:REF /OPT:ICF /INCREMENTAL:NO /DEBUG:NONE)
+    add_custom_command(TARGET noble-client POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -f "$<TARGET_FILE_DIR:noble-client>/noble-client.map"
+        COMMAND ${CMAKE_COMMAND} -E rm -f "$<TARGET_FILE_DIR:noble-client>/noble-client.pdb"
+        COMMAND ${CMAKE_COMMAND} -E rm -f "$<TARGET_FILE_DIR:noble-client>/noble-client.ilk")
+endif()
+
 
 # Noble's own art (original work, tracked in assets\) goes into the data folder alongside the exe.
 # Note: bulk runtime data\ is synced sequentially by build.bat / build-dev.bat / build-package.ps1 using robocopy

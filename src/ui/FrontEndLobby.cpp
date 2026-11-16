@@ -219,7 +219,7 @@ void EnterLobby(OverlayContext &ctx, const ServerEntry &s,
   } else {
     LobbyPlayer hostP;
     hostP.peerId = 1;
-    hostP.username = s.name.empty() ? "Host" : s.name;
+    hostP.username = s.hostPlayerName.empty() ? "Host" : s.hostPlayerName;
     hostP.isHost = true;
     hostP.ping = s.ping; // unknown stays -1 (drawn as "-"), never a made-up 25 ms
     ctx.st.lobbyRoster.push_back(hostP);
@@ -817,6 +817,11 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   TakePendingLobbyEvents(st);
   if (st.lobbyMapPickerOpen) {
     DrawLobbyMapPickerModal(ctx, ui, left, top, back);
+    return;
+  }
+  if (st.optionsOpen) {
+    DrawTacticalGameOptions(ctx, ui, left, top, st.lobbyMode == "firefight",
+                            st.lobbyMode == "forge", back);
     return;
   }
 
@@ -1511,10 +1516,17 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
          st.isLobbyHost, "Select Firefight game variant."});
     optRows.push_back({"MAP", mapDisplay, false, st.isLobbyHost,
                        "Choose which Firefight map to play."});
-    if (st.isLobbyHost)
+    if (st.isLobbyHost) {
+      const std::string ffModeValue =
+          st.lobbyModeChanges > 0
+              ? std::to_string(st.lobbyModeChanges) + " CHANGED"
+              : std::string("DEFAULTS");
+      const std::string ffModeTip = st.lobbyModeChanges > 0
+                                        ? st.lobbyModeSummary
+                                        : std::string(kOptionsTip);
       optRows.push_back(
-          {"GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip});
-    else
+          {"GAME OPTIONS", ffModeValue, false, st.isLobbyHost, ffModeTip});
+    } else
       optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
                          false, false, hostModeTip});
     if (st.isLobbyHost)
@@ -1578,7 +1590,8 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
                : "Press to let everyone vote on what to play next from this "
                  "playlist."});
     else if (st.isLobbyHost)
-      optRows.push_back({"GAME OPTIONS", modeValue, false, false, modeTip});
+      optRows.push_back(
+          {"GAME OPTIONS", modeValue, false, st.isLobbyHost, modeTip});
     else
       optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
                          false, false, hostModeTip});
@@ -2432,13 +2445,40 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
          ImVec2(colX, lobbyTipY + 62.0f * ui.s), kAccent, countdown);
   }
 
+  // The invite strip never prints the address: it copies it. A public IP on
+  // screen ends up in screenshots and streams.
+  const std::string extIp = UPnP::Get().GetExternalIP();
+  const bool ipKnown = !extIp.empty() && extIp != "Unknown";
+  const std::string hostEp = st.isLobbyHost
+                                 ? (ipKnown ? extIp + ":11774" : std::string())
+                                 : st.lobbyHostEndpoint;
+  // A shareable join code works for public AND private (unlisted) lobbies. It
+  // is just the session id in a short, typo-tolerant format - the joiner
+  // resolves the host through the master server, so no IP is exposed in the
+  // code.
+  std::string joinCode;
+  if (st.isLobbyHost && st.lobbySessionId.size() == 16) {
+    InviteCodeInfo codeInfo;
+    codeInfo.sessionId = st.lobbySessionId;
+    codeInfo.isPrivate = st.lobbyPrivacy != 0;
+    joinCode = EncodeInviteCode(codeInfo);
+  }
+
   // Friends and the invite strip sit at the foot of the left column, above the
-  // prompts.
-  const float netH = 44.0f * ui.s;
+  // prompts. Size the hosting card dynamically so a join code gets its own row
+  // without colliding with COPY CODE or overflowing the bottom border.
+  const float netH = joinCode.empty() ? (48.0f * ui.s) : (88.0f * ui.s);
   const float netY =
       ui.origin.y + ui.size.y - 58.0f * ui.s - 8.0f * ui.s - netH;
-  const float friendRowH = 25.0f * ui.s;
-  const float friendsH = 26.0f * ui.s + friendRowH * 4.0f;
+  const float friendRowH = 24.0f * ui.s;
+  const float friendHdrH = 26.0f * ui.s;
+  const float minFriendsTop = lobbyTipY + 26.0f * ui.s;
+  const int maxFriendRows = std::clamp(
+      static_cast<int>((netY - 8.0f * ui.s - minFriendsTop - friendHdrH) /
+                       friendRowH),
+      2, 4);
+  const float friendsH =
+      friendHdrH + friendRowH * static_cast<float>(maxFriendRows);
   const float friendsY = netY - 8.0f * ui.s - friendsH;
 
   const ImVec2 fr0(colX, friendsY), fr1(colX + colW, friendsY + friendsH);
@@ -2446,22 +2486,22 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   ui.dl->AddRect(fr0, fr1, panelEdge, 5.0f * ui.s);
   Text(ui, NobleStyle::TitleFont(), 16.0f,
        ImVec2(fr0.x + 10.0f * ui.s, fr0.y + 4.0f * ui.s), kWhite, "FRIENDS");
-  ui.dl->AddLine(ImVec2(fr0.x, fr0.y + 26.0f * ui.s),
-                 ImVec2(fr1.x, fr0.y + 26.0f * ui.s), kRuleLine, 1.0f);
+  ui.dl->AddLine(ImVec2(fr0.x, fr0.y + friendHdrH),
+                 ImVec2(fr1.x, fr0.y + friendHdrH), kRuleLine, 1.0f);
   const bool lobbyTyping =
       ImGui::GetIO().WantTextInput; // these keys are letters in a search box
   const bool friendsPressed =
       (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_F, false)) ||
       UiPad::ActionY() ||
       (ImGui::IsMouseClicked(0) &&
-       ImGui::IsMouseHoveringRect(fr0, ImVec2(fr1.x, fr0.y + 26.0f * ui.s),
+       ImGui::IsMouseHoveringRect(fr0, ImVec2(fr1.x, fr0.y + friendHdrH),
                                   false));
   if (friendsPressed) {
     st.socialPreviousScreen = Screen::PreGameLobby;
     st.screen = Screen::Social;
     MenuSounds::Click();
   }
-  float friendY = friendsY + 26.0f * ui.s;
+  float friendY = friendsY + friendHdrH;
   const auto realFriends = SocialClient::Get().GetFriends();
   if (realFriends.empty()) {
     Text(ui, NobleStyle::SmallFont(), 15.0f,
@@ -2470,16 +2510,16 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   }
   int friendIdx = 0;
   for (const auto &f : realFriends) {
-    if (friendIdx >= 4)
+    if (friendIdx >= maxFriendRows)
       break;
     Text(ui, NobleStyle::SmallFont(), 15.0f,
          ImVec2(fr0.x + 10.0f * ui.s, friendY + 4.0f * ui.s), kWhite,
-         f.username.c_str());
+         f.username.c_str(), fr1.x - 76.0f * ui.s);
     if (st.isLobbyHost) {
       const float invW = 64.0f * ui.s;
       const float invH = 20.0f * ui.s;
       ImGui::SetCursorScreenPos(
-          ImVec2(fr1.x - invW - 6.0f * ui.s, friendY + 2.5f * ui.s));
+          ImVec2(fr1.x - invW - 6.0f * ui.s, friendY + 2.0f * ui.s));
       ImGui::PushID(1500 + friendIdx);
       if (ImGui::Button("INVITE", ImVec2(invW, invH))) {
         std::string myIp = UPnP::Get().GetExternalIP();
@@ -2507,60 +2547,76 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     ++friendIdx;
   }
 
-  // The invite strip never prints the address: it copies it. A public IP on
-  // screen ends up in screenshots and streams.
-  const std::string extIp = UPnP::Get().GetExternalIP();
-  const bool ipKnown = !extIp.empty() && extIp != "Unknown";
-  const std::string hostEp = st.isLobbyHost
-                                 ? (ipKnown ? extIp + ":11774" : std::string())
-                                 : st.lobbyHostEndpoint;
   const ImVec2 net0(colX, netY), net1(colX + colW, netY + netH);
   ui.dl->AddRectFilled(net0, net1, panelFill, 5.0f * ui.s);
   ui.dl->AddRect(net0, net1, panelEdge, 5.0f * ui.s);
   const char *netTitle = st.isLobbyHost   ? "HOSTING"
                          : hostEp.empty() ? "CONNECTING"
                                           : "CONNECTED";
-  // A shareable join code works for public AND private (unlisted) lobbies. It is just the session id in a short,
-  // typo-tolerant format - the joiner resolves the host through the master server, so no IP is exposed in the code.
-  std::string joinCode;
-  if (st.isLobbyHost && st.lobbySessionId.size() == 16) {
-    InviteCodeInfo codeInfo;
-    codeInfo.sessionId = st.lobbySessionId;
-    codeInfo.isPrivate = st.lobbyPrivacy != 0;
-    joinCode = EncodeInviteCode(codeInfo);
-  }
-  const char *netDesc =
-      st.isLobbyHost
-          ? ((st.lobbyNetMode == 1) ? "Online peer-to-peer" : "Local network")
-          : "Peer-to-peer";
-  if (!joinCode.empty())
-    netDesc = "Share this code - anyone who has it can join.";
-  Text(ui, NobleStyle::TitleFont(), 16.0f,
-       ImVec2(net0.x + 10.0f * ui.s, net0.y + 3.0f * ui.s), kWhite, netTitle);
+  const bool hasCopyBtn = !hostEp.empty() || !joinCode.empty();
+  const float cpW = 108.0f * ui.s, cpH = 24.0f * ui.s;
+  const float cpX = net1.x - cpW - 8.0f * ui.s;
   static double s_inviteCopiedAt = -10.0;
   const bool justCopied = now - s_inviteCopiedAt < 2.0;
-  Text(ui, NobleStyle::SmallFont(), 14.0f,
-       ImVec2(net0.x + 10.0f * ui.s, net0.y + 23.0f * ui.s),
-       justCopied ? kAccent : kDim,
-       justCopied ? (joinCode.empty() ? "Invite copied to the clipboard." : "Join code copied to the clipboard.")
-                  : netDesc);
-  if (!joinCode.empty())
-    Text(ui, NobleStyle::TitleFont(), 15.0f,
-         ImVec2(net0.x + 10.0f * ui.s, net0.y + 39.0f * ui.s), NobleUi::kAmber, joinCode.c_str());
+
+  if (!joinCode.empty()) {
+    const float titleY = net0.y + 7.0f * ui.s;
+    Text(ui, NobleStyle::TitleFont(), 16.0f,
+         ImVec2(net0.x + 10.0f * ui.s, titleY), kWhite, netTitle);
+    const char *netModeTag =
+        (st.lobbyNetMode == 1) ? "ONLINE P2P" : "LOCAL LAN";
+    const float tagX = net0.x + 92.0f * ui.s;
+    if (tagX + 80.0f * ui.s < cpX) {
+      Text(ui, NobleStyle::SmallFont(), 12.5f, ImVec2(tagX, titleY + 2.0f * ui.s),
+           kAccent, netModeTag, cpX - 8.0f * ui.s);
+    }
+
+    // Dedicated recessed join code strip so the code never overlaps COPY CODE
+    // or overflows the bottom of the card.
+    const ImVec2 code0(net0.x + 8.0f * ui.s, net0.y + 33.0f * ui.s);
+    const ImVec2 code1(net1.x - 8.0f * ui.s, net0.y + 61.0f * ui.s);
+    ui.dl->AddRectFilled(code0, code1, IM_COL32(6, 12, 22, 185), 3.0f * ui.s);
+    ui.dl->AddRect(code0, code1, IM_COL32(255, 196, 86, 85), 3.0f * ui.s);
+    Text(ui, NobleStyle::TitleFont(), 16.0f,
+         ImVec2(code0.x + 8.0f * ui.s, code0.y + 5.0f * ui.s), NobleUi::kAmber,
+         joinCode.c_str(), code1.x - 8.0f * ui.s);
+
+    Text(ui, NobleStyle::SmallFont(), 13.5f,
+         ImVec2(net0.x + 10.0f * ui.s, net0.y + 66.0f * ui.s),
+         justCopied ? kAccent : kDim,
+         justCopied ? "Join code copied to clipboard."
+                    : "Share this code so friends can join directly.",
+         net1.x - 10.0f * ui.s);
+  } else {
+    const char *netDesc =
+        st.isLobbyHost
+            ? ((st.lobbyNetMode == 1) ? "Online peer-to-peer" : "Local network")
+            : "Peer-to-peer";
+    const float descMaxX =
+        hasCopyBtn ? (cpX - 8.0f * ui.s) : (net1.x - 10.0f * ui.s);
+    Text(ui, NobleStyle::TitleFont(), 16.0f,
+         ImVec2(net0.x + 10.0f * ui.s, net0.y + 5.0f * ui.s), kWhite, netTitle,
+         descMaxX);
+    Text(ui, NobleStyle::SmallFont(), 14.0f,
+         ImVec2(net0.x + 10.0f * ui.s, net0.y + 25.0f * ui.s),
+         justCopied ? kAccent : kDim,
+         justCopied ? "Invite copied to clipboard." : netDesc, descMaxX);
+  }
+
   bool copyPressed = false;
-  if (!hostEp.empty() || !joinCode.empty()) {
-    const float cpW = 112.0f * ui.s, cpH = 28.0f * ui.s;
-    ImGui::SetCursorScreenPos(
-        ImVec2(net1.x - cpW - 8.0f * ui.s, net0.y + 8.0f * ui.s));
+  if (hasCopyBtn) {
+    ImGui::SetCursorScreenPos(ImVec2(cpX, net0.y + 5.0f * ui.s));
     ImGui::PushID("btn_copy_inv");
-    copyPressed = ImGui::Button(joinCode.empty() ? "COPY INVITE" : "COPY CODE", ImVec2(cpW, cpH));
+    copyPressed = ImGui::Button(joinCode.empty() ? "COPY INVITE" : "COPY CODE",
+                                ImVec2(cpW, cpH));
     ImGui::PopID();
     copyPressed = copyPressed ||
                   (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_X, false)) ||
                   UiPad::ActionX();
   }
   if (copyPressed) {
-    ImGui::SetClipboardText(joinCode.empty() ? ("/connect " + hostEp).c_str() : joinCode.c_str());
+    ImGui::SetClipboardText(
+        joinCode.empty() ? ("/connect " + hostEp).c_str() : joinCode.c_str());
     s_inviteCopiedAt = now;
     MenuSounds::Click();
   }
@@ -2812,28 +2868,41 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
                          ? std::string(ranks[rank].name)
                          : std::string("Not shared yet"));
     if (local) {
-      const Career::Record rec = Career::GetRecord();
-      int challengesDone = 0, challengeCount = 0, tiers = 0, tierMax = 0;
-      for (const auto &c : Career::Challenges()) {
-        ++challengeCount;
-        if (c.done)
-          ++challengesDone;
-      }
-      for (const auto &c : Career::Commendations()) {
-        if (c.tracked) {
-          tiers += c.tier;
-          tierMax += 6;
+      static Career::Record s_cachedRec;
+      static int s_cachedDone = 0, s_cachedTotal = 4, s_cachedTiers = 0, s_cachedTierMax = 0;
+      static ULONGLONG s_cachedCareerAt = 0;
+      const ULONGLONG careerTick = GetTickCount64();
+      if (s_cachedCareerAt == 0 || careerTick - s_cachedCareerAt >= 500ULL) {
+        s_cachedCareerAt = careerTick;
+        s_cachedRec = Career::GetRecord();
+        s_cachedDone = 0;
+        s_cachedTotal = 0;
+        s_cachedTiers = 0;
+        s_cachedTierMax = 0;
+        for (const auto &c : Career::Challenges()) {
+          ++s_cachedTotal;
+          if (c.done)
+            ++s_cachedDone;
         }
+        for (const auto &c : Career::Commendations()) {
+          if (c.tracked) {
+            s_cachedTiers += c.tier;
+            s_cachedTierMax += 6;
+          }
+        }
+        if (s_cachedTotal <= 0)
+          s_cachedTotal = 4;
       }
+      const Career::Record &rec = s_cachedRec;
       statLine("GAMES PLAYED", std::to_string(rec.totals.gamesPlayed));
       statLine("KILLS / DEATHS", std::to_string(rec.totals.kills) + " / " +
                                      std::to_string(rec.totals.deaths));
-      const int totalChallenges = challengeCount > 0 ? challengeCount : 4;
-      statLine("CHALLENGES DONE NOW", std::to_string(challengesDone) + " / " +
-                                          std::to_string(totalChallenges));
+      statLine("CHALLENGES DONE NOW", std::to_string(s_cachedDone) + " / " +
+                                          std::to_string(s_cachedTotal));
       statLine("COMMENDATIONS",
-               tierMax > 0 ? std::to_string(tiers * 100 / tierMax) + "%"
-                           : std::string("0%"));
+               s_cachedTierMax > 0
+                   ? std::to_string(s_cachedTiers * 100 / s_cachedTierMax) + "%"
+                   : std::string("0%"));
       size_t boughtCount = rec.totals.armoryOwned.size();
       if (rec.totals.armoryUnlockAll && boughtCount == 0) {
         boughtCount = 179; // Total catalog count when unlock-all is active
