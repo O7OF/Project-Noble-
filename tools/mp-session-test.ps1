@@ -150,8 +150,8 @@ if ($Slot32) { $env:NOBLE_SLOT_PLAYERS_UNSAFE = '1' } else { Remove-Item Env:\NO
 if ($High) { $env:NOBLE_SLOT_HIGH = '1' } else { Remove-Item Env:\NOBLE_SLOT_HIGH -ErrorAction SilentlyContinue }
 if ($WaitPeersMs -gt 0) { $env:NOBLE_COOP_WAIT_MS = "$WaitPeersMs" } else { Remove-Item Env:\NOBLE_COOP_WAIT_MS -ErrorAction SilentlyContinue }
 if ($LimitsProbe -ge 0) { $env:NOBLE_ENGINE_LIMITS_PROBE = "$LimitsProbe" } else { Remove-Item Env:\NOBLE_ENGINE_LIMITS_PROBE -ErrorAction SilentlyContinue }
-// Automated tests must be invisible: no LAN discovery beacon, so a test host can never show up in anyone's
-// server browser. Guests still connect only to 127.0.0.1:11774.
+# Automated tests must be invisible: no LAN discovery beacon, so a test host can never show up in anyone's
+# server browser. Guests still connect only to 127.0.0.1:11774.
 $env:NOBLE_TEST_NO_BEACON = '1'
 if ($env:NOBLE_LOWMEM -eq '1') { if ($LimitsProbe -lt 0) { $env:NOBLE_ENGINE_LIMITS_PROBE = '0' } }
 
