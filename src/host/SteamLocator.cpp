@@ -1,5 +1,6 @@
 #include "SteamLocator.hpp"
 #include "common/Logger.hpp"
+#include "common/EngineModule.hpp"
 
 #include <windows.h>
 #include <fstream>
@@ -135,7 +136,7 @@ std::optional<ReachInstallInfo> SteamLocator::LocateAndVerifyReach() {
     for (const auto& lib : libraries) {
         fs::path commonMcc = lib / "steamapps" / "common" / "Halo The Master Chief Collection";
         fs::path reachDir = commonMcc / "haloreach";
-        fs::path reachDll = reachDir / "haloreach.dll";
+        fs::path reachDll = reachDir / noble::ReachModuleFileName();
 
         if (fs::exists(reachDll)) {
             ReachInstallInfo info;

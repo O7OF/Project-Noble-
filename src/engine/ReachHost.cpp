@@ -6,6 +6,7 @@
 #include "ui/FrontEndMenu.hpp"
 #include "ui/UiArt.hpp"
 #include "common/Logger.hpp"
+#include "common/EngineModule.hpp"
 #include "common/SaveCodec.hpp"
 #include "common/ArmoryVisor.hpp"
 #include "common/DeviceIdentity.hpp"
@@ -303,7 +304,7 @@ static void EndRoundForTest() {
     if (s_start == 0) s_start = GetTickCount64();
     if (GetTickCount64() - s_start < static_cast<ULONGLONG>(s_seconds * 1000.0)) return;
     s_done = true;
-    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE reach = noble::ReachModule();
     if (!reach) return;
     using RoundEndFn = void(__fastcall*)(int, int, int);
     auto roundEnd = reinterpret_cast<RoundEndFn>(reinterpret_cast<uintptr_t>(reach) + 0x7B3EC);
@@ -515,7 +516,7 @@ bool TeamProbeEnabled() {
 // No logging and no objects with destructors in here: a function containing __try cannot unwind.
 bool TeamProbeRead(TeamProbeSnapshot* out) {
     __try {
-        const HMODULE module = GetModuleHandleW(L"haloreach.dll");
+        const HMODULE module = noble::ReachModule();
         if (!module) return false;
         const uintptr_t base = reinterpret_cast<uintptr_t>(module);
         using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
@@ -702,7 +703,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         bool loading = false;
         if (!s_loadingDone) {
             int curLaunchState = -1;
-            if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+            if (HMODULE reach = noble::ReachModule()) {
                 SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &curLaunchState);
             }
             const bool waitingForRemoteJoin = (curLaunchState >= 0 && curLaunchState < 10 &&
@@ -733,7 +734,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         // Engine "external launch" state machine (haloreach+C1A114): 0..10 while launching, 11 = launched.
         // State 10 waits for the game session to be ready.
         int launchState = -1;
-        if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        if (HMODULE reach = noble::ReachModule()) {
             SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState);
         }
         NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: Frame {} pumped from haloreach.dll (LoadProgress: {:.1f}%, launch state {})",
@@ -756,7 +757,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     const uint64_t syncInterval = noble::NetworkTransport::Get().IsDirectUdpActive() ? 300ULL : 120ULL;
     if (frames % syncInterval == 0) {
         int sessionState = -1;
-        if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        if (HMODULE reach = noble::ReachModule()) {
             SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A118, &sessionState);
         }
         noble::NetworkTransport::Get().SendSessionSync(frames, sessionState == 2);
@@ -768,7 +769,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         int running = -2;
         uintptr_t block = 0;
         const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(
-            reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll")) + 0xC17B18);
+            reinterpret_cast<uintptr_t>(noble::ReachModule()) + 0xC17B18);
         const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
         if (tlsArray && tlsIndex < 128) {
             block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
@@ -787,7 +788,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     if (frames == 1 || (frames % 60) == 0) {
         int launchState = -1;
         int mapState = -1;
-        if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        if (HMODULE reach = noble::ReachModule()) {
             SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState);
             SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A118, &mapState);
         }
@@ -848,7 +849,7 @@ static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint
     // Where in the engine this event came from: a return address (module RVA) turns every engine-side refusal
     // into a Ghidra lookup. Reason 4 is the map/game compatibility answer.
     const auto caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    const HMODULE callerModule = GetModuleHandleW(L"haloreach.dll");
+    const HMODULE callerModule = noble::ReachModule();
     const uintptr_t engineBase = reinterpret_cast<uintptr_t>(callerModule);
     const uintptr_t callerRva = (callerModule && caller > engineBase) ? caller - engineBase : 0;
     NOBLE_WARN("ReachHost [Slot 4 - EngineEvent]: reason={} message='{}' from haloreach+0x{:X}", a1, buf, callerRva);
@@ -871,7 +872,7 @@ static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint
             NOBLE_ERROR("ReachHost [Slot 4 - EngineEvent]: Remote session join timed out ('{}' after {} ms); returning to main menu.",
                         buf, elapsedMs);
             if (Relaunch::HandOff(L"")) {  // ends this process; true is never returned
-                if (HWND hwnd = FindWindowW(L"HaloReachCE_WindowClass", nullptr)) {
+                if (HWND hwnd = FindWindowW(noble::ReachWindowClass().c_str(), nullptr)) {
                     PostMessageW(hwnd, WM_CLOSE, 0, 0);
                 }
             }
@@ -965,7 +966,7 @@ static void BroadcastMatchOver() {
 void ReachHost::BroadcastMatchAward() { BroadcastMatchOver(); }
 
 int ReachHost::GetMapState() {
-    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE reach = noble::ReachModule();
     if (!reach) return -1;
     int mapState = -1;
     if (!SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A118, &mapState)) return -1;
@@ -973,7 +974,7 @@ int ReachHost::GetMapState() {
 }
 
 int ReachHost::GetLaunchState() {
-    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE reach = noble::ReachModule();
     if (!reach) return -1;
     int launchState = -1;
     if (!SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState)) return -1;
@@ -992,13 +993,13 @@ static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uin
         return 0;
     }
     int launchState = -1;
-    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+    if (HMODULE reach = noble::ReachModule()) {
         SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState);
     }
     NOBLE_INFO("ReachHost [Slot 6 - GameResults]: record=0x{:X} (a2=0x{:X} a3=0x{:X}, launch state {})", a1, a2, a3, launchState);
     void* stack[16];
     WORD frames = RtlCaptureStackBackTrace(0, 16, stack, nullptr);
-    uintptr_t reachBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    uintptr_t reachBase = reinterpret_cast<uintptr_t>(noble::ReachModule());
     std::string stackStr;
     for (WORD i = 0; i < frames; ++i) {
         uintptr_t addr = reinterpret_cast<uintptr_t>(stack[i]);
@@ -1046,7 +1047,7 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
     }
 
     float fraction = 0.0f;
-    const HMODULE engineMod = GetModuleHandleW(L"haloreach.dll");
+    const HMODULE engineMod = noble::ReachModule();
     if (engineMod) {
         fraction = *reinterpret_cast<const float*>(reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
     }
@@ -1210,7 +1211,7 @@ void ReachHost::SetRuntimeVolumes(float game, float music, float other) {
     // match never changed the mix: MUSIC/OTHER did nothing and GAME moved everything. The reference host's
     // live::audio::set_volume also writes these three floats in haloreach.dll (game/music/other). Same
     // shape as CameraFov::Apply: make the page writable, write under SEH, restore protection.
-    const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    const uintptr_t base = reinterpret_cast<uintptr_t>(noble::ReachModule());
     if (!base)
         return;
     struct LiveMix {
@@ -1814,7 +1815,7 @@ static void EnsureUiDimensions(HMODULE reach) {
 
 static uint64_t __fastcall UiScreenHook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     s_uiScreenLastTick.store(GetTickCount64(), std::memory_order_relaxed);
-    EnsureUiDimensions(GetModuleHandleW(L"haloreach.dll"));
+    EnsureUiDimensions(noble::ReachModule());
     return s_origUiScreen(a1, a2, a3, a4);
 }
 
@@ -1830,7 +1831,7 @@ static uint64_t __fastcall HookWidgetMouseInput(uint64_t a1, uint64_t a2, uint64
         uint32_t eventType = 0;
         if (SafeCopyMemory(&eventType, reinterpret_cast<const void*>(a3 + 8), sizeof(eventType)) && eventType == 0x1E) {
             s_uiScreenLastTick.store(GetTickCount64(), std::memory_order_relaxed);
-            EnsureUiDimensions(GetModuleHandleW(L"haloreach.dll"));
+            EnsureUiDimensions(noble::ReachModule());
         }
     }
     return s_origWidgetMouseInput(a1, a2, a3, a4);
@@ -1843,7 +1844,7 @@ static uint64_t __fastcall HookWidgetMouseInput(uint64_t a1, uint64_t a2, uint64
 // GetForegroundWindow() returns the parent top-level window, causing the comparison to fail and
 // zeroing the UI mouse cursor to (-1, -1) on the loadout screen!
 static HWND WINAPI EngineGetForegroundWindow() {
-    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+    if (HMODULE reach = noble::ReachModule()) {
         HWND engineHwnd = *reinterpret_cast<HWND*>(reinterpret_cast<uint8_t*>(reach) + 0xC1A188);
         if (engineHwnd && noble::Window::IsForeground(engineHwnd)) {
             return engineHwnd;
@@ -1895,7 +1896,7 @@ static void EnsureUiCursorHook() {
     static bool s_tried = false;
     if (s_tried) return;
     s_tried = true;
-    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE reach = noble::ReachModule();
     if (!reach) return;
     EnsureSubtitleHook(reach);
     {
@@ -4358,7 +4359,7 @@ namespace {
 struct EmblemBytes { uint8_t fg = 0, bg = 0, flags = 0, c1 = 0, c2 = 0, c3 = 0; };
 
 bool EmblemForKeySEH(uint64_t key, EmblemBytes* out) {
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE hReach = noble::ReachModule();
     if (!hReach) return false;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
     __try {

@@ -2,6 +2,7 @@
 #include "common/DeviceIdentity.hpp"
 #include "common/SaveCodec.hpp"
 #include "common/Logger.hpp"
+#include "common/EngineModule.hpp"
 #include "common/Settings.hpp"
 
 #include <windows.h>
@@ -826,7 +827,7 @@ int LocalPlayer(const uint8_t* rec) {
     }
 
     // 2. Check TLS player datum local machine bit (_player_is_local_machine_bit = 0x08)
-    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+    if (HMODULE reach = noble::ReachModule()) {
         const int tlsSlot = ProbeTlsLocalSlot(reinterpret_cast<const uint8_t*>(reach));
         if (tlsSlot >= 0 && tlsSlot < kMaxPlayers) {
             return tlsSlot;
@@ -1435,7 +1436,7 @@ void OnMatchOverJson(const std::string& jsonStr) {
     LivePlayerInfo liveLocal{};
     bool haveLiveLocal = false;
     {
-        HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+        HMODULE reach = noble::ReachModule();
         if (reach) {
             LivePlayerInfo live[16];
             ProbeLiveEngineScores(reinterpret_cast<const uint8_t*>(reach), live, 16);
@@ -1526,7 +1527,7 @@ void EnsureMatchSavedImpl(const char* reason, bool engineReportedEnd) {
     const SettingsData settings = Settings::Get().Snapshot();
 
     int localSlot = -1;
-    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    HMODULE reach = noble::ReachModule();
     if (reach) {
         LivePlayerInfo live[16];
         ProbeLiveEngineScores(reinterpret_cast<const uint8_t*>(reach), live, 16);

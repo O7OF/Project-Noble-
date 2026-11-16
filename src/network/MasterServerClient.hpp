@@ -274,7 +274,7 @@ private:
     bool m_onlineRequested = false;
     bool m_unregisterRequested = false;
 
-    std::string m_url = std::string(kMasterDefault);
+    std::string m_url = MasterDefaultUrl();
     std::unordered_map<std::string, std::string> m_sessionRegionUrl;
     std::unordered_map<std::string, std::string> m_browserEtags;
     std::unordered_map<std::string, std::string> m_browserBodyCache;

@@ -103,20 +103,20 @@ void Clamp(SettingsData& d) {
     // Migration: every saved URL from the old shared cluster (or none) moves to the
     // closed-source US East node. A region the player picked on the new cluster is kept.
     {
-        static constexpr const char* kLegacyMasterUrls[] = {
-            "https://outbreak-z-test-server.onrender.com",
-            "https://servertestdeploy-jfxb.onrender.com",
-            "https://noble-server-2.onrender.com",
-            "https://servertestdeploy-1.onrender.com",
-            "https://projectnobleeast.onrender.com",
-            "https://projectnoblewest.onrender.com",
-            "https://projectnobleuk.onrender.com",
+        const std::string legacyUrls[] = {
+            NOBLE_OBF("https://outbreak-z-test-server.onrender.com"),
+            NOBLE_OBF("https://servertestdeploy-jfxb.onrender.com"),
+            NOBLE_OBF("https://noble-server-2.onrender.com"),
+            NOBLE_OBF("https://servertestdeploy-1.onrender.com"),
+            NOBLE_OBF("https://projectnobleeast.onrender.com"),
+            NOBLE_OBF("https://projectnoblewest.onrender.com"),
+            NOBLE_OBF("https://projectnobleuk.onrender.com"),
         };
         bool legacy = d.masterServerUrl.empty();
-        for (const char* old : kLegacyMasterUrls) {
+        for (const std::string& old : legacyUrls) {
             if (d.masterServerUrl == old) legacy = true;
         }
-        if (legacy) d.masterServerUrl = std::string(kMasterDefault);
+        if (legacy) d.masterServerUrl = MasterDefaultUrl();
     }
     if (d.favorites.size() > 50) d.favorites.resize(50);
     d.wheelUpAction = std::clamp(d.wheelUpAction, -1, 65);

@@ -1,4 +1,6 @@
 #include "Window.hpp"
+#include "common/ObfuscatedString.hpp"
+#include "common/EngineModule.hpp"
 #include "common/Logger.hpp"
 
 #include <algorithm>
@@ -224,7 +226,7 @@ Window::~Window() {
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;
     }
-    UnregisterClassW(L"HaloReachCE_WindowClass", m_hInstance);
+    UnregisterClassW(noble::ReachWindowClass().c_str(), m_hInstance);
 }
 
 void Window::ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless, bool exclusiveFullscreen) {
@@ -298,7 +300,7 @@ bool Window::Create() {
     wc.hIconSm = LoadIconW(m_hInstance, MAKEINTRESOURCEW(101));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
-    wc.lpszClassName = L"HaloReachCE_WindowClass";
+    wc.lpszClassName = noble::ReachWindowClass().c_str();
 
     if (!RegisterClassExW(&wc)) {
         NOBLE_ERROR("Failed to register Win32 window class.");

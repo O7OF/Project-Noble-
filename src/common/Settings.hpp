@@ -124,7 +124,7 @@ struct SettingsData {
     std::string lastPlayedMod;          // mod folder, empty when the game was vanilla
     std::string playerName = "NobleSix";
     std::string serviceTag = "NOBL";  // Reach service tag: 1-4 letters/digits, upper case (profile +0x1AC)
-    std::string masterServerUrl = std::string(kMasterDefault); // empty = LAN only
+    std::string masterServerUrl = MasterDefaultUrl(); // empty = LAN only
     std::vector<std::string> favorites;
 
     // Account / Auth

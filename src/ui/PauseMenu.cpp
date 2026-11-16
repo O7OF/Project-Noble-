@@ -14,6 +14,7 @@
 #include "audio/VoiceChat.hpp"
 #include "career/Career.hpp"
 #include "common/Logger.hpp"
+#include "common/EngineModule.hpp"
 #include "common/MapNames.hpp"
 #include "common/Relaunch.hpp"
 #include "common/Settings.hpp"
@@ -2365,7 +2366,7 @@ static std::string WideToUtf8Short(const wchar_t *w) {
 // table so that player roster, kills, assists, deaths, scores, and ping update
 // live in real time across Firefight, Custom Games, Campaign, and Forge.
 static void UpdateLiveScoreboard() {
-  HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+  HMODULE reach = noble::ReachModule();
   if (!reach)
     return;
   const uint8_t *reachBase = reinterpret_cast<const uint8_t *>(reach);
@@ -4366,7 +4367,7 @@ void PauseMenu::DrawLoading() {
 
   // ---- Live Progress & Lobby Membership ----
   float progress = LoadScreen::Get().GetLoadProgress();
-  const HMODULE engineMod = GetModuleHandleW(L"haloreach.dll");
+  const HMODULE engineMod = noble::ReachModule();
   if (engineMod) {
     float engineProg = *reinterpret_cast<const float *>(
         reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);

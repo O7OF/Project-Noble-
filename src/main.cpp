@@ -1,4 +1,6 @@
 #include "common/Logger.hpp"
+#include "common/ObfuscatedString.hpp"
+#include "common/EngineModule.hpp"
 #include "engine/MapGameTypes.hpp"
 #include "common/MapNames.hpp"
 #include "engine/PadLayouts.hpp"
@@ -82,7 +84,6 @@ static constexpr const wchar_t* kCrashDumpFileName = L"noble-dev-crash.dmp";
 static constexpr const char* kLogFileName = "noble-dev.log";
 #else
 static constexpr const wchar_t* kCrashDumpFileName = L"noble-crash.dmp";
-static constexpr const char* kLogFileName = "noble-client.log";
 #endif
 
 static void WriteCrashDump(EXCEPTION_POINTERS* info);
@@ -99,6 +100,7 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
         }
     } catch (...) {}
     if (pExceptionInfo && pExceptionInfo->ExceptionRecord) {
+#ifdef NOBLE_DEV_BUILD
         uintptr_t faultAddr = reinterpret_cast<uintptr_t>(pExceptionInfo->ExceptionRecord->ExceptionAddress);
         HMODULE hMod = nullptr;
         WCHAR modPath[MAX_PATH] = L"Unknown Module";
@@ -130,6 +132,7 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
             }
             spdlog::error(" Frame {:02d}: 0x{:X} (+0x{:X}) [{}]", i, frameAddr, frameRva, std::filesystem::path(frameModPath).filename().string());
         }
+#endif // NOBLE_DEV_BUILD
 
         WriteCrashDump(pExceptionInfo);
     }
@@ -148,7 +151,9 @@ static void WriteCrashDump(EXCEPTION_POINTERS* info) {
     const wchar_t* dumpName = dumpPath.c_str();
     HANDLE hDumpFile = CreateFileW(dumpName, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hDumpFile == INVALID_HANDLE_VALUE) {
+#ifdef NOBLE_DEV_BUILD
         spdlog::error("Crash minidump could not be created ({})", std::filesystem::path(dumpName).string());
+#endif
         return;
     }
     MINIDUMP_EXCEPTION_INFORMATION mei{};
@@ -160,7 +165,11 @@ static void WriteCrashDump(EXCEPTION_POINTERS* info) {
     const BOOL ok = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hDumpFile, type,
                                       info ? &mei : nullptr, nullptr, nullptr);
     CloseHandle(hDumpFile);
+#ifdef NOBLE_DEV_BUILD
     spdlog::error("Crash minidump written to {} ({})", std::filesystem::path(dumpName).string(), ok ? "ok" : "MiniDumpWriteDump failed");
+#else
+    (void)ok;
+#endif
 }
 
 // A C++ exception that escapes (or an explicit std::terminate) never reaches NobleCrashHandler: the CRT
@@ -177,6 +186,7 @@ static void NobleTerminateHandler() {
             }
         }
     } catch (...) {}
+#ifdef NOBLE_DEV_BUILD
     spdlog::error("UNHANDLED C++ EXCEPTION: the process is being terminated");
     if (std::exception_ptr current = std::current_exception()) {
         try {
@@ -203,6 +213,7 @@ static void NobleTerminateHandler() {
         }
         spdlog::error("  at {:02d}: 0x{:X} (+0x{:X}) [{}]", i, addr, rva, std::filesystem::path(path).filename().string());
     }
+#endif // NOBLE_DEV_BUILD
     // The CRT turns an escaping C++ exception into a fail-fast in ucrtbase, so the SEH filter above never runs:
     // write the minidump here, before TerminateProcess, or this class of crash would only leave a log.
     WriteCrashDump(nullptr);
@@ -216,28 +227,38 @@ static void NobleTerminateHandler() {
 // 0xC0000409, FAST_FAIL 7). abort() raises SIGABRT first, and the SIGABRT handler is process-wide, so route it
 // through the same logging; a terminate-driven abort still has its exception in flight for what().
 static void NobleAbortSignalHandler(int) {
+#ifdef NOBLE_DEV_BUILD
     spdlog::error("abort() / SIGABRT raised on thread {}", GetCurrentThreadId());
+#endif
     NobleTerminateHandler();
 }
 
 // The C runtime's own error paths (an invalid argument to a CRT function, a pure virtual call) also end in a
 // silent fail-fast unless a handler is installed. Log them like any other fatal error: what, where, a stack.
+#ifdef NOBLE_DEV_BUILD
 static std::string NarrowForLog(const wchar_t* w) {
     std::string out;
     if (!w) return "?";
     for (; *w; ++w) out.push_back(static_cast<char>(*w & 0x7F));
     return out;
 }
+#endif
 
 static void NobleInvalidParameterHandler(const wchar_t* expression, const wchar_t* function, const wchar_t* file,
                                          unsigned int line, uintptr_t) {
+#ifdef NOBLE_DEV_BUILD
     spdlog::error("FATAL C RUNTIME ERROR: invalid parameter in {} ({}:{}) expression '{}'", NarrowForLog(function),
                   NarrowForLog(file), line, NarrowForLog(expression));
+#else
+    (void)expression; (void)function; (void)file; (void)line;
+#endif
     NobleTerminateHandler();
 }
 
 static void NoblePureCallHandler() {
+#ifdef NOBLE_DEV_BUILD
     spdlog::error("FATAL C RUNTIME ERROR: pure virtual function called");
+#endif
     NobleTerminateHandler();
 }
 
@@ -422,7 +443,7 @@ char __fastcall MapParseHook(void* a1, void* a2) {
         //   index = *(u32*)(DAT_180c1a600 + 4 + (DAT_180afbe38 & 0xffff) * 8)
         //   header id   = *(int*)((&DAT_184e39f20)[index >> 28] + 0x0C + index * 4)
         //   header type = *(int*)((&DAT_184e39f20)[index >> 28] + 0x10 + index * 4)
-        HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+        HMODULE reach = GetModuleHandleW(NOBLE_OBFW(L"haloreach.dll").c_str());
         const uintptr_t base = reinterpret_cast<uintptr_t>(reach);
         int slot = 0;
         uintptr_t header = 0;
@@ -494,7 +515,7 @@ void __fastcall MapStateTickHook(void* state) {
             }
         }
         SafeReadPtr(reinterpret_cast<uintptr_t>(state) + 0x68, &slot68, sizeof(slot68));
-        if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        if (HMODULE reach = GetModuleHandleW(NOBLE_OBFW(L"haloreach.dll").c_str())) {
             SafeReadPtr(reinterpret_cast<uintptr_t>(reach) + 0xC1A118, &mapState, sizeof(mapState));
         }
         char line[256];
@@ -525,7 +546,7 @@ ExitThreadFn s_origExitThread = nullptr;
 
 VOID WINAPI ExitThreadHook(DWORD code) {
     const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(NOBLE_OBFW(L"haloreach.dll").c_str()));
     if (engineBase && caller > engineBase && caller < engineBase + 0x4EDA000) {
         char line[256];
         std::snprintf(line, sizeof(line), "thread %lu exits with code %lu from haloreach+0x%llX",
@@ -542,7 +563,7 @@ FreeLibraryAndExitThreadFn s_origFreeLibExitThread = nullptr;
 
 VOID WINAPI FreeLibraryAndExitThreadHook(HMODULE module, DWORD code) {
     const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(NOBLE_OBFW(L"haloreach.dll").c_str()));
     char line[256];
     std::snprintf(line, sizeof(line), "FreeLibraryAndExitThread(0x%llX) thread %lu from haloreach+0x%llX",
                   static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(module)),
@@ -558,7 +579,7 @@ PostQuitMessageFn s_origPostQuitMessage = nullptr;
 
 VOID WINAPI PostQuitMessageHook(int code) {
     const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(NOBLE_OBFW(L"haloreach.dll").c_str()));
     const uintptr_t callerRva = (engineBase && caller > engineBase) ? caller - engineBase : 0;
     NOBLE_ERROR("PostQuitMessage({}) requested from haloreach+0x{:X} (caller 0x{:X})", code, callerRva, caller);
     if (auto logger = spdlog::default_logger()) logger->flush();
@@ -567,7 +588,7 @@ VOID WINAPI PostQuitMessageHook(int code) {
 
 VOID WINAPI ExitProcessHook(UINT code) {
     const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
-    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(NOBLE_OBFW(L"haloreach.dll").c_str()));
     const uintptr_t callerRva = (engineBase && caller > engineBase) ? caller - engineBase : 0;
     NOBLE_ERROR("ExitProcess({}) requested from haloreach+0x{:X} (caller 0x{:X})", code, callerRva, caller);
     if (auto logger = spdlog::default_logger()) logger->flush();
@@ -659,7 +680,7 @@ int WalkThread(HANDLE thread, CONTEXT ctx, const UnwindImage& engine) {
         const bool inEngine = engine.base && pc >= reinterpret_cast<uintptr_t>(engine.base) &&
                              pc < reinterpret_cast<uintptr_t>(engine.base) + engine.size;
         char line[512];
-        std::snprintf(line, sizeof(line), "    %02d %s +0x%llX", i, inEngine ? "haloreach.dll" : name.c_str(),
+        std::snprintf(line, sizeof(line), "    %02d %s +0x%llX", i, inEngine ? NOBLE_OBF("haloreach.dll").c_str() : name.c_str(),
                       static_cast<unsigned long long>(inEngine ? pc - reinterpret_cast<uintptr_t>(engine.base)
                                                                : (moduleBase ? pc - moduleBase : pc)));
         NOBLE_ERROR("{}", line);
@@ -690,7 +711,7 @@ void DumpAllThreadStacks() {
     NOBLE_ERROR("STALL DUMP: no engine frame for 15 s; dumping thread stacks");
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snap == INVALID_HANDLE_VALUE) return;
-    const UnwindImage engine = ImageForModule(GetModuleHandleW(L"haloreach.dll"));
+    const UnwindImage engine = ImageForModule(GetModuleHandleW(NOBLE_OBFW(L"haloreach.dll").c_str()));
     NOBLE_ERROR("  engine .pdata entries: {}", engine.pdataCount);
     THREADENTRY32 te{};
     te.dwSize = sizeof(te);
@@ -852,11 +873,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     DisableProcessWindowsGhosting();
     timeBeginPeriod(1);
 
-    // 1. Initialize logging
-    // "-log <file>" lets a second instance (or an automated test) keep its own log instead of truncating
-    // noble-client.log, which basic_file_sink does on every start.
+    // 1. Initialize logging. The shipped client has no log at all (Logger::Init is a no-op there), so the
+    // "-log <file>" override is a development-only switch and is ignored in release.
     {
-        std::string logName = kLogFileName;
+        std::string logName;
+#ifdef NOBLE_DEV_BUILD
+        logName = kLogFileName;
         int argcPre = 0;
         LPWSTR* argvPre = CommandLineToArgvW(GetCommandLineW(), &argcPre);
         for (int i = 1; argvPre && i + 1 < argcPre; ++i) {
@@ -875,6 +897,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             const std::filesystem::path besideExe = std::filesystem::path(exePath).parent_path() / logName;
             logName = besideExe.string();
         }
+#endif
         noble::Logger::Init(logName);
     }
     NOBLE_INFO("Starting {} - {}", noble::APP_NAME, noble::VERSION_STRING);
@@ -1054,7 +1077,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }
 
-    auto window = std::make_unique<noble::Window>(L"Project Noble",
+    auto window = std::make_unique<noble::Window>(NOBLE_OBFW(L"Project Noble").c_str(),
         static_cast<uint32_t>(startupSettings.width), static_cast<uint32_t>(startupSettings.height));
     if (containerParentHwnd && IsWindow(containerParentHwnd)) {
         window->SetContainerParent(containerParentHwnd);
@@ -1747,11 +1770,11 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     if (!skipModDll && !modFolder.empty()) {
         std::error_code modEc;
         std::vector<fs::path> candidates = {
-            modFolder / "modded haloreach.dll (REQUIRED)" / "haloreach.dll",
-            modFolder / "haloreach.dll",
+            modFolder / NOBLE_OBF("modded haloreach.dll (REQUIRED)") / noble::ReachModuleFileName(),
+            modFolder / noble::ReachModuleFileName(),
         };
         for (const auto& entry : fs::directory_iterator(modFolder, modEc)) {
-            if (entry.is_directory(modEc)) candidates.push_back(entry.path() / "haloreach.dll");
+            if (entry.is_directory(modEc)) candidates.push_back(entry.path() / noble::ReachModuleFileName());
         }
         for (const auto& candidate : candidates) {
             if (fs::is_regular_file(candidate, modEc)) { modEngineDll = candidate; break; }

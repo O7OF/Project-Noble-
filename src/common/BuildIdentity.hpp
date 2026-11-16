@@ -1,7 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
+
+#include "ObfuscatedString.hpp"
 
 namespace noble {
 
@@ -31,9 +34,14 @@ constexpr std::string_view kClientProtocolHeader = "X-Noble-Protocol";
 // engine's own session check, not only the master-server gate.
 constexpr uint64_t kSessionMagic = 0x504E43534C4F4231ULL;   // "PNCSLOB1"
 
-// Master-server backend on Render (Global Main)
-constexpr std::string_view kMasterMain   = "https://projectnoblebackend.onrender.com";
-constexpr std::string_view kMasterDefault = kMasterMain;
+// Master-server backend on Render (Global Main). Kept as a run-time function built from an obfuscated
+// literal so the shipping binary contains no plaintext endpoint for a decompiler to read.
+inline const std::string& MasterMainUrl() {
+    static const std::string url = NOBLE_OBF("https://projectnoblebackend.onrender.com");
+    return url;
+}
+
+inline std::string MasterDefaultUrl() { return MasterMainUrl(); }
 
 inline std::string_view ExtractBaseVersion(std::string_view v) {
     while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);

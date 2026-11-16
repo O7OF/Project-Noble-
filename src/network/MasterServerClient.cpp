@@ -243,7 +243,7 @@ void MasterServerClient::SetUrl(const std::string& url) {
 
 std::string MasterServerClient::Url() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_url.empty() ? std::string(kMasterDefault) : m_url;
+    return m_url.empty() ? MasterDefaultUrl() : m_url;
 }
 
 std::string MasterServerClient::GetSessionRegionUrl(const std::string& sessionId) const {
@@ -279,7 +279,7 @@ std::vector<std::string> MasterServerClient::GetCandidateUrls(const std::string&
         addUnique(m_url);
     }
     if (urls.empty()) {
-        addUnique(kMasterMain);
+        addUnique(MasterDefaultUrl());
     }
     return urls;
 }
@@ -350,7 +350,7 @@ void MasterServerClient::EnsureThread() {
 
 void MasterServerClient::RequestList() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) m_url = std::string(kMasterDefault);
+    if (m_url.empty()) m_url = MasterDefaultUrl();
     m_listRequested = true;
     EnsureThread();
     m_wake.notify_all();
@@ -358,7 +358,7 @@ void MasterServerClient::RequestList() {
 
 void MasterServerClient::RequestOnlineCount() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) m_url = std::string(kMasterDefault);
+    if (m_url.empty()) m_url = MasterDefaultUrl();
     m_onlineRequested = true;
     EnsureThread();
     m_wake.notify_all();
@@ -366,7 +366,7 @@ void MasterServerClient::RequestOnlineCount() {
 
 void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) m_url = std::string(kMasterDefault);
+    if (m_url.empty()) m_url = MasterDefaultUrl();
     m_advert = advert;
     std::string pub = UPnP::Get().GetExternalIP();
     if (UPnP::Get().IsPublicIP(pub)) {

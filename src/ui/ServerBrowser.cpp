@@ -139,11 +139,11 @@ void DrawSignalBars(ImDrawList* dl, ImVec2 pos, float s, int ping) {
 struct MasterRegion {
     const char* label;
     const char* location;
-    const char* url;
+    std::string url;
 };
 
 static const MasterRegion kMasterRegions[] = {
-    { "Global Main Master Server", "Main Backend (Render)", "https://projectnoblebackend.onrender.com" },
+    { "Global Main Master Server", "Main Backend (Render)", MasterDefaultUrl() },
     { "LAN / Offline Only", "Local Network Only", "" }
 };
 

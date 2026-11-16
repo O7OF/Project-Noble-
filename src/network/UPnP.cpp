@@ -1,5 +1,6 @@
 #include "UPnP.hpp"
 #include "common/Logger.hpp"
+#include "common/ObfuscatedString.hpp"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -189,12 +190,12 @@ bool UPnP::IsPublicIP(const std::string& ip) const {
 }
 
 std::string UPnP::QueryPublicIPWithIpify() {
-    HttpResponse resp = HttpRequest("https://api4.ipify.org", L"GET", {}, {});
+    HttpResponse resp = HttpRequest(NOBLE_OBF("https://api4.ipify.org"), L"GET", {}, {});
     if (!resp.ok || resp.body.empty()) {
-        resp = HttpRequest("http://api4.ipify.org", L"GET", {}, {});
+        resp = HttpRequest(NOBLE_OBF("http://api4.ipify.org"), L"GET", {}, {});
     }
     if (!resp.ok || resp.body.empty()) {
-        resp = HttpRequest("https://api.ipify.org", L"GET", {}, {});
+        resp = HttpRequest(NOBLE_OBF("https://api.ipify.org"), L"GET", {}, {});
     }
     if (resp.ok && !resp.body.empty()) {
         std::string ip = resp.body;

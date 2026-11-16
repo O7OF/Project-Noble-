@@ -3318,12 +3318,21 @@ void SettingsPanel::RenderSystem() {
           When::Info, version, false, true)) {
     InfoValue(version.c_str());
   }
+#ifdef NOBLE_DEV_BUILD
   if (Row("LOG FILE",
-          "noble-client.log, next to the program. It is what a bug report "
-          "needs.",
-          When::Info, "noble-client.log", false, true)) {
-    InfoValue("noble-client.log");
+          "noble-dev.log, next to the program. Development builds are the "
+          "only builds that keep a log.",
+          When::Info, "noble-dev.log", false, true)) {
+    InfoValue("noble-dev.log");
   }
+#else
+  if (Row("CRASH DUMP",
+          "If Noble crashes it writes noble-crash.dmp next to the program. "
+          "Attach that file to a bug report.",
+          When::Info, "noble-crash.dmp", false, true)) {
+    InfoValue("noble-crash.dmp");
+  }
+#endif
   action("OPEN LOGS FOLDER",
          "Opens the folder that holds the log, the crash dump and this "
          "settings file.",
@@ -3333,13 +3342,14 @@ void SettingsPanel::RenderSystem() {
            s_note = "Opened " + exeDir.string();
          });
   action("COPY DIAGNOSTICS",
-         "Puts the version and the last 40 log lines on the clipboard, ready "
+         "Puts the version and the crash-dump status on the clipboard, ready "
          "to paste into a report. Your player name and Windows user name are "
          "replaced first.",
          "Clipboard", [&] {
            std::string text = std::string("Project Noble ") + version + "\n" +
                               exeDir.string() + "\n";
-           std::ifstream log(exeDir / "noble-client.log");
+#ifdef NOBLE_DEV_BUILD
+           std::ifstream log(exeDir / "noble-dev.log");
            if (log) {
              std::vector<std::string> lines;
              for (std::string line; std::getline(log, line);) {
@@ -3351,6 +3361,12 @@ void SettingsPanel::RenderSystem() {
              for (const std::string &line : lines)
                text += line + "\n";
            }
+#else
+           std::error_code dumpEc;
+           text += std::filesystem::exists(exeDir / "noble-crash.dmp", dumpEc)
+                       ? "\n--- crash dump present: noble-crash.dmp ---\n"
+                       : "\n--- no crash dump ---\n";
+#endif
            const auto scrub = [&text](const std::string &secret,
                                       const char *stand) {
              if (secret.size() < 2)

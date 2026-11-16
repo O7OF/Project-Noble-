@@ -2,6 +2,7 @@
 #include "HookManager.hpp"
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
+#include "common/EngineModule.hpp"
 #include "career/Career.hpp"
 #include "engine/BlamEngine.hpp"
 #include "engine/ReachHost.hpp"
@@ -287,7 +288,7 @@ bool EnginePatches::CinematicInProgress() {
   uintptr_t reachBase =
       s_baseAddress
           ? s_baseAddress
-          : reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+          : reinterpret_cast<uintptr_t>(noble::ReachModule());
   if (!reachBase)
     return false;
   __try {
@@ -312,7 +313,7 @@ void EnginePatches::ClearRasterizerScreenFade(uintptr_t base) {
       base ? base
            : (s_baseAddress ? s_baseAddress
                             : reinterpret_cast<uintptr_t>(
-                                  GetModuleHandleW(L"haloreach.dll")));
+                                  noble::ReachModule()));
   if (!reachBase)
     return;
 
@@ -354,7 +355,7 @@ void EnginePatches::RecoverFromCutsceneSkip() {
   uintptr_t reachBase =
       s_baseAddress
           ? s_baseAddress
-          : reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+          : reinterpret_cast<uintptr_t>(noble::ReachModule());
   if (!reachBase)
     return;
 
@@ -398,7 +399,7 @@ void EnginePatches::OnFrameTick() {
   uintptr_t reachBase =
       s_baseAddress
           ? s_baseAddress
-          : reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+          : reinterpret_cast<uintptr_t>(noble::ReachModule());
   if (!reachBase)
     return;
 
