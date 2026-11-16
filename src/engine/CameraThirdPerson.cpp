@@ -40,6 +40,18 @@ constexpr uintptr_t kGetUnitHeadPosRva = 0x472184;
 constexpr uintptr_t kGetUltimateParentRva = 0x473DC0;
 // haloreach+0x477D9C (object_recompute_node_matrices): recomputes an object's simulation node matrices ([obj + 0x17A]) from its current parent.
 constexpr uintptr_t kUpdateObjectNodesRva = 0x477D9C;
+// haloreach+0x134B2C (player_control_get_aiming_position): computes the unit's actual simulation aiming origin and aiming vector.
+constexpr uintptr_t kGetPlayerAimingPosRva = 0x134B2C;
+// haloreach+0xCB3A0 (observer_get_collision_flags): returns 64-bit collision flags for observer/aim raycasts.
+constexpr uintptr_t kGetObserverCollisionFlagsRva = 0xCB3A0;
+// haloreach+0x12AFCC (collision_test_line): raycasts between two 3D world points against structure/terrain/objects.
+constexpr uintptr_t kCollisionTestLineRva = 0x12AFCC;
+// haloreach+0x2DB54C (chud_compute_anchor_point): computes 2D screen anchor matrices for CHUD widgets (anchorType 9, 17, 21 = crosshair/reticle).
+constexpr uintptr_t kChudComputeAnchorPointRva = 0x2DB54C;
+// haloreach+0x2E5954 (chud_project_view_point): projects a 3D camera-view-space vector to 2D CHUD clip coordinates.
+constexpr uintptr_t kChudProjectViewVectorRva = 0x2E5954;
+// haloreach+0x2D8A04 (chud_map_projected_to_normalized): maps 2D CHUD clip coordinates through lens distortion to normalized [0..1] screen coords.
+constexpr uintptr_t kChudMapProjectedToNormalizedRva = 0x2D8A04;
 // haloreach+0x1DCADC (c_orbiting_camera::update) and haloreach+0x1E2028 (c_following_camera::update):
 // both take (void* camera, int32_t userIndex, float dt, void* observerCommand) and write the third-person
 // field of view in radians (from haloreach+0xC8640) to [observerCommand + 0x28].
@@ -48,6 +60,7 @@ constexpr uintptr_t kCameraFollowingUpdateRva = 0x1E2028;
 constexpr uint8_t kExpectedPrologue[9] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24};
 constexpr uint8_t kUnitThirdPersonPrologue[10] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10};
 constexpr uint8_t kFirstPersonUpdatePrologue[11] = {0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x10, 0x48, 0x89, 0x68, 0x18};
+constexpr uint8_t kChudAnchorPrologue[11] = {0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x08, 0x4C, 0x89, 0x48, 0x20};
 
 using CameraModeCheckFn = int32_t(__fastcall*)(int32_t unitDatumIndex);
 using UnitThirdPersonFn = int32_t(__fastcall*)(int32_t unitDatumIndex, int32_t* outReason);
@@ -57,6 +70,15 @@ using GetObjectMarkersFn = int16_t(__fastcall*)(int32_t objectDatumIndex, int32_
 using GetUnitHeadPosFn = float*(__fastcall*)(int32_t unitDatumIndex, float* outPos);
 using GetUltimateParentFn = int32_t(__fastcall*)(int32_t objectDatumIndex);
 using UpdateObjectNodesFn = void(__fastcall*)(int32_t objectDatumIndex);
+using GetPlayerAimingPosFn = int32_t(__fastcall*)(int32_t unitDatumIndex, float* outAimPosition, float* outAimVector, int32_t useDesiredAiming);
+using GetObserverCollisionFlagsFn = uint64_t(__fastcall*)(int32_t userIndex);
+using CollisionTestLineFn = uint8_t(__fastcall*)(uint64_t collisionFlags, uint32_t secondaryFlags, const float* startPoint,
+                                                 const float* endPoint, int32_t ignoreObject1, int32_t ignoreObject2,
+                                                 int32_t ignoreObject3, void* outCollisionResult);
+using ChudComputeAnchorPointFn = uint8_t(__fastcall*)(int32_t chudUserIndex, int32_t anchorType, void* widgetData,
+                                                      void* arg4, float* outAnchorMatrix, uint8_t* outClampFlag);
+using ChudProjectViewVectorFn = uint8_t(__fastcall*)(const float* viewSpaceVec, float* outProjXY);
+using ChudMapProjectedToNormalizedFn = void(__fastcall*)(void* unusedRcx, const float* inProjXY, float* outNormX, float* outNormY);
 uintptr_t s_reachBase = 0;
 CameraModeCheckFn s_original = nullptr;
 UnitThirdPersonFn s_origUnitThirdPerson = nullptr;
@@ -65,6 +87,12 @@ GetObjectMarkersFn s_getObjectMarkers = nullptr;
 GetUnitHeadPosFn s_getUnitHeadPos = nullptr;
 GetUltimateParentFn s_getUltimateParent = nullptr;
 UpdateObjectNodesFn s_updateObjectNodes = nullptr;
+GetPlayerAimingPosFn s_getPlayerAimingPos = nullptr;
+GetObserverCollisionFlagsFn s_getObserverCollisionFlags = nullptr;
+CollisionTestLineFn s_collisionTestLine = nullptr;
+ChudComputeAnchorPointFn s_origChudComputeAnchorPoint = nullptr;
+ChudProjectViewVectorFn s_chudProjectViewVector = nullptr;
+ChudMapProjectedToNormalizedFn s_chudMapProjectedToNormalized = nullptr;
 
 std::atomic<bool> s_enabled{false};
 std::atomic<bool> s_locked{false};
@@ -563,6 +591,253 @@ int32_t __fastcall Hook_CameraModeCheck(int32_t unitDatumIndex) {
     return 1;
 }
 
+std::mutex s_dynCrosshairMutex;
+uint64_t s_dynCachedFrame = 0;
+bool s_dynCachedValid = false;
+float s_dynCachedScreenX = 0.0f;
+float s_dynCachedScreenY = 0.0f;
+float s_dynSmoothedDist = 25.0f;
+bool s_dynHasSmoothedDist = false;
+LARGE_INTEGER s_dynLastQpc{};
+LARGE_INTEGER s_dynQpcFreq{};
+bool s_dynQpcInit = false;
+std::atomic<int> s_dynLogCount{0};
+
+void ResetDynamicCrosshairState() {
+    std::lock_guard<std::mutex> lock(s_dynCrosshairMutex);
+    s_dynCachedValid = false;
+    s_dynHasSmoothedDist = false;
+    s_dynQpcInit = false;
+}
+
+bool EvaluateDynamicThirdPersonCrosshair(float& outScreenX, float& outScreenY) {
+    if (!s_reachBase || !s_getLocalUnit || !s_getPlayerAimingPos ||
+        !s_getObserverCollisionFlags || !s_collisionTestLine ||
+        !s_chudProjectViewVector || !s_chudMapProjectedToNormalized) {
+        return false;
+    }
+
+    const uint64_t curFrame = s_frameCounter.load(std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(s_dynCrosshairMutex);
+    if (curFrame != 0 && curFrame == s_dynCachedFrame) {
+        if (s_dynCachedValid) {
+            outScreenX = s_dynCachedScreenX;
+            outScreenY = s_dynCachedScreenY;
+        }
+        return s_dynCachedValid;
+    }
+    s_dynCachedFrame = curFrame;
+    s_dynCachedValid = false;
+
+    const int32_t unitDatum = s_getLocalUnit(0);
+    if (unitDatum == -1) {
+        s_dynHasSmoothedDist = false;
+        return false;
+    }
+
+    float aimOrigin[3] = {};
+    float aimDir[3] = {};
+    s_getPlayerAimingPos(unitDatum, aimOrigin, aimDir, 0);
+    if (!std::isfinite(aimOrigin[0]) || !std::isfinite(aimOrigin[1]) || !std::isfinite(aimOrigin[2]) ||
+        !std::isfinite(aimDir[0]) || !std::isfinite(aimDir[1]) || !std::isfinite(aimDir[2])) {
+        return false;
+    }
+
+    const float aimLen = std::sqrt(aimDir[0] * aimDir[0] + aimDir[1] * aimDir[1] + aimDir[2] * aimDir[2]);
+    if (aimLen <= 1e-4f) {
+        return false;
+    }
+    aimDir[0] /= aimLen;
+    aimDir[1] /= aimLen;
+    aimDir[2] /= aimLen;
+
+    constexpr float kMinTraceDist = 1.8f;
+    constexpr float kDefaultConvergenceDist = 25.0f;
+    constexpr float kMaxTraceDist = 100.0f;
+
+    const float endPoint[3] = {
+        aimOrigin[0] + aimDir[0] * kMaxTraceDist,
+        aimOrigin[1] + aimDir[1] * kMaxTraceDist,
+        aimOrigin[2] + aimDir[2] * kMaxTraceDist,
+    };
+
+    const int32_t rootParent = s_getUltimateParent ? s_getUltimateParent(unitDatum) : -1;
+    const int32_t ignoreVehicle = (rootParent != -1 && rootParent != unitDatum) ? rootParent : -1;
+
+    // Include structure/terrain/instanced geometry + gameplay object types (biped, vehicle, crate, machine, scenery, giant).
+    const uint64_t collisionFlags = (s_getObserverCollisionFlags(0) & ~2ull) | (0x2985ull << 32);
+    alignas(16) uint8_t collisionResult[0x100] = {};
+    const uint8_t hit = s_collisionTestLine(collisionFlags, 0, aimOrigin, endPoint,
+                                            unitDatum, ignoreVehicle, -1, collisionResult);
+
+    float rawDist = kDefaultConvergenceDist;
+    if (hit != 0) {
+        const auto* hitPos = reinterpret_cast<const float*>(collisionResult + 0x08);
+        if (std::isfinite(hitPos[0]) && std::isfinite(hitPos[1]) && std::isfinite(hitPos[2])) {
+            const float dx = hitPos[0] - aimOrigin[0];
+            const float dy = hitPos[1] - aimOrigin[1];
+            const float dz = hitPos[2] - aimOrigin[2];
+            const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (std::isfinite(d) && d > 0.01f) {
+                rawDist = d;
+            }
+        }
+    }
+    const float clampedDist = std::clamp(rawDist, kMinTraceDist, kMaxTraceDist);
+
+    if (!s_dynQpcInit) {
+        QueryPerformanceFrequency(&s_dynQpcFreq);
+        QueryPerformanceCounter(&s_dynLastQpc);
+        s_dynQpcInit = true;
+    }
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    float dt = 0.0f;
+    if (s_dynQpcFreq.QuadPart > 0 && now.QuadPart >= s_dynLastQpc.QuadPart) {
+        dt = static_cast<float>(
+            static_cast<double>(now.QuadPart - s_dynLastQpc.QuadPart) /
+            static_cast<double>(s_dynQpcFreq.QuadPart));
+    }
+    s_dynLastQpc = now;
+    if (!std::isfinite(dt) || dt < 0.0f || dt > 0.25f) {
+        dt = 0.016f;
+    }
+
+    if (!s_dynHasSmoothedDist || !std::isfinite(s_dynSmoothedDist)) {
+        s_dynSmoothedDist = clampedDist;
+        s_dynHasSmoothedDist = true;
+    } else {
+        const float alpha = std::clamp(1.0f - std::exp(-dt * 18.0f), 0.05f, 1.0f);
+        s_dynSmoothedDist += (clampedDist - s_dynSmoothedDist) * alpha;
+        s_dynSmoothedDist = std::clamp(s_dynSmoothedDist, kMinTraceDist, kMaxTraceDist);
+    }
+
+    const float targetWorld[3] = {
+        aimOrigin[0] + aimDir[0] * s_dynSmoothedDist,
+        aimOrigin[1] + aimDir[1] * s_dynSmoothedDist,
+        aimOrigin[2] + aimDir[2] * s_dynSmoothedDist,
+    };
+
+    // Read local player 0's active s_observer_result from TLS[g_observer_globals] + 0x154 (verified at haloreach+0x2DBC39..0x2DBC69).
+    const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+    const auto* tlsArray = reinterpret_cast<const uintptr_t*>(__readgsqword(0x58));
+    const uintptr_t tlsSlotBase = tlsArray ? tlsArray[tlsIndex] : 0;
+    const uintptr_t observerGlobals = tlsSlotBase ? *reinterpret_cast<const uintptr_t*>(tlsSlotBase + 0x688) : 0;
+    if (!observerGlobals) {
+        return false;
+    }
+
+    const auto* camPos = reinterpret_cast<const float*>(observerGlobals + 0x154);
+    const auto* camFwd = reinterpret_cast<const float*>(observerGlobals + 0x17C);
+    const auto* camUp  = reinterpret_cast<const float*>(observerGlobals + 0x188);
+    if (!std::isfinite(camPos[0]) || !std::isfinite(camPos[1]) || !std::isfinite(camPos[2]) ||
+        !std::isfinite(camFwd[0]) || !std::isfinite(camFwd[1]) || !std::isfinite(camFwd[2]) ||
+        !std::isfinite(camUp[0])  || !std::isfinite(camUp[1])  || !std::isfinite(camUp[2])) {
+        return false;
+    }
+
+    // Right-handed camera basis: camRight = normalize(cross(camFwd, camUp)).
+    float camRight[3] = {
+        camFwd[1] * camUp[2] - camFwd[2] * camUp[1],
+        camFwd[2] * camUp[0] - camFwd[0] * camUp[2],
+        camFwd[0] * camUp[1] - camFwd[1] * camUp[0],
+    };
+    const float rightLen = std::sqrt(camRight[0] * camRight[0] + camRight[1] * camRight[1] + camRight[2] * camRight[2]);
+    if (rightLen <= 1e-5f) {
+        return false;
+    }
+    camRight[0] /= rightLen;
+    camRight[1] /= rightLen;
+    camRight[2] /= rightLen;
+
+    const float delta[3] = {
+        targetWorld[0] - camPos[0],
+        targetWorld[1] - camPos[1],
+        targetWorld[2] - camPos[2],
+    };
+    const float dFwd   = delta[0] * camFwd[0]   + delta[1] * camFwd[1]   + delta[2] * camFwd[2];
+    const float dRight = delta[0] * camRight[0] + delta[1] * camRight[1] + delta[2] * camRight[2];
+    const float dUp    = delta[0] * camUp[0]    + delta[1] * camUp[1]    + delta[2] * camUp[2];
+    if (!std::isfinite(dFwd) || dFwd <= 0.1f) {
+        return false;
+    }
+
+    // Construct camera-view-space point (X = right, Y = up, Z = -forward = -1.0f) matching haloreach+0x2DBC4B..0x2DBC8A.
+    const float viewVec[3] = {
+        std::clamp(dRight / dFwd, -1.5f, 1.5f),
+        std::clamp(dUp / dFwd, -1.5f, 1.5f),
+        -1.0f,
+    };
+
+    float projXY[2] = {};
+    s_chudProjectViewVector(viewVec, projXY);
+    if (!std::isfinite(projXY[0]) || !std::isfinite(projXY[1])) {
+        return false;
+    }
+
+    float normX = 0.5f;
+    float normY = 0.5f;
+    s_chudMapProjectedToNormalized(nullptr, projXY, &normX, &normY);
+    if (!std::isfinite(normX) || !std::isfinite(normY)) {
+        return false;
+    }
+
+    const float screenW = *reinterpret_cast<const float*>(s_reachBase + 0xD1F6F0);
+    const float screenH = *reinterpret_cast<const float*>(s_reachBase + 0xD1F6F4);
+    if (!std::isfinite(screenW) || !std::isfinite(screenH) || screenW <= 1.0f || screenH <= 1.0f) {
+        return false;
+    }
+
+    outScreenX = std::clamp(screenW * normX, screenW * 0.10f, screenW * 0.90f);
+    outScreenY = std::clamp(screenH * (1.0f - normY), screenH * 0.10f, screenH * 0.90f);
+
+    s_dynCachedScreenX = outScreenX;
+    s_dynCachedScreenY = outScreenY;
+    s_dynCachedValid = true;
+
+    if (s_dynLogCount.fetch_add(1) < 5) {
+        NOBLE_INFO("CameraThirdPerson: dynamic 3P crosshair hit={} dist={:.2f}m view=({:.4f}, {:.4f}) screen=({:.1f}, {:.1f}) / ({:.0f}x{:.0f})",
+                   static_cast<int>(hit), s_dynSmoothedDist, viewVec[0], viewVec[1],
+                   outScreenX, outScreenY, screenW, screenH);
+    }
+    return true;
+}
+
+uint8_t __fastcall Hook_ChudComputeAnchorPoint(int32_t chudUserIndex, int32_t anchorType, void* widgetData,
+                                               void* arg4, float* outAnchorMatrix, uint8_t* outClampFlag) {
+    const uint8_t orig = s_origChudComputeAnchorPoint
+        ? s_origChudComputeAnchorPoint(chudUserIndex, anchorType, widgetData, arg4, outAnchorMatrix, outClampFlag)
+        : 0;
+    if (!orig || chudUserIndex != 0 || !outAnchorMatrix) {
+        return orig;
+    }
+    // Crosshair / weapon reticle anchor types in chud_compute_anchor_point (haloreach+0x2DB54C):
+    //   9  = _chud_anchor_type_crosshair
+    //   17 = secondary crosshair anchor
+    //   21 = weapon reticle anchor (when *outClampFlag != 0; if 0, 3D lock-on tracking owns the anchor)
+    if (anchorType != 9 && anchorType != 17 && anchorType != 21) {
+        return orig;
+    }
+    if (anchorType == 21 && outClampFlag && *outClampFlag == 0) {
+        return orig;
+    }
+
+    // Engage ONLY when 3rd-person camera is active (never in 1st person, vehicle 1st person, or freecam).
+    const bool inVehicleFp = s_vehicleFirstPerson.load() && s_localInVehicle.load() && !s_locked.load();
+    if (!NobleShapesCamera() || inVehicleFp || DevCheats::IsFreecamActive()) {
+        ResetDynamicCrosshairState();
+        return orig;
+    }
+
+    float dynX = 0.0f;
+    float dynY = 0.0f;
+    if (EvaluateDynamicThirdPersonCrosshair(dynX, dynY)) {
+        outAnchorMatrix[10] = dynX; // +0x28: screen X
+        outAnchorMatrix[11] = dynY; // +0x2C: screen Y
+    }
+    return orig;
+}
+
 } // namespace
 
 void CameraThirdPerson::TickFrame() { s_frameCounter.fetch_add(1); }
@@ -576,6 +851,11 @@ bool CameraThirdPerson::Install(HMODULE haloreach) {
     s_getUnitHeadPos = reinterpret_cast<GetUnitHeadPosFn>(base + kGetUnitHeadPosRva);
     s_getUltimateParent = reinterpret_cast<GetUltimateParentFn>(base + kGetUltimateParentRva);
     s_updateObjectNodes = reinterpret_cast<UpdateObjectNodesFn>(base + kUpdateObjectNodesRva);
+    s_getPlayerAimingPos = reinterpret_cast<GetPlayerAimingPosFn>(base + kGetPlayerAimingPosRva);
+    s_getObserverCollisionFlags = reinterpret_cast<GetObserverCollisionFlagsFn>(base + kGetObserverCollisionFlagsRva);
+    s_collisionTestLine = reinterpret_cast<CollisionTestLineFn>(base + kCollisionTestLineRva);
+    s_chudProjectViewVector = reinterpret_cast<ChudProjectViewVectorFn>(base + kChudProjectViewVectorRva);
+    s_chudMapProjectedToNormalized = reinterpret_cast<ChudMapProjectedToNormalizedFn>(base + kChudMapProjectedToNormalizedRva);
 
     void* target = reinterpret_cast<void*>(base + kCameraModeCheckRva);
     if (std::memcmp(target, kExpectedPrologue, sizeof(kExpectedPrologue)) != 0) {
@@ -639,6 +919,18 @@ bool CameraThirdPerson::Install(HMODULE haloreach) {
         }
     } else {
         NOBLE_WARN("CameraThirdPerson: following-camera update at haloreach+0x{:X} does not match expected prologue", kCameraFollowingUpdateRva);
+    }
+
+    void* chudAnchorTarget = reinterpret_cast<void*>(base + kChudComputeAnchorPointRva);
+    if (std::memcmp(chudAnchorTarget, kChudAnchorPrologue, sizeof(kChudAnchorPrologue)) == 0) {
+        if (HookManager::InstallHook(chudAnchorTarget, reinterpret_cast<void*>(&Hook_ChudComputeAnchorPoint),
+                                     reinterpret_cast<void**>(&s_origChudComputeAnchorPoint), "chud_compute_anchor_point")) {
+            NOBLE_INFO("CameraThirdPerson: CHUD anchor hook installed at haloreach+0x{:X}", kChudComputeAnchorPointRva);
+        } else {
+            NOBLE_WARN("CameraThirdPerson: could not install CHUD anchor hook at haloreach+0x{:X}", kChudComputeAnchorPointRva);
+        }
+    } else {
+        NOBLE_WARN("CameraThirdPerson: CHUD anchor function at haloreach+0x{:X} does not match expected prologue", kChudComputeAnchorPointRva);
     }
     return true;
 }

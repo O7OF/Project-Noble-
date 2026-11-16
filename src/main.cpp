@@ -1698,6 +1698,29 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         args += L" -loading-roster \"" + rosterCsv + L"\"";
     }
 
+    // Roster fallback for every mode that has no master-server session (direct connect, LAN, campaign and
+    // firefight co-op): the lobby roster that launched this match is already here from -loading-roster.
+    // Seeding the scoreboard from it gives the real player names in ALL modes; before, only a master-server
+    // fetch did that, so campaign/co-op and LAN boards invented "PLAYER n" rows or showed only the local
+    // player. The async master fetch below still overwrites this with richer data (tags/ranks/machines)
+    // when a session id exists.
+    if (!loadingRoster.empty()) {
+        const noble::SettingsData rosterSettings = noble::Settings::Get().Snapshot();
+        std::vector<noble::PauseMenu::ScoreboardEntry> rosterRows;
+        for (const auto& name : loadingRoster) {
+            noble::PauseMenu::ScoreboardEntry e;
+            e.name = name;
+            e.local = !rosterSettings.playerName.empty() &&
+                      _stricmp(name.c_str(), rosterSettings.playerName.c_str()) == 0;
+            e.tag = e.local ? rosterSettings.serviceTag : std::string();
+            e.ping = 0;   // unknown until the transport measures it; drawn as "-"
+            rosterRows.push_back(std::move(e));
+        }
+        noble::PauseMenu::SetScoreboardRoster(std::move(rosterRows), launchMap, launchMode);
+        NOBLE_INFO("main: scoreboard roster seeded from launch roster ({} player(s), mode '{}')",
+                   loadingRoster.size(), launchMode);
+    }
+
     // In-match scoreboard overlay data: fetch the session roster once so the panel can show names, ranks,
     // emblems and teams while the scoreboard key is held.
     if (!connectSessionId.empty()) {
