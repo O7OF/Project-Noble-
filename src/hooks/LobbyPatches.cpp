@@ -64,6 +64,17 @@ uint32_t LobbyPatches::s_maxCoopPlayers = 16;        // Default to expanded 16 p
 typedef void(__fastcall* SetSlotCountsFn)(void* thisPtr, int32_t privateSlots, int32_t publicSlots, bool isRanked);
 static SetSlotCountsFn s_originalSetSlotCounts = nullptr;
 
+// Dev experiment only: allow a multiplayer/forge session to be declared with more than the engine's stock 16 slots.
+// The supported multiplayer path is 16 slots with the engine's own count; a raised count is only meaningful together
+// with the 32-player slot patch, so it also requires that mode to be installed.
+static bool MultiplayerSlotCount32() {
+    static const bool on = [] {
+        wchar_t env[8] = {};
+        return GetEnvironmentVariableW(L"NOBLE_MP_SLOTS32", env, 8) > 0 && env[0] == L'1';
+    }();
+    return on;
+}
+
 static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, int32_t publicSlots, bool isRanked) {
     NOBLE_INFO("LobbyPatches: set_slot_counts private={} public={} ranked={}", privateSlots, publicSlots, isRanked);
     int32_t targetSlots = publicSlots;
@@ -79,11 +90,21 @@ static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, i
             NOBLE_INFO("LobbyPatches: Expanding campaign/firefight session slot count from {} to {} (private={}, isRanked={})",
                 publicSlots, targetSlots, privateSlots, isRanked);
         }
-    } else if ((publicSlots == 16 || publicSlots == 8) && expandedMp > publicSlots) {
-        targetSlots = std::min(expandedMp, 128);
+    } else if ((publicSlots == 16 || publicSlots == 8) && expandedMp > publicSlots && MultiplayerSlotCount32() &&
+               slots::Players32Active()) {
+        // 2026-11-16: this used to expand every multiplayer/forge session to 128 slots. The expansion had been dormant
+        // for weeks because the hook was silently uninstalled (its signature stopped matching the installed dll); once
+        // 1a6846b restored the hook by RVA it declared every MP session as 128 slots and broke the join handshake - the
+        // host closed the guest channel with reason 10 and the guest then got CONNECT REFUSED reason 3 even for a plain
+        // 2-player session. A stock 16-slot session is the supported multiplayer path, so only the explicit dev
+        // experiment (above, plus the 32-player slot patch being installed) may raise it.
+        targetSlots = std::min(expandedMp, 32);
         NOBLE_INFO("LobbyPatches: Expanding multiplayer/forge session slot count from {} to {} (private={}, isRanked={})",
             publicSlots, targetSlots, privateSlots, isRanked);
-    } else if (publicSlots <= 16 && expandedCoop > 1) {
+    } else if (publicSlots > 0 && publicSlots <= 16 && expandedCoop > 1) {
+        // Campaign/firefight fallback for the window before IsCampaignCoop() is set. Never override publicSlots == 0:
+        // that is the engine's own join lock while a launch is starting, and overriding it let a peer join a session the
+        // engine had locked (guest channel closed with reason 14, then CONNECT REFUSED reason 3).
         targetSlots = std::max(publicSlots, std::min(expandedCoop, 16));
         NOBLE_INFO("LobbyPatches: Expanding campaign/firefight session slot count from {} to {} (private={}, isRanked={})",
             publicSlots, targetSlots, privateSlots, isRanked);
