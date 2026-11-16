@@ -105,6 +105,20 @@ layer (`m64_transport`), an 81-machine membership sender (`m64_member::send81`),
 (`memberx`), a stream installer for 128 players (`install_stream128`), and profile checkers. That is the concrete
 architecture behind the shipped 64/81/128 claims; it is considerably more than widening arrays in place.
 
+**What the M128 installer concretely does.** The decompiled `host_probe::p64_actions::install_stream128`
+(0x1400eeb50, 4,841 bytes) builds a **patch table**: for ~21 engine sites at 28 RVAs in the `0x421340..0x421bd3`
+range it records the target RVA together with the expected and replacement byte strings (through `p64::Batch`), i.e.
+exactly the all-or-nothing site-patch shape Noble uses, expanded into a named stream/profile. The RVAs seen in the
+decompiled function: `0x421340 0x421350 0x4213db 0x42143c 0x4215b9 0x4215bc 0x4216c0 0x4216d7 0x4216e1 0x421713
+0x42171e 0x421748 0x42174e 0x421765 0x42176f 0x42177f 0x4217a8 0x4217ae 0x4217c8 0x421836 0x421842 0x42184a
+0x421851 0x421917 0x421927 0x421b45 0x421bc7 0x421bd3` (patch bytes themselves are RR data and are not copied).
+
+Also confirmed as named modules by the analysis: `m64_join::{BitBranch, bit_branch_code, code_sites, may_leave_out,
+platform_diag_on}` (a bit-branch/code-site patch generator), `capacity::{apply, machine_storage_plan, scoreboard_rows,
+check_ff32_profile, unique_value}`, `lobby_profile::{check, default_switches, plan, prepare_plan}`, `m128::PlayerSet`,
+`m64_readers::install`, `m64_transport::m81::NativeBudget`, `p64::{Batch}`, and `scoreboard::{left_rows,
+membership_users, peer_records, record_peer, session_player, session_users, tick, validate_target}`.
+
 Function names/addresses are in `decompiled/host-probe-analysis/function-index.csv` (24,608 rows, demangled); the
 matching decompiled C for these modules is being exported into the same folder.
 
@@ -238,14 +252,14 @@ Location (outside the repo): `C:\Users\tyler\Desktop\ReachRenaissance-Decompiled
 | `reports/` | PE/symbol recon, Rust source module list, capacity strings, changelog feature extract |
 | `GLOW-NOTES.md` | the armour-light glow feature notes (section 3.2 detail + where the code is) |
 
-Status 2026-11-16 (updated after the background job): launcher analysed (4,378 functions); **host-probe full
-analysis complete** - 24,608 functions, 1,530 s of auto-analysis, Ghidra's Rust demangler applied (the StackVariable
-analyzer logged a non-fatal ArrayIndexOutOfBoundsException; the program saved and is usable). Artifacts:
-`decompiled/host-probe-fast/` (364 C files, whole glow/srgb module + armour/look systems, mangled filenames),
-`decompiled/host-probe-analysis/function-index.csv` (24,608 demangled function names/addresses/sizes) and the
-demangled C export of the capacity/membership/transport modules (filter list in `scripts/export-filters.txt`). The
-other binaries can be run the same way with `scripts/decompile-all.ps1`; expect ~25 min of analysis for host-probe
-and a few minutes each for the rest.
+Status 2026-11-16 (final for this workspace): launcher analysed (4,378 functions); **host-probe full analysis
+complete** - 24,608 functions, 1,530 s auto-analysis, Ghidra's Rust demangler applied (a non-fatal analyzer/decompiler
+ArrayIndexOutOfBoundsException was logged; the program saved and is usable). Artifacts: `decompiled/host-probe-fast/`
+(364 C files: whole glow/srgb module and armour/look systems, mangled filenames), `decompiled/host-probe-analysis/`
+(**198 exported functions / 203 C files, ~948 KB, demangled names** - capacity/m63/m64/m81/m128/memberx/transport/
+m64_join/scoreboard/lobby-profile modules and `install_stream128`) and `function-index.csv` (24,608 demangled
+names/addresses/sizes). The other binaries can be run the same way with `scripts/decompile-all.ps1`; expect ~25 min of
+analysis for host-probe and a few minutes each for the rest.
 
 ## 6. Sources
 
