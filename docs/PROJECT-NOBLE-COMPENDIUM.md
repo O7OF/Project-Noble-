@@ -6,7 +6,7 @@
 
 > **How to read it.** Sections 1-4 are the current state and the multiplayer workstream; sections 5-6 are engine subsystem references; 7 is the day-to-day runbook; 8 is the failure archive and the genuinely open questions; the appendices are quick-reference tables. Claims carry a confidence tag; when two notes disagree the newer one wins and the discrepancy is called out.
 
-> **Version stamp.** Project Noble **v0.20.9**, repo `D:\Project-Noble-Closed-Source`, branch `wip-merge`, HEAD **`1fbd952`** (latest upstream merge `9690f16` brought in the v0.20.9 line; commits on top are the high-slot seat fix `0fdcf97`, mod-version diagnostics `2eec1b4`/`1e853ec`, and the 32/64/128 capacity layout model + headless self-test `1fbd952`; this documentation commit sits on top). Both branches are pushed and identical at that commit. Engine reference: MCC `haloreach.dll` build 1.3528.0.0, SHA-256 `738dd2d2...0894`, image base `0x180000000`. Document built 2026-11-16. All RVAs are `haloreach.dll` RVAs (Ghidra address = `0x180000000` + RVA); a game update invalidates them.
+> **Version stamp.** Project Noble **v0.20.10**, repo `D:\Project-Noble-Closed-Source`, branch `wip-merge`, HEAD **`8d16160`** (latest upstream merge `8d16160` brought in the v0.20.10 line; the work below it is the high-slot seat fix `0fdcf97`, mod-version diagnostics `2eec1b4`/`1e853ec`, and the 32/64/128 capacity/chunked-layout model + headless self-test `0ebd1a2`; this documentation commit sits on top). Both branches are pushed and identical at that commit. Engine reference: MCC `haloreach.dll` build 1.3528.0.0, SHA-256 `738dd2d2...0894`, image base `0x180000000`. Document built 2026-11-16. All RVAs are `haloreach.dll` RVAs (Ghidra address = `0x180000000` + RVA); a game update invalidates them.
 
 **Confidence legend**
 
@@ -61,13 +61,13 @@ Only `noble-dev` and `noble-client` are release gates. The dedicated server must
 
 | Fact | Value |
 |---|---|
-| Version | **0.20.9** in `src/common/Version.hpp`; dev builds report `0.20.9-dev (Closed Source)` |
-| Branch | `wip-merge` @ **`1fbd952`** (tracked tree clean; large maps/packs/saves are not in git) |
-| Merge | `9690f16` merged upstream `7cbe838` (v0.20.9 changelog notes); the commits on top are Noble-side fixes (high-slot seat, mod-version diagnostics, capacity layout model) |
-| Branch parity | `main` and `wip-merge` are pushed and identical at `1fbd952` |
+| Version | **0.20.10** in `src/common/Version.hpp`; dev builds report `0.20.10-dev (Closed Source)` |
+| Branch | `wip-merge` @ **`8d16160`** (tracked tree clean; large maps/packs/saves are not in git) |
+| Merge | `8d16160` merged upstream `ed72784` (v0.20.10 post-match KBM UI focus fixes); the commits below it are Noble-side work (high-slot seat, mod-version diagnostics, capacity/chunked layout model) |
+| Branch parity | `main` and `wip-merge` are pushed and identical at `8d16160` |
 | Release tags | the `v0.20.*` line is published through the release repo; the local clone carries tags only up to the `v0.19.x` line |
 
-### 1.4 The v0.20.0-v0.20.9 release line
+### 1.4 The v0.20.0-v0.20.10 release line
 
 Everything below is shipped in the merged `origin/main` line at HEAD. Sources: `release-notes\v0.20.*.md` and `src/ui/ChangelogData.hpp` (in-client changelog).
 
@@ -83,6 +83,7 @@ Everything below is shipped in the merged `origin/main` line at HEAD. Sources: `
 | 0.20.7 | Firefight JIP: host `AbortGame(reason=6)` suppressed while a Noble network transport is active (logged as `SUPPRESSED AbortGame(reason=6) for join-in-progress`); settings migration fix; changelog notes |
 | 0.20.8 | Custom-game join-in-progress: a guest resolves the host's content mod on a stock map instead of dropping it (the modded-Custom-Game desync/abort path); join/connect refusal suppression now respects the engine's launch join lock (`publicSlots == 0`); version bump |
 | 0.20.9 | Third-person camera engine support: engine-side third-person camera hooks and tuning (`src/engine/CameraThirdPerson.cpp`); changelog/version-history data (`src/ui/ChangelogData.hpp`); version bump |
+| 0.20.10 | Post-match keyboard/mouse UI focus and click handling stabilized (post-game panel and pause-menu focus, picker/lobby click routing, shared NobleUi helpers); version bump |
 
 The line also contains a substantial **front-end UI rework**: `FrontEndPickers.cpp`, `PauseMenu.cpp`, `SettingsPanel.cpp`, `FrontEndLobby.cpp` and the new shared drawing layer `NobleUi.cpp/.hpp` were rewritten or heavily reworked, and the ElitePack/ReachHost engine integrations were wired into the UI (commit `f28a98f`: 17 files, roughly +4.2k/-3.4k lines). *observed (diffstat)*.
 
@@ -120,13 +121,13 @@ History: upstream force-disabled the Extended profiles (commit `4407101`) after 
 
 | Area | State | Confidence |
 |---|---|---|
-| Release line v0.20.0-v0.20.9 | shipped and pushed; `main` = `wip-merge` = `1fbd952` | proven |
+| Release line v0.20.0-v0.20.10 | shipped and pushed; `main` = `wip-merge` = `8d16160` | proven |
 | Shipped multiplayer path (16-slot engine session) | works at **2 and 5 players** on one machine with stock engine limits; join/leave/rejoin proven | proven |
 | 16-player multiplayer acceptance | not yet run - blocked by one-machine RAM, needs 3-4 PCs (see 4.5) | proven absence |
 | High-slot (peer 17 / player 16) membership layer | fixed; peer 17 reaches peer state 8 and the membership delta is accepted | proven |
 | High-slot join-in-progress **seat** path | **fixed** (`0fdcf97`): peer 17 stays seated, both sides enter gameplay, 0 boots/closes | proven (2-instance high-slot run) |
 | 32-player mode | dev-gated; **120-site** patch installs, high-slot seat works (peer 17 plays), declared-32 session joins with 2 players; setter churn and real 17-32 players remain | proven at install + seat level |
-| 64/128 players | capacity layout model + headless self-test done (`1fbd952`); wire widening, two-block A/B site classification, 128 message framing, pools and UI remain (see `docs/02-engine-reference/TOPIC-scaling-64-128.md`) | code + synthetic test |
+| 64/128 players | capacity model + chunked-layout plan validated by the headless self-test (`0ebd1a2`); chunked install, wire widening, 128 message framing, pools and UI remain (see `docs/02-engine-reference/TOPIC-scaling-64-128.md`) | code + synthetic test |
 | Lobby/picker/server-browser honesty | implemented (single effective-seat source, greyed 24/32, live roster, browser verdicts) | proven for the 2-player LAN check |
 | Settings persistence after a match | fixed 2026-11-16: the menu process re-reads `settings.json` after the match child exits (and on a fresh SETTINGS open), so in-match changes are shown and never overwritten by the stale pre-match copy | proven (two-process reload test + 2-player smoke) |
 | Campaign co-op | 4 players stock works; more than 4 parked (fails at the network session-start path) | proven |
@@ -380,7 +381,7 @@ The high-slot test uses `NOBLE_SLOT_HIGH=1` (dev only): free-slot searches start
 
 **32 players (milestone 3) - dev-gated, hardware-blocked end-to-end.** The 32-player patch set is large and byte-checked all-or-nothing; a session can be *declared* with 32 slots and joins with 2 players. Two problems remain: (a) the high-slot seat path above, (b) the host calls `set_slot_counts` about 62 times per second because the engine re-applies 16 and the hook re-expands to 32 - this needs the engine's own session-creation slot count raised (or a one-shot latch) rather than post-hoc expansion. A real 32-player run also needs 32 engine sessions, which is far beyond one machine (4.5).
 
-**64/128 players - capacity model done, wiring is the work.** A constexpr shadow-layout model plus a headless self-test (`-test-slot-capacity`, commit `1fbd952`) validates the three capacities without any engine or clients:
+**64/128 players - capacity model done, wiring is the work.** A constexpr shadow-layout model plus a headless self-test (`-test-slot-capacity`, commits `1fbd952`/`0ebd1a2`) validates the three capacities without any engine or clients:
 
 | capacity | shadow blocks/session | extension bytes | message size | mask words | peer index bits | player index bits |
 |---|---|---|---|---|---|---|
