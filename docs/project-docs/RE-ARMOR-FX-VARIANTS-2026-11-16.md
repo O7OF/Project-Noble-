@@ -185,3 +185,24 @@ screenshots for the Armory UI, then Armory UI wiring.
 All HREK tag edits are local to `D:\Steam\steamapps\common\HREK\tags` (map rebuilt at ~797 MB); scripts are in
 `docs/test-tools/` (`armor_fx_generate_all.py`, `armor_fx_fix_tags.py`, `armor_fx_repair.py`, `restore_blue.py`, the
 inspection/diagnostic scripts).
+
+## 2026-11-16: Primary armour colours as the variant base - test result
+
+Tyler suggested basing the flame colours on Reach's **primary armour colour** palette (`kReachColors`, 30 authentic
+engine palette entries, `src/ui/ArmorCustomizer.cpp`) instead of the visor finishes. Two things were tested:
+
+1. **Native tinting via the attachment colour channel does not work for these particles.** The biped's stock
+   `armor_fx.effect` attachment has `change color` options none/primary/secondary/tertiary/quaternary. Setting it to
+   `primary` and testing the same flames with primary palette index 2 (White) and 21 (Maroon) produced correctly
+   coloured armour but **orange flames in both cases** - the attachment colour channel does not tint the particle
+   palette. Evidence: `armor-fx-primary-white-2026-11-16.png`, `armor-fx-primary-maroon-2026-11-16.png`. Reverted the
+   attachment to `change color = none` afterwards.
+2. A dev flag `-armor-primary-test <0..29>` was added (`ArmorCustomizer.cpp`) so match captures can set the Reach
+   primary palette index.
+
+Conclusion / proposed design: using primary colours is still a good **colour source** for the variant palettes (30
+authentic Reach colours, already exposed in the Armory), and it enables a nicer UX - the flame colour can be derived
+automatically from the player's primary colour index instead of adding 30 separate effect rows. This is a data-only
+swap in the generator (primary RGB list + `legendary_flame_pri_<name>` naming, pmcg entry index = 7 + primary index)
+and a mapping in `ReachHost`/`ReachArmory`; it does not fix the still-open ext-effect-tag/custom-particle render
+blocker, which is the next debugging step.

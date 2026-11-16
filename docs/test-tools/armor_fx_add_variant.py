@@ -1,119 +1,123 @@
-#!/usr/bin/env python3
-"""Add the armour-effect colour variant 'legendary_flame_blue' to HREK tags (blue flames, pmcg index 7).
-
-Run through docs/test-tools/runmb.ps1 (ManagedBlam in Blender). It edits HREK tags in place after writing .bak
-backups, then rebuild Forge World with tool.exe and load it in Noble with -map-override.
-
-What it changes (idempotent):
-  armor_fx.effect            + event 'legendary_flame_blue' (copy of legendary_flame) -> head_fire_blue.particle,
-                               location 4; location 4's marker renamed armor_fx_03_shoulders -> armor_fx_06
-                               (ManagedBlam's Save drops newly added location elements, so the unused shoulders
-                               location is reused instead)
-  spartans.render_model      + region armor_fx permutation 'armor_fx_06'
-                             + marker group 'armor_fx_06' (marker bound to permutation index 6)
-  player_model_customization + selection 'legendary_flame_blue' -> armor_fx / armor_fx_06 in BOTH the Spartan and
-                               Elite armour-effect lists (list count 7 -> 8)
-
-Engine side: dev build flag -armor-fx-probe maps the custom item id 0xF0 (240) to internal pmcg index 7, and
--armor-effect-item 240 puts that item id in the profile. See docs/project-docs/RE-ARMOR-FX-VARIANTS-2026-11-16.md.
-"""
-import os, shutil, traceback
+# Add the first armour-effect variant: legendary_flame_blue (blue flames, pmcg index 7, armor_fx_06).
+# Edits HREK tags in place after writing .bak backups; prints a verification report.
+import os, traceback, shutil
 from mbstart import B, mb_stop
-
 HT = r"D:\Steam\steamapps\common\HREK\tags"
 OUT = r"D:\Project-Noble-Closed-Source\build\bin\Release\data\userdata\claude-tests-2026-11-11"
-out = []
-def L(s): out.append(s); print(s)
-
-def p(rel): return os.path.join(HT, rel)
-def backup(rel):
-    src = p(rel); dst = src + ".bak"
-    if not os.path.exists(dst):
-        shutil.copy2(src, dst); L("backup " + os.path.relpath(dst, HT))
-def load(rel):
-    base, ext = os.path.splitext(rel)
-    tf = B.Tags.TagFile(); tf.Load(B.Tags.TagPath.FromPathAndExtension(base, ext[1:])); return tf
-def field(fs, name):
+out=[]; L=out.append
+def p(path): return os.path.join(HT, path)
+def backup(path):
+    src=p(path); dst=src+'.bak'
+    if not os.path.exists(dst): shutil.copy2(src,dst); L("backup "+os.path.relpath(dst,HT))
+def load(path):
+    base, ext = os.path.splitext(path)
+    tf=B.Tags.TagFile(); tf.Load(B.Tags.TagPath.FromPathAndExtension(base, ext[1:])); return tf
+def field(fs,name):
     for f in fs:
-        if str(f.FieldName) == name: return f
+        if str(f.FieldName)==name: return f
     return None
-
-def add_effect():
-    rel = r"objects\characters\spartans\fx\armor_fx\armor_fx.effect"
-    backup(rel); tf = load(rel)
-    locs = field(tf.Fields, "locations")
-    marker = field(locs.Elements[4].Fields, "marker name")
-    if str(marker.Data) != "armor_fx_06":
-        marker.SetStringData("armor_fx_06"); L("effect: location 4 marker -> armor_fx_06")
-    ev = field(tf.Fields, "events")
-    names = [str(field(ev.Elements[i].Fields, "event name").Data) for i in range(ev.Elements.Count)]
-    if "legendary_flame_blue" not in names:
-        el = ev.DuplicateElement(0); fs = el.Fields
-        field(fs, "event name").SetStringData("legendary_flame_blue")
-        ps = field(fs, "particle systems"); p0 = ps.Elements[0].Fields
-        ref = field(p0, "particle"); base, ext = os.path.splitext(
-            r"objects\characters\spartans\fx\armor_fx\particles\head_fire_blue.particle")
-        ref.Path = B.Tags.TagPath.FromPathAndExtension(base, ext[1:])
-        field(p0, "location").Value = 4
-        L("effect: added event legendary_flame_blue -> head_fire_blue.particle loc 4")
-    tf.Save(); tf.Dispose()
-
-def add_model():
-    rel = r"objects\characters\spartans\spartans.render_model"
-    backup(rel); tf = load(rel)
-    regions = field(tf.Fields, "regions"); region = None
-    for i in range(regions.Elements.Count):
-        fs = regions.Elements[i].Fields
-        if str(field(fs, "name").Data) == "armor_fx": region = regions.Elements[i]; break
-    perms = field(region.Fields, "permutations")
-    pnames = [str(field(perms.Elements[i].Fields, "name").Data) for i in range(perms.Elements.Count)]
-    if "armor_fx_06" not in pnames:
-        el = perms.DuplicateElement(0); field(el.Fields, "name").SetStringData("armor_fx_06")
-        L("render_model: + permutation armor_fx_06")
-    groups = field(tf.Fields, "marker groups")
-    gnames = [str(field(groups.Elements[i].Fields, "name").Data) for i in range(groups.Elements.Count)]
-    if "armor_fx_06" not in gnames:
-        el = groups.DuplicateElement(0); field(el.Fields, "name").SetStringData("armor_fx_06")
-        m = field(el.Fields, "markers").Elements[0].Fields
-        field(m, "permutation index").Data = 6
-        L("render_model: + marker group armor_fx_06 (permutation index 6)")
-    tf.Save(); tf.Dispose()
-
-def add_pmcg():
-    rel = r"globals\player_model_customization.player_model_customization_globals"
-    backup(rel); tf = load(rel)
-    for listname in ("spartan armor effect selections", "elite armor effect selections"):
-        block = field(tf.Fields, listname)
-        names = [str(field(block.Elements[i].Fields, "selection name").Data) for i in range(block.Elements.Count)]
-        if "legendary_flame_blue" in names:
-            L("pmcg %s: already present" % listname); continue
-        el = block.DuplicateElement(1); fs = el.Fields
-        field(fs, "selection name").SetStringData("legendary_flame_blue")
-        bits = field(fs, "customized bits").Elements[0].Fields
-        field(bits, "region name").SetStringData("armor_fx")
-        field(bits, "permutation name").SetStringData("armor_fx_06")
-        L("pmcg %s: + legendary_flame_blue -> armor_fx/armor_fx_06 (count %d)" % (listname, block.Elements.Count))
-    tf.Save(); tf.Dispose()
-
-def verify():
-    tf = load(r"objects\characters\spartans\fx\armor_fx\armor_fx.effect")
-    ev = field(tf.Fields, "events")
-    L("verify events:")
+def setsid(f, s):
+    f.SetStringData(s)
+def setint(f, v):
+    f.Data = v
+def setref(f, relpath):
+    base, ext = os.path.splitext(relpath)
+    f.Path = B.Tags.TagPath.FromPathAndExtension(base, ext[1:])
+def verify_effect(tf):
+    loc=field(tf.Fields,'locations'); L(f"locations {loc.Elements.Count}: " + ", ".join(setsid_name(loc.Elements[i]) for i in range(loc.Elements.Count)))
+    ev=field(tf.Fields,'events'); L(f"events {ev.Elements.Count}")
     for i in range(ev.Elements.Count):
-        fs = ev.Elements[i].Fields; ps = field(fs, "particle systems").Elements[0].Fields
-        L("  %d %s loc=%s -> %s" % (i, field(fs, "event name").Data,
-                                        field(ps, "location").Value,
-                                        field(ps, "particle").Path.RelativePathWithExtension))
-    tf.Dispose()
-    tf = load(r"globals\player_model_customization.player_model_customization_globals")
-    for listname in ("spartan armor effect selections", "elite armor effect selections"):
-        block = field(tf.Fields, listname)
-        L("%s [%d] last=%s" % (listname, block.Elements.Count,
-                                field(block.Elements[block.Elements.Count - 1].Fields, "selection name").Data))
-    tf.Dispose()
-
+        fs=ev.Elements[i].Fields
+        name=str(field(fs,'event name').Data)
+        ps=field(fs,'particle systems')
+        extra=""
+        if ps.Elements.Count:
+            p0=ps.Elements[0].Fields
+            extra=str(field(p0,'particle').Path.RelativePathWithExtension)+" loc="+str(field(p0,'location').Value)
+        L(f"  #{i} {name} {extra}")
+def setsid_name(el):
+    for f in el.Fields:
+        if str(f.FieldName) in ('marker name','event name','name','selection name','region name','permutation name'):
+            return str(f.Data)
+    return '?'
 try:
-    add_effect(); add_model(); add_pmcg(); verify(); mb_stop()
+    # ---------- effect tag ----------
+    ep="objects\\characters\\spartans\\fx\\armor_fx\\armor_fx.effect"; backup(ep)
+    tf=load(ep)
+    loc=field(tf.Fields,'locations')
+    if loc.Elements.Count < 7:
+        el=loc.DuplicateElement(0)
+        f=field(el.Fields,'marker name'); setsid(f,"armor_fx_06")
+        L("effect: added location armor_fx_06")
+    ev=field(tf.Fields,'events')
+    # add event legendary_flame_blue if not present
+    names=[str(field(ev.Elements[i].Fields,'event name').Data) for i in range(ev.Elements.Count)]
+    if "legendary_flame_blue" not in names:
+        el=ev.DuplicateElement(0)
+        fs=el.Fields
+        setsid(field(fs,'event name'),"legendary_flame_blue")
+        ps=field(fs,'particle systems')
+        p0=ps.Elements[0].Fields
+        setref(field(p0,'particle'),"objects\\characters\\spartans\\fx\\armor_fx\\particles\\head_fire_blue.particle")
+        setint(field(p0,'location'), 6)
+        L("effect: added event legendary_flame_blue -> head_fire_blue.particle loc 6")
+    verify_effect(tf)
+    tf.Save(); tf.Dispose()
+    # ---------- render_model: permutation + marker group ----------
+    rp="objects\\characters\\spartans\\spartans.render_model"; backup(rp)
+    tf=load(rp)
+    regions=field(tf.Fields,'regions'); region_el=None
+    for i in range(regions.Elements.Count):
+        fs=regions.Elements[i].Fields
+        if str(field(fs,'name').Data)=='armor_fx': region_el=regions.Elements[i]; break
+    perms=field(region_el.Fields,'permutations')
+    pnames=[str(field(perms.Elements[i].Fields,'name').Data) for i in range(perms.Elements.Count)]
+    if "armor_fx_06" not in pnames:
+        el=perms.DuplicateElement(0)
+        setsid(field(el.Fields,'name'),"armor_fx_06")
+        L("render_model: added permutation armor_fx_06")
+    groups=field(tf.Fields,'marker groups')
+    gnames=[str(field(groups.Elements[i].Fields,'name').Data) for i in range(groups.Elements.Count)]
+    if "armor_fx_06" not in gnames:
+        el=groups.DuplicateElement(0)
+        setsid(field(el.Fields,'name'),"armor_fx_06")
+        markers=field(el.Fields,'markers')
+        setint(field(markers.Elements[0].Fields,'permutation index'), 6)
+        L("render_model: added marker group armor_fx_06 (permutation index 6)")
+    tf.Save(); tf.Dispose()
+    # ---------- pmcg: spartan + elite effect lists ----------
+    pp="globals\\player_model_customization.player_model_customization_globals"; backup(pp)
+    tf=load(pp)
+    for listname in ('spartan armor effect selections','elite armor effect selections'):
+        block=field(tf.Fields,listname)
+        names=[str(field(block.Elements[i].Fields,'selection name').Data) for i in range(block.Elements.Count)]
+        if "legendary_flame_blue" in names:
+            L(f"pmcg {listname}: already present"); continue
+        el=block.DuplicateElement(1)   # copy legendary_flame entry
+        fs=el.Fields
+        setsid(field(fs,'selection name'),"legendary_flame_blue")
+        bits=field(fs,'customized bits')
+        b0=bits.Elements[0].Fields
+        setsid(field(b0,'region name'),"armor_fx")
+        setsid(field(b0,'permutation name'),"armor_fx_06")
+        L(f"pmcg {listname}: added legendary_flame_blue -> armor_fx/armor_fx_06 (count {block.Elements.Count})")
+    tf.Save(); tf.Dispose()
+    # verification reload
+    tf=load(pp)
+    for listname in ('spartan armor effect selections','elite armor effect selections'):
+        block=field(tf.Fields,listname)
+        L(f"{listname} [{block.Elements.Count}]")
+        for i in range(block.Elements.Count):
+            fs=block.Elements[i].Fields
+            nm=str(field(fs,'selection name').Data)
+            bits=field(fs,'customized bits')
+            ch=[]
+            for k in range(bits.Elements.Count):
+                cfs=bits.Elements[k].Fields
+                ch.append(str(field(cfs,'region name').Data)+"/"+str(field(cfs,'permutation name').Data))
+            L(f"  #{i} {nm} -> {ch}")
+    tf.Dispose()
+    mb_stop()
 except Exception:
-    L("ERROR\n" + traceback.format_exc())
-open(os.path.join(OUT, os.environ.get("OUT", "armor_fx_variant.txt")), "w", encoding="utf-8").write("\n".join(out))
+    L("ERROR\n"+traceback.format_exc())
+open(os.path.join(OUT, os.environ.get('OUT','armor_fx_variant_edit.txt')),'w',encoding='utf-8').write("\n".join(out))

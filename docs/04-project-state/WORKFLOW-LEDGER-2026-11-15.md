@@ -257,3 +257,10 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
 - Blocker: effect-tag `locations` cannot gain elements through ManagedBlam Save (max 6 usable/tag); ext region/marker
   path works with a stock particle, but custom particles in ext tags are not consistently visible. Blue variant restored
   and verified; diagnostics documented in the RE doc; Armory UI wiring still pending.
+
+### 2026-11-16 18:30 - #15-B primary-colour test: attachment tint does not affect particles
+- Tested biped armor_fx attachment `change color = primary` with primary palette 2 (White) and 21 (Maroon): armour tinted
+  correctly, flames stayed orange -> native effect tinting is not supported for these particle palettes (reverted).
+- Added dev flag `-armor-primary-test <0..29>` for match captures; agreed direction: generate flame variant palettes from
+  the 30 Reach primary colours (kReachColors) and derive the flame colour from the primary index, instead of 30 separate
+  Armory effect rows. Still blocked on ext-effect-tag/custom-particle rendering; evidence in the RE doc.
