@@ -145,6 +145,14 @@ encoder/decoder and message payload widen the peer/player mask fields to 2 or 4 
 operands are already catalogued (`kPeerMasks32`); the player-mask sites still need enumerating from the engine before any
 of this is installed.
 
+**Site inventory started:** `tools/limits/scan_mask_sites.py` is a committed static scanner for mask-immediate sites
+(AND/TEST/MOV/OR/XOR with contiguous low-bit masks in `.text`). Its generated output,
+[`MASK-SITE-INVENTORY.md`](MASK-SITE-INVENTORY.md), currently lists 3905 mask-like immediates overall, **25 candidates
+inside the known session/player regions** to classify first (peer/player/team masks) and 9 of the 23 `kPeerMasks32`
+entries as mask-immediate patches (the rest are bounds/shift/field-width patches outside the scan's scope). Re-run with
+`python tools/limits/scan_mask_sites.py` after any engine update; the scan is heuristic, so each candidate must be
+confirmed by reading its function.
+
 Message-capacity model (`SlotMessage`): the extension builder's counts are now derived from `kSlotCapacity` (32 ->
 15 peer + 16 player entries) with static asserts pinning the generated tables, and the same `-test-slot-capacity`
 run validates the capacity model: 32 derives exactly the generated extension (0x2200 / message 0xA300); 64 would be
