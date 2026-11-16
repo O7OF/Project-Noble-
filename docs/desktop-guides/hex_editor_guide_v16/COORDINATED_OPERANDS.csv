@@ -1,0 +1,840 @@
+﻿Area,Change,File offset,RVA,Byte count,Original-location bytes,V16 bytes
+Collision registration and state backing,PE zero-filled byte accounting,0x0000018C,0x0000018C,4,00 00 00 00,80 E0 0C 16
+Collision registration and state backing,PE virtual image size,0x000001B8,0x000001B8,4,00 A0 ED 04,00 20 0A 1B
+Collision registration and state backing,PE checksum,0x000001C0,0x000001C0,4,A8 22 CA 00,25 72 D9 00
+Collision registration and state backing,snapshot zero-filled virtual backing,0x000003E0,0x000003E0,4,00 00 00 00,00 90 5B 10
+Collision registration and state backing,snapshot backing reference,0x00002BF2,0x000037F2,4,8D 39 49 02,6D D8 09 1B
+Collision registration and state backing,snapshot backing reference,0x00002BF9,0x000037F9,4,82 39 49 02,62 D8 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000B7DB,0x0000C3DB,4,81 AD 48 02,61 4C 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000B7EB,0x0000C3EB,4,81 AD 48 02,61 4C 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000B7F8,0x0000C3F8,4,24 AD FC 00,04 4C 17 15
+Collision registration and state backing,game-state and checkpoint size,0x0000B7FE,0x0000C3FE,4,20 00 A6 00,20 00 F9 02
+Collision registration and state backing,snapshot backing reference,0x0000B80F,0x0000C40F,4,6D AD 48 02,4D 4C 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000B81C,0x0000C41C,4,64 AD 48 02,44 4C 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000B82A,0x0000C42A,4,12 AD A2 01,F2 4B 10 18
+Collision registration and state backing,snapshot backing reference,0x0000B847,0x0000C447,4,25 AD 48 02,05 4C 09 1B
+Collision registration and state backing,game-state and checkpoint size,0x0000B873,0x0000C473,4,00 00 38 01,00 00 F3 07
+Collision registration and state backing,game-state and checkpoint size,0x0000B89C,0x0000C49C,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,snapshot backing reference,0x0000C124,0x0000CD24,4,38 A4 48 02,18 43 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C144,0x0000CD44,4,28 A4 48 02,08 43 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C159,0x0000CD59,4,23 A4 48 02,03 43 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C2A5,0x0000CEA5,4,B7 A2 48 02,97 41 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C2DD,0x0000CEDD,4,8F A2 48 02,6F 41 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C2EA,0x0000CEEA,4,72 A2 48 02,52 41 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C30C,0x0000CF0C,4,60 A2 48 02,40 41 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C357,0x0000CF57,4,15 A2 48 02,F5 40 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C371,0x0000CF71,4,EB A1 48 02,CB 40 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C392,0x0000CF92,4,DA A1 48 02,BA 40 09 1B
+Collision registration and state backing,snapshot backing reference,0x0000C3CD,0x0000CFCD,4,8F A1 48 02,6F 40 09 1B
+Collision registration and state backing,game-state and checkpoint size,0x000153B7,0x00015FB7,4,00 00 38 01,00 00 F3 07
+Collision registration and state backing,game-state and checkpoint size,0x000154BB,0x000160BB,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x0001552F,0x0001612F,4,00 00 38 01,00 00 F3 07
+Collision registration and state backing,main and two rollback bank reservations,0x000155A9,0x000161A9,4,00 00 49 00,00 00 7D 02
+Collision registration and state backing,game-state and checkpoint size,0x00015F1E,0x00016B1E,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x0001627D,0x00016E7D,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x00016568,0x00017168,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x000165C7,0x000171C7,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x000165CF,0x000171CF,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x000165EB,0x000171EB,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x0003499F,0x0003559F,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x00087649,0x00088249,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x00087B66,0x00088766,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x00087E5A,0x00088A5A,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x000A47E7,0x000A53E7,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,collision element capacity; 48-byte format unchanged,0x0014F433,0x00150033,4,00 1C 00 00,FF 7F 00 00
+Collision registration and state backing,registration guard uses occupancy so freed slots are reusable,0x00150933,0x00151533,1,44,48
+Collision registration and state backing,game-state and checkpoint size,0x001707DB,0x001713DB,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x00170AC9,0x001716C9,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x00170D39,0x00171939,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x00171048,0x00171C48,4,00 00 A6 00,00 00 F9 02
+Collision registration and state backing,game-state and checkpoint size,0x001715B4,0x001721B4,4,00 00 A6 00,00 00 F9 02
+Deletion event recording,Deletion event recording,0x0046E4FC,0x0046F0FC,5,E8 DB 27 00 00,E8 FF 1E 5E 0A
+Deletion event recording,Deletion event recording,0x0046E6C3,0x0046F2C3,5,E8 A4 FA FF FF,E8 A8 1E 5E 0A
+Input update queue and contact memory,permanent arena reservation,0x0000B8CD,0x0000C4CD,4,00 00 4B 00,00 00 00 01
+Input update queue and contact memory,permanent arena allocation boundary,0x000169BA,0x000175BA,4,00 00 4B 00,00 00 00 01
+Input update queue and contact memory,relocated update queue global,0x00056C65,0x00057865,4,FB 5F BB 00,B7 E7 11 15
+Input update queue and contact memory,relocated update queue global,0x00056CD0,0x000578D0,4,90 5F BB 00,4C E7 11 15
+Input update queue and contact memory,Havok contact capacity,0x00098675,0x00099275,4,00 04 00 00,FF 7F 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x004699AA,0x0046A5AA,4,00 28 00 00,00 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x004699E8,0x0046A5E8,4,08 28 00 00,08 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x004699EE,0x0046A5EE,4,0C 28 00 00,0C 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x004699F4,0x0046A5F4,4,04 28 00 00,04 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469A09,0x0046A609,4,08 28 00 00,08 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469A0F,0x0046A60F,4,00 28 00 00,00 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469A6A,0x0046A66A,4,00 20 00 00,00 40 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469AE4,0x0046A6E4,4,00 28 00 00,00 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469AED,0x0046A6ED,4,08 28 00 00,08 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469B16,0x0046A716,4,00 28 00 00,00 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469BE2,0x0046A7E2,4,00 28 00 00,00 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469BE8,0x0046A7E8,4,08 28 00 00,08 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469BEE,0x0046A7EE,4,04 28 00 00,04 50 00 00
+Input update queue and contact memory,consumer queue flag / count offset,0x00469BF4,0x0046A7F4,4,0C 28 00 00,0C 50 00 00
+Input update queue and contact memory,primary and companion clear length,0x0046B203,0x0046BE03,4,00 20 00 00,00 40 00 00
+Input update queue and contact memory,relocated update queue global,0x0046B219,0x0046BE19,4,47 1A 7A 00,03 A2 D0 14
+Input update queue and contact memory,relocated update queue global,0x0046B227,0x0046BE27,4,39 42 7A 00,F5 F1 D0 14
+Input update queue and contact memory,relocated update queue global,0x0046B22E,0x0046BE2E,4,3A 42 7A 00,F6 F1 D0 14
+Input update queue and contact memory,relocated update queue global,0x0046B234,0x0046BE34,4,3C 62 7A 00,C8 41 D1 14
+Input update queue and contact memory,relocated update queue global,0x0046B243,0x0046BE43,4,2D 42 7A 00,B9 01 D1 14
+Input update queue and contact memory,relocated update queue global,0x0046B588,0x0046C188,4,D8 3E 7A 00,94 EE D0 14
+Input update queue and contact memory,relocated update queue global,0x0046B59B,0x0046C19B,4,C5 16 7A 00,81 9E D0 14
+Input update queue and contact memory,relocated update queue global,0x0046B5F4,0x0046C1F4,4,6B 3E 7A 00,27 EE D0 14
+Input update queue and contact memory,relocated update queue global,0x0046B5FC,0x0046C1FC,4,64 16 7A 00,20 9E D0 14
+Input update queue and contact memory,relocated update queue global,0x0046B603,0x0046C203,4,64 3E 7A 00,20 EE D0 14
+Input update queue and contact memory,primary and companion clear length,0x0046B609,0x0046C209,4,00 20 00 00,00 40 00 00
+Input update queue and contact memory,relocated update queue global,0x0046B61C,0x0046C21C,4,54 5E 7A 00,E0 3D D1 14
+Input update queue and contact memory,relocated update queue global,0x0046B62B,0x0046C22B,4,45 3E 7A 00,D1 FD D0 14
+Input update queue and contact memory,"writer indexed alias, phase flag unchanged",0x00473DD7,0x004749D7,4,75 8E 79 00,31 16 D0 14
+Input update queue and contact memory,relocated update queue global,0x00473DE4,0x004749E4,4,7C B6 79 00,38 66 D0 14
+Input update queue and contact memory,relocated update queue global,0x00473DF2,0x004749F2,4,6E B6 79 00,2A 66 D0 14
+Input update queue and contact memory,writer flag-array offset,0x00473DFA,0x004749FA,4,14 20 00 00,14 40 00 00
+Input update queue and contact memory,relocated update queue global,0x00473E00,0x00474A00,4,60 B6 79 00,1C 66 D0 14
+Input update queue and contact memory,relocated update queue global,0x00473E09,0x00474A09,4,5B B6 79 00,17 66 D0 14
+Object visibility scratch,primary visibility frame base,0x0022666B,0x0022726B,4,E8 DD FF FF,E8 DF FD FF
+Object visibility scratch,primary visibility stack reservation,0x00226670,0x00227270,4,F0 22 00 00,F0 20 02 00
+Object visibility scratch,primary cookie storage/load,0x00226689,0x00227289,4,E0 21 00 00,E0 1F 02 00
+Object visibility scratch,primary second bitmap initialization address,0x002266D0,0x002272D0,4,D4 00 00 00,D4 0F 00 00
+Object visibility scratch,primary object bitmap clearing size,0x002266D6,0x002272D6,4,00 01 00 00,00 10 00 00
+Object visibility scratch,primary second scratch structure address,0x002266F1,0x002272F1,4,D0 00 00 00,D0 0F 00 00
+Object visibility scratch,primary object bitmap clearing size,0x00226740,0x00227340,4,00 01 00 00,00 10 00 00
+Object visibility scratch,primary second scratch structure address,0x002267CA,0x002273CA,4,D0 00 00 00,D0 0F 00 00
+Object visibility scratch,primary cookie storage/load,0x00226909,0x00227509,4,E0 21 00 00,E0 1F 02 00
+Object visibility scratch,primary visibility epilogue stack restoration,0x00226919,0x00227519,4,F0 22 00 00,F0 20 02 00
+Object visibility scratch,secondary visibility stack reservation,0x0022693B,0x0022753B,4,70 21 00 00,70 10 02 00
+Object visibility scratch,secondary cookie storage/load,0x00226955,0x00227555,4,60 21 00 00,60 10 02 00
+Object visibility scratch,secondary object bitmap clearing size,0x0022696D,0x0022756D,4,00 01 00 00,00 10 00 00
+Object visibility scratch,secondary cookie storage/load,0x002269B7,0x002275B7,4,60 21 00 00,60 10 02 00
+Object visibility scratch,secondary stack restoration,0x002269C6,0x002275C6,4,70 21 00 00,70 10 02 00
+Object visibility scratch,shared scratch index-table reader,0x00226C6C,0x0022786C,4,04 01 00 00,04 10 00 00
+Object visibility scratch,shared scratch index-table writer,0x00227103,0x00227D03,4,04 01 00 00,04 10 00 00
+Object visibility scratch,third visibility stack reservation,0x0027DA2B,0x0027E62B,4,80 21 00 00,80 10 02 00
+Object visibility scratch,third frame saved SIMD location,0x0027DA3B,0x0027E63B,4,70 21 00 00,70 10 02 00
+Object visibility scratch,third cookie storage/load,0x0027DA4D,0x0027E64D,4,60 21 00 00,60 10 02 00
+Object visibility scratch,third object bitmap clearing size,0x0027DA8E,0x0027E68E,4,00 01 00 00,00 10 00 00
+Object visibility scratch,third cookie storage/load,0x0027DAE5,0x0027E6E5,4,60 21 00 00,60 10 02 00
+Object visibility scratch,third stack restoration,0x0027DAF5,0x0027E6F5,4,80 21 00 00,80 10 02 00
+Object visibility scratch,unwind 0x227250 operation 4,0x00AACC32,0x00AADA32,2,67 04,27 44
+Object visibility scratch,unwind 0x227250 operation 4,0x00AACC36,0x00AADA36,2,66 04,26 44
+Object visibility scratch,unwind 0x227250 operation 4,0x00AACC3A,0x00AADA3A,2,65 04,25 44
+Object visibility scratch,unwind 0x227250 operation 1,0x00AACC3E,0x00AADA3E,2,5E 04,1E 44
+Object visibility scratch,GS unwind cookie offset 0x227250,0x00AACC50,0x00AADA50,4,E0 22 00 00,E0 20 02 00
+Object visibility scratch,unwind 0x227538 operation 1,0x00AACC5A,0x00AADA5A,2,2E 04,0E 42
+Object visibility scratch,GS unwind cookie offset 0x227538,0x00AACC64,0x00AADA64,4,60 21 00 00,60 10 02 00
+Object visibility scratch,unwind 0x27e624 operation 8,0x00AAFAEA,0x00AB08EA,2,17 02,07 21
+Object visibility scratch,unwind 0x27e624 operation 4,0x00AAFAEE,0x00AB08EE,2,33 04,13 42
+Object visibility scratch,unwind 0x27e624 operation 1,0x00AAFAF2,0x00AB08F2,2,30 04,10 42
+Object visibility scratch,GS unwind cookie offset 0x27e624,0x00AAFAFC,0x00AB08FC,4,60 21 00 00,60 10 02 00
+"Objects, render queues, render cache, physics pools and state banks",render bank reservation,0x0001559A,0x0001619A,4,00 00 37 00,00 00 56 00
+"Objects, render queues, render cache, physics pools and state banks",Havok component capacity; original alignment retained,0x0009862A,0x0009922A,4,DC 05 00 00,E0 2E 00 00
+"Objects, render queues, render cache, physics pools and state banks",render-state auxiliary heap allocation,0x0025596D,0x0025656D,4,00 00 06 00,00 00 18 00
+"Objects, render queues, render cache, physics pools and state banks",render-state auxiliary heap registration,0x00255991,0x00256591,4,00 00 06 00,00 00 18 00
+"Objects, render queues, render cache, physics pools and state banks",cached object render-state capacity,0x002559E6,0x002565E6,4,00 04 00 00,00 10 00 00
+"Objects, render queues, render cache, physics pools and state banks",redirect render-cache color update append,0x00263E50,0x00264A50,7,4C 8B DC 49 89 5B 08,E9 BB 5B C7 04 90 90
+"Objects, render queues, render cache, physics pools and state banks",redirect render-cache invalidate append,0x0026565C,0x0026625C,7,4C 8B DC 49 89 5B 08,E9 9F 45 C7 04 90 90
+"Objects, render queues, render cache, physics pools and state banks",redirect object render invalidation append,0x004695E4,0x0046A1E4,9,65 48 8B 04 25 58 00 00 00,E9 87 03 A7 04 90 90 90 90
+"Objects, render queues, render cache, physics pools and state banks",redirect object initialization,0x00469CC0,0x0046A8C0,7,4C 8B DC 49 89 5B 08,E9 3B F7 A6 04 90 90
+"Objects, render queues, render cache, physics pools and state banks",delete-time queued invalidation record offset,0x0046E628,0x0046F228,4,0C 01 00 00,0C 10 00 00
+"Objects, render queues, render cache, physics pools and state banks",queue merge reset bitmap words,0x0047B82C,0x0047C42C,4,40 00 00 00,00 04 00 00
+"Objects, render queues, render cache, physics pools and state banks",message consumer record offset,0x0047B922,0x0047C522,4,0C 01 00 00,0C 10 00 00
+"Objects, render queues, render cache, physics pools and state banks",queue merge source records,0x0047C5E5,0x0047D1E5,4,0C 01 00 00,0C 10 00 00
+"Objects, render queues, render cache, physics pools and state banks",queue merge capacity; one reserved slot retained,0x0047C611,0x0047D211,4,00 08 00 00,00 80 00 00
+"Objects, render queues, render cache, physics pools and state banks",queue merge destination records,0x0047C630,0x0047D230,4,0C 01 00 00,0C 10 00 00
+Per-frame render packet memory,CPU packet reset/allocation limit,0x0000BC06,0x0000C806,4,00 5C 03 00,00 00 10 00
+Per-frame render packet memory,per-frame packet backing pointer,0x0000BC0D,0x0000C80D,4,2F 54 C4 00,EF C7 AD 12
+Per-frame render packet memory,per-frame packet backing pointer,0x0024A43A,0x0024B03A,4,02 6C A0 00,C2 DF 89 12
+Per-frame render packet memory,CPU packet offset decoder,0x0024A43F,0x0024B03F,4,FF FF 03 00,FF FF 0F 00
+Per-frame render packet memory,per-frame packet backing pointer,0x0024A53F,0x0024B13F,4,FD 6A A0 00,BD DE 89 12
+Per-frame render packet memory,CPU packet offset decoder,0x0024A545,0x0024B145,4,FF FF 03 00,FF FF 0F 00
+Per-frame render packet memory,CPU packet reset/allocation limit,0x0024FD73,0x00250973,4,00 5C 03 00,00 00 10 00
+Per-frame render packet memory,CPU packet generation shift,0x0024FD9A,0x0025099A,1,12,14
+Per-frame render packet memory,per-frame packet backing pointer,0x0027E5AE,0x0027F1AE,4,8E 2A 9D 00,4E 9E 86 12
+Per-frame render packet memory,CPU packet offset decoder,0x0027E5B3,0x0027F1B3,4,FF FF 03 00,FF FF 0F 00
+Per-frame render packet memory,per-frame packet backing pointer,0x00298027,0x00298C27,4,15 90 9B 00,D5 03 85 12
+Per-frame render packet memory,CPU packet offset decoder,0x00298037,0x00298C37,4,FF FF 03 00,FF FF 0F 00
+Per-frame render packet memory,CPU packet offset decoder,0x002980D6,0x00298CD6,4,FF FF 03 00,FF FF 0F 00
+Per-frame render packet memory,per-frame packet backing pointer,0x002989C2,0x002995C2,4,7A 86 9B 00,3A FA 84 12
+Per-frame render packet memory,CPU packet offset decoder,0x002989C8,0x002995C8,4,FF FF 03 00,FF FF 0F 00
+Per-frame render packet memory,per-frame packet backing pointer,0x00299525,0x0029A125,4,17 7B 9B 00,D7 EE 84 12
+Per-frame render packet memory,CPU packet offset decoder,0x0029952B,0x0029A12B,4,FF FF 03 00,FF FF 0F 00
+Per-frame render packet memory,per-frame packet backing pointer,0x0029954E,0x0029A14E,4,EE 7A 9B 00,AE EE 84 12
+Per-frame render packet memory,CPU packet offset decoder,0x00299554,0x0029A154,4,FF FF 03 00,FF FF 0F 00
+Per-frame render packet memory,per-frame packet backing pointer,0x002997AF,0x0029A3AF,4,8D 78 9B 00,4D EC 84 12
+Per-frame render packet memory,CPU packet offset decoder,0x002997B6,0x0029A3B6,4,FF FF 03 00,FF FF 0F 00
+Per-frame render packet memory,per-frame packet backing pointer,0x002A185D,0x002A245D,4,DF F7 9A 00,9F 6B 84 12
+Per-frame render packet memory,CPU packet offset decoder,0x002A1864,0x002A2464,4,FF FF 03 00,FF FF 0F 00
+Physics collector and reclamation recording,relocated physics collection reference,0x000038AD,0x000044AD,4,17 4E 87 02,57 DB C9 12
+Physics collector and reclamation recording,physics collection bitmap reset length,0x000038B3,0x000044B3,4,00 01 00 00,00 10 00 00
+Physics collector and reclamation recording,relocated physics collection reference,0x000038BE,0x000044BE,4,05 6F 87 02,45 EB CB 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000038C5,0x000044C5,4,02 8F 87 02,42 EB CD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000A3330,0x000A3F30,4,8B 53 7D 02,CB E0 BF 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000A3338,0x000A3F38,4,8C 53 7D 02,CC E0 BF 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000A333E,0x000A3F3E,4,81 53 7D 02,C1 E0 BF 12
+Physics collector and reclamation recording,physics collection bitmap reset length,0x000A3347,0x000A3F47,4,00 01 00 00,00 10 00 00
+Physics collector and reclamation recording,relocated physics collection reference,0x000A3352,0x000A3F52,4,71 74 7D 02,B1 F0 C1 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000A335B,0x000A3F5B,4,6C 94 7D 02,AC F0 C3 12
+Physics collector and reclamation recording,physics iterator caller stack reservation,0x000CF11F,0x000CFD1F,4,60 21 00 00,60 30 00 00
+Physics collector and reclamation recording,physics iterator caller cookie,0x000CF139,0x000CFD39,4,50 21 00 00,50 30 00 00
+Physics collector and reclamation recording,physics iterator traversal frame address,0x000CF140,0x000CFD40,4,40 01 00 00,40 10 00 00
+Physics collector and reclamation recording,physics iterator visited bitmap clear,0x000CF14F,0x000CFD4F,4,00 01 00 00,00 10 00 00
+Physics collector and reclamation recording,physics iterator traversal frame address,0x000CF173,0x000CFD73,4,40 01 00 00,40 10 00 00
+Physics collector and reclamation recording,physics iterator traversal frame address,0x000CF19E,0x000CFD9E,4,40 01 00 00,40 10 00 00
+Physics collector and reclamation recording,physics iterator caller cookie,0x000CF1B0,0x000CFDB0,4,50 21 00 00,50 30 00 00
+Physics collector and reclamation recording,physics iterator stack restoration,0x000CF1BF,0x000CFDBF,4,60 21 00 00,60 30 00 00
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF1E3,0x000CFDE3,4,DD 94 7A 02,1D 22 BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF1EC,0x000CFDEC,4,D8 B5 7A 02,18 32 BF 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF20E,0x000CFE0E,4,AE 94 7A 02,EE 21 BD 12
+Physics collector and reclamation recording,physics collected object-array relative access,0x000CF231,0x000CFE31,4,08 01 00 00,08 10 00 00
+Physics collector and reclamation recording,physics collected object-array relative access,0x000CF251,0x000CFE51,4,08 01 00 00,08 10 00 00
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF25D,0x000CFE5D,4,63 94 7A 02,A3 21 BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF267,0x000CFE67,4,59 94 7A 02,99 21 BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF2B3,0x000CFEB3,4,0D 94 7A 02,4D 21 BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF2BC,0x000CFEBC,4,08 B5 7A 02,48 31 BF 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF2DE,0x000CFEDE,4,DE 93 7A 02,1E 21 BD 12
+Physics collector and reclamation recording,physics collected object-array relative access,0x000CF301,0x000CFF01,4,08 01 00 00,08 10 00 00
+Physics collector and reclamation recording,physics collected object-array relative access,0x000CF321,0x000CFF21,4,08 01 00 00,08 10 00 00
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF32D,0x000CFF2D,4,93 93 7A 02,D3 20 BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF337,0x000CFF37,4,89 93 7A 02,C9 20 BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF384,0x000CFF84,4,38 93 7A 02,78 20 BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF3E4,0x000CFFE4,4,E0 B3 7A 02,20 30 BF 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF3ED,0x000CFFED,4,D7 B3 7A 02,17 30 BF 12
+Physics collector and reclamation recording,physics collected object-array relative access,0x000CF3F5,0x000CFFF5,4,08 01 00 00,08 10 00 00
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF3FE,0x000CFFFE,4,CA D3 7A 02,0A 30 C1 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF407,0x000D0007,4,C1 D3 7A 02,01 30 C1 12
+Physics collector and reclamation recording,physics collected tag-array relative access,0x000CF40E,0x000D000E,4,0C 21 00 00,0C 10 02 00
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF419,0x000D0019,4,A3 92 7A 02,E3 1F BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF6FF,0x000D02FF,4,BD 8F 7A 02,FD 1C BD 12
+Physics collector and reclamation recording,physics collection bitmap reset length,0x000CF705,0x000D0305,4,00 01 00 00,00 10 00 00
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF70C,0x000D030C,4,B8 8F 7A 02,F8 1C BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF71B,0x000D031B,4,A9 B0 7A 02,E9 2C BF 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF722,0x000D0322,4,A6 D0 7A 02,E6 2C C1 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CF8AD,0x000D04AD,4,13 8E 7A 02,53 1B BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CFE2F,0x000D0A2F,4,95 A9 7A 02,D5 25 BF 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000CFE3A,0x000D0A3A,4,82 88 7A 02,C2 15 BD 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000D00A9,0x000D0CA9,4,1F C7 7A 02,5F 23 C1 12
+Physics collector and reclamation recording,relocated physics tag-array indexed reader,0x000D00BD,0x000D0CBD,4,CC B3 87 02,0C 30 CC 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000D0227,0x000D0E27,4,9D A5 7A 02,DD 21 BF 12
+Physics collector and reclamation recording,relocated physics collection reference,0x000D0232,0x000D0E32,4,8A 84 7A 02,CA 11 BD 12
+Physics collector and reclamation recording,observe physics reclamation without changing deletion,0x001CAC6A,0x001CB86A,5,E8 41 38 2A 00,E8 91 5A 88 0A
+Physics collector and reclamation recording,second iterator caller stack reservation,0x0047369C,0x0047429C,4,60 21 00 00,60 30 00 00
+Physics collector and reclamation recording,second iterator visited bitmap clear,0x004736D0,0x004742D0,4,00 01 00 00,00 10 00 00
+Physics collector and reclamation recording,second iterator caller stack restoration,0x0047375D,0x0047435D,4,60 21 00 00,60 30 00 00
+Physics collector and reclamation recording,iterator caller unwind offset,0x00AA21D2,0x00AA2FD2,2,2C 04,0C 06
+Physics collector and reclamation recording,iterator caller GS cookie offset,0x00AA21DC,0x00AA2FDC,4,50 21 00 00,50 30 00 00
+Physics collector and reclamation recording,iterator caller unwind offset,0x00AC1586,0x00AC2386,2,34 04,14 06
+Physics collector and reclamation recording,iterator caller unwind offset,0x00AC158A,0x00AC238A,2,33 04,13 06
+Physics collector and reclamation recording,iterator caller unwind offset,0x00AC158E,0x00AC238E,2,32 04,12 06
+Physics collector and reclamation recording,iterator caller unwind offset,0x00AC1592,0x00AC2392,2,2C 04,0C 06
+Physics collector and reclamation recording,iterator caller GS cookie offset,0x00AC15A4,0x00AC23A4,4,50 21 00 00,50 30 00 00
+Physics working memory,world entity insertion reclamation threshold,0x0009A204,0x0009AE04,4,A4 06 00 00,E0 2E 00 00
+Physics working memory,world entity reclamation low-water threshold,0x0009B7C0,0x0009C3C0,4,A0 06 00 00,DC 2E 00 00
+Physics working memory,world entity reclamation repeated threshold,0x0009B7D4,0x0009C3D4,4,A0 06 00 00,DC 2E 00 00
+Physics working memory,physics phase allocator block-size override,0x000CEB6B,0x000CF76B,4,00 10 27 00,00 00 00 04
+Physics working memory,initial Havok allocator block size,0x001E5ECB,0x001E6ACB,4,00 00 38 00,00 00 00 04
+Physics working memory,Havok free-list soft memory limit; retain 85 percent margin,0x001E5F17,0x001E6B17,4,99 99 2F 00,66 66 66 03
+Physics working memory,secondary Havok working arena,0x001E63A2,0x001E6FA2,4,6A BF 91 04,5A 20 90 0E
+Physics working memory,primary Havok working arena,0x001E63AF,0x001E6FAF,4,5D BF 59 04,4D 20 90 0A
+Physics working memory,first backing callback subsequent block size,0x001E63B7,0x001E6FB7,4,00 10 27 00,00 00 00 04
+Physics working memory,backing free callback reset block size,0x001E63DE,0x001E6FDE,4,00 00 38 00,00 00 00 04
+Physics working memory,fallback arena registrations retain shared secondary backing,0x003BBB42,0x003BC742,4,CA 67 74 04,BA C8 72 0E
+Scheduler frame-fence counter,owner-relative frame-fence pending counter,0x0046B551,0x0046C151,4,B0 C0 00 00,B0 00 03 00
+Scheduler wait and shutdown pointers,shutdown free-job queue pointer,0x0000BF08,0x0000CB08,4,C0 00 08 00,C0 00 26 00
+Scheduler wait and shutdown pointers,main-thread job wait worker-context pointer,0x00689EFF,0x0068AAFF,4,F0 C0 08 00,F0 00 29 00
+Shared job scheduler,scheduler owner array stride / constructor size,0x0000A908,0x0000B508,4,F8 C0 08 00,F8 00 29 00
+Shared job scheduler,relocated global scheduler owner,0x0000A921,0x0000B521,4,AB 3E D6 02,DB 9A ED 14
+Shared job scheduler,relocated global scheduler owner,0x0000B998,0x0000C598,4,34 2E D6 02,64 8A ED 14
+Shared job scheduler,scheduler owner array stride / constructor size,0x0000B9B9,0x0000C5B9,4,F8 C0 08 00,F8 00 29 00
+Shared job scheduler,scheduler owner array stride / constructor size,0x0000B9D2,0x0000C5D2,4,F8 C0 08 00,F8 00 29 00
+Shared job scheduler,scheduler owner array stride / constructor size,0x0000BA63,0x0000C663,4,F8 C0 08 00,F8 00 29 00
+Shared job scheduler,scheduler owner array stride / constructor size,0x0000BEB7,0x0000CAB7,4,F8 C0 08 00,F8 00 29 00
+Shared job scheduler,relocated global scheduler owner,0x0000BEBE,0x0000CABE,4,0E 29 D6 02,3E 85 ED 14
+Shared job scheduler,external scheduler layout access,0x0000BEEA,0x0000CAEA,4,F0 C0 08 00,F0 00 29 00
+Shared job scheduler,scheduler owner array stride / constructor size,0x0000BF1A,0x0000CB1A,4,F8 C0 08 00,F8 00 29 00
+Shared job scheduler,external scheduler layout access,0x00016F81,0x00017B81,4,18 40 07 00,18 00 23 00
+Shared job scheduler,external scheduler layout access,0x00056D06,0x00057906,4,28 C0 00 00,28 00 03 00
+Shared job scheduler,object-job scratch frame,0x0046996C,0x0046A56C,4,60 78 FF FF,60 C0 FB FF
+Shared job scheduler,object-job scratch frame,0x00469971,0x0046A571,4,A0 88 00 00,A0 40 04 00
+Shared job scheduler,object-job scratch frame,0x0046998A,0x0046A58A,4,F8 88 00 00,F8 40 04 00
+Shared job scheduler,object-job scratch frame,0x0046999B,0x0046A59B,4,90 87 00 00,90 3F 04 00
+Shared job scheduler,object-job scratch frame,0x004699BA,0x0046A5BA,4,00 08 00 00,00 40 00 00
+Shared job scheduler,object-job scratch frame,0x004699C1,0x0046A5C1,4,70 7F 00 00,70 FF 03 00
+Shared job scheduler,object-job scratch frame,0x004699D4,0x0046A5D4,4,78 87 00 00,78 3F 04 00
+Shared job scheduler,object-job scratch frame,0x004699DA,0x0046A5DA,4,70 87 00 00,70 3F 04 00
+Shared job scheduler,object-job scratch frame,0x004699E1,0x0046A5E1,4,80 87 00 00,80 3F 04 00
+Shared job scheduler,object-job scratch frame,0x00469B3D,0x0046A73D,4,70 7F 00 00,70 FF 03 00
+Shared job scheduler,object-job scratch frame,0x00469B49,0x0046A749,4,78 87 00 00,78 3F 04 00
+Shared job scheduler,external scheduler layout access,0x00469B56,0x0046A756,4,94 40 07 00,94 00 23 00
+Shared job scheduler,external scheduler layout access,0x00469B79,0x0046A779,4,A4 40 07 00,A4 00 23 00
+Shared job scheduler,external scheduler layout access,0x00469B91,0x0046A791,4,94 40 07 00,94 00 23 00
+Shared job scheduler,external scheduler layout access,0x00469BCD,0x0046A7CD,4,28 C0 00 00,28 00 03 00
+Shared job scheduler,object-job scratch frame,0x00469BFC,0x0046A7FC,4,70 87 00 00,70 3F 04 00
+Shared job scheduler,object-job scratch frame,0x00469C07,0x0046A807,4,70 7F 00 00,70 FF 03 00
+Shared job scheduler,object-job scratch frame,0x00469C12,0x0046A812,4,70 3F 00 00,70 FF 01 00
+Shared job scheduler,object-job scratch frame,0x00469C1E,0x0046A81E,4,78 87 00 00,78 3F 04 00
+Shared job scheduler,object-job scratch frame,0x00469C3D,0x0046A83D,4,70 3F 00 00,70 FF 01 00
+Shared job scheduler,object-job scratch frame,0x00469C44,0x0046A844,4,70 87 00 00,70 3F 04 00
+Shared job scheduler,object-job scratch frame,0x00469C51,0x0046A851,4,90 87 00 00,90 3F 04 00
+Shared job scheduler,object-job scratch frame,0x00469C61,0x0046A861,4,F8 88 00 00,F8 40 04 00
+Shared job scheduler,object-job scratch frame,0x00469C68,0x0046A868,4,A0 88 00 00,A0 40 04 00
+Shared job scheduler,coordinated scheduler layout,0x00689D6B,0x0068A96B,4,98 40 07 00,98 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x00689D86,0x0068A986,4,38 00 08 00,38 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x00689D91,0x0068A991,4,10 40 07 00,10 00 23 00
+Shared job scheduler,scheduler biased record pointer,0x00689DBF,0x0068A9BF,4,00 02 00 00,00 08 00 00
+Shared job scheduler,coordinated scheduler layout,0x00689E2F,0x0068AA2F,4,28 C0 00 00,28 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x00689E63,0x0068AA63,4,30 C0 00 00,30 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x00689E6A,0x0068AA6A,4,0C 40 07 00,0C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x00689E78,0x0068AA78,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x00689E88,0x0068AA88,4,0C 40 07 00,0C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x00689F69,0x0068AB69,4,14 40 07 00,14 00 23 00
+Shared job scheduler,scheduler biased record pointer,0x00689F99,0x0068AB99,4,00 02 00 00,00 08 00 00
+Shared job scheduler,coordinated scheduler layout,0x00689FA3,0x0068ABA3,4,00 40 07 00,00 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x00689FB2,0x0068ABB2,4,04 40 07 00,04 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x00689FBA,0x0068ABBA,4,00 40 07 00,00 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x00689FC2,0x0068ABC2,4,00 C0 06 00,00 00 1B 00
+Shared job scheduler,coordinated scheduler layout,0x00689FC8,0x0068ABC8,4,04 40 07 00,04 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x00689FD5,0x0068ABD5,4,04 C0 06 00,04 00 1B 00
+Shared job scheduler,coordinated scheduler layout,0x00689FE7,0x0068ABE7,4,00 C0 06 00,00 00 1B 00
+Shared job scheduler,coordinated scheduler layout,0x00689FFC,0x0068ABFC,4,28 C0 00 00,28 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A002,0x0068AC02,4,14 40 07 00,14 00 23 00
+Shared job scheduler,scheduler job / queue capacity,0x0068A09A,0x0068AC9A,4,00 10 00 00,00 40 00 00
+Shared job scheduler,coordinated scheduler layout,0x0068A0B2,0x0068ACB2,4,00 C0 00 00,00 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A0DA,0x0068ACDA,4,F0 C0 08 00,F0 00 29 00
+Shared job scheduler,coordinated scheduler layout,0x0068A10D,0x0068AD0D,4,00 C0 00 00,00 00 03 00
+Shared job scheduler,scheduler job / queue capacity,0x0068A11F,0x0068AD1F,4,00 10 00 00,00 40 00 00
+Shared job scheduler,scheduler job / queue capacity,0x0068A137,0x0068AD37,4,00 10 00 00,00 40 00 00
+Shared job scheduler,object-job context helper field,0x0068A16C,0x0068AD6C,4,00 88 00 00,00 40 04 00
+Shared job scheduler,object-job context helper field,0x0068A175,0x0068AD75,4,00 80 00 00,00 00 04 00
+Shared job scheduler,object-job context helper field,0x0068A180,0x0068AD80,4,00 40 00 00,00 00 02 00
+Shared job scheduler,object-job context helper field,0x0068A18C,0x0068AD8C,4,08 88 00 00,08 40 04 00
+Shared job scheduler,object-job context helper field,0x0068A1B0,0x0068ADB0,4,00 40 00 00,00 00 02 00
+Shared job scheduler,object-job context helper field,0x0068A1B9,0x0068ADB9,4,00 88 00 00,00 40 04 00
+Shared job scheduler,object-job context helper field,0x0068A1E8,0x0068ADE8,4,08 88 00 00,08 40 04 00
+Shared job scheduler,object-job context helper field,0x0068A1EF,0x0068ADEF,4,00 40 00 00,00 00 02 00
+Shared job scheduler,coordinated scheduler layout,0x0068A207,0x0068AE07,4,10 40 07 00,10 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A21A,0x0068AE1A,4,38 00 08 00,38 00 26 00
+Shared job scheduler,scheduler biased record pointer,0x0068A24B,0x0068AE4B,4,00 02 00 00,00 08 00 00
+Shared job scheduler,object-job context helper field,0x0068A25F,0x0068AE5F,4,00 C0 FF FF,00 00 FE FF
+Shared job scheduler,coordinated scheduler layout,0x0068A291,0x0068AE91,4,10 40 07 00,10 00 23 00
+Shared job scheduler,object-job context helper field,0x0068A2A3,0x0068AEA3,4,00 88 00 00,00 40 04 00
+Shared job scheduler,object-job context helper field,0x0068A2C2,0x0068AEC2,4,00 40 00 00,00 00 02 00
+Shared job scheduler,object-job context helper field,0x0068A2FF,0x0068AEFF,4,00 80 00 00,00 00 04 00
+Shared job scheduler,coordinated scheduler layout,0x0068A321,0x0068AF21,4,54 C0 08 00,54 00 29 00
+Shared job scheduler,coordinated scheduler layout,0x0068A329,0x0068AF29,4,18 40 07 00,18 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A336,0x0068AF36,4,54 C0 08 00,54 00 29 00
+Shared job scheduler,scheduler record pointer inversion,0x0068A394,0x0068AF94,4,00 C0 00 00,00 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A3B8,0x0068AFB8,4,14 40 07 00,14 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A3CC,0x0068AFCC,4,14 40 07 00,14 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A3E4,0x0068AFE4,4,14 40 07 00,14 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A3F4,0x0068AFF4,4,04 C0 06 00,04 00 1B 00
+Shared job scheduler,coordinated scheduler layout,0x0068A404,0x0068B004,4,28 C0 00 00,28 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A40D,0x0068B00D,4,00 C0 06 00,00 00 1B 00
+Shared job scheduler,coordinated scheduler layout,0x0068A413,0x0068B013,4,04 40 07 00,04 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A41A,0x0068B01A,4,00 C0 06 00,00 00 1B 00
+Shared job scheduler,coordinated scheduler layout,0x0068A420,0x0068B020,4,00 40 07 00,00 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A426,0x0068B026,4,04 40 07 00,04 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A431,0x0068B031,4,14 40 07 00,14 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A463,0x0068B063,4,10 40 07 00,10 00 23 00
+Shared job scheduler,scheduler record pointer inversion,0x0068A481,0x0068B081,4,00 C0 00 00,00 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A48B,0x0068B08B,4,38 00 08 00,38 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A4B7,0x0068B0B7,4,10 40 07 00,10 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A4D6,0x0068B0D6,4,00 C0 00 00,00 00 03 00
+Shared job scheduler,scheduler job / queue capacity,0x0068A4DC,0x0068B0DC,4,00 10 00 00,00 40 00 00
+Shared job scheduler,coordinated scheduler layout,0x0068A4E2,0x0068B0E2,4,04 C0 00 00,04 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A4ED,0x0068B0ED,4,08 C0 00 00,08 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A4F4,0x0068B0F4,4,14 C0 00 00,14 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A4FB,0x0068B0FB,4,0C C0 00 00,0C 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A502,0x0068B102,4,10 C0 00 00,10 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A514,0x0068B114,4,14 C0 00 00,14 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A51D,0x0068B11D,4,04 C0 00 00,04 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A523,0x0068B123,4,14 C0 00 00,14 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A53D,0x0068B13D,4,14 C0 00 00,14 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A54D,0x0068B14D,4,00 C0 00 00,00 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A56D,0x0068B16D,4,14 C0 00 00,14 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A57E,0x0068B17E,4,04 C0 00 00,04 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A585,0x0068B185,4,0C C0 00 00,0C 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A58C,0x0068B18C,4,10 C0 00 00,10 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A595,0x0068B195,4,10 C0 00 00,10 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A5B3,0x0068B1B3,4,14 C0 00 00,14 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A5C4,0x0068B1C4,4,04 C0 00 00,04 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A5CB,0x0068B1CB,4,10 C0 00 00,10 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A5D7,0x0068B1D7,4,10 C0 00 00,10 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A5E2,0x0068B1E2,4,10 C0 00 00,10 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A5F2,0x0068B1F2,4,00 80 00 00,00 00 02 00
+Shared job scheduler,coordinated scheduler layout,0x0068A5F9,0x0068B1F9,4,00 C0 00 00,00 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A60F,0x0068B20F,4,0C C0 00 00,0C 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A615,0x0068B215,4,00 C0 00 00,00 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A61B,0x0068B21B,4,14 C0 00 00,14 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A625,0x0068B225,4,0C C0 00 00,0C 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A632,0x0068B232,4,04 C0 00 00,04 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A638,0x0068B238,4,0C C0 00 00,0C 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A63F,0x0068B23F,4,14 C0 00 00,14 00 03 00
+Shared job scheduler,coordinated scheduler layout,0x0068A64F,0x0068B24F,4,00 80 00 00,00 00 02 00
+Shared job scheduler,coordinated scheduler layout,0x0068A6B3,0x0068B2B3,4,0C 40 07 00,0C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A6BF,0x0068B2BF,4,28 00 08 00,28 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A6CF,0x0068B2CF,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A6F8,0x0068B2F8,4,1C C0 07 00,1C 00 25 00
+Shared job scheduler,coordinated scheduler layout,0x0068A70A,0x0068B30A,4,28 C0 00 00,28 00 03 00
+Shared job scheduler,scheduler biased record pointer,0x0068A71E,0x0068B31E,4,00 02 00 00,00 08 00 00
+Shared job scheduler,coordinated scheduler layout,0x0068A73E,0x0068B33E,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A748,0x0068B348,4,1C 00 08 00,1C 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A74F,0x0068B34F,4,28 00 08 00,28 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A759,0x0068B359,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A75F,0x0068B35F,4,28 00 08 00,28 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A766,0x0068B366,4,2C 00 08 00,2C 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A770,0x0068B370,4,20 40 07 00,20 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A776,0x0068B376,4,2C 00 08 00,2C 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A77E,0x0068B37E,4,20 40 07 00,20 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A78C,0x0068B38C,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A793,0x0068B393,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A79B,0x0068B39B,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A7A9,0x0068B3A9,4,20 40 07 00,20 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A7B0,0x0068B3B0,4,20 40 07 00,20 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A7B6,0x0068B3B6,4,30 00 08 00,30 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A7BE,0x0068B3BE,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A7C8,0x0068B3C8,4,20 00 08 00,20 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A7CF,0x0068B3CF,4,30 00 08 00,30 00 26 00
+Shared job scheduler,coordinated scheduler layout,0x0068A7F2,0x0068B3F2,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A804,0x0068B404,4,0C 40 07 00,0C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A9B0,0x0068B5B0,4,1C 40 07 00,1C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A9C0,0x0068B5C0,4,0C 40 07 00,0C 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A9C6,0x0068B5C6,4,10 40 07 00,10 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A9CD,0x0068B5CD,4,14 40 07 00,14 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A9D4,0x0068B5D4,4,18 40 07 00,18 00 23 00
+Shared job scheduler,coordinated scheduler layout,0x0068A9DB,0x0068B5DB,4,54 C0 08 00,54 00 29 00
+Shared job scheduler,coordinated scheduler layout,0x0068A9E7,0x0068B5E7,4,38 00 08 00,38 00 26 00
+Shared job scheduler,scheduler job / queue capacity,0x0068AA16,0x0068B616,4,00 10 00 00,00 40 00 00
+Shared job scheduler,coordinated scheduler layout,0x0068AA1F,0x0068B61F,4,00 C0 06 00,00 00 1B 00
+Shared job scheduler,coordinated scheduler layout,0x0068AA25,0x0068B625,4,04 80 00 00,04 00 08 00
+Shared job scheduler,scheduler dependency free-list capacity,0x0068AA39,0x0068B639,4,FF 0F 00 00,FF FF 00 00
+Shared job scheduler,coordinated scheduler layout,0x0068AA41,0x0068B641,4,F8 7F 00 00,F8 FF 07 00
+Shared job scheduler,coordinated scheduler layout,0x0068AA49,0x0068B649,4,F0 C0 08 00,F0 00 29 00
+Shared job scheduler,coordinated scheduler layout,0x0068AA4F,0x0068B64F,4,00 80 00 00,00 00 08 00
+Shared job scheduler,scheduler dependency free-list capacity,0x0068AA53,0x0068B653,4,00 10 00 00,00 00 01 00
+Shared job scheduler,scheduler owner array stride / constructor size,0x0091D075,0x0091DC75,4,F8 C0 08 00,F8 00 29 00
+Shared job scheduler,relocated global scheduler owner,0x0091D082,0x0091DC82,4,4A 17 45 02,7A 73 5C 14
+Shared job scheduler,object-job unwind allocation / save,0x00AC126E,0x00AC206E,2,1F 11,1F 88
+Shared job scheduler,object-job unwind allocation / save,0x00AC1272,0x00AC2072,2,14 11,14 88
+Shared job scheduler,object-job GS+EH cookie offset,0x00AC128C,0x00AC208C,4,92 88 00 00,92 40 04 00
+Spatial bitmaps and solver memory,exception directory size,0x0000020C,0x0000020C,4,E0 50 05 00,B8 51 05 00
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x000D3284,0x000D3E84,4,C8 01 00 00,C8 10 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x000D3288,0x000D3E88,7,48 8B 05 81 61 A2 00,E9 F3 D4 97 0A 90 90
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x000D3296,0x000D3E96,4,B0 01 00 00,B0 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x000D32D3,0x000D3ED3,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x000D338F,0x000D3F8F,4,B0 01 00 00,B0 10 00 00
+Spatial bitmaps and solver memory,spatial stack restoration,0x000D339E,0x000D3F9E,4,C8 01 00 00,C8 10 00 00
+Spatial bitmaps and solver memory,retain low spatial frame RBP anchor,0x0012790C,0x0012850C,4,D0 FE FF FF,D0 EF FF FF
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x00127913,0x00128513,4,30 02 00 00,30 11 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x00127917,0x00128517,7,48 8B 05 F2 1A 9D 00,E9 84 8E 92 0A 90 90
+Spatial bitmaps and solver memory,spatial RBP high field,0x00127924,0x00128524,4,20 01 00 00,20 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012792B,0x0012852B,4,90 01 00 00,90 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x00127954,0x00128554,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00127C0D,0x0012880D,4,20 01 00 00,20 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00127C1D,0x0012881D,4,80 02 00 00,80 11 00 00
+Spatial bitmaps and solver memory,spatial stack restoration,0x00127C24,0x00128824,4,30 02 00 00,30 11 00 00
+Spatial bitmaps and solver memory,retain low spatial frame RBP anchor,0x00128AB0,0x001296B0,4,F0 97 FE FF,F0 88 FE FF
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x00128AB5,0x001296B5,4,10 69 01 00,10 78 01 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00128AC5,0x001296C5,4,00 69 01 00,00 78 01 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00128ACD,0x001296CD,4,F0 68 01 00,F0 77 01 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00128AD6,0x001296D6,4,E0 68 01 00,E0 77 01 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00128ADF,0x001296DF,4,D0 68 01 00,D0 77 01 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00128AE8,0x001296E8,4,C0 68 01 00,C0 77 01 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00128AF1,0x001296F1,4,B0 68 01 00,B0 77 01 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00128AFA,0x001296FA,4,A0 68 01 00,A0 77 01 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00128B03,0x00129703,4,90 68 01 00,90 77 01 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00128B14,0x00129714,4,80 67 01 00,80 76 01 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00128B1B,0x0012971B,4,88 68 01 00,88 77 01 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00128E32,0x00129A32,4,70 68 01 00,70 77 01 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00128E55,0x00129A55,4,78 68 01 00,78 77 01 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00128E65,0x00129A65,4,80 68 01 00,80 77 01 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00128F2A,0x00129B2A,4,00 04 00 00,00 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00128FD8,0x00129BD8,4,C0 01 00 00,C0 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012900E,0x00129C0E,4,C0 01 00 00,C0 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012908B,0x00129C8B,4,C0 01 00 00,C0 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001290A1,0x00129CA1,4,E0 02 00 00,E0 11 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001290E6,0x00129CE6,4,E0 02 00 00,E0 11 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129162,0x00129D62,4,E0 02 00 00,E0 11 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001291AA,0x00129DAA,4,20 04 00 00,20 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001291C2,0x00129DC2,4,20 04 00 00,20 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129237,0x00129E37,4,2C 06 00 00,2C 15 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129247,0x00129E47,4,34 06 00 00,34 15 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012925D,0x00129E5D,4,34 06 00 00,34 15 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129289,0x00129E89,4,30 06 00 00,30 15 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001292B2,0x00129EB2,4,30 06 00 00,30 15 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001292E2,0x00129EE2,4,30 06 00 00,30 15 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x0012933D,0x00129F3D,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001293AB,0x00129FAB,4,00 04 00 00,00 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001294C1,0x0012A0C1,4,80 67 01 00,80 76 01 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x001294D1,0x0012A0D1,4,10 69 01 00,10 78 01 00
+Spatial bitmaps and solver memory,retain low spatial frame RBP anchor,0x001295E0,0x0012A1E0,4,20 E6 FF FF,20 D7 FF FF
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x001295E5,0x0012A1E5,4,E0 1A 00 00,E0 29 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x001295F5,0x0012A1F5,4,D0 1A 00 00,D0 29 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x001295FD,0x0012A1FD,4,C0 1A 00 00,C0 29 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012960E,0x0012A20E,4,B0 19 00 00,B0 28 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129615,0x0012A215,4,40 1A 00 00,40 29 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012961F,0x0012A21F,4,60 1A 00 00,60 29 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x001296B7,0x0012A2B7,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012979F,0x0012A39F,4,48 1A 00 00,48 29 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001297AB,0x0012A3AB,4,50 1A 00 00,50 29 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001297B4,0x0012A3B4,4,58 1A 00 00,58 29 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012994E,0x0012A54E,4,70 17 00 00,70 26 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129989,0x0012A589,4,70 17 00 00,70 26 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012999F,0x0012A59F,4,90 18 00 00,90 27 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001299DA,0x0012A5DA,4,90 18 00 00,90 27 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129CC2,0x0012A8C2,4,58 1A 00 00,58 29 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129CDA,0x0012A8DA,4,50 1A 00 00,50 29 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129CE7,0x0012A8E7,4,48 1A 00 00,48 29 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00129CFD,0x0012A8FD,4,B0 19 00 00,B0 28 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00129D0D,0x0012A90D,4,E0 1A 00 00,E0 29 00 00
+Spatial bitmaps and solver memory,retain low spatial frame RBP anchor,0x0012A7DD,0x0012B3DD,4,08 DF FF FF,08 D0 FF FF
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x0012A7E2,0x0012B3E2,4,F8 21 00 00,F8 30 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x0012A7F2,0x0012B3F2,4,E0 21 00 00,E0 30 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x0012A7FA,0x0012B3FA,4,D0 21 00 00,D0 30 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x0012A803,0x0012B403,4,C0 21 00 00,C0 30 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012A814,0x0012B414,4,B0 20 00 00,B0 2F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012A81B,0x0012B41B,4,78 21 00 00,78 30 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x0012A830,0x0012B430,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012A85D,0x0012B45D,4,60 21 00 00,60 30 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012A9B4,0x0012B5B4,4,A0 00 00 00,A0 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012A9F4,0x0012B5F4,4,A0 00 00 00,A0 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012AA30,0x0012B630,4,AC 18 00 00,AC 27 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012AA4F,0x0012B64F,4,AC 18 00 00,AC 27 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012AA65,0x0012B665,4,B0 18 00 00,B0 27 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012AAE3,0x0012B6E3,4,68 21 00 00,68 30 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012AB0D,0x0012B70D,4,AC 18 00 00,AC 27 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0012ABBA,0x0012B7BA,4,B0 20 00 00,B0 2F 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x0012ABCA,0x0012B7CA,4,F8 21 00 00,F8 30 00 00
+Spatial bitmaps and solver memory,retain low spatial frame RBP anchor,0x00167801,0x00168401,4,18 F9 FF FF,18 EA FF FF
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x00167808,0x00168408,4,B0 07 00 00,B0 16 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x00167846,0x00168446,7,48 8B 05 C3 1B 99 00,E9 75 8F 8E 0A 90 90
+Spatial bitmaps and solver memory,spatial RBP high field,0x00167853,0x00168453,4,10 06 00 00,10 15 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0016793D,0x0016853D,4,50 03 00 00,50 12 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x00167A23,0x00168623,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00167A74,0x00168674,4,5C 03 00 00,5C 12 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00168295,0x00168E95,4,70 03 00 00,70 12 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001682D1,0x00168ED1,4,64 03 00 00,64 12 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001682DD,0x00168EDD,4,50 03 00 00,50 12 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00168306,0x00168F06,4,78 03 00 00,78 12 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00168513,0x00169113,4,10 06 00 00,10 15 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00168523,0x00169123,4,B0 07 00 00,B0 16 00 00
+Spatial bitmaps and solver memory,primary Havok solver buffer capacity,0x001E607C,0x001E6C7C,4,00 40 06 00,00 00 00 01
+Spatial bitmaps and solver memory,Havok solver arena backing / end,0x001E6083,0x001E6C83,4,89 D2 B8 04,79 E3 CF 12
+Spatial bitmaps and solver memory,Havok solver arena backing / end,0x001E612E,0x001E6D2E,4,DE 11 BF 04,CE E2 CF 13
+Spatial bitmaps and solver memory,Havok solver arena backing / end,0x001E6142,0x001E6D42,4,CA 31 C2 04,BA E2 CF 14
+Spatial bitmaps and solver memory,retain low spatial frame RBP anchor,0x001E8FA4,0x001E9BA4,4,50 BA FF FF,50 AB FF FF
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x001E8FA9,0x001E9BA9,4,B0 46 00 00,B0 55 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x001E8FB9,0x001E9BB9,4,A0 46 00 00,A0 55 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x001E8FC1,0x001E9BC1,4,90 46 00 00,90 55 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x001E8FCA,0x001E9BCA,4,80 46 00 00,80 55 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E8FDB,0x001E9BDB,4,70 45 00 00,70 54 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E8FE2,0x001E9BE2,4,20 46 00 00,20 55 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E8FEC,0x001E9BEC,4,28 46 00 00,28 55 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E9022,0x001E9C22,4,18 46 00 00,18 55 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E9108,0x001E9D08,4,10 46 00 00,10 55 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E91B7,0x001E9DB7,4,18 46 00 00,18 55 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E91DE,0x001E9DDE,4,18 46 00 00,18 55 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x001E9239,0x001E9E39,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E92B6,0x001E9EB6,4,70 05 00 00,70 14 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E92E7,0x001E9EE7,4,74 05 00 00,74 14 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x001E9319,0x001E9F19,4,70 45 00 00,70 54 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x001E9329,0x001E9F29,4,B0 46 00 00,B0 55 00 00
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x002EB824,0x002EC424,4,60 01 00 00,60 10 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x002EB828,0x002EC428,7,48 8B 05 E1 DB 80 00,E9 B3 4F 76 0A 90 90
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x002EB842,0x002EC442,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x002EBAB2,0x002EC6B2,4,60 01 00 00,60 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x004732E3,0x00473EE3,4,70 01 00 00,70 10 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x004732E7,0x00473EE7,7,48 8B 05 22 61 68 00,E9 14 D5 5D 0A 90 90
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x004732F5,0x00473EF5,4,60 01 00 00,60 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x004732FD,0x00473EFD,4,A8 01 00 00,A8 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x00473366,0x00473F66,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00473377,0x00473F77,4,A0 01 00 00,A0 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00473393,0x00473F93,4,B0 01 00 00,B0 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x004733B9,0x00473FB9,4,60 01 00 00,60 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x004733C9,0x00473FC9,4,70 01 00 00,70 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x0047352A,0x0047412A,4,80 01 00 00,80 10 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x0047352E,0x0047412E,7,48 8B 05 DB 5E 68 00,E9 ED D2 5D 0A 90 90
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x0047353C,0x0047413C,4,70 01 00 00,70 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00473544,0x00474144,4,C8 01 00 00,C8 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x0047354E,0x0047414E,4,D8 01 00 00,D8 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x004735B2,0x004741B2,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x004735C3,0x004741C3,4,D0 01 00 00,D0 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x004735F6,0x004741F6,4,E0 01 00 00,E0 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00473629,0x00474229,4,E0 01 00 00,E0 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00473635,0x00474235,4,C0 01 00 00,C0 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00473654,0x00474254,4,70 01 00 00,70 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00473664,0x00474264,4,80 01 00 00,80 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x006BD1CE,0x006BDDCE,4,A0 01 00 00,A0 10 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x006BD1D2,0x006BDDD2,7,48 8B 05 37 C2 43 00,E9 69 36 39 0A 90 90
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x006BD1E0,0x006BDDE0,4,90 01 00 00,90 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x006BD208,0x006BDE08,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x006BD27C,0x006BDE7C,4,90 01 00 00,90 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x006BD28C,0x006BDE8C,4,A0 01 00 00,A0 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x00736118,0x00736D18,4,60 01 00 00,60 10 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x0073611C,0x00736D1C,7,48 8B 05 ED 32 3C 00,E9 3F A7 31 0A 90 90
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x0073623E,0x00736E3E,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x007363B9,0x00736FB9,4,B0 01 00 00,B0 10 00 00
+Spatial bitmaps and solver memory,spatial stack restoration,0x007363C0,0x00736FC0,4,60 01 00 00,60 10 00 00
+Spatial bitmaps and solver memory,retain low spatial frame RBP anchor,0x007364CF,0x007370CF,4,A8 FE FF FF,A8 EF FF FF
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x007364D6,0x007370D6,4,30 02 00 00,30 11 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x007364DA,0x007370DA,7,48 8B 05 2F 2F 3C 00,E9 A1 A3 31 0A 90 90
+Spatial bitmaps and solver memory,spatial RBP high field,0x007364E7,0x007370E7,4,20 01 00 00,20 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x00736514,0x00737114,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736675,0x00737275,4,80 00 00 00,80 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736699,0x00737299,4,80 00 00 00,80 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x0073679E,0x0073739E,4,20 01 00 00,20 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x007367AE,0x007373AE,4,30 02 00 00,30 11 00 00
+Spatial bitmaps and solver memory,retain low spatial frame RBP anchor,0x0073680F,0x0073740F,4,D8 F4 FF FF,D8 E5 FF FF
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x00736816,0x00737416,4,00 0C 00 00,00 1B 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x0073681E,0x0073741E,7,48 8B 05 EB 2B 3C 00,E9 7D A0 31 0A 90 90
+Spatial bitmaps and solver memory,spatial RBP high field,0x0073682B,0x0073742B,4,E0 0A 00 00,E0 19 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x007368BF,0x007374BF,4,A0 00 00 00,A0 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x007368C6,0x007374C6,4,40 01 00 00,40 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x007368D2,0x007374D2,4,40 01 00 00,40 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x007368DC,0x007374DC,4,A4 00 00 00,A4 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736A12,0x00737612,4,A0 00 00 00,A0 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736A69,0x00737669,4,A0 02 00 00,A0 11 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736A75,0x00737675,4,A0 00 00 00,A0 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736A7C,0x0073767C,4,A0 00 00 00,A0 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736A83,0x00737683,4,A0 02 00 00,A0 11 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x00736AB6,0x007376B6,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736BA3,0x007377A3,4,A0 04 00 00,A0 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736C5E,0x0073785E,4,A0 00 00 00,A0 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736C7C,0x0073787C,4,A0 04 00 00,A0 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736D1B,0x0073791B,4,A0 00 00 00,A0 0F 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736D2B,0x0073792B,4,A0 04 00 00,A0 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736D88,0x00737988,4,A0 04 00 00,A0 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736DDB,0x007379DB,4,AC 04 00 00,AC 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736DEE,0x007379EE,4,A4 04 00 00,A4 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736DFB,0x007379FB,4,A8 04 00 00,A8 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736E04,0x00737A04,4,A0 04 00 00,A0 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736E40,0x00737A40,4,A8 04 00 00,A8 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736E4C,0x00737A4C,4,A0 04 00 00,A0 13 00 00
+Spatial bitmaps and solver memory,spatial RBP high field,0x00736ED8,0x00737AD8,4,E0 0A 00 00,E0 19 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00736EE8,0x00737AE8,4,00 0C 00 00,00 1B 00 00
+Spatial bitmaps and solver memory,spatial bitmap stack reservation,0x00738677,0x00739277,4,60 01 00 00,60 10 00 00
+Spatial bitmaps and solver memory,spatial stack page-probe hook,0x0073867B,0x0073927B,7,48 8B 05 8E 0D 3C 00,E9 40 82 31 0A 90 90
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00738689,0x00739289,4,50 01 00 00,50 10 00 00
+Spatial bitmaps and solver memory,spatial bitmap clear length,0x007386A8,0x007392A8,4,00 01 00 00,00 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00738749,0x00739349,4,50 01 00 00,50 10 00 00
+Spatial bitmaps and solver memory,spatial frame high field / restoration,0x00738759,0x00739359,4,90 01 00 00,90 10 00 00
+Spatial bitmaps and solver memory,spatial stack restoration,0x00738760,0x00739360,4,60 01 00 00,60 10 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA2562,0x00AA3362,2,39 00,19 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AA2578,0x00AA3378,4,B0 01 00 00,B0 10 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA45DA,0x00AA53DA,2,50 00,30 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA45DE,0x00AA53DE,2,46 00,26 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AA45F4,0x00AA53F4,4,20 02 00 00,20 11 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA4676,0x00AA5476,2,89 16,79 17
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA467A,0x00AA547A,2,8A 16,7A 17
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA467E,0x00AA547E,2,8B 16,7B 17
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA4682,0x00AA5482,2,8C 16,7C 17
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA4686,0x00AA5486,2,8D 16,7D 17
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA468A,0x00AA548A,2,8E 16,7E 17
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA468E,0x00AA548E,2,8F 16,7F 17
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA4692,0x00AA5492,2,90 16,80 17
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA4696,0x00AA5496,2,2B 2D,0B 2F
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA469A,0x00AA549A,2,22 2D,02 2F
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AA46B0,0x00AA54B0,4,80 68 01 00,80 77 01 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA46BA,0x00AA54BA,2,AC 01,9C 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA46BE,0x00AA54BE,2,AD 01,9D 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA46C2,0x00AA54C2,2,66 03,46 05
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA46C6,0x00AA54C6,2,5C 03,3C 05
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AA46DC,0x00AA54DC,4,B0 1A 00 00,B0 29 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA476E,0x00AA556E,2,1C 02,0C 03
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA4772,0x00AA5572,2,1D 02,0D 03
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA4776,0x00AA5576,2,1E 02,0E 03
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA477A,0x00AA557A,2,3F 04,1F 06
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AA4790,0x00AA5590,4,B0 21 00 00,B0 30 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D26,0x00AA7B26,2,72 00,62 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D2A,0x00AA7B2A,2,73 00,63 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D2E,0x00AA7B2E,2,74 00,64 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D32,0x00AA7B32,2,75 00,65 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D36,0x00AA7B36,2,76 00,66 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D3A,0x00AA7B3A,2,77 00,67 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D3E,0x00AA7B3E,2,78 00,68 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D42,0x00AA7B42,2,79 00,69 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D46,0x00AA7B46,2,7A 00,6A 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D4A,0x00AA7B4A,2,00 01,E0 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AA6D4E,0x00AA7B4E,2,F6 00,D6 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AA6D64,0x00AA7B64,4,10 07 00 00,10 16 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AAAEFA,0x00AABCFA,2,68 04,58 05
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AAAEFE,0x00AABCFE,2,69 04,59 05
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AAAF02,0x00AABD02,2,6A 04,5A 05
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AAAF06,0x00AABD06,2,DF 08,BF 0A
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AAAF0A,0x00AABD0A,2,D6 08,B6 0A
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AAAF20,0x00AABD20,4,70 46 00 00,70 55 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AB394E,0x00AB474E,2,36 00,16 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AB3952,0x00AB4752,2,2C 00,0C 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AB3968,0x00AB4768,4,50 01 00 00,50 10 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AB3BDE,0x00AB49DE,2,35 00,15 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AB3BE2,0x00AB49E2,2,34 00,14 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AB3BE6,0x00AB49E6,2,33 00,13 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AB3BEA,0x00AB49EA,2,2C 00,0C 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AB3BFC,0x00AB49FC,4,50 01 00 00,50 10 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AC1546,0x00AC2346,2,32 00,12 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AC154A,0x00AC234A,2,31 00,11 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AC154E,0x00AC234E,2,30 00,10 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AC1552,0x00AC2352,2,2E 00,0E 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AC155C,0x00AC235C,4,60 01 00 00,60 10 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AC1566,0x00AC2366,2,37 00,17 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AC156A,0x00AC236A,2,36 00,16 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AC156E,0x00AC236E,2,30 00,10 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AC157C,0x00AC237C,4,70 01 00 00,70 10 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AD63C2,0x00AD71C2,2,38 00,18 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AD63C6,0x00AD71C6,2,37 00,17 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AD63CA,0x00AD71CA,2,34 00,14 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AD63D4,0x00AD71D4,4,90 01 00 00,90 10 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AD9FDA,0x00ADADDA,2,4F 00,2F 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AD9FDE,0x00ADADDE,2,4E 00,2E 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AD9FE2,0x00ADADE2,2,4D 00,2D 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00AD9FE6,0x00ADADE6,2,46 00,26 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00AD9FF8,0x00ADADF8,4,20 02 00 00,20 11 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00ADA002,0x00ADAE02,2,BF 00,AF 01
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00ADA006,0x00ADAE06,2,89 01,69 03
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00ADA00A,0x00ADAE0A,2,88 01,68 03
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00ADA00E,0x00ADAE0E,2,87 01,67 03
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00ADA012,0x00ADAE12,2,80 01,60 03
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00ADA024,0x00ADAE24,4,E0 0B 00 00,E0 1A 00 00
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00ADA0B6,0x00ADAEB6,2,32 00,12 02
+Spatial bitmaps and solver memory,spatial unwind allocation / saved register,0x00ADA0BA,0x00ADAEBA,2,2C 00,0C 02
+Spatial bitmaps and solver memory,spatial GS cookie frame offset,0x00ADA0C8,0x00ADAEC8,4,50 01 00 00,50 10 00 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF4240,0x0AA51C40,16,NEW FILE AREA,21 00 00 00 6C 3E 0D 00 AF 3F 0D 00 5C 33 AA 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF4250,0x0AA51C50,16,NEW FILE AREA,21 00 00 00 F8 84 12 00 34 88 12 00 D4 53 AA 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF4260,0x0AA51C60,16,NEW FILE AREA,21 00 00 00 EC 83 16 00 6A 91 16 00 20 7B AA 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF4270,0x0AA51C70,16,NEW FILE AREA,21 00 00 00 04 C4 2E 00 CF C6 2E 00 D8 49 AB 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF4280,0x0AA51C80,16,NEW FILE AREA,21 00 00 00 D0 3E 47 00 DE 3F 47 00 40 23 AC 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF4290,0x0AA51C90,16,NEW FILE AREA,21 00 00 00 18 41 47 00 79 42 47 00 60 23 AC 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF42A0,0x0AA51CA0,16,NEW FILE AREA,21 00 00 00 C0 DD 6B 00 9D DE 6B 00 BC 71 AD 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF42B0,0x0AA51CB0,16,NEW FILE AREA,21 00 00 00 00 6D 73 00 D0 6F 73 00 48 47 AB 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF42C0,0x0AA51CC0,16,NEW FILE AREA,21 00 00 00 B4 70 73 00 CB 73 73 00 D4 AD AD 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF42D0,0x0AA51CD0,16,NEW FILE AREA,21 00 00 00 F4 73 73 00 0A 7B 73 00 FC AD AD 00
+Spatial bitmaps and solver memory,spatial probe chained unwind,0x00CF42E0,0x0AA51CE0,16,NEW FILE AREA,21 00 00 00 6C 92 73 00 68 93 73 00 B0 AE AD 00
+Visible list and mesh records,visible list/mesh module-indexed reference,0x00118379,0x00118F79,4,48 08 92 02,98 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0011838F,0x00118F8F,4,7C 08 92 02,CC 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0011839A,0x00118F9A,4,48 08 92 02,98 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x001183B1,0x00118FB1,4,7C 08 92 02,CC 90 BF 12
+Visible list and mesh records,visible list and mesh constructor capacity,0x0014DEB7,0x0014EAB7,4,00 04 00 00,00 10 00 00
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DEBE,0x0014EABE,4,08 DD 7C 02,58 A5 A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DEC8,0x0014EAC8,4,F4 DC 7C 02,44 A5 A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DECF,0x0014EACF,4,E9 DC 7C 02,39 A5 A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DED6,0x0014EAD6,4,F2 DC 7C 02,42 A5 A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DEDD,0x0014EADD,4,E7 DC 7C 02,37 A5 A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DEF9,0x0014EAF9,4,ED 1C 7D 02,3D A5 AA 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DF00,0x0014EB00,4,D8 1C 7D 02,28 A5 AA 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DF07,0x0014EB07,4,D5 1C 7D 02,25 A5 AA 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DF0E,0x0014EB0E,4,DE 1C 7D 02,2E A5 AA 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014DF15,0x0014EB15,4,CF 1C 7D 02,1F A5 AA 12
+Visible list and mesh records,constructor capacity restore hook,0x0014DF31,0x0014EB31,7,48 8D 05 D2 BC 7F 02,E9 CA 2C 90 0A 90 90
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E098,0x0014EC98,4,2E DB 7C 02,7E A3 A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E09F,0x0014EC9F,4,47 1B 7D 02,97 A3 AA 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E1C4,0x0014EDC4,4,14 1A 7D 02,64 A2 AA 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E1CF,0x0014EDCF,4,09 1A 7D 02,59 A2 AA 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E1DA,0x0014EDDA,4,02 1A 7D 02,52 A2 AA 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0014E1E6,0x0014EDE6,4,D0 07 92 02,20 90 BF 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E1ED,0x0014EDED,4,CB D9 7C 02,1B A2 A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E1F8,0x0014EDF8,4,C0 D9 7C 02,10 A2 A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E203,0x0014EE03,4,B9 D9 7C 02,09 A2 A9 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0014E20F,0x0014EE0F,4,B0 C7 91 02,00 90 BE 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E3D6,0x0014EFD6,4,02 18 7D 02,52 A0 AA 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0014E3DF,0x0014EFDF,4,D0 07 92 02,20 90 BF 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E3E6,0x0014EFE6,4,F6 17 7D 02,46 A0 AA 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E3F0,0x0014EFF0,4,E8 17 7D 02,38 A0 AA 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E3F8,0x0014EFF8,4,C0 D7 7C 02,10 A0 A9 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0014E401,0x0014F001,4,B0 C7 91 02,00 90 BE 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E408,0x0014F008,4,B4 D7 7C 02,04 A0 A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0014E412,0x0014F012,4,A6 D7 7C 02,F6 9F A9 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00226BB2,0x002277B2,4,16 50 6F 02,66 18 9C 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00226C73,0x00227873,4,55 4F 6F 02,A5 17 9C 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00227023,0x00227C23,4,A3 4B 6F 02,F3 13 9C 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0022702E,0x00227C2E,4,96 4B 6F 02,E6 13 9C 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00227044,0x00227C44,4,82 4B 6F 02,D2 13 9C 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00227061,0x00227C61,4,67 4B 6F 02,B7 13 9C 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0022710C,0x00227D0C,4,BA 4A 6F 02,0A 13 9C 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0022711B,0x00227D1B,4,AB 4A 6F 02,FB 12 9C 12
+Visible list and mesh records,visible list/mesh RIP reference,0x002272B8,0x00227EB8,4,2E 89 6F 02,7E 11 9D 12
+Visible list and mesh records,visible list/mesh RIP reference,0x002272BF,0x00227EBF,4,25 89 6F 02,75 11 9D 12
+Visible list and mesh records,visible list/mesh RIP reference,0x002272CE,0x00227ECE,4,18 89 6F 02,68 11 9D 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00227402,0x00228002,4,EA 87 6F 02,3A 10 9D 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E035,0x0027EC35,4,91 DB 69 02,E1 A3 96 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E041,0x0027EC41,4,A5 1B 6A 02,F5 A3 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E04C,0x0027EC4C,4,78 DB 69 02,C8 A3 96 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E074,0x0027EC74,4,52 DB 69 02,A2 A3 96 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0027E0A5,0x0027ECA5,4,D4 C7 91 02,24 90 BE 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0027E0B1,0x0027ECB1,4,D2 C7 91 02,22 90 BE 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0027E0B9,0x0027ECB9,4,D5 C7 91 02,25 90 BE 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0027E0C3,0x0027ECC3,4,CC C7 91 02,1C 90 BE 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E255,0x0027EE55,4,91 19 6A 02,E1 A1 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E25C,0x0027EE5C,4,88 19 6A 02,D8 A1 97 12
+Visible list and mesh records,guard invalid mesh index before record writes,0x0027E260,0x0027EE60,8,7D 0F 0F BF C8 66 FF C0,E9 9B 2A 7D 0A 90 90 90
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E26B,0x0027EE6B,4,7B 19 6A 02,CB A1 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E284,0x0027EE84,4,68 19 6A 02,B8 A1 97 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0027E748,0x0027F348,4,CE C7 91 02,1E 90 BE 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0027E751,0x0027F351,4,D0 C7 91 02,20 90 BE 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E76B,0x0027F36B,4,7B 14 6A 02,CB 9C 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E777,0x0027F377,4,4F D4 69 02,9F 9C 96 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E780,0x0027F380,4,66 14 6A 02,B6 9C 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E787,0x0027F387,4,3F D4 69 02,8F 9C 96 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E790,0x0027F390,4,56 14 6A 02,A6 9C 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E797,0x0027F397,4,2F D4 69 02,7F 9C 96 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E7BC,0x0027F3BC,4,0A D4 69 02,5A 9C 96 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027E7E7,0x0027F3E7,4,FF 13 6A 02,4F 9C 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027F07B,0x0027FC7B,4,5D 0B 6A 02,AD 93 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027F088,0x0027FC88,4,5E 0B 6A 02,AE 93 97 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0027F09C,0x0027FC9C,4,D0 07 92 02,20 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0027F0B1,0x0027FCB1,4,F0 07 92 02,40 90 BF 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027F184,0x0027FD84,4,62 0A 6A 02,B2 92 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027F1A3,0x0027FDA3,4,49 0A 6A 02,99 92 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0027F249,0x0027FE49,4,A3 09 6A 02,F3 91 97 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0028AED6,0x0028BAD6,4,F0 0C 69 02,40 D5 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0028AEF3,0x0028BAF3,4,C5 0C 69 02,15 D5 95 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0028AF06,0x0028BB06,4,B0 C7 91 02,00 90 BE 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0028AF18,0x0028BB18,4,CC C7 91 02,1C 90 BE 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0028AF5D,0x0028BB5D,4,7C 08 92 02,CC 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0028AF6C,0x0028BB6C,4,90 08 92 02,E0 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0028B09F,0x0028BC9F,4,7C 08 92 02,CC 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0028B0CB,0x0028BCCB,4,7C 08 92 02,CC 90 BF 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0028B134,0x0028BD34,4,92 0A 69 02,E2 D2 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0028B164,0x0028BD64,4,64 0A 69 02,B4 D2 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00297CFE,0x002988FE,4,BA 3E 68 02,0A 07 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00297D05,0x00298905,4,A7 3E 68 02,F7 06 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00297D0C,0x0029890C,4,BA 3E 68 02,0A 07 95 12
+Visible list and mesh records,mesh field relative to relocated list base,0x00297D4B,0x0029894B,4,D8 40 00 00,D8 00 01 00
+Visible list and mesh records,visible list/mesh RIP reference,0x00297D77,0x00298977,4,4F 3E 68 02,9F 06 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00297D89,0x00298989,4,3F 3E 68 02,8F 06 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00297F95,0x00298B95,4,23 3C 68 02,73 04 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00297FA3,0x00298BA3,4,23 3C 68 02,73 04 95 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x00297FB0,0x00298BB0,4,B0 C7 91 02,00 90 BE 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00297FC1,0x00298BC1,4,07 3C 68 02,57 04 95 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0029800D,0x00298C0D,4,44 08 92 02,94 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x00298020,0x00298C20,4,80 08 92 02,D0 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x00298043,0x00298C43,4,4B 08 92 02,9B 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x002980AB,0x00298CAB,4,90 08 92 02,E0 90 BF 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00298BDD,0x002997DD,4,DB 2F 68 02,2B F8 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00298BE4,0x002997E4,4,C8 2F 68 02,18 F8 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00298BEB,0x002997EB,4,DB 2F 68 02,2B F8 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00298C8F,0x0029988F,4,1D 2F 68 02,6D F7 94 12
+Visible list and mesh records,mesh field relative to relocated list base,0x00298CBC,0x002998BC,4,C8 40 00 00,C8 00 01 00
+Visible list and mesh records,mesh field relative to relocated list base,0x00298CC7,0x002998C7,4,C9 40 00 00,C9 00 01 00
+Visible list and mesh records,mesh field relative to relocated list base,0x00298CDD,0x002998DD,4,E0 40 00 00,E0 00 01 00
+Visible list and mesh records,visible list/mesh RIP reference,0x00298DF9,0x002999F9,4,CD 2D 68 02,1D F6 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00298E08,0x00299A08,4,C0 2D 68 02,10 F6 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299A33,0x0029A633,4,85 21 68 02,D5 E9 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299A3A,0x0029A63A,4,72 21 68 02,C2 E9 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299A41,0x0029A641,4,85 21 68 02,D5 E9 94 12
+Visible list and mesh records,mesh field relative to relocated list base,0x00299A97,0x0029A697,4,D8 40 00 00,D8 00 01 00
+Visible list and mesh records,visible list/mesh RIP reference,0x00299AC6,0x0029A6C6,4,00 21 68 02,50 E9 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299AD9,0x0029A6D9,4,EF 20 68 02,3F E9 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299B6A,0x0029A76A,4,4E 20 68 02,9E E8 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299B71,0x0029A771,4,3B 20 68 02,8B E8 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299B78,0x0029A778,4,4E 20 68 02,9E E8 94 12
+Visible list and mesh records,mesh field relative to relocated list base,0x00299BD2,0x0029A7D2,4,D8 40 00 00,D8 00 01 00
+Visible list and mesh records,visible list/mesh RIP reference,0x00299C09,0x0029A809,4,E3 5F 68 02,33 E8 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299CE7,0x0029A8E7,4,DF 1E 68 02,2F E7 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299CEE,0x0029A8EE,4,BE 1E 68 02,0E E7 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299D06,0x0029A906,4,C2 1E 68 02,12 E7 94 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299DCB,0x0029A9CB,4,21 5E 68 02,71 E6 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x00299FB3,0x0029ABB3,4,39 5C 68 02,89 E4 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0029D6EC,0x0029E2EC,4,EC 24 68 02,3C AD 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0029D6FA,0x0029E2FA,4,EC 24 68 02,3C AD 95 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0029D70C,0x0029E30C,4,D0 07 92 02,20 90 BF 12
+Visible list and mesh records,visible list/mesh module-indexed reference,0x0029D721,0x0029E321,4,F0 07 92 02,40 90 BF 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0029D7F2,0x0029E3F2,4,F4 23 68 02,44 AC 95 12
+Visible list and mesh records,visible list/mesh RIP reference,0x0029D80C,0x0029E40C,4,E0 23 68 02,30 AC 95 12
+Visible list and mesh records,trampoline chained unwind metadata,0x00CF4220,0x0AA51C20,16,NEW FILE AREA,21 00 00 00 9C EA 14 00 7D EC 14 00 A8 A9 A9 00
+Visible list and mesh records,trampoline chained unwind metadata,0x00CF4230,0x0AA51C30,16,NEW FILE AREA,21 00 00 00 E0 EB 27 00 07 F4 27 00 3C 09 AB 00
