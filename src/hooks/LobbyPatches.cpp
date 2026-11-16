@@ -67,16 +67,19 @@ static SetSlotCountsFn s_originalSetSlotCounts = nullptr;
 // Dev experiment only: allow a multiplayer/forge session to be declared with more than the engine's stock 16 slots.
 // The supported multiplayer path is 16 slots with the engine's own count; a raised count is only meaningful together
 // with the 32-player slot patch, so it also requires that mode to be installed.
-static bool MultiplayerSlotCount32() {
-    static const bool on = [] {
+static bool MultiplayerSlotCount32() {    static const bool on = [] {
         wchar_t env[8] = {};
         return GetEnvironmentVariableW(L"NOBLE_MP_SLOTS32", env, 8) > 0 && env[0] == L'1';
     }();
     return on;
 }
 
-int LobbyPatches::EffectiveMultiplayerSeats() {
-    constexpr int kStockSeats = 16, kPatchSeats = 32;
+// Last public-slot count the engine asked for. 0 is its join lock while a launch is starting; Tyler's
+// slot-count fix deliberately keeps that lock, so the join-in-progress refusal overrides below must not
+// bypass it (that combination used to let a guest into a session the engine had already locked).
+static std::atomic<int32_t> s_lastPublicSlots{-1};
+
+int LobbyPatches::EffectiveMultiplayerSeats() {    constexpr int kStockSeats = 16, kPatchSeats = 32;
     if (!MultiplayerSlotCount32() || !slots::Players32Active()) return kStockSeats;
     // The baked target is 128 while 32 is the largest seat count this patch set supports.
     const int baked = static_cast<int>(GetMaxMultiplayerPlayers());
@@ -85,6 +88,7 @@ int LobbyPatches::EffectiveMultiplayerSeats() {
 
 static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, int32_t publicSlots, bool isRanked) {
     NOBLE_INFO("LobbyPatches: set_slot_counts private={} public={} ranked={}", privateSlots, publicSlots, isRanked);
+    s_lastPublicSlots.store(publicSlots);
     int32_t targetSlots = publicSlots;
     const int32_t expandedMp = static_cast<int32_t>(LobbyPatches::GetMaxMultiplayerPlayers());
     const int32_t expandedCoop = static_cast<int32_t>(LobbyPatches::GetMaxCoopPlayers());
@@ -302,10 +306,11 @@ static void __fastcall Hook_JoinRefuse(void* a1, void* a2, void* a3) {
             RefuseRole(), GetCurrentProcessId(), session, reason, reason, CallerRva(_ReturnAddress()), a1, a2);
         NOBLE_WARN("LobbyPatches: JOIN REFUSED stack: {}", ReachStack());
     }
-    // Join-in-progress (Firefight survival especially) is refused by the host with reason 3 even after the
-    // can_accept overrides, which sends the joiner home. When Noble is the host of an active transport,
-    // drop that refusal so the engine's own join handshake continues and the player can drop in.
-    if (reason == 3 && IsNobleHost() && IsTransportActive()) {
+    // Join-in-progress (Firefight survival especially) is refused by the host with reason 3, which sends the
+    // joiner home. When Noble is the host of an active transport, drop that refusal so the engine's own join
+    // handshake continues and the player can drop in - but never while the engine holds its launch join lock
+    // (publicSlots 0), or the guest would be forced into a session the engine has closed for joins.
+    if (reason == 3 && IsNobleHost() && IsTransportActive() && s_lastPublicSlots.load() != 0) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED join refusal reason 3 (join in progress) to keep the guest connected");
         return;
     }
@@ -322,7 +327,7 @@ static void __fastcall Hook_ConnectRefuse(void* a1, void* a2, void* a3) {
             RefuseRole(), GetCurrentProcessId(), id, reason, reason, CallerRva(_ReturnAddress()));
         NOBLE_WARN("LobbyPatches: CONNECT REFUSED stack: {}", ReachStack());
     }
-    if (reason == 3 && IsNobleHost() && IsTransportActive()) {
+    if (reason == 3 && IsNobleHost() && IsTransportActive() && s_lastPublicSlots.load() != 0) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED connect refusal reason 3 (join in progress) to keep the guest connected");
         return;
     }

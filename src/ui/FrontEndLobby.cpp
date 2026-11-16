@@ -1222,6 +1222,28 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         }
       }
 
+      // A mod can change a stock map's content (tags, objects, weapons) without shipping a map file of its
+      // own. Resolve the folder on its own, so a guest that has the same mod launches the stock map WITH the
+      // mod instead of dropping it. Dropping it made the guest and host run different content, which the
+      // engine then aborts - the modded Custom Game join-in-progress failure.
+      if (resolvedModFolder.empty() && !hostModFolder.empty()) {
+        const std::string folderName = hostModFolder.filename().string();
+        for (const ModEntry &mod : ctx.mods) {
+          if (_stricmp(mod.folder.filename().string().c_str(),
+                       folderName.c_str()) == 0 ||
+              _stricmp(mod.id.c_str(), folderName.c_str()) == 0) {
+            resolvedModFolder = mod.folder;
+            break;
+          }
+        }
+      }
+      if (resolvedModFolder.empty() && !hostModId.empty()) {
+        if (const ModEntry *installed =
+                ModCatalog::FindByWorkshopId(ctx.mods, hostModId)) {
+          resolvedModFolder = installed->folder;
+        }
+      }
+
       if (!resolvedMap.empty()) {
         choice.mapOverride = resolvedMap;
         choice.modFolder = resolvedModFolder;
@@ -1230,6 +1252,17 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         NOBLE_INFO(
             "FrontEndMenu: Guest resolved modded map: '{}' (folder: '{}')",
             choice.mapOverride.string(), choice.modFolder.string());
+      } else if (!resolvedModFolder.empty()) {
+        // The host's mod does not ship its own map (content/tag overrides on a stock map). Launch the stock
+        // map with this PC's installed copy of the same mod; dropping the mod here is what desynced the
+        // guest in modded Custom Games.
+        choice.mapOverride.clear();
+        choice.modFolder = resolvedModFolder;
+        st.lobbyMapOverride.clear();
+        st.lobbyModFolder = resolvedModFolder;
+        NOBLE_INFO("FrontEndMenu: guest uses its installed copy of the host's content mod '{}' on stock map "
+                   "'{}' (no mod map file needed)",
+                   resolvedModFolder.filename().string(), choice.map);
       } else {
         // The host is on a mod map this PC does not have. Launching the plain
         // map anyway puts the guest in a match on a different map than the host
@@ -1239,10 +1272,14 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
             KnownScenario(choice.map, kMissions, Count(kMissions)) ||
             KnownScenario(choice.map, kFirefightMaps, Count(kFirefightMaps)) ||
             KnownScenario(choice.map, kMaps, Count(kMaps));
-        if (!stockScenario || !hostModId.empty()) {
-          NOBLE_WARN("FrontEndMenu: host's mod map '{}' (mod: '{}') is not on "
+        // A host running any mod (workshop id OR a local mod folder) whose content this PC does not have
+        // must not be launched vanilla: the two would run different content and the engine aborts the
+        // session. Refuse with the same message used for a missing mod map.
+        const bool hostHasMod = !hostModId.empty() || !hostModFolder.empty();
+        if (!stockScenario || hostHasMod) {
+          NOBLE_WARN("FrontEndMenu: host's mod '{}' (id '{}', '{}') is not on "
                      "this PC; not launching",
-                     wantMapFile, hostModId);
+                     wantMapFile, hostModId, hostModFolder.string());
           st.lobbyLaunchPending = false;
           return;
         }
