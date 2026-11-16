@@ -983,4 +983,158 @@ void Install(HMODULE engine, bool extendedProfile) {
         NOBLE_INFO("SlotPatch: 16-player mode; inert until -slot-players 32");
 }
 
+// ---------------------------------------------------------------------------------------------
+// Capacity plan for >32 players (dev only; not wired to the runtime yet).
+//
+// Today's 32-player mode hides the overflow records in ONE session-sized shadow object: peers 17..31 at
+// shadow+0x60 (block A) / shadow+0x2270 (block B), players 16..31 at shadow+0x1740 / shadow+0x3950, and the
+// 17 x 0xC peer table at shadow+0x446C. That works because 15 peer / 16 player records fit in the gaps the
+// stock session layout leaves. At 64 the peer array (47 records) is 0x3F28 bytes, which no longer fits below the
+// player array, and at 128 it is 0x95B8. So a >32 capacity needs a new shadow layout, and because the A/B blocks
+// of a static session are only 0x2210 apart, one single shadow delta can no longer map both:
+//   - capacity <= 32: one shadow block per static session, arrays at the proven stock-relative offsets
+//                     (all biases 0, so 32-player runtime behaviour stays byte-identical),
+//   - capacity > 32:  two shadow blocks per static session (one for block-A record accesses, one for block-B);
+//                     inside each block the shadow arrays are placed back-to-back in a new order.
+// The remaining runtime work for >32 is per-site A/B classification: every member cave / table cave / step loop
+// currently uses one constant, so each generated site has to be tagged with the A or B shadow block before the
+// 64/128 modes can install. This model keeps that distinction explicit (…BiasA / …BiasB).
+struct SlotShadowLayout {
+    uint32_t capacity;
+    uint32_t blocksUsed;      // shadow blocks per static session (1 at 32, 2 at 64/128)
+    uint32_t peerOffset;      // shadow offset of the peer array inside its block
+    uint32_t playerOffset;    // shadow offset of the player array inside its block
+    uint32_t tableOffset;     // shadow offset of the 0xC table inside its block
+    int32_t peerBiasA, peerBiasB;       // added to the shadow constant: A: offset-stock, B: blockDelta+offset-stockB
+    int32_t playerBiasA, playerBiasB;
+    int32_t tableBiasA, tableBiasB;
+    uint32_t peerEntries, playerEntries;
+    uint32_t peerBytes, playerBytes, tableBytes;
+    uint32_t peerMaskWords;   // 32-bit words needed for a capacity-bit peer mask
+    uint64_t msgExtBytes;     // membership message extension bytes for this capacity
+    uint64_t msgSize;         // 0x8100 base + extension
+};
+
+constexpr uint32_t kStockPeerA = 0x60, kStockPlayerA = 0x1740, kStockTable = 0x446C;
+constexpr uint32_t kBlockDelta = 0x2210;   // A -> B distance inside a static session
+constexpr uint32_t kPeerEntryWire = 0x180, kPlayerEntryWire = 0xB8, kMsgBase = 0x8100;
+constexpr uint32_t kPeerFirst = 17, kPlayerFirst = 16;
+
+constexpr uint32_t AlignUp16(uint32_t v) { return (v + 0xF) & ~0xFu; }
+
+constexpr SlotShadowLayout MakeSlotShadowLayout(uint32_t capacity) {
+    SlotShadowLayout L{};
+    L.capacity = capacity;
+    L.blocksUsed = capacity <= 32 ? 1u : 2u;
+    L.peerEntries = capacity - kPeerFirst;
+    L.playerEntries = capacity - kPlayerFirst;
+    L.peerBytes = L.peerEntries * 0x158;
+    L.playerBytes = L.playerEntries * 0xB0;
+    L.tableBytes = L.peerEntries * 0xC;
+    L.msgExtBytes = static_cast<uint64_t>(L.peerEntries) * kPeerEntryWire +
+                    static_cast<uint64_t>(L.playerEntries) * kPlayerEntryWire;
+    L.msgSize = kMsgBase + L.msgExtBytes;
+    L.peerMaskWords = (capacity + 31) / 32;
+    if (capacity <= 32) {
+        // Proven stock-relative single-block layout.
+        L.peerOffset = kStockPeerA;
+        L.playerOffset = kStockPlayerA;
+        L.tableOffset = kStockTable;
+    } else {
+        // Two shadow blocks; in each block: peers, players, table, back to back.
+        L.peerOffset = kStockPeerA;
+        L.playerOffset = AlignUp16(L.peerOffset + L.peerBytes);
+        L.tableOffset = AlignUp16(L.playerOffset + L.playerBytes);
+    }
+    if (L.blocksUsed == 1) {
+        L.peerBiasA = L.peerBiasB = 0;
+        L.playerBiasA = L.playerBiasB = 0;
+        L.tableBiasA = L.tableBiasB = 0;
+    } else {
+        L.peerBiasA = static_cast<int32_t>(L.peerOffset) - static_cast<int32_t>(kStockPeerA);
+        L.playerBiasA = static_cast<int32_t>(L.playerOffset) - static_cast<int32_t>(kStockPlayerA);
+        L.tableBiasA = static_cast<int32_t>(L.tableOffset) - static_cast<int32_t>(kStockTable);
+        L.peerBiasB = static_cast<int32_t>(kSessionStride) + static_cast<int32_t>(L.peerOffset) -
+                      static_cast<int32_t>(kStockPeerA + kBlockDelta);
+        L.playerBiasB = static_cast<int32_t>(kSessionStride) + static_cast<int32_t>(L.playerOffset) -
+                        static_cast<int32_t>(kStockPlayerA + kBlockDelta);
+        L.tableBiasB = static_cast<int32_t>(kSessionStride) + static_cast<int32_t>(L.tableOffset) -
+                       static_cast<int32_t>(kStockTable + kBlockDelta);
+    }
+    return L;
+}
+
+constexpr SlotShadowLayout kSlotLayout32 = MakeSlotShadowLayout(32);
+constexpr SlotShadowLayout kSlotLayout64 = MakeSlotShadowLayout(64);
+constexpr SlotShadowLayout kSlotLayout128 = MakeSlotShadowLayout(128);
+
+constexpr uint32_t BitsFor(uint32_t v) { uint32_t b = 0; while (v) { v >>= 1; ++b; } return b; }
+
+constexpr bool RangeOverlaps(uint64_t a, uint64_t an, uint64_t b, uint64_t bn) {
+    return a < b + bn && b < a + an;
+}
+constexpr bool ValidateSlotShadowLayout(const SlotShadowLayout& L) {
+    if (L.peerBytes == 0 || L.playerBytes == 0 || L.tableBytes == 0) return false;
+    const bool inBlock = L.peerOffset + L.peerBytes <= kSessionStride &&
+                         L.playerOffset + L.playerBytes <= kSessionStride &&
+                         L.tableOffset + L.tableBytes <= kSessionStride;
+    if (!inBlock) return false;
+    if (RangeOverlaps(L.peerOffset, L.peerBytes, L.playerOffset, L.playerBytes)) return false;
+    if (RangeOverlaps(L.peerOffset, L.peerBytes, L.tableOffset, L.tableBytes)) return false;
+    if (RangeOverlaps(L.playerOffset, L.playerBytes, L.tableOffset, L.tableBytes)) return false;
+    if (L.blocksUsed > 2) return false;
+    if (L.capacity == 32) {
+        // Must reproduce today's layout exactly (biases 0, extension 0x2200).
+        if (L.blocksUsed != 1) return false;
+        if (L.peerOffset != kStockPeerA || L.playerOffset != kStockPlayerA || L.tableOffset != kStockTable) return false;
+        if (L.peerBiasA != 0 || L.peerBiasB != 0 || L.playerBiasA != 0 || L.playerBiasB != 0 ||
+            L.tableBiasA != 0 || L.tableBiasB != 0) return false;
+        if (L.msgExtBytes != 0x2200) return false;
+    }
+    return true;
+}
+constexpr bool kLayout32Valid = ValidateSlotShadowLayout(kSlotLayout32);
+constexpr bool kLayout64Valid = ValidateSlotShadowLayout(kSlotLayout64);
+constexpr bool kLayout128Valid = ValidateSlotShadowLayout(kSlotLayout128);
+static_assert(kLayout32Valid, "32-player shadow layout must be unchanged");
+static_assert(kLayout64Valid, "64-player shadow layout must not overlap");
+static_assert(kLayout128Valid, "128-player shadow layout must not overlap");
+
+// Wire limits the layouts do not change (numbers the membership generator uses).
+constexpr uint32_t kPeerIndexBits = 6;    // membership message: owning peer field
+constexpr uint32_t kPlayerIndexBits = 5;  // membership message: player index field
+constexpr uint64_t kMax16BitMessage = 0xFFFF;
+
+int SlotLayoutSelfTest() {
+    int failures = 0;
+    const SlotShadowLayout layouts[] = { kSlotLayout32, kSlotLayout64, kSlotLayout128 };
+    NOBLE_INFO("SlotLayout: synthetic 32/64/128 shadow-layout validation (no engine needed)");
+    for (const SlotShadowLayout& L : layouts) {
+        const bool layoutOk = ValidateSlotShadowLayout(L);
+        const uint32_t peerBits = BitsFor(L.capacity - 1);
+        const uint32_t playerBits = BitsFor(L.capacity - 1);
+        const bool peerWireOk = peerBits <= kPeerIndexBits;
+        const bool playerWireOk = playerBits <= kPlayerIndexBits;
+        const bool msg16Ok = L.msgSize <= kMax16BitMessage;
+        if (!layoutOk) ++failures;
+        NOBLE_INFO("SlotLayout: cap={:>3} blocks {} peerA=0x{:X} playerA=0x{:X} table=0x{:X} bytes p{:X}/pl{:X}/t{:X} "
+                   "biasA {}/{}/{} biasB {}/{}/{} mask {}w ext 0x{:X} msg 0x{:X} ({}) wire peer {}b player {}b -> {} / {}",
+                   L.capacity, L.blocksUsed, L.peerOffset, L.playerOffset, L.tableOffset, L.peerBytes, L.playerBytes,
+                   L.tableBytes, L.peerBiasA, L.playerBiasA, L.tableBiasA, L.peerBiasB, L.playerBiasB, L.tableBiasB,
+                   L.peerMaskWords, static_cast<uint32_t>(L.msgExtBytes), static_cast<uint32_t>(L.msgSize),
+                   msg16Ok ? "16-bit ok" : "needs message/fragment work", peerBits, playerBits,
+                   layoutOk && peerWireOk ? "ok" : "needs widening", layoutOk && playerWireOk ? "ok" : "needs widening");
+        if (!peerWireOk || !playerWireOk) {
+            NOBLE_WARN("SlotLayout: capacity {} exceeds the stock wire fields (peer index {} bits, player index {} bits) - "
+                       "the membership encoder/decoder must be widened before this capacity can go on the wire",
+                       L.capacity, kPeerIndexBits, kPlayerIndexBits);
+        }
+        if (!msg16Ok) {
+            NOBLE_WARN("SlotLayout: capacity {} membership message would be 0x{:X} bytes (> 0xFFFF); needs a "
+                       "message/framing change", L.capacity, static_cast<uint32_t>(L.msgSize));
+        }
+    }
+    NOBLE_INFO("SlotLayout: {} check(s) failed (0 = all three layouts valid)", failures);
+    return failures;
+}
 } // namespace noble::slots

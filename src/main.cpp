@@ -943,6 +943,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Provenance for support: which source tree/exe this log came from. Log-only, dev builds only.
     NOBLE_INFO("Build: {}", noble::BuildStamp());
 
+    // Headless synthetic validation of the 32/64/128 slot-shadow layouts (no MCC, no window, no engine).
+    // `-test-slot-capacity`: prints one line per capacity into the log and returns non-zero if a layout is invalid.
+    if (std::wstring(pCmdLine ? pCmdLine : L"").find(L"-test-slot-capacity") != std::wstring::npos) {
+        const int failures = noble::slots::SlotLayoutSelfTest();
+        noble::Logger::Shutdown();
+        return failures == 0 ? 0 : 1;
+    }
+
     // "-crash-test": throw an unhandled C++ exception so the terminate handler's minidump can be verified
     // (the CRT answers an escaping exception with a fail-fast, which the SEH filter never sees).
     if (std::wstring(pCmdLine ? pCmdLine : L"").find(L"-crash-test") != std::wstring::npos) {

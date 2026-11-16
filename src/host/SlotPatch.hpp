@@ -20,4 +20,9 @@ bool Players32Active();
 
 // Dev diagnostics: peer record `peer` of the static session object `session` (shadow object for peers >= 17).
 uint8_t* PeerRecord(uint8_t* session, int32_t peer);
+
+// Headless synthetic validation of the shadow-slot layouts for 32/64/128 capacity (dev builds, no engine needed):
+// shadow array offsets and biases, overlap/stride fit, and which wire limits each capacity needs. Returns the
+// number of failed checks (0 = all layouts valid). Prints one line per capacity.
+int SlotLayoutSelfTest();
 }
