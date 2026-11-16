@@ -1053,7 +1053,7 @@ void PauseMenu::ShowGameOver() {
     s_gameOverPadArmedAt = 0.0;
     s_guestAutoReturned = false;
     s_gameOverWaitRelease = true;
-    s_gameOverSettleUntil = now + 350;
+    s_gameOverSettleUntil = now + 450;
     s_resetGameOverImGui.store(true);
     Window::TakeLeftClicks();
     (void)Window::TakeWheelSteps();
@@ -1621,7 +1621,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
       activated = i;
     }
     if (ImGui::IsItemHovered() && navInteractive &&
-        (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f)) {
+        NobleUi::IsMouseMoved(2.5f)) {
       s_pausePane = 0;
       s_focus = i;
       if (s_focus != 1)
@@ -1758,7 +1758,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
       ImGui::EndGroup();
       if (clicked ||
           (hovered && navInteractive &&
-           (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f))) {
+           NobleUi::IsMouseMoved(2.5f))) {
         s_challengeFocus = cardIdx;
         if (clicked) {
           s_pausePane = 1;
@@ -4151,6 +4151,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   if (s_gameOverWaitRelease) {
     const bool anyInputHeld =
         ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0) ||
+        ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0) ||
         ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0) ||
         ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0) ||
         ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown);
@@ -4204,16 +4205,16 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     UiPad::ConsumeAccept();
     s_reveal.skipped = true;
   }
-  const ImGuiIO &gio = ImGui::GetIO();
-  const bool pointerMoved =
-      (gio.MouseDelta.x != 0.0f || gio.MouseDelta.y != 0.0f);
+  const bool pointerMoved = NobleUi::IsMouseMoved(2.5f);
   const auto syncButtonFocus = [&](int button) {
     if (ImGui::IsItemHovered()) {
       overButton = true;
-      MenuSounds::Hover(ImGui::GetItemID());
       if (interactive && pointerMoved &&
           std::find(padOrder.begin(), padOrder.end(), button) != padOrder.end()) {
-        s_gameOverPadButton = button;
+        if (s_gameOverPadButton != button) {
+          s_gameOverPadButton = button;
+          MenuSounds::Hover(ImGui::GetItemID());
+        }
       }
     }
     if (s_gameOverPadButton == button) {
@@ -4222,8 +4223,11 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
                                   ImGui::GetItemRectMax(), s, true);
     }
   };
+  const bool buttonInteractive =
+      interactive && t >= tEnd && ImGui::GetTime() >= s_gameOverPadArmedAt;
+
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
-  if ((NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) && interactive) ||
+  if ((NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) && buttonInteractive) ||
       (padPress && s_gameOverPadButton == kPadQuit)) {
     QuitFromMatch(hwnd, "quit requested from post-game panel");
   }
@@ -4238,14 +4242,14 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const char *const menuReason = hostRole ? "host disband lobby from the after-action report"
                                   : guestRole ? "guest leave lobby from the after-action report"
                                               : "return to menu";
-  if ((ImGui::Button(menuLabel, ImVec2(bw, bh)) && interactive) ||
+  if ((ImGui::Button(menuLabel, ImVec2(bw, bh)) && buttonInteractive) ||
       (padPress && s_gameOverPadButton == kPadMenu))
     RelaunchAndClose(hwnd, L"-main-menu", menuReason);
   syncButtonFocus(kPadMenu);
   if (canPlayAgain) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if ((NobleStyle::PrimaryButton("PLAY AGAIN", ImVec2(bw, bh)) && interactive) ||
+    if ((NobleStyle::PrimaryButton("PLAY AGAIN", ImVec2(bw, bh)) && buttonInteractive) ||
         (padPress && s_gameOverPadButton == kPadAgain))
       RelaunchAndClose(hwnd, again, "play again");
     syncButtonFocus(kPadAgain);
@@ -4253,7 +4257,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const auto nextMissionButton = [&] {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if ((NobleStyle::PrimaryButton("NEXT MISSION", ImVec2(bw, bh)) && interactive) ||
+    if ((NobleStyle::PrimaryButton("NEXT MISSION", ImVec2(bw, bh)) && buttonInteractive) ||
         (padPress && s_gameOverPadButton == kPadNext))
       RelaunchAndClose(hwnd,
                        NextMissionArgs(nextMission, hostRole
@@ -4274,7 +4278,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       bx -= bw + gap;
       ImGui::SetCursorScreenPos(ImVec2(bx, by));
       if (hasPlaylist) {
-        if ((ImGui::Button("NEXT IN ROTATION", ImVec2(bw, bh)) && interactive) ||
+        if ((ImGui::Button("NEXT IN ROTATION", ImVec2(bw, bh)) && buttonInteractive) ||
             (padPress && s_gameOverPadButton == kPadNext))
           RelaunchAndClose(hwnd, LobbyReturnArgs(true, true),
                            "next in rotation");
@@ -4287,7 +4291,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     }
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if ((NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) && interactive) ||
+    if ((NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) && buttonInteractive) ||
         (padPress && s_gameOverPadButton == kPadLobby))
       RelaunchAndClose(hwnd, LobbyReturnArgs(true), "return to lobby");
     syncButtonFocus(kPadLobby);
@@ -4295,7 +4299,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
     if (canReturnLobby) {
-      if ((NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) && interactive) ||
+      if ((NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) && buttonInteractive) ||
           (padPress && s_gameOverPadButton == kPadLobby)) {
         RelaunchAndClose(hwnd, LobbyReturnArgs(false), "guest return to lobby");
       }
@@ -4390,8 +4394,12 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   if (t < tEnd) {
     Text(dl, smallFont, 16.0f * s, ImVec2(margin, by + bh * 0.5f - 9.0f * s),
          kTextDim, "Enter, Space or click: skip");
-    if (interactive && ImGui::IsMouseClicked(0) && !overButton)
+    if (interactive && (ImGui::IsMouseClicked(0) || skipKey)) {
       s_reveal.skipped = true;
+      t = tEnd + 1.0f;
+      s_gameOverPadArmedAt = ImGui::GetTime() + 0.35;
+      UiPad::ConsumeAccept();
+    }
   }
   ImGui::End();
 }
@@ -5129,6 +5137,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
         open || gameOver || boardPointer || connectionLost ||
         extraOverlay != nullptr;
     const bool gameOverJustReset = s_resetGameOverImGui.exchange(false);
+    static bool s_gameOverMouseWaitRelease = false;
     if (gameOverJustReset) {
       Window::TakeLeftClicks();
       (void)Window::TakeWheelSteps();
@@ -5137,6 +5146,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       io.ClearInputKeys();
       io.ClearInputMouse();
       io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+      s_gameOverMouseWaitRelease = true;
     }
 
     UiPad::Feed(io, pointerUiActive);
@@ -5146,6 +5156,13 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     POINT cursor{};
     static bool s_boardWasPointerFrame = false;
     const bool focused = Window::IsForeground(hwnd);
+    const bool gameOverSettling =
+        gameOver && (GetTickCount64() < s_gameOverSettleUntil);
+    const bool lDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+    if (!lDown && !rDown) {
+      s_gameOverMouseWaitRelease = false;
+    }
     if (UiPad::IsVirtualCursorControllingMouse()) {
       s_boardWasPointerFrame = boardPointer;
       if ((pointerUiActive || isTheater) && focused) {
@@ -5164,36 +5181,40 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       const float sy = io.DisplaySize.y / static_cast<float>(client.bottom);
       io.AddMousePosEvent(static_cast<float>(cursor.x) * sx,
                           static_cast<float>(cursor.y) * sy);
-      // A click shorter than a frame is seen only as a WM_LBUTTONDOWN; give
-      // ImGui a full press + release for it (ImGui spreads queued events over
-      // frames).
-      bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-      // The click that freed the scoreboard pointer is not a click on the
-      // panel: wait for its release.
-      static bool s_boardClickHeld = false;
-      if (boardPointer && !s_boardWasPointerFrame && down)
-        s_boardClickHeld = true;
-      s_boardWasPointerFrame = boardPointer;
-      if (s_boardClickHeld) {
-        if (down) {
-          down = false;
-          Window::TakeLeftClicks();
-        } else {
-          s_boardClickHeld = false;
-          Window::TakeLeftClicks();
-        }
-      }
-      if (Window::TakeLeftClicks() > 0 && !down) {
-        io.AddMouseButtonEvent(0, true);
+
+      if (gameOverSettling || s_gameOverMouseWaitRelease) {
+        Window::TakeLeftClicks();
+        (void)Window::TakeWheelSteps();
         io.AddMouseButtonEvent(0, false);
+        io.AddMouseButtonEvent(1, false);
       } else {
-        io.AddMouseButtonEvent(0, down);
+        bool down = lDown;
+        // The click that freed the scoreboard pointer is not a click on the
+        // panel: wait for its release.
+        static bool s_boardClickHeld = false;
+        if (boardPointer && !s_boardWasPointerFrame && down)
+          s_boardClickHeld = true;
+        s_boardWasPointerFrame = boardPointer;
+        if (s_boardClickHeld) {
+          if (down) {
+            down = false;
+            Window::TakeLeftClicks();
+          } else {
+            s_boardClickHeld = false;
+            Window::TakeLeftClicks();
+          }
+        }
+        if (Window::TakeLeftClicks() > 0 && !down) {
+          io.AddMouseButtonEvent(0, true);
+          io.AddMouseButtonEvent(0, false);
+        } else {
+          io.AddMouseButtonEvent(0, down);
+        }
+        io.AddMouseButtonEvent(1, rDown);
+        const float wheel = Window::TakeWheelSteps();
+        if (wheel != 0.0f)
+          io.AddMouseWheelEvent(0.0f, wheel);
       }
-      const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
-      io.AddMouseButtonEvent(1, rDown);
-      const float wheel = Window::TakeWheelSteps();
-      if (wheel != 0.0f)
-        io.AddMouseWheelEvent(0.0f, wheel);
     } else {
       s_boardWasPointerFrame = false;
       io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);

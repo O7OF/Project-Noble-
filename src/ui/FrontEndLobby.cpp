@@ -2153,8 +2153,7 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   }
   const float startY =
       rowsY + rowStep * static_cast<float>(optionRowCount) + 10.0f * ui.s;
-  const bool mouseMoved = ImGui::GetIO().MouseDelta.x != 0.0f ||
-                          ImGui::GetIO().MouseDelta.y != 0.0f;
+  const bool mouseMoved = NobleUi::IsMouseMoved(2.5f);
   float curY = rowsY;
   float teamRowY = -1.0f;
   const bool pickerWasOpen = st.lobbyPickerOpen;

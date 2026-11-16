@@ -577,5 +577,15 @@ void DrawChallengeCard(const Career::Challenge &c, float width, bool focused,
        c.done ? kDoneColour : kText, countStr.c_str());
 }
 
+bool IsMouseMoved(float minDistance) {
+  if (!ImGui::GetCurrentContext())
+    return false;
+  const ImGuiIO &io = ImGui::GetIO();
+  const float dx = io.MouseDelta.x;
+  const float dy = io.MouseDelta.y;
+  const float dsq = dx * dx + dy * dy;
+  return (dsq >= (minDistance * minDistance) && dsq < 250000.0f);
+}
+
 } // namespace NobleUi
 } // namespace noble

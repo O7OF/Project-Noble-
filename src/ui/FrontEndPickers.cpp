@@ -825,8 +825,7 @@ TacticalGridResult DrawTacticalMapGrid(
       std::clamp(selectedGroupIdx, 0, static_cast<int>(groups.size()) - 1);
   const float crispMax = std::max(1.0f, ImGui::GetIO().DisplaySize.y / 1080.0f);
   const bool typing = ImGui::GetIO().WantTextInput;
-  const bool mouseMoved = ImGui::GetIO().MouseDelta.x != 0.0f ||
-                          ImGui::GetIO().MouseDelta.y != 0.0f;
+  const bool mouseMoved = NobleUi::IsMouseMoved(2.5f);
 
   // Build visual 2-column row plan (mod headings start a fresh row cleanly,
   // expanded drawers attach right under their row)
@@ -2797,7 +2796,7 @@ void DrawSkullsScreen(OverlayContext &ctx, const Ui &ui, float left, float top,
       st.skull = i;
       toggle = true;
     }
-    if (ImGui::IsItemHovered() && ImGui::GetIO().MouseDelta.x != 0.0f)
+    if (ImGui::IsItemHovered() && NobleUi::IsMouseMoved(2.5f))
       st.skull = i;
     ImGui::PopID();
     const bool on = (st.skulls & (1ull << sk.bit)) != 0;
