@@ -135,3 +135,101 @@ Forge World loaded with `-map-override`, using the dev probes:
 **Next:** more flame colours (green/purple/white) with the same recipe; then lightning (storm) recolours using the
 plasma palette; then Armory UI rows + profile persistence/replication (custom item ids in the u32 profile fields,
 vanilla fallback to default), capability gating and the map/mod distribution decision.
+
+## 2026-11-16 late: 30-colour (visor palette) scaling attempt - status and blockers
+
+Goal from Tyler: flame variants matching **all 30 Armory visor colours** (see `src/common/ArmoryVisor.hpp`), plus
+screenshots for the Armory UI, then Armory UI wiring.
+
+**Working:**
+* The blue-flame variant (`legendary_flame_blue`, pmcg index 7) still renders from the rebuilt Forge World
+  (`armor-fx-blue-restored-2026-11-16.png`).
+* Recoloured palette bitmaps work: copying `fx\particles\fire\gradients\fire.bitmap` to a new bitmap tag and
+  hue-shifting its `processed pixel data` (ManagedBlam `GetData`/`SetData`, 256x16 BGRA with 3 mips) produces valid
+  palettes (gold gradient preview verified; pointing the known-good legacy blue particle at the gold palette renders
+  gold/white flames - `armor-fx-gold-palette-legacy-particle-2026-11-16.png`).
+* A generator created all 29 remaining visor colours: recoloured palettes + `head_fire_<id>.particle` copies, five
+  extra `armor_fx_extN.effect` tags (6 events/locations each), a new render-model region `armor_fx_ext` with 30
+  permutations + 29 marker groups, 29 pmcg entries in both effect lists (list count 7 blue + 29 = 37), and five extra
+  biped effect attachments. The engine translator maps custom item ids 0xF0..0x10D (240..269) to pmcg indices 7..36
+  (dev flag path).
+
+**Blockers / findings:**
+* `effect` tag **locations** block: ManagedBlam `Save` silently drops newly added location elements (tested with
+  `AddElement`, `InsertElement`, `DuplicateElement`, with/without new string ids, even though `MaximumElementCount` is
+  8 and the count increases in memory). Existing locations can be renamed, and events can be added. Consequence: max 6
+  usable locations per effect tag; 30 colours need multiple effect tags/attachments (or a different tag-edit route).
+* Extra biped effect attachments: a duplicate of the **stock** `armor_fx.effect` attachment visibly increased flame
+  pixels (attachment slots beyond the original 9 are not obviously capped), so multiple effect tags may be viable.
+* New render-model region `armor_fx_ext` + marker groups + pmcg mapping: selecting the midnight variant (custom id 266)
+  with a **stock** particle in the matching ext event produced flames at the helmet
+  (`armor-fx-ext-region-stock-particle-2026-11-16.png`), i.e. the new region/marker/pmcg path works at least for that
+  event.
+* Custom particle tags (`head_fire_<id>.particle`) are valid: the legacy blue event pointed at `head_fire_gold.particle`
+  rendered gold flames. However, custom particles in the **ext effect tags** were not consistently visible in captures
+  (gold ext attempt showed only sparse embers, magenta showed no clear magenta plume), so the remaining failure is in
+  the ext effect-tag/particle combination, not the palette or pmcg/region chain.
+* Diagnostic leftovers were restored for the blue variant (blue palette + legacy event particle, duplicate stock
+  attachment removed) and the map rebuilt. The five ext effect tags/attachments and the 29 pmcg entries remain in HREK
+  for the next debugging round (inactive unless a custom id is chosen).
+
+**Next steps:**
+1. Isolate the ext effect-tag + custom-particle failure with one controlled build (single ext attachment, one event,
+   custom particle vs stock particle; no duplicate attachment) and inspect the build's particle/palette postprocessing.
+   Suspects: custom particle palette parameter flags or tag inclusion/fallback in the ext tag path.
+2. Once rendering, batch-capture all 30 variants (one launch per id 240..269) for Armory UI screenshots.
+3. Armory UI/profile wiring: expand `kArmorEffects`/profile indices to include the 30 variants, map ids to custom item
+   ids in `ReachHost`, capability-gate rows until the asset pack is present, and replicate custom ids (vanilla peers
+   fall back to default).
+
+All HREK tag edits are local to `D:\Steam\steamapps\common\HREK\tags` (map rebuilt at ~797 MB); scripts are in
+`docs/test-tools/` (`armor_fx_generate_all.py`, `armor_fx_fix_tags.py`, `armor_fx_repair.py`, `restore_blue.py`, the
+inspection/diagnostic scripts).
+
+## 2026-11-16: Primary armour colours as the variant base - test result
+
+Tyler suggested basing the flame colours on Reach's **primary armour colour** palette (`kReachColors`, 30 authentic
+engine palette entries, `src/ui/ArmorCustomizer.cpp`) instead of the visor finishes. Two things were tested:
+
+1. **Native tinting via the attachment colour channel does not work for these particles.** The biped's stock
+   `armor_fx.effect` attachment has `change color` options none/primary/secondary/tertiary/quaternary. Setting it to
+   `primary` and testing the same flames with primary palette index 2 (White) and 21 (Maroon) produced correctly
+   coloured armour but **orange flames in both cases** - the attachment colour channel does not tint the particle
+   palette. Evidence: `armor-fx-primary-white-2026-11-16.png`, `armor-fx-primary-maroon-2026-11-16.png`. Reverted the
+   attachment to `change color = none` afterwards.
+2. A dev flag `-armor-primary-test <0..29>` was added (`ArmorCustomizer.cpp`) so match captures can set the Reach
+   primary palette index.
+
+Conclusion / proposed design: using primary colours is still a good **colour source** for the variant palettes (30
+authentic Reach colours, already exposed in the Armory), and it enables a nicer UX - the flame colour can be derived
+automatically from the player's primary colour index instead of adding 30 separate effect rows. This is a data-only
+swap in the generator (primary RGB list + `legendary_flame_pri_<name>` naming, pmcg entry index = 7 + primary index)
+and a mapping in `ReachHost`/`ReachArmory`; it does not fix the still-open ext-effect-tag/custom-particle render
+blocker, which is the next debugging step.
+
+## 2026-11-16: ROOT CAUSE of the ext-tag failure - engine only instantiates the first 10 unit attachments
+
+The ext-effect-tag variants were invisible because of a **unit attachment slot limit**, not the particle assets:
+
+* The stock `spartans.biped` has 9 attachments (indices 0..8), including the `armor_fx.effect` attachment at index 5.
+* Clean isolation: keeping only **one** extra attachment (slot 9, `armor_fx_ext0.effect`) and pointing its event at the
+  stock location marker `armor_fx_00` with the stock `head_fire.particle` produced extra flames on top of the stock ones
+  (orange-bright pixel count 3489 vs 2835 baseline, flame-region mean diff 21.1) -
+  `armor-fx-extra-attachment-slot9-2026-11-16.png`. So slot 9 works.
+* Effect tags placed at slots 10..13 (`armor_fx_ext1..4.effect`) never rendered - selecting their variants produced no
+  flames at all, even with stock particles at stock markers. The engine appears to instantiate only the first **10** unit
+  attachments.
+* This explains all earlier contradictions: the diagnostic duplicate stock attachment was at slot 14 (ignored), and the
+  one genuinely visible extra effect was always the slot-9 attachment.
+
+Implication for 30 variants: with 9 stock attachments there is only **one** free effect-tag attachment slot (6 locations),
+so one effect tag can host at most 6 new colours. Options:
+1. **Patch the engine attachment limit** (find the runtime cap/array size for object attachments and raise it to e.g. 24)
+   - allows 5 extra effect tags = 30 colours, keeps all stock attachments;
+2. **Extend the effect tag's `locations` block by binary/tag-format editing** (ManagedBlam Save drops added locations) -
+   one effect tag with 30 locations, one attachment;
+3. Free attachment slots by removing stock attachments (flashlights/damage/out-of-bounds/bungie light) - not acceptable.
+
+Clean state restored: biped back to its original 9 attachments, attachment `change color = none`, diagnostic tag edits
+left inert, Forge World rebuilt; blue variant still verified working. Next: RE the attachment runtime limit (or the effect
+tag location block) and then generate the 30 primary-palette variants (auto-match + selectable per Tyler's direction).

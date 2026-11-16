@@ -7440,12 +7440,17 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
         if (anyTeam && !ctx.st.lobbyRoster.empty() &&
             choice.mode != "campaign" && choice.mode != "firefight") {
           std::wstring teams;
+          int maxTeam = 2;
           for (const auto &player : ctx.st.lobbyRoster) {
             if (!teams.empty())
               teams += L",";
-            teams += std::to_wstring(std::clamp(player.team, 1, kTeamCount));
+            const int t = std::clamp(player.team, 1, kTeamCount);
+            if (t > maxTeam)
+              maxTeam = t;
+            teams += std::to_wstring(t);
           }
           args += L" -lobby-teams \"" + teams + L"\"";
+          args += L" -lobby-team-count " + std::to_wstring(maxTeam);
         }
         args += L" -difficulty " + std::to_wstring(choice.difficulty);
         // The match process only keeps this for the way back: post-game's NEXT

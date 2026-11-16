@@ -39,7 +39,7 @@ static int __fastcall Hook_MccItemTranslator(int itemId) {
                           static_cast<unsigned>(itemId), out);
     return out;
   }
-  if (itemId >= kArmorFxCustomItemBase && itemId < kArmorFxCustomItemBase + 8) {
+  if (itemId >= kArmorFxCustomItemBase && itemId < kArmorFxCustomItemBase + 30) {
     const int idx = kArmorFxVariantBaseIndex + (itemId - kArmorFxCustomItemBase);
     if (n < 60) NOBLE_INFO("EnginePatches[fx-translator]: CUSTOM armor-fx item 0x{:X} -> internal index {}",
                           static_cast<unsigned>(itemId), idx);

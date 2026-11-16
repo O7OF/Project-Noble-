@@ -985,6 +985,14 @@ ArmorCustomizer::ArmorCustomizer() {
                 NOBLE_INFO("ArmorCustomizer: -armor-effect-test equipped armor effect {} ({})", idx,
                            kArmorEffects[static_cast<size_t>(idx)].stringId);
             }
+            // Test-only "-armor-primary-test <0..29>": set the Reach primary armour colour palette index, so match
+            // captures can test whether effect tinting follows object colour changes.
+            if (_wcsicmp(argv[i], L"-armor-primary-test") == 0 && i + 1 < argc) {
+                m_profile.primaryColor = std::clamp(_wtoi(argv[i + 1]), 0, 29);
+                m_profile.primaryCustom = false;
+                SaveProfile(m_profilePath);
+                NOBLE_INFO("ArmorCustomizer: -armor-primary-test set primary colour {}", m_profile.primaryColor);
+            }
         }
         if (argv) LocalFree(argv);
     }

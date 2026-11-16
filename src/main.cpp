@@ -2199,22 +2199,36 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         // (player_override_team <player index> <0-based team>). Retried a few times: the first attempt can
         // land before the player unit exists, and the engine re-spawns on round start.
         std::vector<int> lobbyTeams;
+        int lobbyTeamCount = 0;
         {
             int argc = 0;
             LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
             for (int i = 1; argv && i + 1 < argc; ++i) {
-                if (_wcsicmp(argv[i], L"-lobby-teams") != 0) continue;
-                std::wstring csv = argv[i + 1];
-                size_t start = 0;
-                while (start <= csv.size()) {
-                    const size_t comma = csv.find(L',', start);
-                    const std::wstring part = csv.substr(start, comma == std::wstring::npos ? std::wstring::npos : comma - start);
-                    if (!part.empty()) lobbyTeams.push_back(std::clamp(_wtoi(part.c_str()), 1, 8));
-                    if (comma == std::wstring::npos) break;
-                    start = comma + 1;
+                if (_wcsicmp(argv[i], L"-lobby-team-count") == 0) {
+                    lobbyTeamCount = std::clamp(_wtoi(argv[i + 1]), 2, 8);
+                } else if (_wcsicmp(argv[i], L"-lobby-teams") == 0) {
+                    std::wstring csv = argv[i + 1];
+                    size_t start = 0;
+                    while (start <= csv.size()) {
+                        const size_t comma = csv.find(L',', start);
+                        const std::wstring part = csv.substr(start, comma == std::wstring::npos ? std::wstring::npos : comma - start);
+                        if (!part.empty()) lobbyTeams.push_back(std::clamp(_wtoi(part.c_str()), 1, 8));
+                        if (comma == std::wstring::npos) break;
+                        start = comma + 1;
+                    }
                 }
             }
             if (argv) LocalFree(argv);
+        }
+
+        if (lobbyTeamCount > 0) {
+            noble::PauseMenu::SetMatchTeamCount(lobbyTeamCount);
+        } else if (!lobbyTeams.empty()) {
+            int maxTeam = 2;
+            for (int t : lobbyTeams) { if (t > maxTeam) maxTeam = t; }
+            noble::PauseMenu::SetMatchTeamCount(maxTeam);
+        } else if (launchMode == "forge") {
+            noble::PauseMenu::SetMatchTeamCount(8);
         }
 
         // Synchronous Co-Op modes (Campaign / Firefight) do not have opposing player teams, and executing
