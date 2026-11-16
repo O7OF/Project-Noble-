@@ -199,7 +199,28 @@ static std::string ReachStack() {
 typedef void(__fastcall* SessionAbortFn)(void* session, uint32_t reason);
 static SessionAbortFn s_originalSessionAbort = nullptr;
 static std::atomic<bool> s_campaignCoop{false};
-void LobbyPatches::SetCampaignCoop(bool on) { s_campaignCoop.store(on); }
+static uintptr_t s_slotWatchAddr;                              // external-launch slot state word, Dr1 slot-watch probe
+static std::atomic<size_t> s_playerCreateSuccess{0};           // successful player_create calls this launch (host)
+static void ArmPlayer0Watch();                                 // defined below
+bool LobbyPatches::IsCampaignCoop() { return s_campaignCoop.load(); }
+size_t LobbyPatches::GetPlayerCreateSuccessCount() { return s_playerCreateSuccess.load(); }
+void LobbyPatches::SetCampaignCoop(bool on) {
+    s_campaignCoop.store(on);
+    if (on) s_playerCreateSuccess.store(0);
+    // Arm the external-launch slot-state watch as early as the campaign launch is known, so the state transitions that
+    // produce the 7/5 pair required by player_create are captured (16-player campaign probe; NOBLE_COOP_SLOT_WATCH=1).
+    if (on && s_reachBase && !s_slotWatchAddr) {
+        wchar_t env[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_COOP_SLOT_WATCH", env, 8) > 0 && env[0] != L'0') {
+            wchar_t idxEnv[8] = {};
+            int idx = 0;
+            if (GetEnvironmentVariableW(L"NOBLE_COOP_SLOT_INDEX", idxEnv, 8) > 0) idx = _wtoi(idxEnv);
+            if (idx < 0 || idx > 15) idx = 0;
+            s_slotWatchAddr = s_reachBase + 0x2D1B960 + static_cast<uintptr_t>(idx) * 0x18D0;
+            ArmPlayer0Watch();
+        }
+    }
+}
 
 static void __fastcall Hook_SessionAbort(void* session, uint32_t reason) {
     uintptr_t caller = CallerRva(_ReturnAddress());
@@ -635,6 +656,12 @@ static void __fastcall Hook_GameOver(int32_t reason) {
 typedef void(__fastcall* AbortGameFn)(uint32_t reason);
 static AbortGameFn s_originalAbortGame = nullptr;
 
+// 16-player campaign probe switch: hold guest match-end/abort during the join handshake (diagnostic).
+static bool HoldGuestMatchEnd() {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_JIP_HOLD_GUEST", env, 8) > 0 && env[0] != L'0';
+}
+
 static void __fastcall Hook_AbortGame(uint32_t reason) {
     NOBLE_INFO("LobbyPatches: AbortGame(reason={}) from hr+0x{:X}", reason, CallerRva(_ReturnAddress()));
 #ifndef NOBLE_DEDICATED
@@ -647,6 +674,16 @@ static void __fastcall Hook_AbortGame(uint32_t reason) {
         return;
     }
 #endif
+    // 16-player campaign probe: with the guest's game-engine state promoted, the launch-ready path re-fires
+    // AbortGame(reason=6) a couple of seconds after joining. Hold that abort on campaign guests so the in-game player
+    // path can keep running (diagnostic; guests only).
+    if (HoldGuestMatchEnd() && s_campaignCoop.load() && !IsNobleHost()) {
+        static std::atomic<int> abortHoldLog{0};
+        if (abortHoldLog.fetch_add(1) < 8) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: held guest AbortGame(reason={})", reason);
+        }
+        return;
+    }
     if (s_originalAbortGame) s_originalAbortGame(reason);
 }
 
@@ -682,6 +719,15 @@ static void __fastcall Hook_SetGameEnded(void* thisPtr, bool force) {
         return;
     }
 #endif
+    // 16-player campaign probe: a mid-mission campaign guest's engine ends the match while its join handshake settles.
+    // Hold the match-end on guests so the in-game player path can run (diagnostic; guests only).
+    if (HoldGuestMatchEnd() && s_campaignCoop.load() && !IsNobleHost()) {
+        static std::atomic<int> holdLog{0};
+        if (holdLog.fetch_add(1) < 8) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: held guest match-end (SetGameEnded force={})", force);
+        }
+        return;
+    }
     if (s_originalSetGameEnded) s_originalSetGameEnded(thisPtr, force);
 }
 
@@ -690,7 +736,13 @@ static void __fastcall Hook_SetGameEnded(void* thisPtr, bool force) {
 // inputs so the failing condition (no launch source, wrong mode byte, session state, ...) is visible.
 static LONG CALLBACK WatchHandler(EXCEPTION_POINTERS* info);   // defined below (player0/manager watches)
 static void DumpGamePlayers(char* out, size_t cap);            // defined below (team-count diagnostics)
+static void ForceCampaignPlayerSyncTick();                     // defined below (16-player campaign probe)
+static void SafeHexDump(char* out, size_t cap, uintptr_t addr, size_t len);   // defined below
+static int SafeReadU8Ptr(uintptr_t addr);                                     // defined below
+static void DumpGuestPlayerStateProbe(uint8_t* param);         // defined below (16-player campaign probe)
+static void CallGuestPlayerSyncProbe();                        // defined below (16-player campaign probe)
 static uintptr_t s_player0Flags;                               // defined below (game-player flags watch target)
+static uintptr_t s_player0Unit;                                // game-player datum unit object index (+0x28), Dr1 probe
 static void ArmPlayer0Watch();                                 // defined below
 
 // Arms the existing Dr0 flags watch on the first game-player flags word (campaign co-op activation tracing).
@@ -704,10 +756,92 @@ static void ArmCampaignPlayerFlagsWatch() {
         const uintptr_t data = arr ? *reinterpret_cast<const uintptr_t*>(arr + 0x50) : 0;
         if (data && size >= 0x80 && size <= 0x4000) {
             s_player0Flags = data + 4;
+            wchar_t slotEnv[8] = {};
+            if (GetEnvironmentVariableW(L"NOBLE_COOP_SLOT_WATCH", slotEnv, 8) > 0 && slotEnv[0] != L'0') {
+                // Watch the external-launch slot-0 state word (the pair must read 7/5 for player_create to work).
+                s_slotWatchAddr = s_reachBase + 0x2D1B960;
+            } else {
+                s_player0Unit = data + 0x28;
+            }
             ArmPlayer0Watch();
         }
     } __except (1) {
     }
+}
+
+// 16-player campaign probe: promote a mid-mission guest's game-engine state from 3 to 4 once its session is actually
+// in-game, and restore the local-player-manager state (1 -> 4) so the engine's in-game player path can run on the guest.
+// Env-gated diagnostic.
+static void PromoteGuestEngineStateProbe(uint8_t* param) {
+    wchar_t env[8] = {};
+    if (!(GetEnvironmentVariableW(L"NOBLE_JIP_ENGINE_STATE_HACK", env, 8) > 0 && env[0] != L'0')) return;
+    __try {
+        if (!s_reachBase || !param) return;
+        const uintptr_t sess = *reinterpret_cast<const uintptr_t*>(param + 0x18);
+        const int sessState = sess ? *reinterpret_cast<const int*>(sess + 0x60EF8) : -1;
+        const uintptr_t engine = *reinterpret_cast<const uintptr_t*>(s_reachBase + 0x4E0E908);
+        if (engine) {
+            auto* state = reinterpret_cast<int*>(engine + 0x20);
+            if (*state == 3) {
+                *state = 4;
+                static std::atomic<int> engineStateLog{0};
+                if (engineStateLog.fetch_add(1) < 8) {
+                    NOBLE_WARN("LobbyPatches: campaign >4 probe: promoted guest game-engine state 3 -> 4 (sessState {})",
+                               sessState);
+                }
+            }
+        }
+        const uintptr_t src = *reinterpret_cast<const uintptr_t*>(param + 8);
+        if (src) {
+            auto* managerState = reinterpret_cast<int*>(src + 0x20);
+            if (*managerState == 1) {
+                *managerState = 4;
+                static std::atomic<int> managerStateLog{0};
+                if (managerStateLog.fetch_add(1) < 8) {
+                    NOBLE_WARN("LobbyPatches: campaign >4 probe: restored guest manager state 1 -> 4 (sessState {})",
+                               sessState);
+                }
+            }
+        }
+    } __except (1) {
+    }
+}
+
+// 16-player campaign probe: one-shot dump of the guest's local-player-manager identity bytes, the game-player table
+// header and the first player datum, so a synthetic local-player record can be built for a mid-mission joiner.
+static void DumpGuestPlayerStateProbeImpl(uint8_t* param) {
+    __try {
+        if (!s_reachBase || !param) return;
+        const uintptr_t manager = *reinterpret_cast<const uintptr_t*>(param + 8);
+        char mbuf[160] = {};
+        if (manager) SafeHexDump(mbuf, sizeof(mbuf), manager + 0x10, 0x30);
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+        const uintptr_t arr = block ? *reinterpret_cast<const uintptr_t*>(block + 0x18) : 0;
+        char hbuf[192] = {};
+        uintptr_t data = 0;
+        uint64_t size = 0;
+        if (arr) {
+            SafeHexDump(hbuf, sizeof(hbuf), arr + 0x20, 0x40);
+            data = *reinterpret_cast<const uintptr_t*>(arr + 0x50);
+            size = *reinterpret_cast<const uint64_t*>(arr + 0x20);
+        }
+        char pbuf[192] = {};
+        if (data && size > 0x100) SafeHexDump(pbuf, sizeof(pbuf), data, 0x30);
+        NOBLE_WARN("LobbyPatches: [{}] guest state probe: manager+10 {} | table hdr {} | player0 {}", RefuseRole(), mbuf,
+                   hbuf, pbuf);
+    } __except (1) {
+    }
+}
+static void DumpGuestPlayerStateProbe(uint8_t* param) {
+    static const bool enabled = [] {
+        wchar_t env[8] = {};
+        return GetEnvironmentVariableW(L"NOBLE_JIP_DUMP_STATE", env, 8) > 0 && env[0] != L'0';
+    }();
+    static std::atomic<int> n{0};
+    if (!enabled || n.fetch_add(1) >= 5) return;
+    DumpGuestPlayerStateProbeImpl(param);
 }
 
 // Campaign-JIP local-player-manager watch: the guest's launch-ready abort comes from localPlayerManager+0x20 staying 1
@@ -782,6 +916,12 @@ static uint8_t __fastcall Hook_LaunchReady(uint8_t* param) {
         }
     }
     const uint8_t result = s_originalLaunchReady ? s_originalLaunchReady(param) : 0;
+    // 16-player campaign probe: a mid-mission campaign guest's game-engine state (DAT_184E0E908 + 0x20) stays 3 while
+    // the host is 4, which keeps the guest's per-player update/activation loop shut. Promote it to 4 on the guest.
+    if (s_campaignCoop.load() && !IsNobleHost()) DumpGuestPlayerStateProbe(param);
+    if (s_campaignCoop.load() && !IsNobleHost()) PromoteGuestEngineStateProbe(param);
+    ForceCampaignPlayerSyncTick();   // 16-player campaign probe: drive the guest's game-player sync path
+    CallGuestPlayerSyncProbe();      // 16-player campaign probe: invoke the game-player sync directly on the guest
     const int call = s_launchReadyLogCount.fetch_add(1);
     if (result == 0 || call < 3) {
         uintptr_t src = 0, sess = 0;
@@ -859,13 +999,102 @@ static uint8_t __fastcall Hook_IdentityMatch(uint8_t* a1, uint64_t a2, int a3, u
 typedef uint8_t(__fastcall* PlayerCreateFn)(uint64_t a1, uint32_t a2, uint64_t a3, int32_t a4);
 static PlayerCreateFn s_originalPlayerCreate = nullptr;
 static std::atomic<int> s_playerCreateLogCount{0};
+// 16-player campaign probe: the engine gives up after ~20 failed player_create attempts when a late joiner's channel
+// state has not settled yet, so the extra player datum is never created. Queue the failed call and retry it on the host
+// once the channel state has had time to settle. Env-gated diagnostic.
+struct PendingCreate {
+    uint64_t a1 = 0;
+    uint32_t a2 = 0;
+    uint64_t a3 = 0;
+    int32_t a4 = -1;
+    ULONGLONG firstTry = 0;
+    ULONGLONG lastTry = 0;
+    bool active = false;
+};
+static PendingCreate s_pendingCreates[16];
+static const bool retryCreate = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_RETRY_CREATE", env, 8) > 0 && env[0] != L'0';
+}();
+static void RetryPendingPlayerCreates() {
+    if (!retryCreate || !s_campaignCoop.load() || !IsNobleHost() || !s_originalPlayerCreate) return;
+    const ULONGLONG now = GetTickCount64();
+    for (int i = 0; i < 16; ++i) {
+        auto& p = s_pendingCreates[i];
+        if (!p.active) continue;
+        if (now - p.firstTry > 30000) {
+            p.active = false;
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: gave up retrying player_create slot {}", p.a2);
+            continue;
+        }
+        if (now - p.lastTry < 200) continue;
+        p.lastTry = now;
+        const uint8_t result = s_originalPlayerCreate(p.a1, p.a2, p.a3, p.a4);
+        if (result) {
+            p.active = false;
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: RETRY player_create slot {} SUCCEEDED after {} ms",
+                       p.a2, now - p.firstTry);
+        }
+    }
+}
+// 16-player campaign probe: player_create (hr+0x420298) requires the per-slot state pair at DAT_182d1b960 /
+// DAT_182d1b7cc (stride 0x18D0) to read 7 / 5. A late joiner's slot sits at 8 / 3 (or 9 / 2 mid-join), so the engine
+// gives up, disbands the campaign session and returns to menus. Force the pair right before the call. Env-gated probe.
+static void ForceSlotStateForCreateProbe(int32_t a4) {
+    wchar_t env[8] = {};
+    if (!(GetEnvironmentVariableW(L"NOBLE_COOP_FORCE_SLOTSTATE", env, 8) > 0 && env[0] != L'0')) return;
+    __try {
+        if (!s_reachBase || a4 < 0 || a4 > 15) return;
+        auto* st1 = reinterpret_cast<uint32_t*>(s_reachBase + 0x2D1B960 + static_cast<size_t>(a4) * 0x18D0);
+        auto* st2 = reinterpret_cast<uint32_t*>(s_reachBase + 0x2D1B7CC + static_cast<size_t>(a4) * 0x18D0);
+        if (*st1 != 7 || *st2 != 5) {
+            const uint32_t old1 = *st1, old2 = *st2;
+            *st1 = 7;
+            *st2 = 5;
+            static std::atomic<int> forceLog{0};
+            if (forceLog.fetch_add(1) < 10) {
+                NOBLE_WARN("LobbyPatches: campaign >4 probe: forced slot {} states {}/{} -> 7/5 before player_create", a4,
+                           old1, old2);
+            }
+        }
+    } __except (1) {
+    }
+}
+
 static uint8_t __fastcall Hook_PlayerCreate(uint64_t a1, uint32_t a2, uint64_t a3, int32_t a4) {
+    if (s_campaignCoop.load() && IsNobleHost()) ForceSlotStateForCreateProbe(a4);
     const uint8_t result = s_originalPlayerCreate ? s_originalPlayerCreate(a1, a2, a3, a4) : 0;
-    if (s_playerCreateLogCount.fetch_add(1) < 20) {
-        int b960 = -1, b7cc = -1, engineState = -1, engine52 = -1, av = -1;
+    if (result && s_campaignCoop.load() && IsNobleHost()) s_playerCreateSuccess.fetch_add(1);
+    if (!result && retryCreate && s_campaignCoop.load() && IsNobleHost() && a4 >= 0 && a4 < 16) {
+        auto& p = s_pendingCreates[a4];
+        const ULONGLONG now = GetTickCount64();
+        if (!p.active) {
+            p.a1 = a1;
+            p.a2 = a2;
+            p.a3 = a3;
+            p.a4 = a4;
+            p.firstTry = now;
+            p.active = true;
+            static std::atomic<int> queueLog{0};
+            if (queueLog.fetch_add(1) < 10) {
+                NOBLE_WARN("LobbyPatches: campaign >4 probe: queued player_create retry for a4 {} slot {}", a4, a2);
+            }
+        }
+        p.lastTry = now;
+    }
+    if (s_playerCreateLogCount.fetch_add(1) < 40) {
+        int engineState = -1, engine52 = -1;
+        unsigned cand960[3] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+        unsigned cand7cc[3] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
         if (s_reachBase && a4 >= 0 && a4 < 16) {
-            b960 = *reinterpret_cast<const uint8_t*>(s_reachBase + 0x2D1B960 + static_cast<size_t>(a4) * 0x634);
-            b7cc = *reinterpret_cast<const uint8_t*>(s_reachBase + 0x2D1B7CC + static_cast<size_t>(a4) * 0x634);
+            static const size_t strides[3] = { 0x18D0, 0x31A0, 0x634 };
+            for (int k = 0; k < 3; ++k) {
+                __try {
+                    cand960[k] = *reinterpret_cast<const uint32_t*>(s_reachBase + 0x2D1B960 + static_cast<size_t>(a4) * strides[k]);
+                    cand7cc[k] = *reinterpret_cast<const uint32_t*>(s_reachBase + 0x2D1B7CC + static_cast<size_t>(a4) * strides[k]);
+                } __except (1) {
+                }
+            }
         }
         if (a1) {
             const uintptr_t lvar3 = *reinterpret_cast<uintptr_t*>(a1 + 8);
@@ -874,8 +1103,9 @@ static uint8_t __fastcall Hook_PlayerCreate(uint64_t a1, uint32_t a2, uint64_t a
                 engine52 = *reinterpret_cast<const uint8_t*>(lvar3 + 0x52);
             }
         }
-        NOBLE_WARN("LobbyPatches: player_create -> {} (slot {} a3 0x{:X} a4 {} b960 {} b7cc {} engineState {} engine52 {})",
-                   result, a2, a3, a4, b960, b7cc, engineState, engine52);
+        NOBLE_WARN("LobbyPatches: player_create -> {} (slot {} a4 {} engineState {} engine52 {} | s18D0 {:X}/{:X} s31A0 {:X}/{:X} s634 {:X}/{:X})",
+                   result, a2, a4, engineState, engine52, cand960[0], cand7cc[0], cand960[1], cand7cc[1],
+                   cand960[2], cand7cc[2]);
     }
     return result;
 }
@@ -951,6 +1181,467 @@ static void __fastcall Hook_PlayerUpdateLoop(int32_t a1, float* a2) {
                    a2 ? a2[0] : 0.0f);
     }
     if (s_originalPlayerUpdateLoop) s_originalPlayerUpdateLoop(a1, a2);
+}
+
+// Membership-vs-launch-data comparison (hr+0x39EBF0(membershipBlock, mode, bit)): walks the peer mask and compares each
+// peer's record fields against the launch-data dword at +4 and a per-peer bitmask; first mismatch returns 0 and the
+// launch is rejected (the >4-player rejection we are chasing). Probe: log the compared values per present peer.
+static uint32_t SafeRead32(uintptr_t addr) {
+    __try {
+        return *reinterpret_cast<const uint32_t*>(addr);
+    } __except (1) {
+        return 0xFFFFFFFFu;
+    }
+}
+static uintptr_t SafeLaunchDataFromMembership(uintptr_t membership) {
+    __try {
+        const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(membership);
+        if (!holder) return 0;
+        const uintptr_t obj = *reinterpret_cast<const uintptr_t*>(holder + 0x47E0);
+        if (!obj) return 0;
+        using AccessorFn = uintptr_t(__fastcall*)();
+        const auto fn = reinterpret_cast<AccessorFn>(*reinterpret_cast<const uintptr_t*>(obj + 0x90));
+        if (!fn) return 0;
+        return fn();
+    } __except (1) {
+        return 0;
+    }
+}
+typedef uint8_t(__fastcall* SessionCompareFn)(int64_t* membership, int32_t mode, uint32_t bit);
+static SessionCompareFn s_originalSessionCompare = nullptr;
+static std::atomic<int> s_sessionCompareLog{0};
+static uint8_t __fastcall Hook_SessionCompare(int64_t* membership, int32_t mode, uint32_t bit) {
+    const uint8_t result = s_originalSessionCompare ? s_originalSessionCompare(membership, mode, bit) : 0;
+    const int n = s_sessionCompareLog.fetch_add(1);
+    if (n < 30 && s_campaignCoop.load()) {
+        const uintptr_t base = reinterpret_cast<uintptr_t>(membership);
+        const uint32_t mask = base ? SafeRead32(base + 0x2C) : 0;
+        const uintptr_t launchData = base ? SafeLaunchDataFromMembership(base) : 0;
+        const uint32_t launchDword = launchData ? SafeRead32(launchData + 4) : 0xFFFFFFFFu;
+        std::string peers;
+        int present = 0;
+        for (int i = 0; i < 17 && present < 8; ++i) {
+            if (!((mask >> i) & 1u)) continue;
+            ++present;
+            const uint32_t a = SafeRead32(base + 0x48 + static_cast<uintptr_t>(i) * 0x158);
+            const uint32_t b = SafeRead32(base + 0x14C + static_cast<uintptr_t>(i) * 0x158);
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), " p%d:A=%08X%s B=%08X", i, a, a == launchDword ? "*" : "", b);
+            peers += buf;
+        }
+        NOBLE_WARN("LobbyPatches: [{} pid {}] session_compare mode {} bit {} -> {} peers {} launch {:08X}{}", RefuseRole(),
+                   GetCurrentProcessId(), mode, bit, result, present, launchDword, peers);
+    }
+    return result;
+}
+
+// Launch state-3 decision (hr+0x40BBC0(ctx)): when the campaign session is already in state 6..9 it switches the launch
+// into the network-session-start mode (status 4 then session start). Probe: skip this decision for campaign hosts so the
+// direct launch path can continue with five players (env NOBLE_COOP_SKIP_STATE3).
+typedef void(__fastcall* LaunchState3Fn)(int64_t* ctx);
+static LaunchState3Fn s_originalLaunchState3 = nullptr;
+static const bool skipState3 = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_SKIP_STATE3", env, 8) > 0 && env[0] != L'0';
+}();
+static void __fastcall Hook_LaunchState3(int64_t* ctx) {
+    if (skipState3 && s_campaignCoop.load() && IsNobleHost()) {
+        static std::atomic<int> skip3Log{0};
+        if (skip3Log.fetch_add(1) < 8) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: skipped launch state-3 session-start decision");
+        }
+        return;
+    }
+    if (s_originalLaunchState3) s_originalLaunchState3(ctx);
+}
+
+// Session-start tick (hr+0x40C0C0(ctx)): when every player is ready this routine starts the network session, sets the
+// context bit 0x400 and pushes launch status 1 - the mode switch that then trips the state-4 abort for >4 players.
+// Probe: skip the routine entirely (env NOBLE_COOP_SKIP_SESSIONSTART) and see whether the direct-launch path continues.
+typedef void(__fastcall* SessionStartTickFn)(int64_t* ctx);
+static SessionStartTickFn s_originalSessionStartTick = nullptr;
+static const bool skipSessionStart = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_SKIP_SESSIONSTART", env, 8) > 0 && env[0] != L'0';
+}();
+static void __fastcall Hook_SessionStartTick(int64_t* ctx) {
+    if (skipSessionStart && s_campaignCoop.load() && IsNobleHost()) {
+        static std::atomic<int> skipLog{0};
+        if (skipLog.fetch_add(1) < 8) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: skipped session-start tick");
+        }
+        return;
+    }
+    if (s_originalSessionStartTick) s_originalSessionStartTick(ctx);
+}
+
+// Launch status setter (hr+0x3FBEB8(obj, status)): writes the launch-data status byte (obj+0x88) and pushes it out via
+// FUN_1803FBFB4. The state-4 launch update treats status != 4 as failure (observed error code 6 for the 5th player).
+// Probe: log status values and caller stacks to find who rejects the >4-player launch.
+typedef uint8_t(__fastcall* LaunchStatusSetFn)(uint64_t* obj, uint32_t status);
+static LaunchStatusSetFn s_originalLaunchStatusSet = nullptr;
+static std::atomic<int> s_launchStatusLog{0};
+static void __fastcall Hook_LaunchStatusSet(uint64_t* obj, uint32_t status) {
+    // 16-player campaign probe: with five players the engine sits in launch state 4 long enough for the "all players
+    // ready -> start session" branch (hr+0x40C200) to set status 1, after which the state-4 update treats it as failure
+    // and aborts. Suppress that transition (env NOBLE_COOP_SUPPRESS_START) and see if the direct launch path continues.
+    static const bool suppressStart = [] {
+        wchar_t env[8] = {};
+        return GetEnvironmentVariableW(L"NOBLE_COOP_SUPPRESS_START", env, 8) > 0 && env[0] != L'0';
+    }();
+    if (suppressStart && status == 1 && s_campaignCoop.load() && IsNobleHost() &&
+        CallerRva(_ReturnAddress()) == 0x40C200) {
+        static std::atomic<int> suppressLog{0};
+        if (suppressLog.fetch_add(1) < 10) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: suppressed launch status 1 from session-start branch");
+        }
+        return;
+    }
+    const int n = s_launchStatusLog.fetch_add(1);
+    if (n < 80 || status == 6) {
+        void* frames[16] = {};
+        const USHORT count = CaptureStackBackTrace(0, 16, frames, nullptr);
+        const uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandleW(L"haloreach.dll"));
+        std::string out;
+        for (USHORT i = 0; i < count && i < 8; ++i) {
+            const uint64_t addr = reinterpret_cast<uint64_t>(frames[i]);
+            char buf[40];
+            if (base && addr >= base && addr < base + 0x278EE90) {
+                std::snprintf(buf, sizeof(buf), " hr+0x%llX", static_cast<unsigned long long>(addr - base));
+            } else {
+                std::snprintf(buf, sizeof(buf), " 0x%llX", static_cast<unsigned long long>(addr));
+            }
+            out += buf;
+        }
+        NOBLE_WARN("LobbyPatches: [{} pid {}] launch_status_set obj {:#x} status {} stack:{}", RefuseRole(),
+                   GetCurrentProcessId(), reinterpret_cast<uintptr_t>(obj), status, out);
+    }
+    if (s_originalLaunchStatusSet) s_originalLaunchStatusSet(obj, status);
+}
+
+// Launch-acceptance decision (hr+0x407C84(launchParams) -> char) and the two branches it selects:
+// hr+0x4076CC proceeds to the next launch stage, hr+0x407438 resets the launch on failure. Probe: log the decision result
+// and which branch runs, to find the >4-player rejection input.
+// Dynamic hook of the launch-data object's accept/reject method: FUN_18040719C calls
+// (**(code**)(*plVar1 + 8))(plVar1, param_1[1]) where plVar1 = *(param_1 + *param_1*2 + 2). The returned value is the
+// launch acceptance decision (0 = fail, 1 = proceed). The method address is per-object vtable data, so install the
+// detour at runtime from the launch-decision probe.
+typedef int(__fastcall* LaunchDataMethodFn)(void* obj, int32_t arg);
+static LaunchDataMethodFn s_originalLaunchDataMethod = nullptr;
+static std::atomic<int> s_launchDataMethodLog{0};
+static int __fastcall Hook_LaunchDataMethod(void* obj, int32_t arg) {
+    const int result = s_originalLaunchDataMethod ? s_originalLaunchDataMethod(obj, arg) : 0;
+    const uintptr_t callerRva = CallerRva(_ReturnAddress());
+    const int n = s_launchDataMethodLog.fetch_add(1);
+    const bool launchTickCaller = (callerRva == 0x407362);
+    // Log every launch-tick (vtable+8) decision call and any zero result anywhere.
+    if (result == 0 || (launchTickCaller && n < 80)) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] launch_data_method(obj {:#x}, arg {}) -> {} caller hr+0x{:X}", RefuseRole(),
+                   GetCurrentProcessId(), reinterpret_cast<uintptr_t>(obj), arg, result, callerRva);
+    }
+    return result;
+}
+
+// POD-only lookup of the launch-data object's accept/reject method (SEH available).
+static uintptr_t FindLaunchDataMethod(int* params) {
+    __try {
+        if (!params || !s_reachBase) return 0;
+        const int state = *params;
+        if (state < 0 || state >= 0x20) return 0;
+        auto* slot = reinterpret_cast<uintptr_t*>(reinterpret_cast<uint8_t*>(params) +
+                                                  static_cast<size_t>(state) * 8 + 8);
+        const uintptr_t obj = *slot;
+        if (!obj) return 0;
+        const uintptr_t vtable = *reinterpret_cast<const uintptr_t*>(obj);
+        const uintptr_t method = vtable ? *reinterpret_cast<const uintptr_t*>(vtable + 8) : 0;
+        const uintptr_t base = s_reachBase;
+        if (method < base || method >= base + 0x278EE90) return 0;
+        return method;
+    } __except (1) {
+        return 0;
+    }
+}
+
+// Launch state-machine objects: the launch context keeps an array of state objects (context + state*8 + 8); each
+// object has a vtable whose methods run the launch stages. Log each state's object/vtable/method addresses once, so the
+// failing stage's update method can be identified and decompiled.
+struct LaunchStateObjInfo {
+    uintptr_t obj = 0;
+    uintptr_t vtable = 0;
+    uintptr_t m8 = 0, m10 = 0, m18 = 0, m20 = 0, m28 = 0, m30 = 0;
+};
+static LaunchStateObjInfo GetLaunchStateObjInfo(int* params, int state) {
+    LaunchStateObjInfo info;
+    __try {
+        if (!params || state < 0 || state > 15) return info;
+        auto* slot = reinterpret_cast<uintptr_t*>(reinterpret_cast<uint8_t*>(params) + state * 8 + 8);
+        info.obj = *slot;
+        if (!info.obj) return info;
+        info.vtable = *reinterpret_cast<const uintptr_t*>(info.obj);
+        if (!info.vtable) return info;
+        auto* vt = reinterpret_cast<const uintptr_t*>(info.vtable);
+        info.m8 = vt[1];
+        info.m10 = vt[2];
+        info.m18 = vt[3];
+        info.m20 = vt[4];
+        info.m28 = vt[5];
+        info.m30 = vt[6];
+    } __except (1) {
+    }
+    return info;
+}
+
+typedef int(__fastcall* LaunchDecisionFn)(int* params);
+static LaunchDecisionFn s_originalLaunchDecision = nullptr;
+static std::atomic<int> s_launchDecisionLog{0};
+static int __fastcall Hook_LaunchDecision(int* params) {
+    const int result = s_originalLaunchDecision ? s_originalLaunchDecision(params) : 0;
+    // Log each launch state's object/vtable/methods once.
+    if (params) {
+        const int state = *params;
+        if (state >= 0 && state <= 11) {
+            static std::atomic<bool> seen[12];
+            if (!seen[state].exchange(true)) {
+                const LaunchStateObjInfo info = GetLaunchStateObjInfo(params, state);
+                if (info.obj) {
+                    const uintptr_t base = s_reachBase;
+                    NOBLE_WARN("LobbyPatches: launch state {} obj {:#x} vtable {:#x} | m8 hr+0x{:X} m10 hr+0x{:X} "
+                               "m18 hr+0x{:X} m20 hr+0x{:X} m28 hr+0x{:X} m30 hr+0x{:X}",
+                               state, info.obj, info.vtable,
+                               info.m8 >= base ? info.m8 - base : 0, info.m10 >= base ? info.m10 - base : 0,
+                               info.m18 >= base ? info.m18 - base : 0, info.m20 >= base ? info.m20 - base : 0,
+                               info.m28 >= base ? info.m28 - base : 0, info.m30 >= base ? info.m30 - base : 0);
+                }
+            }
+        }
+    }
+    // Install the dynamic detour on the launch-data object's accept/reject method (once).
+    if (!s_originalLaunchDataMethod) {
+        const uintptr_t method = FindLaunchDataMethod(params);
+        if (method && HookManager::InstallHook(reinterpret_cast<void*>(method),
+                                                reinterpret_cast<void*>(&Hook_LaunchDataMethod),
+                                                reinterpret_cast<void**>(&s_originalLaunchDataMethod),
+                                                "launch_data_method")) {
+            NOBLE_WARN("LobbyPatches: launch_data_method dynamic hook installed at hr+0x{:X}", method - s_reachBase);
+        }
+    }
+    const int n = s_launchDecisionLog.fetch_add(1);
+    if (n < 20) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] launch_decision -> {} state {} f42 {} f3a {} caller hr+0x{:X}", RefuseRole(),
+                   GetCurrentProcessId(), result, params ? params[0] : -1,
+                   params ? SafeReadU8Ptr(reinterpret_cast<uintptr_t>(params) + 0x108) : -1,
+                   params ? SafeReadU8Ptr(reinterpret_cast<uintptr_t>(params) + 0xE8) : -1,
+                   CallerRva(_ReturnAddress()));
+    }
+    return result;
+}
+typedef void(__fastcall* LaunchProceedFn)(int* params);
+static LaunchProceedFn s_originalLaunchProceed = nullptr;
+static std::atomic<int> s_launchProceedLog{0};
+static void __fastcall Hook_LaunchProceed(int* params) {
+    const int n = s_launchProceedLog.fetch_add(1);
+    if (n < 12) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] launch_proceed state {} caller hr+0x{:X}", RefuseRole(), GetCurrentProcessId(),
+                   params ? params[0] : -1, CallerRva(_ReturnAddress()));
+    }
+    if (s_originalLaunchProceed) s_originalLaunchProceed(params);
+}
+// FUN_180407438 takes five arguments (context, newState, newSubState, a4, a5) - the detour must forward all of them,
+// otherwise the logging clobbers RDX/R8/R9 and corrupts the launch transition.
+typedef void(__fastcall* LaunchStageFn)(int* params, int32_t newState, int32_t newSubState, uint32_t a4, uint64_t a5);
+static LaunchStageFn s_originalLaunchResetStage = nullptr;
+static std::atomic<int> s_launchResetStageLog{0};
+static void __fastcall Hook_LaunchResetStage(int* params, int32_t newState, int32_t newSubState, uint32_t a4, uint64_t a5) {
+    const int n = s_launchResetStageLog.fetch_add(1);
+    if (n < 30) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] launch_reset_stage cur {} -> state {} sub {} a4 {} a5 {:#x} caller hr+0x{:X}",
+                   RefuseRole(), GetCurrentProcessId(), params ? params[0] : -1, newState, newSubState, a4, a5,
+                   CallerRva(_ReturnAddress()));
+    }
+    if (s_originalLaunchResetStage) s_originalLaunchResetStage(params, newState, newSubState, a4, a5);
+}
+
+// Restart-context installer (hr+0xA2CE4(ctx)): copies a game context into DAT_1827CD400 and sets the pending-restart
+// flag. Probe: log the context pointer, its first byte and the caller stack for every install (compare working and
+// failing campaign launches).
+typedef void(__fastcall* RestartCtxFn)(void* ctx);
+static RestartCtxFn s_originalRestartCtx = nullptr;
+static std::atomic<int> s_restartCtxLog{0};
+static void __fastcall Hook_RestartCtx(void* ctx) {
+    const int n = s_restartCtxLog.fetch_add(1);
+    if (n < 20) {
+        void* frames[24] = {};
+        const USHORT count = CaptureStackBackTrace(0, 24, frames, nullptr);
+        const uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandleW(L"haloreach.dll"));
+        std::string out;
+        for (USHORT i = 0; i < count; ++i) {
+            const uint64_t addr = reinterpret_cast<uint64_t>(frames[i]);
+            char buf[40];
+            if (base && addr >= base && addr < base + 0x278EE90) {
+                std::snprintf(buf, sizeof(buf), " hr+0x%llX", static_cast<unsigned long long>(addr - base));
+            } else {
+                std::snprintf(buf, sizeof(buf), " 0x%llX", static_cast<unsigned long long>(addr));
+            }
+            out += buf;
+        }
+        NOBLE_WARN("LobbyPatches: [{} pid {}] restart_ctx ctx {:#x} b0 {} stack:{}", RefuseRole(), GetCurrentProcessId(),
+                   reinterpret_cast<uintptr_t>(ctx), ctx ? SafeReadU8Ptr(reinterpret_cast<uintptr_t>(ctx)) : -1, out);
+    }
+    if (s_originalRestartCtx) s_originalRestartCtx(ctx);
+}
+
+// Engine restart/return-to-menu path (hr+0xA3FFC): called when the engine tears the game down and rebuilds its context.
+// In the >4-player campaign launch this runs right after the engine decides the external launch failed. Probe: capture
+// the call stack of whoever invoked it.
+typedef void(__fastcall* EngineRestartFn)();
+static EngineRestartFn s_originalEngineRestart = nullptr;
+static std::atomic<int> s_engineRestartLog{0};
+static void __fastcall Hook_EngineRestart() {
+    const int n = s_engineRestartLog.fetch_add(1);
+    if (n < 10) {
+        void* frames[24] = {};
+        const USHORT count = CaptureStackBackTrace(0, 24, frames, nullptr);
+        const uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandleW(L"haloreach.dll"));
+        std::string out;
+        for (USHORT i = 0; i < count; ++i) {
+            const uint64_t addr = reinterpret_cast<uint64_t>(frames[i]);
+            char buf[40];
+            if (base && addr >= base && addr < base + 0x278EE90) {
+                std::snprintf(buf, sizeof(buf), " hr+0x%llX", static_cast<unsigned long long>(addr - base));
+            } else {
+                std::snprintf(buf, sizeof(buf), " 0x%llX", static_cast<unsigned long long>(addr));
+            }
+            out += buf;
+        }
+        NOBLE_WARN("LobbyPatches: [{} pid {}] ENGINE RESTART path called; stack:{}", RefuseRole(), GetCurrentProcessId(),
+                   out);
+    }
+    if (s_originalEngineRestart) s_originalEngineRestart();
+}
+
+// Launch/frame entry (hr+0xA2E80(launchParams, a2, a3, a4)): contains the abort/quit branch that ends a >4-player
+// campaign launch. Probe: log the launch-parameter pointer, its first bytes and the launch-mode globals per call.
+static int SafeReadU8Ptr(uintptr_t addr) {
+    __try {
+        return *reinterpret_cast<const uint8_t*>(addr);
+    } __except (1) {
+        return -1;
+    }
+}
+static int SafeReadU32Ptr(uintptr_t addr) {
+    __try {
+        return static_cast<int>(*reinterpret_cast<const uint32_t*>(addr));
+    } __except (1) {
+        return -1;
+    }
+}
+typedef void(__fastcall* LaunchFrameFn)(char* block, uint64_t a2, uint64_t a3, uint64_t a4);
+static LaunchFrameFn s_originalLaunchFrame = nullptr;
+static std::atomic<int> s_launchFrameLog{0};
+static void __fastcall Hook_LaunchFrame(char* block, uint64_t a2, uint64_t a3, uint64_t a4) {
+    const int n = s_launchFrameLog.fetch_add(1);
+    const bool special = (block == nullptr) || SafeReadU8Ptr(reinterpret_cast<uintptr_t>(block)) == 4;
+    if (n < 12 || (special && n < 40)) {
+        const uintptr_t engine = s_reachBase ? *reinterpret_cast<const uintptr_t*>(s_reachBase + 0x4E0E908) : 0;
+        const uintptr_t sess = engine ? *reinterpret_cast<const uintptr_t*>(engine + 0x18) : 0;
+        NOBLE_WARN("LobbyPatches: [{} pid {}] launch_frame block {:#x} b0 {} bC {} modeSet {} modeVal {} modeSel {} "
+                   "modeExtra {} pmask {:08X} sessState {}",
+                   RefuseRole(), GetCurrentProcessId(), reinterpret_cast<uintptr_t>(block),
+                   block ? SafeReadU8Ptr(reinterpret_cast<uintptr_t>(block)) : -1,
+                   block ? SafeReadU8Ptr(reinterpret_cast<uintptr_t>(block) + 0x0C) : -1,
+                   s_reachBase ? SafeReadU8Ptr(s_reachBase + 0x4E0E8F0) : -1,
+                   s_reachBase ? SafeReadU8Ptr(s_reachBase + 0x4E0E8F2) : -1,
+                   s_reachBase ? SafeReadU8Ptr(s_reachBase + 0x4E0E8F3) : -1,
+                   s_reachBase ? SafeReadU8Ptr(s_reachBase + 0x4E0E8F8) : -1,
+                   sess ? SafeReadU32Ptr(sess + 0x173C) : 0, sess ? SafeReadU32Ptr(sess + 0x60EF8) : -1);
+    }
+    if (s_originalLaunchFrame) s_originalLaunchFrame(block, a2, a3, a4);
+}
+
+// Engine fatal/error reporter (hr+0x00D648(code, reasonString, a3, a4)): stores the first error and forwards event 10
+// to the host interface. Probe: log the exact error code and reason text the engine aborts with (16-player campaign work).
+typedef void(__fastcall* EngineErrorFn)(int32_t code, const char* reason, uint64_t a3, uint64_t a4);
+static EngineErrorFn s_originalEngineError = nullptr;
+static std::atomic<int> s_engineErrorLog{0};
+static void SafeCString(char* out, size_t cap, const char* str) {
+    __try {
+        if (!str) {
+            std::snprintf(out, cap, "(null)");
+            return;
+        }
+        size_t n = 0;
+        while (str[n] && n + 1 < cap) {
+            out[n] = str[n];
+            ++n;
+        }
+        out[n] = 0;
+    } __except (1) {
+        std::snprintf(out, cap, "(fault)");
+    }
+}
+static void __fastcall Hook_EngineError(int32_t code, const char* reason, uint64_t a3, uint64_t a4) {
+    const int n = s_engineErrorLog.fetch_add(1);
+    if (n < 20) {
+        char text[256];
+        SafeCString(text, sizeof(text), reason);
+        NOBLE_WARN("LobbyPatches: [{} pid {}] ENGINE ERROR code {} reason '{}' caller hr+0x{:X} stack: {}", RefuseRole(),
+                   GetCurrentProcessId(), code, text, CallerRva(_ReturnAddress()), ReachStack());
+    }
+    if (s_originalEngineError) s_originalEngineError(code, reason, a3, a4);
+}
+
+// External-launch slot state setter (hr+0x3F7B40(channelBase, slot, state)): campaign players transition through these
+// states; player_create requires the pair state==7 (channel+0x1320) / field==5 (channel+0x118C). Probe: log transitions.
+typedef void(__fastcall* SlotStateSetFn)(uint64_t channel, int32_t slot, int32_t state);
+static SlotStateSetFn s_originalSlotStateSet = nullptr;
+static std::atomic<int> s_slotStateLog{0};
+static void __fastcall Hook_SlotStateSet(uint64_t channel, int32_t slot, int32_t state) {
+    const int n = s_slotStateLog.fetch_add(1);
+    if (n < 120) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] slot_state_set slot {} -> {} caller hr+0x{:X} stack: {}", RefuseRole(),
+                   GetCurrentProcessId(), slot, state, CallerRva(_ReturnAddress()), ReachStack());
+    }
+    if (s_originalSlotStateSet) s_originalSlotStateSet(channel, slot, state);
+}
+
+// Player-update broadcast chain (probe): c_game_engine player-update send entry (hr+0x3AB59C) and the player-config
+// builder/sender it calls (hr+0x3C0804). Captured to replay the launch-time player-config broadcast for a mid-mission
+// joiner (16-player campaign work).
+static void SafeHexDump(char* out, size_t cap, uintptr_t addr, size_t len) {
+    __try {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(addr);
+        size_t n = 0;
+        for (size_t i = 0; i < len && n + 3 < cap; ++i) n += std::snprintf(out + n, cap - n, "%02X", p[i]);
+        out[n < cap ? n : cap - 1] = 0;
+    } __except (1) {
+        std::snprintf(out, cap, "fault");
+    }
+}
+typedef void(__fastcall* PlayerUpdateSendFn)(uint64_t a1, uint64_t a2);
+static PlayerUpdateSendFn s_originalPlayerUpdateSend = nullptr;
+static std::atomic<int> s_playerUpdateSendLog{0};
+static void __fastcall Hook_PlayerUpdateSend(uint64_t a1, uint64_t a2) {
+    const int n = s_playerUpdateSendLog.fetch_add(1);
+    if (n < 30) {
+        static char h1[128], h2[128];
+        SafeHexDump(h1, sizeof(h1), a1, 0x30);
+        SafeHexDump(h2, sizeof(h2), a2, 0x30);
+        NOBLE_WARN("LobbyPatches: [{} pid {}] player_update_send({:#x}, {:#x}) caller hr+0x{:X} | a1 {} | a2 {}", RefuseRole(),
+                   GetCurrentProcessId(), a1, a2, CallerRva(_ReturnAddress()), h1, h2);
+    }
+    if (s_originalPlayerUpdateSend) s_originalPlayerUpdateSend(a1, a2);
+}
+
+typedef void(__fastcall* PlayerConfigSendFn)(uint64_t engine, uint64_t a1, uint64_t a2);
+static PlayerConfigSendFn s_originalPlayerConfigSend = nullptr;
+static std::atomic<int> s_playerConfigSendLog{0};
+static void __fastcall Hook_PlayerConfigSend(uint64_t engine, uint64_t a1, uint64_t a2) {
+    const int n = s_playerConfigSendLog.fetch_add(1);
+    if (n < 30) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] player_config_send(engine {:#x}, {:#x}, {:#x}) caller hr+0x{:X}", RefuseRole(),
+                   GetCurrentProcessId(), engine, a1, a2, CallerRva(_ReturnAddress()));
+    }
+    if (s_originalPlayerConfigSend) s_originalPlayerConfigSend(engine, a1, a2);
 }
 
 // Simulation update gate (hr+0x3AAB08 -> bool). The main loop only runs the per-player update (FUN_180057434, which
@@ -1087,6 +1778,24 @@ static LONG CALLBACK WatchHandler(EXCEPTION_POINTERS* info) {
     CONTEXT* c = info->ContextRecord;
     if (c->Dr6 & 2) {
         c->Dr6 = 0;
+        if (s_slotWatchAddr) {
+            static std::atomic<int> slotWatchHits{0};
+            if (slotWatchHits.fetch_add(1) < 24) {
+                const uint32_t value = *reinterpret_cast<const uint32_t*>(s_slotWatchAddr);
+                NOBLE_WARN("LobbyPatches: [{} pid {}] SLOT0 STATE WRITE -> {} at hr+0x{:X} stack: {}", RefuseRole(),
+                           GetCurrentProcessId(), value, CallerRva(reinterpret_cast<void*>(c->Rip)), ReachStack());
+            }
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+        if (s_player0Unit) {
+            static std::atomic<int> unitWatchHits{0};
+            if (unitWatchHits.fetch_add(1) < 24) {
+                const int32_t unit = *reinterpret_cast<const int32_t*>(s_player0Unit);
+                NOBLE_WARN("LobbyPatches: [{} pid {}] PLAYER0 UNIT WRITE -> {} at hr+0x{:X} stack: {}", RefuseRole(),
+                           GetCurrentProcessId(), unit, CallerRva(reinterpret_cast<void*>(c->Rip)), ReachStack());
+            }
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
         static uint64_t lastId = 0;
         const uint64_t id = s_sessionP0Id ? *reinterpret_cast<const uint64_t*>(s_sessionP0Id) : 0;
         if (id != lastId && s_sessionWatchHits.fetch_add(1) < 12) {
@@ -1135,9 +1844,17 @@ static DWORD WINAPI ArmWatchThread(void* param) {
         CONTEXT c = {};
         c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
         if (GetThreadContext(th, &c)) {
-            c.Dr0 = s_player0Flags;
-            c.Dr7 = (c.Dr7 & ~0xF0003ull) | 1ull | (1ull << 16) | (3ull << 18);   // L0, write, 4 bytes
-            if (s_sessionP0Id) {
+            if (s_player0Flags) {
+                c.Dr0 = s_player0Flags;
+                c.Dr7 = (c.Dr7 & ~0xF0003ull) | 1ull | (1ull << 16) | (3ull << 18);   // L0, write, 4 bytes
+            }
+            if (s_slotWatchAddr) {
+                c.Dr1 = s_slotWatchAddr;
+                c.Dr7 = (c.Dr7 & ~0xF0000Cull) | 4ull | (1ull << 20) | (3ull << 22);   // L1, write, 4 bytes
+            } else if (s_player0Unit) {
+                c.Dr1 = s_player0Unit;
+                c.Dr7 = (c.Dr7 & ~0xF0000Cull) | 4ull | (1ull << 20) | (3ull << 22);   // L1, write, 4 bytes
+            } else if (s_sessionP0Id) {
                 c.Dr1 = s_sessionP0Id;
                 c.Dr7 = (c.Dr7 & ~0xF0000Cull) | 4ull | (1ull << 20) | (2ull << 22);   // L1, write, 8 bytes
             }
@@ -1147,12 +1864,13 @@ static DWORD WINAPI ArmWatchThread(void* param) {
     }
     CloseHandle(th);
     // Logged after the resume: the game thread may hold the logger lock while it is suspended.
-    NOBLE_WARN("LobbyPatches: player 0 flags watch {} at {:#x} (thread {})", ok ? "armed" : "FAILED", s_player0Flags, tid);
+    NOBLE_WARN("LobbyPatches: watch {} at dr0 {:#x} dr1 {:#x} (thread {})", ok ? "armed" : "FAILED", s_player0Flags,
+               s_slotWatchAddr ? s_slotWatchAddr : s_player0Unit, tid);
     return 0;
 }
 static void ArmPlayer0Watch() {
     static bool armed = false;
-    if (armed || !s_player0Flags) return;
+    if (armed || (!s_player0Flags && !s_slotWatchAddr)) return;
     armed = true;
     AddVectoredExceptionHandler(1, &WatchHandler);
     if (HANDLE t = CreateThread(nullptr, 0, &ArmWatchThread, reinterpret_cast<void*>(static_cast<uintptr_t>(GetCurrentThreadId())), 0, nullptr))
@@ -1162,8 +1880,78 @@ static void ArmPlayer0Watch() {
 typedef void(__fastcall* TeamCountFn)(int32_t* a1, int32_t* alive, int32_t* teams);
 static TeamCountFn s_originalTeamCount = nullptr;
 static std::atomic<int> s_teamCountLogCount{0};
+// EXPERIMENT (16-player campaign): the guest's game-player sync (hr+0x41F510) is gated on
+// game_engine+0x28 != session+0x4468; a mid-mission guest whose own player was never created leaves those equal, so the
+// sync never runs. Bumping the engine-side counter forces the engine down the sync path.
+static const bool forceSync = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_JIP_FORCE_SYNC", env, 8) > 0 && env[0] != L'0';
+}();
+static std::atomic<int> s_forceSyncHits{0};
+static void ForceCampaignPlayerSyncTick() {
+    if (!forceSync) return;
+    static std::atomic<int> diag{0};
+    __try {
+        const uintptr_t engine = s_reachBase ? *reinterpret_cast<const uintptr_t*>(s_reachBase + 0x4E0E910) : 0;
+        const uintptr_t sess = engine ? *reinterpret_cast<const uintptr_t*>(engine + 0x18) : 0;
+        int engineCounter = -1, sessionCounter = -1;
+        if (engine) engineCounter = *reinterpret_cast<const int*>(engine + 0x28);
+        if (sess) sessionCounter = *reinterpret_cast<const int*>(sess + 0x4468);
+        if (diag.fetch_add(1) < 10) {
+            NOBLE_WARN("LobbyPatches: campaign >4 probe: coop {} host {} engine 0x{:X} sess 0x{:X} counters {} vs {}",
+                       s_campaignCoop.load(), IsNobleHost(), engine, sess, engineCounter, sessionCounter);
+        }
+        if (!s_campaignCoop.load() || IsNobleHost() || !engine || !sess) return;
+        auto* pEngine = reinterpret_cast<int*>(engine + 0x28);
+        if (*pEngine == sessionCounter) {
+            *pEngine = sessionCounter - 1;
+            if (s_forceSyncHits.fetch_add(1) < 8) {
+                NOBLE_WARN("LobbyPatches: campaign >4 probe: nudged engine player-sync counter (session {})", sessionCounter);
+            }
+        }
+    } __except (1) {
+    }
+}
+
+// 16-player campaign probe: activate pending extra game players on the host (flags low bits 0x2 -> 0x1) so the
+// engine's player update/spawn path can seat them. Env-gated diagnostic.
+static const bool activateJoiners = [] {
+    wchar_t env[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_COOP_ACTIVATE_JOINERS", env, 8) > 0 && env[0] != L'0';
+}();
+static void ActivatePendingJoinersProbe() {
+    if (!activateJoiners || !s_campaignCoop.load() || !IsNobleHost()) return;
+    __try {
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+        const uintptr_t arr = block ? *reinterpret_cast<const uintptr_t*>(block + 0x18) : 0;
+        if (!arr) return;
+        const uint64_t size = *reinterpret_cast<const uint64_t*>(arr + 0x20);
+        const uintptr_t data = *reinterpret_cast<const uintptr_t*>(arr + 0x50);
+        if (!data || size < 0x100) return;
+        static std::atomic<int> actLog{0};
+        for (int i = 1; i < 16; ++i) {
+            auto* d = reinterpret_cast<uint8_t*>(data + static_cast<uintptr_t>(i) * size);
+            const uint16_t salt = *reinterpret_cast<const uint16_t*>(d);
+            auto* flags = reinterpret_cast<uint32_t*>(d + 4);
+            if (salt != 0 && (*flags & 0x7u) == 0x2u) {
+                *flags = (*flags & 0xFFFFFFF8u) | 0x1u;
+                if (actLog.fetch_add(1) < 10) {
+                    NOBLE_WARN("LobbyPatches: campaign >4 probe: activated pending game player {} (flags -> {:08X})", i,
+                               *flags);
+                }
+            }
+        }
+    } __except (1) {
+    }
+}
+
 static void __fastcall Hook_TeamCount(int32_t* a1, int32_t* alive, int32_t* teams) {
     ForceCampaignPlayerTeams();   // keep campaign JIP players on team 0 before the game-over check reads team counts
+    ActivatePendingJoinersProbe();
+    RetryPendingPlayerCreates();
+    ForceCampaignPlayerSyncTick();
     if (s_originalTeamCount) s_originalTeamCount(a1, alive, teams);
 
     // Keep at least 1 alive player and 1 team while the match is running to prevent false GameOver (0x7A61C)
@@ -1233,6 +2021,34 @@ static void __fastcall Hook_PlayerSync(uint8_t* singleton, int32_t* count, void*
                        *reinterpret_cast<const int32_t*>(r), *reinterpret_cast<const uint64_t*>(r + 4),
                        *reinterpret_cast<const int32_t*>(r + 0xC), *reinterpret_cast<const int32_t*>(r + 0x1C));
     }
+}
+
+// Probe: invoke the game-player sync (hr+0x41F510) directly on a campaign guest after a mid-mission join - the guest's
+// engine update never reaches the normal caller, so the guest never builds its own game-player entry. NOBLE_JIP_CALL_SYNC=1.
+static void RunDirectPlayerSyncProbe() {
+    __try {
+        const uintptr_t engine = *reinterpret_cast<const uintptr_t*>(s_reachBase + 0x4E0E910);
+        if (!engine) return;
+        static uint8_t records[0x1000];
+        std::memset(records, 0, sizeof(records));
+        int32_t count = 0;
+        s_originalPlayerSync(reinterpret_cast<uint8_t*>(engine), &count, nullptr, records);
+        char dump[1024];
+        DumpGamePlayers(dump, sizeof(dump));
+        NOBLE_WARN("LobbyPatches: campaign >4 probe: direct player sync call returned count {} | table: {}", count, dump);
+    } __except (1) {
+        NOBLE_WARN("LobbyPatches: campaign >4 probe: direct player sync call raised");
+    }
+}
+static void CallGuestPlayerSyncProbe() {
+    static const bool enabled = [] {
+        wchar_t env[8] = {};
+        return GetEnvironmentVariableW(L"NOBLE_JIP_CALL_SYNC", env, 8) > 0 && env[0] != L'0';
+    }();
+    static bool done = false;
+    if (!enabled || done || !s_campaignCoop.load() || IsNobleHost() || !s_reachBase || !s_originalPlayerSync) return;
+    done = true;
+    RunDirectPlayerSyncProbe();
 }
 
 // Membership consumer (hr+0x39E47C(block, payload); block = session + 0x30): applies a decoded membership update
@@ -1789,6 +2605,34 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
               reinterpret_cast<void**>(&s_originalPlayerUpdateLoop), "player_update_loop" },
             { 0x3AAB08, { 0x48, 0x83, 0xEC, 0x28, 0x45 }, reinterpret_cast<void*>(&Hook_SimGate),
               reinterpret_cast<void**>(&s_originalSimGate), "sim_gate" },
+            { 0x3AB59C, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_PlayerUpdateSend),
+              reinterpret_cast<void**>(&s_originalPlayerUpdateSend), "player_update_send" },
+            { 0x3C0804, { 0x48, 0x89, 0x5C, 0x24, 0x10 }, reinterpret_cast<void*>(&Hook_PlayerConfigSend),
+              reinterpret_cast<void**>(&s_originalPlayerConfigSend), "player_config_send" },
+            { 0x3F7B40, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_SlotStateSet),
+              reinterpret_cast<void**>(&s_originalSlotStateSet), "slot_state_set" },
+            { 0xD648, { 0x40, 0x53, 0x48, 0x83, 0xEC }, reinterpret_cast<void*>(&Hook_EngineError),
+              reinterpret_cast<void**>(&s_originalEngineError), "engine_error" },
+            { 0xA2E80, { 0x48, 0x8B, 0xC4, 0x57, 0x41 }, reinterpret_cast<void*>(&Hook_LaunchFrame),
+              reinterpret_cast<void**>(&s_originalLaunchFrame), "launch_frame" },
+            { 0xA3FFC, { 0x40, 0x53, 0xB8, 0xE0, 0xEA }, reinterpret_cast<void*>(&Hook_EngineRestart),
+              reinterpret_cast<void**>(&s_originalEngineRestart), "engine_restart" },
+            { 0xA2CE4, { 0x40, 0x53, 0x48, 0x83, 0xEC }, reinterpret_cast<void*>(&Hook_RestartCtx),
+              reinterpret_cast<void**>(&s_originalRestartCtx), "restart_ctx" },
+            { 0x407C84, { 0x48, 0x63, 0x01, 0x41, 0xB2 }, reinterpret_cast<void*>(&Hook_LaunchDecision),
+              reinterpret_cast<void**>(&s_originalLaunchDecision), "launch_decision" },
+            { 0x3FBEB8, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchStatusSet),
+              reinterpret_cast<void**>(&s_originalLaunchStatusSet), "launch_status_set" },
+            { 0x39EBF0, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_SessionCompare),
+              reinterpret_cast<void**>(&s_originalSessionCompare), "session_compare" },
+            { 0x40C0C0, { 0x48, 0x89, 0x5C, 0x24, 0x10 }, reinterpret_cast<void*>(&Hook_SessionStartTick),
+              reinterpret_cast<void**>(&s_originalSessionStartTick), "session_start_tick" },
+            { 0x40BBC0, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchState3),
+              reinterpret_cast<void**>(&s_originalLaunchState3), "launch_state3" },
+            { 0x4076CC, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchProceed),
+              reinterpret_cast<void**>(&s_originalLaunchProceed), "launch_proceed" },
+            { 0x407438, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchResetStage),
+              reinterpret_cast<void**>(&s_originalLaunchResetStage), "launch_reset_stage" },
             { 0x3BF63C, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_LaunchReset),
               reinterpret_cast<void**>(&s_originalLaunchReset), "launch_reset" },
         };
@@ -1802,7 +2646,14 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
             return std::strstr(name, "launch_ready") || std::strstr(name, "identity_match") ||
                    std::strstr(name, "controller_apply") || std::strstr(name, "player_create") ||
                    std::strstr(name, "player_update_step") || std::strstr(name, "player_update_loop") ||
-                   std::strstr(name, "sim_gate") || std::strstr(name, "launch_reset");
+                   std::strstr(name, "sim_gate") || std::strstr(name, "launch_reset") ||
+                   std::strstr(name, "player_update_send") || std::strstr(name, "player_config_send") ||
+                   std::strstr(name, "slot_state_set") || std::strstr(name, "engine_error") ||
+                   std::strstr(name, "launch_frame") || std::strstr(name, "engine_restart") ||
+                   std::strstr(name, "restart_ctx") || std::strstr(name, "launch_decision") ||
+                   std::strstr(name, "launch_proceed") || std::strstr(name, "launch_reset_stage") ||
+                   std::strstr(name, "launch_status_set") || std::strstr(name, "session_compare") ||
+                   std::strstr(name, "session_start_tick") || std::strstr(name, "launch_state3");
         };
         for (auto& h : theaterHooks) {
             if (isProbeHook(h.name) && !jipProbe) continue;

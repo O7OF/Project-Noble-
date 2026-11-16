@@ -25,6 +25,8 @@ public:
     // Campaign co-op: a host boots its guest with reason 9 a few seconds after both spawn, which ends the mission with
     // "Error hosting co-op". While this is set, a reason-9 boot of a guest is logged and dropped instead.
     static void SetCampaignCoop(bool on);
+    static bool IsCampaignCoop();
+    static size_t GetPlayerCreateSuccessCount();
     static size_t GetRemotePlayerAddCount();
 
 private:

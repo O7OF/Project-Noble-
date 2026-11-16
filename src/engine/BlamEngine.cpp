@@ -1727,6 +1727,24 @@ static bool ReadEngineLaunchMapStateSEH(HMODULE hMod, int32_t* outLaunchState, i
     }
 }
 
+namespace {
+// 16-player campaign probe: count external-launch slots whose state pair is launch-ready (7/5). These live in the
+// haloreach module's channel array; see the compatibility notes. Kept in a POD-only function so SEH is available.
+int CountLaunchReadySlots(uintptr_t moduleBase, int count) {
+    int ready = 0;
+    __try {
+        for (int i = 0; i < count && i < 16; ++i) {
+            const auto* s1 = reinterpret_cast<const uint32_t*>(moduleBase + 0x2D1B960 + static_cast<size_t>(i) * 0x18D0);
+            const auto* s2 = reinterpret_cast<const uint32_t*>(moduleBase + 0x2D1B7CC + static_cast<size_t>(i) * 0x18D0);
+            if (*s1 == 7 && *s2 == 5) ++ready;
+        }
+    } __except (1) {
+        return -1;
+    }
+    return ready;
+}
+}  // namespace
+
 bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint64_t skulls,
                            const std::string& customMvarPath, const std::string& customVariantPath,
                            const std::string& connectAddress, int expectedPeers) {
@@ -1891,9 +1909,31 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
             // while declaring 4 keeps it running and an extra joiner is tolerated in the session membership as a
             // non-active entry). Declare the stock maximum until the engine cap is lifted for the 16-player goal.
             constexpr int kCampaignCoopEngineCap = 4;
-            declaredPlayers = std::min(kCampaignCoopEngineCap, declaredPlayers);
-            NOBLE_INFO("BlamEngine: campaign co-op launch declares {} player(s) (0xE8, stock engine cap {})",
-                       declaredPlayers, kCampaignCoopEngineCap);
+            static const bool declareRoster = [] {
+                const char* env = std::getenv("NOBLE_COOP_DECLARE_ROSTER");
+                return env && env[0] != '0';
+            }();
+            if (declareRoster) {
+                // 16-player probe: declare the real roster so the engine creates a player slot for every participant
+                // (start-cap investigation).
+                declaredPlayers = std::min(16, 1 + expectedPeers);
+                NOBLE_WARN("BlamEngine: campaign >4 probe: declaring full roster {} player(s) (0xE8)", declaredPlayers);
+            } else {
+                declaredPlayers = std::min(kCampaignCoopEngineCap, declaredPlayers);
+                NOBLE_INFO("BlamEngine: campaign co-op launch declares {} player(s) (0xE8, stock engine cap {})",
+                           declaredPlayers, kCampaignCoopEngineCap);
+            }
+        }
+        // Diagnostic: force the declared player count regardless of peers (block-validation experiments).
+        static const int forceDeclare = [] {
+            const char* env = std::getenv("NOBLE_COOP_FORCE_DECLARE");
+            if (!env) return 0;
+            const int v = std::atoi(env);
+            return (v >= 1 && v <= 16) ? v : 0;
+        }();
+        if (forceDeclare && connectAddress.empty()) {   // host launch only
+            declaredPlayers = forceDeclare;
+            NOBLE_WARN("BlamEngine: campaign >4 probe: forcing declared players to {} (0xE8)", declaredPlayers);
         }
         launchBlock[0xE8] = static_cast<uint8_t>(declaredPlayers);
         NOBLE_INFO("BlamEngine: launch block declares {} player(s) (0xE8), {} expected peer(s), mode {}",
@@ -1951,7 +1991,14 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 if (peersToWaitFor > 0) {
                     const size_t targetPeers = static_cast<size_t>(peersToWaitFor);
                     const ULONGLONG waitStart = GetTickCount64();
-                    const ULONGLONG deadline = waitStart + 45000;
+                    // Co-op load windows on one machine can be tight; allow the wait window to be configured for
+                    // multi-instance test runs (default stays 45 s).
+                    int waitMs = 45000;
+                    if (const char* waitEnv = std::getenv("NOBLE_COOP_WAIT_MS")) {
+                        const int v = std::atoi(waitEnv);
+                        if (v >= 15000 && v <= 300000) waitMs = v;
+                    }
+                    const ULONGLONG deadline = waitStart + static_cast<ULONGLONG>(waitMs);
                     ULONGLONG lastLog = 0;
                     s_waitingRemoteExpected.store(static_cast<int>(targetPeers), std::memory_order_relaxed);
                     s_waitingRemoteJoined.store(0, std::memory_order_relaxed);
@@ -1973,8 +2020,43 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                         // re-sends its join request, so it is not a reliable readiness signal on its own. Wait for the
                         // real network game-peer count (channels established) instead; the old counter-based check
                         // remains as a late fallback so a session that never reports channels still starts.
-                        const bool ready = channelPeers >= targetPeers ||
-                                           (playersJoined >= targetPeers && elapsed >= 20000ULL);
+                        // Strict channel wait (16-player probe): when NOBLE_COOP_STRICT_CHANNELS is set, ignore the
+                        // over-counting membership counter fallback and wait for real channels only.
+                        static const bool strictChannels = [] {
+                            const char* env = std::getenv("NOBLE_COOP_STRICT_CHANNELS");
+                            return env && env[0] != '0';
+                        }();
+                        // 16-player probe: the engine only creates a player datum once that player's external-launch slot
+                        // reaches state pair 7/5 (channel+0x1320 / channel+0x118C). Wait for every expected peer's slot to
+                        // be launch-ready before starting the simulation, otherwise the last joiner's slot is still at
+                        // 8/3 and the engine gives up (and disbands the campaign session).
+                        static const bool waitSlots = [] {
+                            const char* env = std::getenv("NOBLE_COOP_WAIT_SLOTS");
+                            return env && env[0] != '0';
+                        }();
+                        int slotReady = 0;
+                        if (waitSlots && noble::LobbyPatches::IsCampaignCoop() && m_hModule) {
+                            slotReady = CountLaunchReadySlots(reinterpret_cast<uintptr_t>(m_hModule),
+                                                              static_cast<int>(targetPeers));
+                        }
+                        static const bool waitSlotsOnly = [] {
+                            const char* env = std::getenv("NOBLE_COOP_WAIT_SLOTS_ONLY");
+                            return env && env[0] != '0';
+                        }();
+                        // 16-player probe: precise readiness - the engine has created a game-player datum for every
+                        // expected peer (one player_create success per joining player).
+                        static const bool waitCreates = [] {
+                            const char* env = std::getenv("NOBLE_COOP_WAIT_CREATES");
+                            return env && env[0] != '0';
+                        }();
+                        const size_t createdPlayers = LobbyPatches::GetPlayerCreateSuccessCount();
+                        const bool ready =
+                            (!waitCreates || createdPlayers >= targetPeers) &&
+                            ((waitSlotsOnly && waitSlots && slotReady >= static_cast<int>(targetPeers)) ||
+                             (!waitSlotsOnly &&
+                              (channelPeers >= targetPeers ||
+                               (!strictChannels && playersJoined >= targetPeers && elapsed >= 20000ULL)) &&
+                              (!waitSlots || slotReady >= static_cast<int>(targetPeers))));
                         if (ready) {
                             const int settleMs = settleLonger ? 1200 : 500;
                             NOBLE_INFO("BlamEngine: {}/{} remote player(s) in session (membership: {}, engine peers: {}, elapsed {} ms); settling {} ms for world replication",

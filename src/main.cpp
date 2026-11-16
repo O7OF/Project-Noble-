@@ -354,8 +354,29 @@ uint64_t __fastcall Stage2Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a
 }
 uint64_t __fastcall Stage3Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     const ULONGLONG t0 = GetTickCount64();
+    const char* chain = "";
+    void* frames[24] = {};
+    USHORT frameCount = 0;
+    if (static_cast<int32_t>(a2) == 3) {
+        frameCount = CaptureStackBackTrace(0, 24, frames, nullptr);
+    }
     const uint64_t res = s_origStage3 ? s_origStage3(a1, a2, a3, a4) : 0;
     NOBLE_WARN("engine stage 0x3873C(stage={}) returned after {} ms", static_cast<int32_t>(a2), GetTickCount64() - t0);
+    if (static_cast<int32_t>(a2) == 3 && frameCount > 0) {
+        const uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandleW(L"haloreach.dll"));
+        std::string out;
+        for (USHORT i = 0; i < frameCount; ++i) {
+            const uint64_t addr = reinterpret_cast<uint64_t>(frames[i]);
+            char buf[40];
+            if (base && addr >= base && addr < base + 0x278EE90) {
+                std::snprintf(buf, sizeof(buf), " hr+0x%llX", static_cast<unsigned long long>(addr - base));
+            } else {
+                std::snprintf(buf, sizeof(buf), " 0x%llX", static_cast<unsigned long long>(addr));
+            }
+            out += buf;
+        }
+        NOBLE_WARN("engine stage 0x3873C(stage=3) INITIATOR STACK:{}", out);
+    }
     if (auto logger = spdlog::default_logger()) logger->flush();
     return res;
 }
