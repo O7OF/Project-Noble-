@@ -68,15 +68,17 @@ preserved inside each chunk pair. Chunk capacity: 25 peer records, 49 player rec
 
 | capacity | peer chunks | player chunks | table chunks | chunked shadow bytes | piecewise member-cave size (est.) |
 |---|---|---|---|---|---|
-| 32 (current, stock layout kept) | 1 | 1 | 1 | 0xCB88 (upper bound) | ~50 B (current 41 B cave used) |
-| 64 | 2 | 1 | 1 | 0x10F38 | ~77 B |
-| 128 | 5 | 3 | 1 | 0x261C8 | ~158 B |
+| 32 (current, stock layout kept) | 1 | 1 | 1 | 0xCB88 (upper bound) | 24 B chunk dispatch; stock single-range cave stays 41 B |
+| 64 | 2 | 1 | 1 | 0x10F38 | 53 B (worst kind: peer) |
+| 128 | 5 | 3 | 1 | 0x261C8 | 140 B (worst kind: peer) |
 
-All chunk plans fit inside `kSessionStride` (asserted by the self-test, see section 5). Cost of the chunked model: the
-member-cave entry must grow from 48 to >=160 bytes (53 sites -> ~8.5 KB of cave code, fine), and the pointer-stepping
-loops (9 step caves) and whole-array copy/clear mirrors must hop chunk boundaries instead of assuming one contiguous
-array. The validated plan is to use the chunked model for >32 capacity and keep the proven stock-relative single-block
-layout (biases 0) for 32.
+The self-test also simulates the dispatch itself: for every record index it checks that the per-range constant maps
+both the block-A base and the block-A base + 0x2210 (block B) to the intended chunk offset (`+ (index - first) *
+record`), that chunk pairs end inside `kSessionStride`, and that chunks of one kind cannot overlap. Cost of the
+chunked model: the member-cave entry must grow from 48 to >=160 bytes (worst measured piecewise cave is 140 B at
+128; 53 sites -> ~8.5 KB of cave code, fine), and the pointer-stepping loops (9 step caves) and whole-array
+copy/clear mirrors must hop chunk boundaries instead of assuming one contiguous array. The validated plan is to use
+the chunked model for >32 capacity and keep the proven stock-relative single-block layout (biases 0) for 32.
 
 ## 3. Wire and message limits (measured/bounded, not yet fixed)
 
@@ -111,22 +113,24 @@ external calibration.
 ## 5. How this is validated without 64/128 clients
 
 1. `noble-dev.exe -test-slot-capacity` - headless, validates every layout (offsets, biases, overlap, stride, mask
-   words, extension/message sizes, required wire bits, and the chunked plan: chunk counts/limits, shadow bytes,
-   piecewise cave size), exit code 0/non-zero. Evidence 2026-11-16: 32 unchanged (ext 0x2200, msg 0xA300);
-   64 ext 0x6900 / msg 0xEA00 / peer 6 bits ok / player needs 6 / 2 peer + 1 player chunk, cave ~77 B;
-   128 ext 0xF700 / msg 0x17800 needs framing / peer+player need 7 bits / 5 peer + 3 player chunks, cave ~158 B.
+   words, extension/message sizes, required wire bits, chunk counts/limits, shadow bytes) and **simulates the chunked
+   dispatch**: for every record index it checks that the per-range constant maps both the block-A base and the block-A
+   base + 0x2210 (block B) to the intended chunk offset, that chunk pairs end inside kSessionStride (0x8614 / 0xEAA4 /
+   0x21A14 for 32/64/128) and that chunks of one kind cannot overlap. Exit 0 on 2026-11-16 for all three capacities:
+   32 unchanged (ext 0x2200, msg 0xA300); 64 ext 0x6900 / msg 0xEA00 / peer 6 bits ok / player needs 6 / worst cave
+   53 B; 128 ext 0xF700 / msg 0x17800 needs framing / peer+player 7 bits / 5 peer + 3 player chunks / worst cave 140 B.
 2. Install-level sessions: declare C slots and join with 2 clients (proves shadow storage, message registration,
    encoder/decoder validity at capacity even without C clients).
 3. Forced high slots (`NOBLE_SLOT_HIGH=1`, free-slot scans start at peer 17 / player 16) can place a handful of
-   real clients at slots 17, 18, ... to exercise multiple shadow peers/players end-to-end; extend it per slot once
    real clients at slots 17, 18, ... to exercise multiple shadow peers/players end-to-end; extend it per slot once
    the chunked-layout cave install lands.
 
 ## 6. Ordered work list
 
-1. Install the chunked layout: grow the member-cave entry (48 -> >=160 B), teach the generator to emit piecewise
-   index-range constants (25 peer / 49 player / 726 table records per chunk), and make the 9 pointer-stepping step
-   caves plus the whole-array copy/clear mirrors hop chunk boundaries. Keep the 32 path byte-identical.
+1. Install the chunked layout: grow the member-cave entry (48 -> >=160 B; measured worst case 140 B at 128), teach
+   the generator to emit piecewise index-range constants (25 peer / 49 player / 726 table records per chunk), and
+   make the 9 pointer-stepping step caves plus the whole-array copy/clear mirrors hop chunk boundaries. Keep the 32
+   path byte-identical.
 2. Wire the capacity into `SlotPatch` install behind dev env gates (e.g. `NOBLE_MP_SLOTS=64|128`), one capacity at
    a time, with all-or-nothing byte checks and the install-level validation from section 5.
 3. Widen the membership encoder/decoder fields (peer/player index bits, multi-word masks) and the game-player event

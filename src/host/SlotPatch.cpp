@@ -1031,6 +1031,12 @@ constexpr uint32_t kPeerFirst = 17, kPlayerFirst = 16;
 
 constexpr uint32_t AlignUp16(uint32_t v) { return (v + 0xF) & ~0xFu; }
 
+// Bytes of one piecewise member cave for a given chunk count: stock-path jump + one 19-byte body per chunk
+// (replay original multiply, add constant, jump back) + one cmp/jcc dispatch pair per extra chunk.
+constexpr uint32_t PiecewiseCaveBytes(uint32_t chunks) {
+    return 5 + 19 * chunks + 10 * (chunks > 0 ? chunks - 1 : 0);
+}
+
 constexpr SlotShadowLayout MakeSlotShadowLayout(uint32_t capacity) {
     SlotShadowLayout L{};
     L.capacity = capacity;
@@ -1095,8 +1101,10 @@ constexpr SlotShadowLayout MakeSlotShadowLayout(uint32_t capacity) {
         L.chunkedBytes = cursor;
         L.chunkedFits = cursor <= kSessionStride;
     }
-    // Piecewise member cave: dispatch + one "orig + add + jmp" per chunk + stock fallback.
-    L.memberCaveBytes = 23 + L.peerChunks * 27;
+    // Worst-case piecewise member cave across the three record kinds.
+    L.memberCaveBytes = PiecewiseCaveBytes(L.peerChunks);
+    if (PiecewiseCaveBytes(L.playerChunks) > L.memberCaveBytes) L.memberCaveBytes = PiecewiseCaveBytes(L.playerChunks);
+    if (PiecewiseCaveBytes(L.tableChunks) > L.memberCaveBytes) L.memberCaveBytes = PiecewiseCaveBytes(L.tableChunks);
     return L;
 }
 
@@ -1141,6 +1149,81 @@ constexpr uint32_t kPeerIndexBits = 6;    // membership message: owning peer fie
 constexpr uint32_t kPlayerIndexBits = 5;  // membership message: player index field
 constexpr uint64_t kMax16BitMessage = 0xFFFF;
 
+// ---------------------------------------------------------------------------------------------
+// Chunked dispatch validation (no engine needed). For the future 64/128 install every member cave is a chain of
+// index-range branches: below the first shadow slot it runs stock; in chunk c it replays the original multiply and
+// adds one constant. Because chunk A is placed exactly kBlockDelta before chunk B, the SAME constant maps block-A
+// and block-B record bases into their chunks; this function simulates that for every record index and checks the
+// mapping, the chunk placement, and that chunks of one kind cannot overlap.
+struct CapacityChunk { uint32_t kind; uint32_t firstIndex; uint32_t count; uint32_t aOffset, bOffset; int32_t constant; };
+constexpr uint32_t kMaxCapacityChunks = 32;
+
+int ValidateChunkPlan(const SlotShadowLayout& L) {
+    int failures = 0;
+    struct Kind { uint32_t record, stock, first, entries; };
+    const Kind kinds[3] = {
+        { 0x158, kStockPeerA, kPeerFirst, L.peerEntries },
+        { 0xB0, kStockPlayerA, kPlayerFirst, L.playerEntries },
+        { 0xC, kStockTable, kPeerFirst, L.tableEntries },
+    };
+    CapacityChunk chunks[kMaxCapacityChunks] = {};
+    uint32_t n = 0;
+    uint32_t cursor = 0;
+    for (uint32_t k = 0; k < 3; ++k) {
+        const Kind& K = kinds[k];
+        const uint32_t per = kBlockDelta / K.record;
+        const uint32_t needed = (K.entries + per - 1) / per;
+        for (uint32_t c = 0; c < needed; ++c) {
+            const uint32_t start = K.first + c * per;
+            const uint32_t remain = K.entries - c * per;
+            const uint32_t cnt = remain < per ? remain : per;
+            const uint32_t a = (cursor + 0xF) & ~0xFu;
+            const uint32_t b = a + kBlockDelta;
+            const uint32_t size = cnt * K.record;
+            cursor = b + size;
+            if (b + size > kSessionStride) ++failures;
+            const int32_t C = static_cast<int32_t>(a) - static_cast<int32_t>(K.stock) -
+                              static_cast<int32_t>(K.first) * static_cast<int32_t>(K.record);
+            if (n < kMaxCapacityChunks) chunks[n++] = { k, start, cnt, a, b, C };
+            for (uint32_t i = start; i < start + cnt; ++i) {
+                const uint64_t addA = static_cast<uint64_t>(K.stock) + static_cast<uint64_t>(i) * K.record +
+                                      static_cast<uint64_t>(static_cast<int64_t>(C));
+                const uint64_t wantA = static_cast<uint64_t>(a) + static_cast<uint64_t>(i - K.first) * K.record;
+                if (addA != wantA) ++failures;
+                const uint64_t addB = static_cast<uint64_t>(K.stock + kBlockDelta) +
+                                      static_cast<uint64_t>(i) * K.record +
+                                      static_cast<uint64_t>(static_cast<int64_t>(C));
+                const uint64_t wantB = static_cast<uint64_t>(b) + static_cast<uint64_t>(i - K.first) * K.record;
+                if (addB != wantB) ++failures;
+            }
+        }
+    }
+    // Chunks of one kind must not overlap in either block.
+    for (uint32_t i = 0; i < n; ++i) {
+        for (uint32_t j = i + 1; j < n; ++j) {
+            if (chunks[i].kind != chunks[j].kind) continue;
+            const uint32_t rec = kinds[chunks[i].kind].record;
+            const uint32_t si = chunks[i].count * rec, sj = chunks[j].count * rec;
+            if (RangeOverlaps(chunks[i].aOffset, si, chunks[j].aOffset, sj)) ++failures;
+            if (RangeOverlaps(chunks[i].bOffset, si, chunks[j].bOffset, sj)) ++failures;
+        }
+    }
+    // Piecewise cave size per record kind: stock-path jump + one 19-byte body per chunk + one cmp/jcc dispatch
+    // pair per extra chunk. The install needs one cave entry large enough for the worst kind.
+    const uint32_t peerCave = PiecewiseCaveBytes(L.peerChunks);
+    const uint32_t playerCave = PiecewiseCaveBytes(L.playerChunks);
+    const uint32_t tableCave = PiecewiseCaveBytes(L.tableChunks);
+    const uint32_t worstCave = peerCave > playerCave ? (peerCave > tableCave ? peerCave : tableCave)
+                                                     : (playerCave > tableCave ? playerCave : tableCave);
+    NOBLE_INFO("SlotLayout: cap={:>3} chunk plan: {} chunk(s) (peers {} / players {} / table {}), shadow end 0x{:X}, "
+               "piecewise caves peer {} B / player {} B / table {} B -> worst {} B{}",
+               L.capacity, n, L.peerChunks, L.playerChunks, L.tableChunks, cursor,
+               peerCave, playerCave, tableCave, worstCave,
+               worstCave <= 48 ? "" : " (needs a larger cave entry)");
+    if (L.memberCaveBytes != worstCave) ++failures;   // model and dispatch estimate must agree
+    return failures;
+}
+
 int SlotLayoutSelfTest() {
     int failures = 0;
     const SlotShadowLayout layouts[] = { kSlotLayout32, kSlotLayout64, kSlotLayout128 };
@@ -1179,6 +1262,7 @@ int SlotLayoutSelfTest() {
         if (L.capacity == 32 && (L.peerChunks != 1 || L.playerChunks != 1 || L.tableChunks != 1)) ++failures;
         if (L.capacity == 64 && (L.peerChunks != 2 || L.playerChunks != 1 || L.tableChunks != 1)) ++failures;
         if (L.capacity == 128 && (L.peerChunks != 5 || L.playerChunks != 3 || L.tableChunks != 1)) ++failures;
+        failures += ValidateChunkPlan(L);
     }
     NOBLE_INFO("SlotLayout: {} check(s) failed (0 = all three layouts valid)", failures);
     return failures;
