@@ -16,7 +16,11 @@ param(
     [int]$ScoreboardAt = 0,         # 0 = off
     [int]$RamAbortGb = 26,          # abort if total working set exceeds this
     [string[]]$ExtraHostArgs = @(),
-    [string[]]$ExtraGuestArgs = @()
+    [string[]]$ExtraGuestArgs = @(),
+    # Leave/rejoin test: seconds after all instances are up when the chosen guest is hard-killed and relaunched.
+    [int]$LeaveAt = 0,
+    [int]$RejoinAt = 0,
+    [int]$LeaveGuest = 0
 )
 # Multiplayer N-instance LAN harness for Project Noble (2026-11-16, multiplayer workstream).
 # Host = build\bin\Release, guests = build\bin\Release2..ReleaseN (auto-created skeletons with junctions into
@@ -136,6 +140,7 @@ if ($WaitPeersMs -gt 0) { $env:NOBLE_COOP_WAIT_MS = "$WaitPeersMs" } else { Remo
 $slotArgs = @()
 if ($Slot32) { $slotArgs = @('-slot-patch','-slot-players','32') }
 $procs = @(); $logs = @(); $names = @(); $peaks = @{}
+$script:guestArgsByIndex = @{}
 try {
     foreach ($d in $dirs) { Apply-LowSettings $d }
     for ($i = 1; $i -lt $Players; ++$i) {
@@ -169,6 +174,7 @@ try {
         if ($ExtraGuestArgs.Count -gt 0) { $guestArgs += $ExtraGuestArgs }
         $g = Start-Test -file (Join-Path $d 'noble-dev.exe') -cwd $d -argList $guestArgs
         $procs += $g; $logs += $log; $names += ("GUEST$($i+1)")
+        $script:guestArgsByIndex[$i] = $guestArgs
         Write-Output ("guest " + ($i+1) + " pid " + $g.Id)
         if ($i -lt ($Players - 1)) { Start-Sleep -Seconds $GuestStagger }
     }
@@ -177,7 +183,31 @@ try {
     $start = Get-Date
     $peakTotal = 0.0
     $aborted = $false
+    $left = $false; $rejoined = $false
+    $leaveIndex = $LeaveGuest
+    if ($leaveIndex -le 0 -or $leaveIndex -ge $Players) { $leaveIndex = $Players - 1 }
     while (((Get-Date) - $start).TotalSeconds -lt $Seconds) {
+        $elapsed = ((Get-Date) - $start).TotalSeconds
+        if ($LeaveAt -gt 0 -and -not $left -and $elapsed -ge $LeaveAt -and $leaveIndex -lt $procs.Count) {
+            if (-not $procs[$leaveIndex].HasExited) { Stop-Process -Id $procs[$leaveIndex].Id -Force }
+            $left = $true
+            Write-Output ("leave: killed GUEST" + ($leaveIndex + 1) + " at " + [math]::Round($elapsed,1) + " s")
+        }
+        if ($RejoinAt -gt 0 -and $left -and -not $rejoined -and $elapsed -ge $RejoinAt -and $leaveIndex -lt $procs.Count) {
+            $d = $dirs[$leaveIndex]
+            $rlog = "client$($leaveIndex + 1)-rejoin-$runTag.log"
+            Remove-Item (Join-Path $d $rlog) -ErrorAction SilentlyContinue
+            $src = $script:guestArgsByIndex[$leaveIndex]
+            $rargs = @()
+            for ($a = 0; $a -lt $src.Count; ++$a) {
+                if ($src[$a] -eq '-log' -and $a + 1 -lt $src.Count) { $rargs += @('-log', $rlog); $a++ } else { $rargs += $src[$a] }
+            }
+            $g = Start-Test -file (Join-Path $d 'noble-dev.exe') -cwd $d -argList $rargs
+            $procs[$leaveIndex] = $g
+            $logs[$leaveIndex] = $rlog
+            $rejoined = $true
+            Write-Output ("rejoin: relaunched GUEST" + ($leaveIndex + 1) + " pid " + $g.Id + " at " + [math]::Round($elapsed,1) + " s")
+        }
         $ps = @(Get-Process noble-dev -ErrorAction SilentlyContinue)
         if ($ps.Count -eq 0) { break }
         $ws = 0.0
