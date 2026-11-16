@@ -6,7 +6,7 @@
 
 > **How to read it.** Sections 1-4 are the current state and the multiplayer workstream; sections 5-6 are engine subsystem references; 7 is the day-to-day runbook; 8 is the failure archive and the genuinely open questions; the appendices are quick-reference tables. Claims carry a confidence tag; when two notes disagree the newer one wins and the discrepancy is called out.
 
-> **Version stamp.** Project Noble **v0.20.9**, repo `D:\Project-Noble-Closed-Source`, branch `wip-merge`, HEAD **`e032f5d`** (a merge of `wip-merge` @ `fbefd61` - the multiplayer workstream, settings persistence and diagnostics - and `origin/main` @ `00e203e`, the v0.20.9 release line). Both branches are pushed and identical at that commit. Engine reference: MCC `haloreach.dll` build 1.3528.0.0, SHA-256 `738dd2d2...0894`, image base `0x180000000`. Document built 2026-11-16. All RVAs are `haloreach.dll` RVAs (Ghidra address = `0x180000000` + RVA); a game update invalidates them.
+> **Version stamp.** Project Noble **v0.20.9**, repo `D:\Project-Noble-Closed-Source`, branch `wip-merge`, HEAD **`1fbd952`** (latest upstream merge `9690f16` brought in the v0.20.9 line; commits on top are the high-slot seat fix `0fdcf97`, mod-version diagnostics `2eec1b4`/`1e853ec`, and the 32/64/128 capacity layout model + headless self-test `1fbd952`; this documentation commit sits on top). Both branches are pushed and identical at that commit. Engine reference: MCC `haloreach.dll` build 1.3528.0.0, SHA-256 `738dd2d2...0894`, image base `0x180000000`. Document built 2026-11-16. All RVAs are `haloreach.dll` RVAs (Ghidra address = `0x180000000` + RVA); a game update invalidates them.
 
 **Confidence legend**
 
@@ -62,9 +62,9 @@ Only `noble-dev` and `noble-client` are release gates. The dedicated server must
 | Fact | Value |
 |---|---|
 | Version | **0.20.9** in `src/common/Version.hpp`; dev builds report `0.20.9-dev (Closed Source)` |
-| Branch | `wip-merge` @ **`9952b10`** (tracked tree clean; large maps/packs/saves are not in git) |
-| Merge | `e032f5d` merges `wip-merge` `fbefd61` (multiplayer work + settings/reload fixes + build diagnostics) with `origin/main` `00e203e` (v0.20.9 release line) |
-| Branch parity | `main` and `wip-merge` are pushed and identical at `9952b10` |
+| Branch | `wip-merge` @ **`1fbd952`** (tracked tree clean; large maps/packs/saves are not in git) |
+| Merge | `9690f16` merged upstream `7cbe838` (v0.20.9 changelog notes); the commits on top are Noble-side fixes (high-slot seat, mod-version diagnostics, capacity layout model) |
+| Branch parity | `main` and `wip-merge` are pushed and identical at `1fbd952` |
 | Release tags | the `v0.20.*` line is published through the release repo; the local clone carries tags only up to the `v0.19.x` line |
 
 ### 1.4 The v0.20.0-v0.20.9 release line
@@ -120,13 +120,13 @@ History: upstream force-disabled the Extended profiles (commit `4407101`) after 
 
 | Area | State | Confidence |
 |---|---|---|
-| Release line v0.20.0-v0.20.9 | shipped and pushed; `main` = `wip-merge` = `e032f5d` | proven |
+| Release line v0.20.0-v0.20.9 | shipped and pushed; `main` = `wip-merge` = `1fbd952` | proven |
 | Shipped multiplayer path (16-slot engine session) | works at **2 and 5 players** on one machine with stock engine limits; join/leave/rejoin proven | proven |
 | 16-player multiplayer acceptance | not yet run - blocked by one-machine RAM, needs 3-4 PCs (see 4.5) | proven absence |
 | High-slot (peer 17 / player 16) membership layer | fixed; peer 17 reaches peer state 8 and the membership delta is accepted | proven |
-| High-slot join-in-progress **seat** path | still refuses the player (host boots peer 17 every frame, reason 9) | proven/open |
-| 32-player mode | dev-gated; the 114-site patch installs, a declared-32 session joins with 2 players, no 17th seat yet | proven at install level |
-| 64/128 players | not started; needs protocol widening (32-peer DWORD mask ceiling) | code/unverified |
+| High-slot join-in-progress **seat** path | **fixed** (`0fdcf97`): peer 17 stays seated, both sides enter gameplay, 0 boots/closes | proven (2-instance high-slot run) |
+| 32-player mode | dev-gated; **120-site** patch installs, high-slot seat works (peer 17 plays), declared-32 session joins with 2 players; setter churn and real 17-32 players remain | proven at install + seat level |
+| 64/128 players | capacity layout model + headless self-test done (`1fbd952`); wire widening, two-block A/B site classification, 128 message framing, pools and UI remain (see `docs/02-engine-reference/TOPIC-scaling-64-128.md`) | code + synthetic test |
 | Lobby/picker/server-browser honesty | implemented (single effective-seat source, greyed 24/32, live roster, browser verdicts) | proven for the 2-player LAN check |
 | Settings persistence after a match | fixed 2026-11-16: the menu process re-reads `settings.json` after the match child exits (and on a fresh SETTINGS open), so in-match changes are shown and never overwritten by the stale pre-match copy | proven (two-process reload test + 2-player smoke) |
 | Campaign co-op | 4 players stock works; more than 4 parked (fails at the network session-start path) | proven |
@@ -302,7 +302,7 @@ These two log lines were repeatedly misread as causes; they are consequences:
 | `CLOSE channel ... reason 10` | host received the guest's out-of-band **connect-closed** (OOB type 7) and tore the channel down | `FUN_180429AA4` case 7 -> `FUN_18043B98C(channel, 10)` at `0x429BEE` |
 | `CLOSE channel ... reason 14` (guest) | channel no longer referenced by a session | engine teardown |
 | `CONNECT REFUSED: id N reason 3` | **this process sent** a connect-refuse (the hook is on the encoder at `0x42459C`), usually stale reconnect attempts after its session died | sender `FUN_1803F8C60` -> `0x3F8D6F` |
-| `boot_peer(17, reason 9)` | host's own seat refusal for the joining player; Noble currently suppresses it while the seat path is being fixed | `src/hooks/LobbyPatches.cpp` |
+| `boot_peer(17, reason 9)` | host's own seat refusal; this was the high-slot blocker until the seat check was caved (`0fdcf97`, 4.2); the hook remains as a safety net | `src/hooks/LobbyPatches.cpp` |
 
 Reading rule: fix the first divergence (state/table/payload), not the teardown that follows it.
 
@@ -314,9 +314,9 @@ Reading rule: fix the first divergence (state/table/payload), not the teardown t
 | Shipped policy (since 2026-11-16) | multiplayer sessions keep the engine's **stock 16 slots**; expansion only with `NOBLE_MP_SLOTS32=1` **and** the 32-player slot patch active, capped at 32 | proven |
 | `s_maxCoopPlayers` | 16 (campaign/Firefight) | code |
 | The 128 regression | a restored `set_slot_counts` detour expanded every MP/Forge session to 128, breaking *all* joins (host CLOSE 10, guest CLOSE 14, CONNECT REFUSED 3, 4607 setter calls in 75 s). Fixed by keeping stock 16 and no longer overriding `publicSlots == 0` (the engine's join lock). | proven |
-| 32-slot dev mode | `-slot-patch -slot-players 32` + `NOBLE_SLOT_PLAYERS_UNSAFE=1`; 114 slot address sites (67 table + 47 member caves) / 23 masks / 139 bounds / membership payload 0xA300; declared-32 session joins with 2 players but the setter churns ~62x/s (3713 calls in 60 s) because the engine re-applies 16 | proven |
-| 17-32 seats | not usable yet: the high-slot join does not seat the player (4.2) | proven |
-| 33-128 seats | impossible without protocol widening (DWORD peer mask) | code |
+| 32-slot dev mode | `-slot-patch -slot-players 32` + `NOBLE_SLOT_PLAYERS_UNSAFE=1`; 120 slot address sites (67 table + 53 member caves) / 23 masks / 139 bounds / membership payload 0xA300; declared-32 session joins with 2 players; the setter still churns ~62x/s (engine re-applies 16) | proven |
+| 17-32 seats | usable in the dev high-slot proof: peer 17 / player 16 seats and plays (4.2); a real 17-32 player run is hardware-blocked | proven (dev seat) |
+| 33-128 seats | not wired yet: 64 fits the 6-bit peer index and a 16-bit message length; 128 needs wire widening and message framing (`docs/02-engine-reference/TOPIC-scaling-64-128.md`) | code + self-test |
 
 The slot-count hook must be located by a robust fallback (pattern scan first, then the proven RVA `0x39C5C8`): a silent pattern-miss once left the hook uninstalled for weeks, and the later restore caused the 128 regression. Log the resolved source at startup. *proven.*
 
@@ -353,9 +353,9 @@ Two hard lessons from getting here:
 1. **The 128 -> 16 regression fix is the foundation.** Restoring the `set_slot_counts` detour (after its pattern stopped matching) made every multiplayer/Forge session declare 128 slots, which broke join for *every* player count, not just large ones. The shipped policy now keeps the engine's 16.
 2. **Read the direction of the arrow.** `CONNECT REFUSED ... reason 3` is emitted by *this* process; `CLOSE ... reason 10` is the host reacting to a guest that already gave up. Both are downstream of the first table or payload divergence.
 
-### 4.2 High-slot join (peer 17 / player 16): membership fixed, seat path open
+### 4.2 High-slot join (peer 17 / player 16): fixed - seats and plays
 
-The high-slot test uses `NOBLE_SLOT_HIGH=1` (dev only): free-slot searches start at peer 17 (`0x3953BC`) and player 16 (`0x39D69A`), and the membership decoder's owning-peer limit is raised 16 -> 31 (`0x4273B0`). The goal is a real >16 seat, which is the gate to 32 players.
+The high-slot test uses `NOBLE_SLOT_HIGH=1` (dev only): free-slot searches start at peer 17 (`0x3953BC`) and player 16 (`0x39D69A`), and the membership decoder's owning-peer limit is raised 16 -> 31 (`0x4273B0`). This is the gate to real >16 seats.
 
 **Engine state machine (code, verified in disassembly):**
 
@@ -366,27 +366,29 @@ The high-slot test uses `NOBLE_SLOT_HIGH=1` (dev only): free-slot searches start
 | 7 -> 8 | `FUN_180392DB0`, readiness test `0x393191..0x39349D` | every player mapped to the peer must be "ready": mapping == -1 **or** player record `+0x1C != -1` |
 | 8 consumed | membership consumer `FUN_18039E47C` | applies the delta; final consistency/checksum check over the block vs payload `+0x2548`; mismatch = `ret 0` + membership reset |
 
-**The 2026-11-16 fix (commit `48cd1d2`, with `c33ef10`):** the membership delta was rejected because the type-27 peer-properties handler still used stock peer math (`0x39D23E` / `0x39F04E` / `0x39F0C0`): for peer 17 its `0x120`-byte property copy overwrote player 0/1 records and set player 0's slot dword to **4**. The membership wire slot field is 2 bits and the engine encoder does not mask it, so slot 4 leaked into the preceding 6-bit peer field - the host sent `peer 0 slot 4`, the guest decoded `peer 1 slot 0`, the checksum diverged and the consumer reset the session. Fixes:
+**Fix 1 - membership data (`48cd1d2`, with `c33ef10`):** the type-27 peer-properties handler used stock peer math (`0x39D23E` / `0x39F04E` / `0x39F0C0`): for peer 17 its 0x120-byte property copy overwrote player 0/1 records and set player 0's slot dword to **4**. The wire slot field is 2 bits and the encoder does not mask it, so slot 4 leaked into the preceding 6-bit peer field (host sent `peer 0 slot 4`, guest decoded `peer 1 slot 0`) and the checksum diverged. Fixed with three caves plus a producer-side invalid-slot sanitiser; peer 17 then reached state 8 and the delta was accepted on both sides.
 
-- three missing caves for the msg-27 peer math (47 member caves total), and
-- a producer-side invalid-slot sanitiser in `SlotMessage.cpp` (repairs a wire-unrepresentable slot from the authoritative mapping table before the payload and its checksum are built).
+**Fix 2 - the seat path (`0fdcf97`):** the host still called `boot_peer(17, reason 9)` every frame. The culprit was `FUN_18044FC94`, the per-frame duplicate-user/seat check: its loop bounds had already been raised to 32 (SlotBounds `0x44FF31` / `0x44FF8B` / `0x44FFC4`) but its peer stride at `0x44FF46` was stock, so peers >= 17 read player-record memory and the check kept matching the joining peer. Six member caves were added: `0x44FF46` (seat check peer stride) plus player-add acceptance `0x397424` / `0x397503` / `0x39752A` and queued player-add apply `0x39FB62` / `0x39FB7D`. The patch set is now **53 member caves / 120 slots address sites**, all byte-checked against the stock DLL.
 
-Result (proven with `NOBLE_SLOT_PROBE=1` + `NOBLE_SLOT_HIGH=1`): peer 17 reaches **state 8 on both sides**, the guest **accepts** the delta (`ret 1`, no reset, sequence advances, peer mask `0x20001` / player mask `0x10001`, session state 6 with local peer 17 record state 8).
+**Result (2-instance `NOBLE_SLOT_HIGH=1` run, 2026-11-16):** host `peermask 00020001 pmask 00010001`, peer states `p0:8 p17:8`, **0 BOOT lines**; membership producer sends peer 17 state 8 + `plr[0] idx 16`; guest consumer `ret 1` on every delta; host `game session started` 13:58:43 and guest 13:59:02; no CLOSE 10, no CONNECT REFUSED, no crash. The guest plays as peer 17 / player 16.
 
-**Remaining blocker - the join-in-progress seat path.** After msg 27 the host still calls `boot_peer(17, reason 9)` every frame (Noble suppresses it and logs `keeping peer 17`), i.e. the engine's player-add/accept path still refuses to seat the player; the guest channel closes with reason 14 about 19 s later and the guest returns to the lobby cleanly. The still-uncaved sites on that path:
+**Multi-high-slot probe (4 instances):** two high peers seat simultaneously (host peer mask `0x00060001`, states `p0:8 p17:8 p18:8`); the third guest fell back to a normal slot and channels closed. Whether that is the same-PC shared identity being treated as a duplicate user or a real limit is still open (retest with distinct accounts).
 
-| Site | RVA | Role |
-|---|---|---|
-| `can_accept_player_join_request` | `0x39740C`, `0x397503`, `0x39752A` | non-served refusal path reached for peer >= 17 |
-| queued player-add apply | `0x39FB62`, `0x39FB7D` | queued add/update apply path |
-
-Also open on this path (same class as the msg-27 bug): a 17-entry session parameter at `session+0x60A60` left at 17 by a stopgap (writes for peer >= 17 are skipped, and the parameter is also network-encoded), and a handful of fixed 16/17-entry tables that were never grown (`0x41F510` / `0x40A760` 16 x `0xA0`; 17 x 6 stack tables at `0x41E884` / `0x41F510` / `0x41FBE8`; 17 x `0xC` at `0x39C6B4`). Which of those actually gate the seat is **uncertain**; the seat-path trace decides.
+**Still open, carried from the inventory:** the identity of the stray slot writer (the producer sanitiser neutralises it), the 17-entry session parameter at `session+0x60A60` and a handful of fixed 16/17-entry tables (4.7); none of them block the proven single-seat path.
 
 ### 4.3 32, 64 and 128 players - plan status
 
 **32 players (milestone 3) - dev-gated, hardware-blocked end-to-end.** The 32-player patch set is large and byte-checked all-or-nothing; a session can be *declared* with 32 slots and joins with 2 players. Two problems remain: (a) the high-slot seat path above, (b) the host calls `set_slot_counts` about 62 times per second because the engine re-applies 16 and the hook re-expands to 32 - this needs the engine's own session-creation slot count raised (or a one-shot latch) rather than post-hoc expansion. A real 32-player run also needs 32 engine sessions, which is far beyond one machine (4.5).
 
-**64/128 players - not started, protocol work first.** The peer mask is a 32-bit word and the 32-player membership message already uses its maximum field widths (6-bit peer count, 5-bit player index); going above 32 requires a protocol version bump plus mask/loop widening across the network code. No later MCC engine has more than 16 player slots, so this is original architecture work with no cross-game blueprint.
+**64/128 players - capacity model done, wiring is the work.** A constexpr shadow-layout model plus a headless self-test (`-test-slot-capacity`, commit `1fbd952`) validates the three capacities without any engine or clients:
+
+| capacity | shadow blocks/session | extension bytes | message size | mask words | peer index bits | player index bits |
+|---|---|---|---|---|---|---|
+| 32 (current) | 1 | 0x2200 | 0xA300 | 1 | 6 (patched) | 5 (patched) |
+| 64 | 2 (A/B) | 0x6900 | 0xEA00 (fits 16-bit length) | 2 | 6 (at the field's ceiling) | 6 (needs widening) |
+| 128 | 2 (A/B) | 0xF700 | 0x17800 - exceeds 64 KiB, needs framing | 4 | 7 (needs widening) | 7 (needs widening) |
+
+What remains is the ordered list in `docs/02-engine-reference/TOPIC-scaling-64-128.md`: per-site A/B shadow-block classification of the caves/steps, dev-gated capacity install, membership encoder/decoder widening (peer/player index bits, multi-word masks, game-player event index), the 128 message-size/framing question, pool/session-slot-count raises, setter-churn fix and the UI/harness generalization. 64 is the natural next ceiling because the current peer-index field tops out at 64; no later MCC engine has more than 16 player slots, so this remains original architecture work.
 
 **Reach Renaissance (RR) reference - use the real numbers.** The external RR project (`v0.1.50` at the time of study) is an existence proof and a UX reference only; no RR code, data, assets, strings, profile names or ports may be copied. Facts established from a read-only study of its install and Tyler's existing run logs:
 
@@ -449,14 +451,13 @@ Known remaining UI gap: guest display names on direct/LAN launches are synchroni
 
 ### 4.7 Remaining blockers and the next concrete steps
 
-1. **Seat path (critical):** add byte-checked caves for `0x39740C` / `0x397503` / `0x39752A` (`can_accept_player_join_request`) and `0x39FB62` / `0x39FB7D` (queued player-add apply); run one high-slot attempt per batch. Pass criteria: host producer stays at 2 players after the ack, peer 17 stays at state 8 on both sides, no CLOSE 10, no CONNECT REFUSED 3, match keeps simulating.
-2. **Name the stray slot writer.** A hardware write watchpoint on `session+0x1750` (player 0 record `+0x10`) plus hooks on the player-add helpers (`0x39D8A8` add, `0x39D620` add/update, `0x39FB34` queued apply) in the high-slot run; then cave the guilty writer. The producer sanitiser neutralises the symptom, not the cause.
-3. **Grow the 17-entry session parameter** at `session+0x60A60` properly: storage, the `0x110`-byte stack copies in `0x3FF588`, getters and its network encoding; delete the "not set for peer 17" stopgap.
-4. **Re-check the fixed 16/17-entry tables** (`0x41F510`, `0x40A760`, `0x41E884`, `0x41FBE8`, `0x3C0248`) only after the seat trace points at them - an earlier "fixed table" theory turned out to be a symptom of the shadow peer-table reset bug.
-5. **Two-PC real join**, same build and layout id (`0x03010400`), then a 16-player run across 3-4 PCs x 4-5 instances. Verify the pinned-limit gating on the real join path first (3.9).
-6. **Stop the 32-slot declaration churn** and then attempt a 32-player run across machines.
-7. **Synthetic membership self-test** before any >16 real peers: fill a 32/32 payload, encode+decode through the engine wrappers (`0x423D88` / `0x423E40`), compare; check the third decode caller at `0x442394` (static buffer `0x4E3BB80`) can hold `0xA300` bytes. This is the one wire path that has never run at 32.
-8. **64/128 design** (protocol bump, mask widening) stays behind an explicit go-ahead.
+1. **Multi-high-slot validation.** Two high peers seat at once; the third guest still falls back/closes. Retest with distinct accounts/profiles (the multi-instance harness shares one identity) before treating it as a limit, and extend the forced-slot test to peers 18/19/20.
+2. **Name the stray slot writer.** A hardware write watchpoint on `session+0x1750` (player 0 record `+0x10`) plus hooks on the player-add helpers (`0x39D8A8`, `0x39D620`, `0x39FB34`) names the writer; the producer sanitiser only neutralises the symptom.
+3. **Grow the 17-entry session parameter** at `session+0x60A60` properly: storage, the `0x110`-byte stack copies in `0x3FF588`, getters and its network encoding; delete the "not set for peer 17" stopgap. Re-check the fixed 16/17-entry tables (`0x41F510`, `0x40A760`, `0x41E884`, `0x41FBE8`, `0x3C0248`) once the trace points at them.
+4. **Stop the set-slot-count churn** (~62x/s): raise the engine's own session-creation slot count (or latch the expansion) instead of post-hoc re-expansion - needed before any 32/64/128 run.
+5. **16-player real acceptance:** same build and layout id (`0x03010400`) on 3-4 PCs x 4-5 instances; verify the pinned-limit gating on the real join path first (3.9).
+6. **64/128 capacity work:** follow `docs/02-engine-reference/TOPIC-scaling-64-128.md` (A/B site classification, dev-gated install, wire widening, 128 framing, pools, UI). Validate every step with `-test-slot-capacity`, install-level declared-capacity sessions and the forced high-slot tests until real clients are available.
+7. **Dedicated server** is still a stub (no engine session), so headless large-session testing remains impossible without the multi-PC rig.
 
 ### 4.8 Pass / fail signatures
 
@@ -464,7 +465,7 @@ Known remaining UI gap: guest display names on direct/LAN launches are synchroni
 |---|---|
 | Join worked (normal slot) | host `SEND msg 26` + `RECV msg 27/35`, producer 2 peers/2 players, both sides `game session started at frame N`, guest `launch 11 map 2 (running)`, type-44 stream |
 | Join failed | only messages 8/22/25 and no 26/27/35 |
-| High-slot pass | host producer stays >= 2 players after the ack, peer 17 state 8 on both sides, delta `ret 1`, no CLOSE 10 / REFUSED 3, guest can leave and rejoin |
+| High-slot pass | **achieved 2026-11-16**: host producer stays at 2 players after the ack, peer 17 state 8 on both sides, delta `ret 1`, no BOOT lines, no CLOSE 10 / REFUSED 3, both sides `game session started` (leave/rejoin at peer 17 not yet re-tested) |
 | Fail signatures | `CLOSE ... reason 10`, `CONNECT REFUSED ... reason 3 (hr+0x423E2E)`, guest `map 0 (none)`, `FATAL EXCEPTION` / `0xC0000005` / crash dump |
 
 ---
@@ -670,7 +671,7 @@ The slot patch is generated, not hand-written: `tools\limits\gen_sites.py`, `gen
 | Campaign session ended in its first frame; Sword Base match ended ~25 s in; `GAME OVER reason 0` right after `game session started` | runtime beam pools added ~9.2 MB to bank 3 (58.6 -> 68.05 of 67.04 MB); unbounded bump allocator corrupted state | `BankRoomFor` guard in `PoolResize.cpp`; proven (2.5) |
 | Every multiplayer join broke (including 2 LAN instances): host CLOSE reason 10, guest 14, rejoin REFUSED 3 | restored `set_slot_counts` detour expanded every MP/Forge session to 128 declared slots | keep stock 16; expansion only under the dev 32-slot mode; proven by the 2- and 5-player runs |
 | High-slot guest rejected the membership delta (host sent `peer 0 slot 4`, guest decoded `peer 1 slot 0`) | type-27 peer-properties handler used stock peer math, writing into player 0/1 records and corrupting player 0's slot (2-bit wire field, unmasked encoder) | 3 caves + producer-side invalid-slot sanitiser; peer 17 now reaches state 8 and the delta is accepted (4.2) |
-| High-slot player removed ~84 ms after the ack; producer 2 -> 1 players | multiple candidates over time; the current known gate is the join-in-progress seat path (`can_accept_player_join_request` / queued player-add) which still boots peer 17 | open; uncaved sites listed in 4.7 |
+| High-slot peer booted with `reason 9` every frame; player 16 never kept its seat | `FUN_18044FC94` duplicate-user/seat check read the peer record with stock 0x158 math, so peer 17 read player-record memory and matched | 6 member caves (`0x44FF46` + player-add acceptance + queued apply); peer 17 seats and plays (4.2) |
 | Scoreboard/loading roster showed 1 row while 5 players were in the session | rows were seeded from the pre-game master-server roster, absent in LAN/direct sessions | roster/loading surfaces now size from the live engine game-player table; 2-row LAN proof |
 | Settings reset to defaults on launch | start-up migration copied the newest mirror (`Documents\Noble Launcher\data`, `%APPDATA%\ProjectNoble\data`) back over the saved file | first-run-only migration, atomic per-process save; shipped v0.20.2/v0.20.6 |
 | Firefight join-in-progress dropped the joiner to the main menu | host sent refusal reason 3 and/or `AbortGame(reason=6)` 11 ms after the joiner's channel closed | refusal-3 drop for active Noble sessions (v0.20.5) and logged `AbortGame(reason=6)` suppression (v0.20.7) |
@@ -775,10 +776,10 @@ The slot patch is generated, not hand-written: `tools\limits\gen_sites.py`, `gen
 | Path | What it is |
 |---|---|
 | `docs/00-README-START-HERE.md` | index of the 2026-11-15 documentation packet (its state blocks describe v0.19.103; superseded by this file) |
-| `docs/multiplayer-session-2026-11-16.md` | newest multiplayer status: fixes, 5-player evidence, high-slot/seat blocker, harness quick reference |
+| `docs/multiplayer-session-2026-11-16.md` | multiplier status of the 2026-11-16 session: fixes, 5-player evidence, high-slot history (the seat blocker it describes was fixed in `0fdcf97`), harness quick reference |
 | `docs/ANTI-REVERSING.md` | what the release build hides and how to verify it (7.5) |
 | `docs/01-guides/` | modder guide (68 hooks with MCC RVAs, launch flags, tooling, variant rules) and player guide (Firefight, Armory, appearance) |
-| `docs/02-engine-reference/` | retail -> MCC address table, master upgrade opportunity list (68 items), decompile index, TOPIC chapters: networking, AI/pathfinding/objectives, armour/appearance/armory, lighting/rendering |
+| `docs/02-engine-reference/` | retail -> MCC address table, master upgrade opportunity list (68 items), decompile index, TOPIC chapters: networking, AI/pathfinding/objectives, armour/appearance/armory, lighting/rendering, **scaling past 32 players (64/128 capacity plan)** |
 | `docs/03-qa-and-release/` | QA verification log, stabilization report, stage-1 status (pool inspector readings), release draft |
 | `docs/04-project-state/` | project start-here, master task list, session handoffs, workflow ledger, reference library |
 | `docs/05-research-and-prompts/` | visor colour and armour-effect RE notes, hex-number bug root cause + runtime check, decompile notes, network boundary note, community requests |
