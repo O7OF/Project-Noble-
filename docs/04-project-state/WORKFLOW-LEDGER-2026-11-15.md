@@ -264,3 +264,10 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
 - Added dev flag `-armor-primary-test <0..29>` for match captures; agreed direction: generate flame variant palettes from
   the 30 Reach primary colours (kReachColors) and derive the flame colour from the primary index, instead of 30 separate
   Armory effect rows. Still blocked on ext-effect-tag/custom-particle rendering; evidence in the RE doc.
+
+### 2026-11-16 18:55 - #15-B root cause: engine caps unit attachments (first 10 only)
+- Isolation proved slot-9 extra effect attachment renders (extra flames +23% pixels) but slots 10..13 are ignored, so only
+  one free effect-tag attachment exists with the 9 stock unit attachments. 30 colours need either an engine attachment-cap
+  patch, effect-tag location block extension, or dropping stock attachments (rejected).
+- Clean state restored (biped 9 attachments, change color none, map rebuilt); blue variant still verified. Next: RE the
+  attachment runtime limit, then generate primary-palette variants + auto/selectable armory UI.

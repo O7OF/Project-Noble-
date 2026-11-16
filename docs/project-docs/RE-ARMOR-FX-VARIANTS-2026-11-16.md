@@ -206,3 +206,30 @@ automatically from the player's primary colour index instead of adding 30 separa
 swap in the generator (primary RGB list + `legendary_flame_pri_<name>` naming, pmcg entry index = 7 + primary index)
 and a mapping in `ReachHost`/`ReachArmory`; it does not fix the still-open ext-effect-tag/custom-particle render
 blocker, which is the next debugging step.
+
+## 2026-11-16: ROOT CAUSE of the ext-tag failure - engine only instantiates the first 10 unit attachments
+
+The ext-effect-tag variants were invisible because of a **unit attachment slot limit**, not the particle assets:
+
+* The stock `spartans.biped` has 9 attachments (indices 0..8), including the `armor_fx.effect` attachment at index 5.
+* Clean isolation: keeping only **one** extra attachment (slot 9, `armor_fx_ext0.effect`) and pointing its event at the
+  stock location marker `armor_fx_00` with the stock `head_fire.particle` produced extra flames on top of the stock ones
+  (orange-bright pixel count 3489 vs 2835 baseline, flame-region mean diff 21.1) -
+  `armor-fx-extra-attachment-slot9-2026-11-16.png`. So slot 9 works.
+* Effect tags placed at slots 10..13 (`armor_fx_ext1..4.effect`) never rendered - selecting their variants produced no
+  flames at all, even with stock particles at stock markers. The engine appears to instantiate only the first **10** unit
+  attachments.
+* This explains all earlier contradictions: the diagnostic duplicate stock attachment was at slot 14 (ignored), and the
+  one genuinely visible extra effect was always the slot-9 attachment.
+
+Implication for 30 variants: with 9 stock attachments there is only **one** free effect-tag attachment slot (6 locations),
+so one effect tag can host at most 6 new colours. Options:
+1. **Patch the engine attachment limit** (find the runtime cap/array size for object attachments and raise it to e.g. 24)
+   - allows 5 extra effect tags = 30 colours, keeps all stock attachments;
+2. **Extend the effect tag's `locations` block by binary/tag-format editing** (ManagedBlam Save drops added locations) -
+   one effect tag with 30 locations, one attachment;
+3. Free attachment slots by removing stock attachments (flashlights/damage/out-of-bounds/bungie light) - not acceptable.
+
+Clean state restored: biped back to its original 9 attachments, attachment `change color = none`, diagnostic tag edits
+left inert, Forge World rebuilt; blue variant still verified working. Next: RE the attachment runtime limit (or the effect
+tag location block) and then generate the 30 primary-palette variants (auto-match + selectable per Tyler's direction).
