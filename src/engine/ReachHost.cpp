@@ -75,6 +75,22 @@
 #include <d3dcompiler.h>
 #include <wrl/client.h>
 
+namespace {
+// Dev-only: -armor-effect-item <id> overrides the profile armor-effect item id (used with -armor-fx-probe to test
+// custom variant ids before the pmcg list/model assets exist). Returns 0 when absent/invalid.
+uint32_t DevArmorFxItemOverride() {
+  int argc = 0;
+  LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  uint32_t out = 0;
+  for (int i = 1; argv && i + 1 < argc; ++i)
+    if (_wcsicmp(argv[i], L"-armor-effect-item") == 0) {
+      const int v = _wtoi(argv[i + 1]);
+      if (v > 0) out = static_cast<uint32_t>(v);
+    }
+  if (argv) LocalFree(argv);
+  return out;
+}
+}
 namespace noble {
 
 void* ReachHost::s_vtable[160] = { nullptr };
@@ -1529,7 +1545,8 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // The engine copies them to appearance-record bytes +0x18 (Spartan, pmcg list 80) and +0x19
         // (Elite, pmcg list 8C) - mixing species into +0x68 is what used to make an armor effect pick
         // the Elite variant. (Verified in haloreach.dll 0x2EDA08 / 0x1055EC.)
-        put(0x68, kEffect + spEffectOff);
+        const uint32_t devFxItem = DevArmorFxItemOverride();
+        put(0x68, devFxItem ? devFxItem : kEffect + spEffectOff);
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + visorOff);
         // Armory set indices: 0..7 = MCC's eight Elite sets (194..201), 8 = Honor Guard, 9 = Counselor,
@@ -1537,7 +1554,7 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // entries in the appearance record (ElitePack) - so the profile set item stays at Minor (194).
         const int eliteSet = num(el, "armor_set", 0, 10, 0);
         put(0x8C, kEliteSet + (eliteSet < 8 ? eliteSet : 0));
-        put(0x90, kEliteEffect + elEffectOff);
+        put(0x90, devFxItem ? devFxItem : kEliteEffect + elEffectOff);
         put(0x94, VoiceItem(str(sp, "voice_id")));
         const int primaryColor = (species == 1 && el.contains("primary_color"))
             ? num(el, "primary_color", 0, 29, 1)
