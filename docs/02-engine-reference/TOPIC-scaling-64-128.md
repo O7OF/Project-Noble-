@@ -80,6 +80,12 @@ chunked model: the member-cave entry has been grown from 48 to 256 bytes (worst 
 copy/clear mirrors must hop chunk boundaries instead of assuming one contiguous array. The validated plan is to use
 the chunked model for >32 capacity and keep the proven stock-relative single-block layout (biases 0) for 32.
 
+Shadow record access is now chunk-aware (`BuildShadowLayoutPlan`): record constructors, the whole-array copy/clear
+mirrors, the free-peer slot-table reset and the `PeerRecord` diagnostic all iterate the plan's chunks. Capacity 32
+builds one chunk per kind at the stock offsets (biases 0), so the proven 32-player path is unchanged; plan coverage is
+asserted for 32/64/128 in the self-test. The S1/S2 side areas used by `0x396828` are still 15 contiguous peer records
+(32-only) and must grow with chunk-copy support for a 64/128 install.
+
 ## 3. Wire and message limits (measured/bounded, not yet fixed)
 
 | limit | stock | 32 (current) | needed for 64 | needed for 128 |
@@ -130,6 +136,8 @@ log instead of being silently ignored.
    Membership message: the same run's `SlotMessage::CapacitySelfTest()` derives extension/message size from the
    capacity and asserts 32 equals the generated tables (ext 0x2200, message 0xA300); 64 is 0x6900 / 0xEA00 with the
    player index needing 6 bits; 128 is 0xF700 / 0x17800 and needs framing plus 7-bit peer/player fields.
+   Shadow-plan coverage is asserted too: peers 1/2/5 chunks, players 1/1/3, table 1 for 32/64/128, each kind's chunks
+   partition [firstSlot, capacity) once, stay inside kSessionStride, and capacity 32 keeps the stock offsets.
 2. Install-level sessions: declare C slots and join with 2 clients (proves shadow storage, message registration,
    encoder/decoder validity at capacity even without C clients).
 3. Forced high slots (`NOBLE_SLOT_HIGH=1`, free-slot scans start at peer 17 / player 16) can place a handful of
@@ -138,10 +146,10 @@ log instead of being silently ignored.
 
 ## 6. Ordered work list
 
-1. Install the chunked layout: the member-cave entry is grown (48 -> 256 B; worst measured case 140 B at 128), so
-   what remains is the generator emitting piecewise index-range bodies (25 peer / 49 player / 726 table records per
-   chunk) and the 9 pointer-stepping step caves plus the whole-array copy/clear mirrors hopping chunk boundaries.
-   Keep the 32 path byte-identical.
+1. Install the chunked layout: record init, the copy/clear mirrors, the peer-table reset and `PeerRecord` are already
+   chunk-aware and validated (32 builds one stock chunk). What remains is the generator emitting piecewise index-range
+   bodies (25 peer / 49 player / 726 table records per chunk), growing the S1/S2 side areas with chunk copies, and
+   making the 9 pointer-stepping step caves hop chunk boundaries. Keep the 32 path byte-identical.
 2. Wire the capacity into `SlotPatch` install behind dev env gates (`-slot-players` / `NOBLE_SLOT_PLAYERS`
    = 64|128 is already recognised and refused with a clear log today), one capacity at a time, with
    all-or-nothing byte checks and the install-level validation from section 5.

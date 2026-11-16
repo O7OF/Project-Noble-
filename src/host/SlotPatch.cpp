@@ -301,6 +301,68 @@ int StaticSession(const void* p, uint32_t& offset) {
 uint8_t* ShadowSlots(int k, const Array& a) { return gShadow + k * kSessionStride + a.offset; }
 size_t ShadowBytes(const Array& a) { return static_cast<size_t>(kSlots32 - a.firstShadowSlot) * a.record; }
 
+// Chunk-aware shadow access. Capacity 32 keeps the proven stock-relative layout (one contiguous chunk at the array
+// offset); a 64/128 install uses the chunked layout (chunk A at a cursor, its block-B twin implied by +0x2210). Record
+// init, the whole-array copy/clear mirrors and the dev diagnostics all go through this plan, so the future install can
+// reuse them while today's 32-player path stays byte-identical.
+enum class ShadowKind : uint32_t { Peers = 0, Players = 1, Table = 2 };
+struct ShadowChunk { uint32_t first, count, aOffset; };
+constexpr uint32_t kMaxShadowChunks = 8;
+struct ShadowKindPlan { ShadowChunk chunks[kMaxShadowChunks]; uint32_t count; };
+struct ShadowLayoutPlan { uint32_t capacity; ShadowKindPlan kinds[3]; };
+constexpr uint32_t kShadowBlockDelta = 0x2210;
+constexpr uint32_t kKindStockOffset[3] = { 0x60, 0x1740, 0x446C };
+constexpr uint32_t kKindRecordSize[3] = { 0x158, 0xB0, 0xC };
+constexpr uint32_t kKindFirstSlot[3] = { 17, 16, 17 };
+constexpr uint32_t kKindChunkLimit[3] = { 25, 49, 726 };
+uint32_t gCapacity = 0;                 // active capacity (32 while 32-player mode is installed); set by Install
+ShadowLayoutPlan gShadowPlan{};         // chunk plan for gCapacity
+
+ShadowLayoutPlan BuildShadowLayoutPlan(uint32_t capacity) {
+    ShadowLayoutPlan plan{};
+    plan.capacity = capacity;
+    if (capacity <= 32) {
+        for (uint32_t k = 0; k < 3; ++k) {
+            plan.kinds[k].count = 1;
+            plan.kinds[k].chunks[0] = { kKindFirstSlot[k], capacity - kKindFirstSlot[k], kKindStockOffset[k] };
+        }
+        return plan;
+    }
+    uint32_t cursor = 0;
+    for (uint32_t k = 0; k < 3; ++k) {
+        const uint32_t entries = capacity - kKindFirstSlot[k];
+        uint32_t done = 0, c = 0;
+        while (done < entries && c < kMaxShadowChunks) {
+            const uint32_t remain = entries - done;
+            const uint32_t cnt = remain < kKindChunkLimit[k] ? remain : kKindChunkLimit[k];
+            ShadowChunk& ch = plan.kinds[k].chunks[c];
+            ch.first = kKindFirstSlot[k] + done;
+            ch.count = cnt;
+            ch.aOffset = (cursor + 0xF) & ~0xFu;
+            cursor = ch.aOffset + kShadowBlockDelta + cnt * kKindRecordSize[k];
+            done += cnt;
+            ++c;
+        }
+        plan.kinds[k].count = c;
+    }
+    return plan;
+}
+
+ShadowKind KindOfArray(const Array& a) {
+    return a.table ? ShadowKind::Table : (a.peer ? ShadowKind::Peers : ShadowKind::Players);
+}
+uint32_t ArrayBlockDelta(const Array& a, ShadowKind kind) { return a.offset - kKindStockOffset[static_cast<uint32_t>(kind)]; }
+uint8_t* ShadowChunkPtr(int k, ShadowKind kind, const ShadowChunk& c, uint32_t blockDelta) {
+    (void)kind;
+    return gShadow + static_cast<size_t>(k) * kSessionStride + c.aOffset + blockDelta;
+}
+const ShadowChunk* FindShadowChunk(const ShadowLayoutPlan& plan, ShadowKind kind, uint32_t index) {
+    const ShadowKindPlan& kp = plan.kinds[static_cast<uint32_t>(kind)];
+    for (uint32_t c = 0; c < kp.count; ++c)
+        if (index >= kp.chunks[c].first && index < kp.chunks[c].first + kp.chunks[c].count) return &kp.chunks[c];
+    return nullptr;
+}
+
 // Inline arrays fully inside [offset, offset + n) - only those were really copied or cleared.
 template <typename F> void ForCoveredArrays(uint32_t offset, size_t n, F f) {
     for (const Array& a : kArrays)
@@ -313,12 +375,18 @@ template <typename F> void ForCoveredArrays(uint32_t offset, size_t n, F f) {
 // before 2026-11-09 the first peer in slot 17 "owned" player 0: the host's player was removed and the joiner written
 // over it (found with a hardware watch on the session's player 0 id).
 constexpr uint32_t kPeerPlayerCount = 0x140, kPeerPlayerSlots = 0x144, kPeerPlayerSlotCount = 4;
-void ResetShadowPeerPlayerTables(uint8_t* records, const Array& a) {
+void ResetShadowPeerTables(int k, const Array& a) {
     if (!a.peer || a.table) return;
-    for (uint32_t j = 0; j < kSlots32 - a.firstShadowSlot; ++j) {
-        uint8_t* r = records + static_cast<size_t>(j) * a.record;
-        std::memset(r + kPeerPlayerCount, 0, 4);
-        std::memset(r + kPeerPlayerSlots, 0xFF, kPeerPlayerSlotCount * 4);
+    const ShadowKind kind = ShadowKind::Peers;
+    const uint32_t blockDelta = ArrayBlockDelta(a, kind);
+    const ShadowKindPlan& plan = gShadowPlan.kinds[static_cast<uint32_t>(kind)];
+    for (uint32_t c = 0; c < plan.count; ++c) {
+        uint8_t* base = ShadowChunkPtr(k, kind, plan.chunks[c], blockDelta);
+        for (uint32_t j = 0; j < plan.chunks[c].count; ++j) {
+            uint8_t* r = base + static_cast<size_t>(j) * a.record;
+            std::memset(r + kPeerPlayerCount, 0, 4);
+            std::memset(r + kPeerPlayerSlots, 0xFF, kPeerPlayerSlotCount * 4);
+        }
     }
 }
 
@@ -327,8 +395,14 @@ void MirrorClear(void* dst, int value, size_t n) {
     const int k = StaticSession(dst, o);
     if (k < 0) return;
     ForCoveredArrays(o, n, [&](const Array& a) {
-        std::memset(ShadowSlots(k, a), value, ShadowBytes(a));
-        if (value == 0) ResetShadowPeerPlayerTables(ShadowSlots(k, a), a);
+        const ShadowKind kind = KindOfArray(a);
+        const uint32_t blockDelta = ArrayBlockDelta(a, kind);
+        const ShadowKindPlan& plan = gShadowPlan.kinds[static_cast<uint32_t>(kind)];
+        for (uint32_t c = 0; c < plan.count; ++c) {
+            uint8_t* base = ShadowChunkPtr(k, kind, plan.chunks[c], blockDelta);
+            std::memset(base, value, static_cast<size_t>(plan.chunks[c].count) * a.record);
+        }
+        if (value == 0) ResetShadowPeerTables(k, a);
     });
 }
 
@@ -342,8 +416,24 @@ void MirrorCopy(void* dst, const void* src, size_t n) {
         const uint32_t from = a.offset - od + os;   // the same array in the source block
         const Array* sa = nullptr;
         for (const Array& b : kArrays) if (b.offset == from && b.record == a.record) sa = &b;
-        if (ks >= 0 && sa) std::memmove(ShadowSlots(kd, a), ShadowSlots(ks, *sa), ShadowBytes(a));
-        else { std::memset(ShadowSlots(kd, a), 0, ShadowBytes(a)); ResetShadowPeerPlayerTables(ShadowSlots(kd, a), a); cleared = true; }
+        const ShadowKind kind = KindOfArray(a);
+        const ShadowKindPlan& plan = gShadowPlan.kinds[static_cast<uint32_t>(kind)];
+        if (ks >= 0 && sa) {
+            const uint32_t dDst = ArrayBlockDelta(a, kind);
+            const uint32_t dSrc = ArrayBlockDelta(*sa, kind);
+            for (uint32_t c = 0; c < plan.count; ++c) {
+                std::memmove(ShadowChunkPtr(kd, kind, plan.chunks[c], dDst),
+                             ShadowChunkPtr(ks, kind, plan.chunks[c], dSrc),
+                             static_cast<size_t>(plan.chunks[c].count) * a.record);
+            }
+        } else {
+            const uint32_t dDst = ArrayBlockDelta(a, kind);
+            for (uint32_t c = 0; c < plan.count; ++c)
+                std::memset(ShadowChunkPtr(kd, kind, plan.chunks[c], dDst), 0,
+                            static_cast<size_t>(plan.chunks[c].count) * a.record);
+            ResetShadowPeerTables(kd, a);
+            cleared = true;
+        }
     });
     // Network-decoded blocks (#1) carry no shadow slots yet: drop slots 16..31 rather than keep stale players.
     static LONG logged = 0;
@@ -374,6 +464,8 @@ void* __cdecl StackCopyMirror(void* dst, const void* src, size_t n) {
     const int ks = StaticSession(src, os);
     const Array* peers = nullptr;
     if (ks >= 0) for (const Array& a : kArrays) if (a.peer && !a.table && a.offset == os + 0x28) peers = &a;   // half + 0x28
+    // 32-player layout: the 15 side peer records are contiguous at the array offset. A 64/128 install must grow the
+    // S1/S2 side areas and copy them chunk by chunk (see docs/02-engine-reference/TOPIC-scaling-64-128.md).
     if (peers) std::memcpy(side, ShadowSlots(ks, *peers), kSidePeerBytes);
     else std::memset(side, 0, kSidePeerBytes);
     return r;
@@ -806,14 +898,18 @@ void InitShadowRecords(uintptr_t base, uint8_t* shadow, bool players32) {
     for (int k = 0; k < kSessions; ++k) {
         uint8_t* object = shadow + k * kSessionStride;
         for (const Array& a : kArrays) {
-            // Shadow slot j sits at the same array offset as slot 0 (C = delta - threshold * record).
-            const uint32_t count = players32 ? kSlots32 - a.firstShadowSlot : 0;
-            for (uint32_t j = 0; j < count; ++j) {
-                uint8_t* r = object + a.offset + j * a.record;
-                if (a.table) { std::memset(r, 0, 4); std::memset(r + 4, 0xFF, 8); continue; }
-                (a.peer ? peerCtor : playerCtor)(r);
+            if (!players32) continue;
+            const ShadowKind kind = KindOfArray(a);
+            const uint32_t blockDelta = ArrayBlockDelta(a, kind);
+            const ShadowKindPlan& plan = gShadowPlan.kinds[static_cast<uint32_t>(kind)];
+            for (uint32_t c = 0; c < plan.count; ++c) {
+                for (uint32_t j = 0; j < plan.chunks[c].count; ++j) {
+                    uint8_t* r = object + plan.chunks[c].aOffset + blockDelta + static_cast<size_t>(j) * a.record;
+                    if (a.table) { std::memset(r, 0, 4); std::memset(r + 4, 0xFF, 8); continue; }
+                    (a.peer ? peerCtor : playerCtor)(r);
+                }
             }
-            if (count) ResetShadowPeerPlayerTables(object + a.offset, a);
+            if (plan.count) ResetShadowPeerTables(k, a);
         }
     }
 }
@@ -842,12 +938,16 @@ bool Players32Active() { return gPlayers32Active; }
 // Dev diagnostics: address of peer record `peer` (0x158 each from session + 0x60) of the static session that
 // contains `session`, in the shadow object for peers >= 17. nullptr if 32-player mode is off or out of range.
 uint8_t* PeerRecord(uint8_t* session, int32_t peer) {
-    if (peer < 0 || peer >= 32 || !session) return nullptr;
+    const uint32_t capacity = gCapacity ? gCapacity : kSlots32;
+    if (peer < 0 || static_cast<uint32_t>(peer) >= capacity || !session) return nullptr;
     if (peer < 17) return session + 0x60 + static_cast<size_t>(peer) * 0x158;
     uint32_t o = 0;
     const int k = StaticSession(session, o);
     if (k < 0 || o != 0 || !gShadow) return nullptr;
-    return gShadow + static_cast<size_t>(k) * kSessionStride + 0x60 + static_cast<size_t>(peer - 17) * 0x158;
+    const ShadowChunk* chunk = FindShadowChunk(gShadowPlan, ShadowKind::Peers, static_cast<uint32_t>(peer));
+    if (!chunk) return nullptr;
+    return gShadow + static_cast<size_t>(k) * kSessionStride + chunk->aOffset +
+           static_cast<size_t>(peer - chunk->first) * 0x158;
 }
 
 void Install(HMODULE engine, bool extendedProfile) {
@@ -940,6 +1040,8 @@ void Install(HMODULE engine, bool extendedProfile) {
         if (tableCaves) VirtualFree(tableCaves, 0, MEM_RELEASE);
         return;
     }
+    gCapacity = players32 ? kSlots32 : 16;
+    gShadowPlan = BuildShadowLayoutPlan(gCapacity);
     InitShadowRecords(base, shadow, players32);
     const int64_t delta = reinterpret_cast<intptr_t>(shadow) - static_cast<intptr_t>(sessions);
     // The table caves scale the shadow delta by 1/4 (index register * 4); sessions and shadow are 4-aligned.
@@ -1262,6 +1364,52 @@ int ValidateChunkPlan(const SlotShadowLayout& L) {
     return failures;
 }
 
+// Coverage check for the chunk-aware shadow plan used by record init / mirrors / PeerRecord: each kind's chunks must
+// partition [firstSlot, capacity) exactly once, ascend in shadow storage, keep the A->B distance inside the object,
+// and capacity 32 must reproduce the stock offsets (byte-identical 32-player path).
+int ValidateShadowPlanCoverage() {
+    int failures = 0;
+    struct Expected { uint32_t capacity, peers, players, table; };
+    const Expected expected[] = { { 32, 1, 1, 1 }, { 64, 2, 1, 1 }, { 128, 5, 3, 1 } };
+    for (const Expected& e : expected) {
+        const ShadowLayoutPlan plan = BuildShadowLayoutPlan(e.capacity);
+        for (uint32_t k = 0; k < 3; ++k) {
+            const ShadowKindPlan& kp = plan.kinds[k];
+            const uint32_t wantChunks = k == 0 ? e.peers : (k == 1 ? e.players : e.table);
+            if (kp.count != wantChunks) { ++failures; NOBLE_WARN("SlotLayout: cap {} kind {} chunk count {} != {}",
+                                                                  e.capacity, k, kp.count, wantChunks); }
+            uint32_t expectFirst = kKindFirstSlot[k];
+            for (uint32_t c = 0; c < kp.count; ++c) {
+                const ShadowChunk& ch = kp.chunks[c];
+                if (ch.first != expectFirst) { ++failures; NOBLE_WARN("SlotLayout: cap {} kind {} chunk {} first {} != {}",
+                                                                       e.capacity, k, c, ch.first, expectFirst); }
+                if (ch.count == 0) { ++failures; }
+                expectFirst = ch.first + ch.count;
+                const uint64_t end = static_cast<uint64_t>(ch.aOffset) + kShadowBlockDelta +
+                                     static_cast<uint64_t>(ch.count) * kKindRecordSize[k];
+                if (end > kSessionStride || ch.aOffset + static_cast<uint64_t>(ch.count) * kKindRecordSize[k] > kSessionStride) {
+                    ++failures;
+                    NOBLE_WARN("SlotLayout: cap {} kind {} chunk {} ends at 0x{:X} outside kSessionStride",
+                               e.capacity, k, c, static_cast<uint32_t>(end));
+                }
+                if (e.capacity == 32 && ch.aOffset != kKindStockOffset[k]) {
+                    ++failures;
+                    NOBLE_WARN("SlotLayout: cap 32 kind {} must keep the stock offset 0x{:X}, got 0x{:X}",
+                               k, kKindStockOffset[k], ch.aOffset);
+                }
+            }
+            const uint32_t covered = expectFirst - kKindFirstSlot[k];
+            if (covered != e.capacity - kKindFirstSlot[k]) {
+                ++failures;
+                NOBLE_WARN("SlotLayout: cap {} kind {} covers {} records, want {}", e.capacity, k, covered,
+                           e.capacity - kKindFirstSlot[k]);
+            }
+        }
+        NOBLE_INFO("SlotLayout: cap={:>3} shadow plan coverage ok: peers {} chunk(s), players {}, table {}",
+                   e.capacity, plan.kinds[0].count, plan.kinds[1].count, plan.kinds[2].count);
+    }
+    return failures;
+}
 int SlotLayoutSelfTest() {
     int failures = 0;
     const SlotShadowLayout layouts[] = { kSlotLayout32, kSlotLayout64, kSlotLayout128 };
@@ -1302,6 +1450,8 @@ int SlotLayoutSelfTest() {
         if (L.capacity == 128 && (L.peerChunks != 5 || L.playerChunks != 3 || L.tableChunks != 1)) ++failures;
         failures += ValidateChunkPlan(L);
     }
+    failures += ValidateShadowPlanCoverage();
+
     // Effective-seat mapping: stock stays 16 for any unimplemented/uninstalled capacity; an installed dev capacity
     // reports itself instead of the stock 16.
     struct SeatsCase { uint32_t requested; bool installed; uint32_t want; };
