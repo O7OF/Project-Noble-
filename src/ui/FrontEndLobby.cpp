@@ -139,6 +139,11 @@ void EnterLobby(OverlayContext &ctx, const ServerEntry &s,
                        const std::string &modId,
                        const std::string &modTitle,
                        const std::filesystem::path &modFolder) {
+  if (!AuthClient::Get().IsLoggedIn()) {
+    NOBLE_WARN("EnterLobby: cannot join online lobby '{}' while not logged in", s.name);
+    OpenAccountModal();
+    return;
+  }
   ctx.st.isLobbyHost = false;
   ctx.st.lobbySessionId = s.id;
   ctx.st.lobbyHostEndpoint = s.hostAddress + ":" + std::to_string(s.port);
@@ -252,6 +257,9 @@ void SetupHostLobby(MenuState &st, const std::string &mapScenario,
                            const std::filesystem::path &mapThumb,
                            const std::string &existingSessionId,
                            const std::string &existingSessionToken) {
+  if (!AuthClient::Get().IsLoggedIn()) {
+    st.lobbyNetMode = 0; // Auto local play mode if not logged in
+  }
   st.isLobbyHost = true;
   st.lobbyMap = mapScenario;
   st.lobbyMapOverride = mapOverride;
@@ -2702,7 +2710,7 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
 
   const float headY = bannerY + bannerH + 8.0f * ui.s;
   const float headH = 28.0f * ui.s;
-  const float slotH = 40.0f * ui.s;
+  const float slotH = 42.0f * ui.s;
   const float slotGap = 2.0f * ui.s;
   const float slotPad = 6.0f * ui.s;
   const float teamHeadH = 20.0f * ui.s;
@@ -3130,7 +3138,7 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         ui.dl->AddRectFilled(s0, s1,
                              selected ? IM_COL32(36, 78, 112, 240)
                                       : TeamStyleFor(teamForRow).rowBase);
-        PlayerRow(ui, ImVec2(s0.x + 4.0f * ui.s, s0.y), rowW - 4.0f * ui.s,
+        PlayerRow(ui, s0, rowW,
                   player.rankIndex >= 0
                       ? player.rankIndex
                       : (local ? Career::RankIndex(Career::Get().credits) : -1),
