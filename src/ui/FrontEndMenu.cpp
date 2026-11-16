@@ -3138,7 +3138,7 @@ int PickerRow(
           cursorMoved = true;
         }
         acceptKey = ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                    (!UiPad::IsVirtualCursorActive() && UiPad::AcceptPressed());
+                    (!UiPad::IsVirtualCursorControllingMouse() && UiPad::AcceptPressed());
         if (UiPad::BackPressed()) {
           UiPad::ConsumeBack();
           ImGui::CloseCurrentPopup();
@@ -6295,7 +6295,10 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
                  {Prompt::Tabs, "Category"}},
                 {}, 0.01875f);
     else if (st.screen == Screen::Career)
-      DrawHints(ui, {{Prompt::Back, "Back"}, {Prompt::Tabs, "Switch Tab"}},
+      DrawHints(ui,
+                {{Prompt::Accept, "Select"},
+                 {Prompt::Back, "Back"},
+                 {Prompt::Tabs, "Switch Tab"}},
                 ctx.careerPanel.IsCommendationsTab()
                     ? std::vector<HintExtra>{{InputPrompts::Button::DpadDown,
                                               "ARROWS", "Navigate"},

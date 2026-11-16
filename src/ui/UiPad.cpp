@@ -173,10 +173,26 @@ std::string s_vcToastText;
 POINT s_lastPhysCursor{-99999, -99999};
 } // namespace
 
-bool Up() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || (!IsVirtualCursorActive() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)); }
-bool Down() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || (!IsVirtualCursorActive() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)); }
-bool Left() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || (!IsVirtualCursorActive() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)); }
-bool Right() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || (!IsVirtualCursorActive() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)); }
+bool Up() {
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) ||
+           (!IsVirtualCursorControllingMouse() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) ||
+           ImGui::IsKeyPressed(ImGuiKey_UpArrow);
+}
+bool Down() {
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) ||
+           (!IsVirtualCursorControllingMouse() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) ||
+           ImGui::IsKeyPressed(ImGuiKey_DownArrow);
+}
+bool Left() {
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
+           (!IsVirtualCursorControllingMouse() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) ||
+           ImGui::IsKeyPressed(ImGuiKey_LeftArrow);
+}
+bool Right() {
+    return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
+           (!IsVirtualCursorControllingMouse() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) ||
+           ImGui::IsKeyPressed(ImGuiKey_RightArrow);
+}
 bool PageUp() { return ImGui::IsKeyPressed(ImGuiKey_GamepadL2); }
 bool PageDown() { return ImGui::IsKeyPressed(ImGuiKey_GamepadR2); }
 
@@ -291,13 +307,27 @@ float AnalogScrollY(bool includeLeftStick) {
 void ScrollWindow(bool arrows, bool triggers) {
     if (ImGui::GetScrollMaxY() <= 0.0f) return;
     float delta = 0.0f;
+    const float dt = std::min(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 0.016f, 0.05f);
+    const float speed = ImGui::GetFontSize() * 45.0f * dt;
+
     if (!(IsVirtualCursorActive() && s_vcControllingMouse)) {
-        const float speed = ImGui::GetFontSize() * 45.0f * ImGui::GetIO().DeltaTime;
-        if (ImGui::IsKeyDown(ImGuiKey_GamepadRStickDown)) delta += speed;
-        if (ImGui::IsKeyDown(ImGuiKey_GamepadRStickUp)) delta -= speed;
+        if (std::abs(s_rStickY) > 0.12f) {
+            delta -= s_rStickY * speed;
+        } else {
+            if (ImGui::IsKeyDown(ImGuiKey_GamepadRStickDown)) delta += speed;
+            if (ImGui::IsKeyDown(ImGuiKey_GamepadRStickUp)) delta -= speed;
+        }
         if (arrows) {
-            if (ImGui::IsKeyDown(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyDown(ImGuiKey_GamepadLStickDown)) delta += speed;
-            if (ImGui::IsKeyDown(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyDown(ImGuiKey_GamepadLStickUp)) delta -= speed;
+            if (ImGui::IsKeyDown(ImGuiKey_GamepadDpadDown) ||
+                (!IsVirtualCursorControllingMouse() && ImGui::IsKeyDown(ImGuiKey_GamepadLStickDown)) ||
+                ImGui::IsKeyDown(ImGuiKey_DownArrow)) delta += speed;
+            if (ImGui::IsKeyDown(ImGuiKey_GamepadDpadUp) ||
+                (!IsVirtualCursorControllingMouse() && ImGui::IsKeyDown(ImGuiKey_GamepadLStickUp)) ||
+                ImGui::IsKeyDown(ImGuiKey_UpArrow)) delta -= speed;
+        }
+    } else {
+        if (std::abs(s_rStickY) > 0.12f) {
+            delta -= s_rStickY * speed;
         }
     }
     if (triggers) {
@@ -504,7 +534,7 @@ void Feed(ImGuiIO& io, bool menuActive) {
 
     // Dominant-axis cone check on cardinal stick nav: stops slightly tilted diagonal pushes from
     // firing simultaneous horizontal + vertical navigation events and jumping between panels.
-    const bool vcBlocksSticks = vcEligible;
+    const bool vcBlocksSticks = vcEligible && s_vcControllingMouse;
     const int lax = std::abs(static_cast<int>(p.lx));
     const int lay = std::abs(static_cast<int>(p.ly));
     const bool allowLX = !vcBlocksSticks && lax >= 18000 && lax * 100 > lay * 135;
