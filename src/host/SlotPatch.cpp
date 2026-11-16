@@ -1068,6 +1068,8 @@ void Install(HMODULE engine, bool extendedProfile) {
     }
     gCapacity = players32 ? kSlots32 : 16;
     gShadowPlan = BuildShadowLayoutPlan(gCapacity);
+    gSessions = sessions;
+    gShadow = shadow;
     InitShadowRecords(base, shadow, players32);
     const int64_t delta = reinterpret_cast<intptr_t>(shadow) - static_cast<intptr_t>(sessions);
     // The table caves scale the shadow delta by 1/4 (index register * 4); sessions and shadow are 4-aligned.
@@ -1116,8 +1118,6 @@ void Install(HMODULE engine, bool extendedProfile) {
             NOBLE_WARN("SlotPatch: peer parameter guard (+0x3FF588) not installed; a peer in slot 17+ will crash when it sets its entry");
         }
         NOBLE_INFO("SlotPatch: {} peer / team masks widened to 32 (17-bit peer masks, 0x408F10, game-over team count, game player event index 4->5 bits, register-held loop bounds)", std::size(kPeerMasks32));
-        gSessions = sessions;
-        gShadow = shadow;
         ApplyFrames(base, unwindCopies);   // checked above (FramesMatch)
         ApplyCallSites(base, copyStubs);   // checked above (CallSitesMatch); after ApplyFrames: the side areas exist
         ApplyTableSites(base, tableCaves, sessions, delta);   // checked above (TableSitesMatch)
