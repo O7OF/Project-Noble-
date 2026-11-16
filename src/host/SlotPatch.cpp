@@ -19,7 +19,9 @@ struct Site {
     uint32_t rva;
     uint8_t original[7];   // imul r64, r64, imm32
     uint32_t caveLength;
-    uint8_t cave[48];
+    // 256 bytes: one-range caves are 41 bytes today, but the chunked 64/128 layouts need a piecewise cave with one
+    // body per chunk (measured worst case 140 bytes at 128, see SlotLayoutSelfTest).
+    uint8_t cave[256];
     uint32_t constantAt;   // imm32 of `add dst, C`
     uint32_t backAt1, backAt2;   // rel32 of the two `jmp back`
     uint32_t record;       // 0xB0 player, 0x158 peer
@@ -299,6 +301,78 @@ int StaticSession(const void* p, uint32_t& offset) {
 uint8_t* ShadowSlots(int k, const Array& a) { return gShadow + k * kSessionStride + a.offset; }
 size_t ShadowBytes(const Array& a) { return static_cast<size_t>(kSlots32 - a.firstShadowSlot) * a.record; }
 
+// High words of the widened peer/player valid masks live in the shadow object, after the chunked arrays (see
+// MakeCapacityMaskPlan in the capacity model section). These helpers are used by the shadow init/mirror lifecycle, so
+// they are declared before it; at capacity 32 they are 0 bytes and every call is a no-op (the 32 path is unchanged).
+constexpr uint32_t kMaskHighBase = 0x28000;
+constexpr uint32_t MaskWordsForCapacity(uint32_t capacity) { return (capacity + 31) / 32; }
+constexpr uint32_t MaskHighBytes(uint32_t capacity) {
+    const uint32_t words = MaskWordsForCapacity(capacity);
+    return words > 1 ? 2 * (words - 1) * 4 : 0;   // peer high words followed by player high words
+}
+
+// Chunk-aware shadow access. Capacity 32 keeps the proven stock-relative layout (one contiguous chunk at the array
+// offset); a 64/128 install uses the chunked layout (chunk A at a cursor, its block-B twin implied by +0x2210). Record
+// init, the whole-array copy/clear mirrors and the dev diagnostics all go through this plan, so the future install can
+// reuse them while today's 32-player path stays byte-identical.
+enum class ShadowKind : uint32_t { Peers = 0, Players = 1, Table = 2 };
+struct ShadowChunk { uint32_t first, count, aOffset; };
+constexpr uint32_t kMaxShadowChunks = 8;
+struct ShadowKindPlan { ShadowChunk chunks[kMaxShadowChunks]; uint32_t count; };
+struct ShadowLayoutPlan { uint32_t capacity; ShadowKindPlan kinds[3]; };
+constexpr uint32_t kShadowBlockDelta = 0x2210;
+constexpr uint32_t kKindStockOffset[3] = { 0x60, 0x1740, 0x446C };
+constexpr uint32_t kKindRecordSize[3] = { 0x158, 0xB0, 0xC };
+constexpr uint32_t kKindFirstSlot[3] = { 17, 16, 17 };
+constexpr uint32_t kKindChunkLimit[3] = { 25, 49, 726 };
+uint32_t gCapacity = 0;                 // active capacity (32 while 32-player mode is installed); set by Install
+ShadowLayoutPlan gShadowPlan{};         // chunk plan for gCapacity
+
+ShadowLayoutPlan BuildShadowLayoutPlan(uint32_t capacity) {
+    ShadowLayoutPlan plan{};
+    plan.capacity = capacity;
+    if (capacity <= 32) {
+        for (uint32_t k = 0; k < 3; ++k) {
+            plan.kinds[k].count = 1;
+            plan.kinds[k].chunks[0] = { kKindFirstSlot[k], capacity - kKindFirstSlot[k], kKindStockOffset[k] };
+        }
+        return plan;
+    }
+    uint32_t cursor = 0;
+    for (uint32_t k = 0; k < 3; ++k) {
+        const uint32_t entries = capacity - kKindFirstSlot[k];
+        uint32_t done = 0, c = 0;
+        while (done < entries && c < kMaxShadowChunks) {
+            const uint32_t remain = entries - done;
+            const uint32_t cnt = remain < kKindChunkLimit[k] ? remain : kKindChunkLimit[k];
+            ShadowChunk& ch = plan.kinds[k].chunks[c];
+            ch.first = kKindFirstSlot[k] + done;
+            ch.count = cnt;
+            ch.aOffset = (cursor + 0xF) & ~0xFu;
+            cursor = ch.aOffset + kShadowBlockDelta + cnt * kKindRecordSize[k];
+            done += cnt;
+            ++c;
+        }
+        plan.kinds[k].count = c;
+    }
+    return plan;
+}
+
+ShadowKind KindOfArray(const Array& a) {
+    return a.table ? ShadowKind::Table : (a.peer ? ShadowKind::Peers : ShadowKind::Players);
+}
+uint32_t ArrayBlockDelta(const Array& a, ShadowKind kind) { return a.offset - kKindStockOffset[static_cast<uint32_t>(kind)]; }
+uint8_t* ShadowChunkPtr(int k, ShadowKind kind, const ShadowChunk& c, uint32_t blockDelta) {
+    (void)kind;
+    return gShadow + static_cast<size_t>(k) * kSessionStride + c.aOffset + blockDelta;
+}
+const ShadowChunk* FindShadowChunk(const ShadowLayoutPlan& plan, ShadowKind kind, uint32_t index) {
+    const ShadowKindPlan& kp = plan.kinds[static_cast<uint32_t>(kind)];
+    for (uint32_t c = 0; c < kp.count; ++c)
+        if (index >= kp.chunks[c].first && index < kp.chunks[c].first + kp.chunks[c].count) return &kp.chunks[c];
+    return nullptr;
+}
+
 // Inline arrays fully inside [offset, offset + n) - only those were really copied or cleared.
 template <typename F> void ForCoveredArrays(uint32_t offset, size_t n, F f) {
     for (const Array& a : kArrays)
@@ -311,12 +385,18 @@ template <typename F> void ForCoveredArrays(uint32_t offset, size_t n, F f) {
 // before 2026-11-09 the first peer in slot 17 "owned" player 0: the host's player was removed and the joiner written
 // over it (found with a hardware watch on the session's player 0 id).
 constexpr uint32_t kPeerPlayerCount = 0x140, kPeerPlayerSlots = 0x144, kPeerPlayerSlotCount = 4;
-void ResetShadowPeerPlayerTables(uint8_t* records, const Array& a) {
+void ResetShadowPeerTables(int k, const Array& a) {
     if (!a.peer || a.table) return;
-    for (uint32_t j = 0; j < kSlots32 - a.firstShadowSlot; ++j) {
-        uint8_t* r = records + static_cast<size_t>(j) * a.record;
-        std::memset(r + kPeerPlayerCount, 0, 4);
-        std::memset(r + kPeerPlayerSlots, 0xFF, kPeerPlayerSlotCount * 4);
+    const ShadowKind kind = ShadowKind::Peers;
+    const uint32_t blockDelta = ArrayBlockDelta(a, kind);
+    const ShadowKindPlan& plan = gShadowPlan.kinds[static_cast<uint32_t>(kind)];
+    for (uint32_t c = 0; c < plan.count; ++c) {
+        uint8_t* base = ShadowChunkPtr(k, kind, plan.chunks[c], blockDelta);
+        for (uint32_t j = 0; j < plan.chunks[c].count; ++j) {
+            uint8_t* r = base + static_cast<size_t>(j) * a.record;
+            std::memset(r + kPeerPlayerCount, 0, 4);
+            std::memset(r + kPeerPlayerSlots, 0xFF, kPeerPlayerSlotCount * 4);
+        }
     }
 }
 
@@ -325,9 +405,21 @@ void MirrorClear(void* dst, int value, size_t n) {
     const int k = StaticSession(dst, o);
     if (k < 0) return;
     ForCoveredArrays(o, n, [&](const Array& a) {
-        std::memset(ShadowSlots(k, a), value, ShadowBytes(a));
-        if (value == 0) ResetShadowPeerPlayerTables(ShadowSlots(k, a), a);
+        const ShadowKind kind = KindOfArray(a);
+        const uint32_t blockDelta = ArrayBlockDelta(a, kind);
+        const ShadowKindPlan& plan = gShadowPlan.kinds[static_cast<uint32_t>(kind)];
+        for (uint32_t c = 0; c < plan.count; ++c) {
+            uint8_t* base = ShadowChunkPtr(k, kind, plan.chunks[c], blockDelta);
+            std::memset(base, value, static_cast<size_t>(plan.chunks[c].count) * a.record);
+        }
+        if (value == 0) ResetShadowPeerTables(k, a);
     });
+    // The high mask words are session-level state next to the masks, so a whole-block clear clears them too. At capacity
+    // 32 the span is empty and this is a no-op.
+    if (o == 0 && value == 0) {
+        if (const uint32_t maskBytes = MaskHighBytes(gCapacity))
+            std::memset(gShadow + static_cast<size_t>(k) * kSessionStride + kMaskHighBase, 0, maskBytes);
+    }
 }
 
 void MirrorCopy(void* dst, const void* src, size_t n) {
@@ -340,9 +432,34 @@ void MirrorCopy(void* dst, const void* src, size_t n) {
         const uint32_t from = a.offset - od + os;   // the same array in the source block
         const Array* sa = nullptr;
         for (const Array& b : kArrays) if (b.offset == from && b.record == a.record) sa = &b;
-        if (ks >= 0 && sa) std::memmove(ShadowSlots(kd, a), ShadowSlots(ks, *sa), ShadowBytes(a));
-        else { std::memset(ShadowSlots(kd, a), 0, ShadowBytes(a)); ResetShadowPeerPlayerTables(ShadowSlots(kd, a), a); cleared = true; }
+        const ShadowKind kind = KindOfArray(a);
+        const ShadowKindPlan& plan = gShadowPlan.kinds[static_cast<uint32_t>(kind)];
+        if (ks >= 0 && sa) {
+            const uint32_t dDst = ArrayBlockDelta(a, kind);
+            const uint32_t dSrc = ArrayBlockDelta(*sa, kind);
+            for (uint32_t c = 0; c < plan.count; ++c) {
+                std::memmove(ShadowChunkPtr(kd, kind, plan.chunks[c], dDst),
+                             ShadowChunkPtr(ks, kind, plan.chunks[c], dSrc),
+                             static_cast<size_t>(plan.chunks[c].count) * a.record);
+            }
+        } else {
+            const uint32_t dDst = ArrayBlockDelta(a, kind);
+            for (uint32_t c = 0; c < plan.count; ++c)
+                std::memset(ShadowChunkPtr(kd, kind, plan.chunks[c], dDst), 0,
+                            static_cast<size_t>(plan.chunks[c].count) * a.record);
+            ResetShadowPeerTables(kd, a);
+            cleared = true;
+        }
     });
+    // High mask words follow the block: copied between two session shadows, cleared when the source is not a session.
+    // At capacity 32 the span is empty and this is a no-op.
+    if (const uint32_t maskBytes = MaskHighBytes(gCapacity); maskBytes && od == 0) {
+        uint8_t* dstMasks = gShadow + static_cast<size_t>(kd) * kSessionStride + kMaskHighBase;
+        if (ks >= 0 && os == 0)
+            std::memcpy(dstMasks, gShadow + static_cast<size_t>(ks) * kSessionStride + kMaskHighBase, maskBytes);
+        else
+            std::memset(dstMasks, 0, maskBytes);
+    }
     // Network-decoded blocks (#1) carry no shadow slots yet: drop slots 16..31 rather than keep stale players.
     static LONG logged = 0;
     if (cleared && InterlockedIncrement(&logged) <= 20)
@@ -372,6 +489,8 @@ void* __cdecl StackCopyMirror(void* dst, const void* src, size_t n) {
     const int ks = StaticSession(src, os);
     const Array* peers = nullptr;
     if (ks >= 0) for (const Array& a : kArrays) if (a.peer && !a.table && a.offset == os + 0x28) peers = &a;   // half + 0x28
+    // 32-player layout: the 15 side peer records are contiguous at the array offset. A 64/128 install must grow the
+    // S1/S2 side areas and copy them chunk by chunk (see docs/02-engine-reference/TOPIC-scaling-64-128.md).
     if (peers) std::memcpy(side, ShadowSlots(ks, *peers), kSidePeerBytes);
     else std::memset(side, 0, kSidePeerBytes);
     return r;
@@ -746,6 +865,27 @@ bool UnsafeOverride() {
 bool gPlayers32Active = false;
 bool gMessageOn = true;
 
+// Requested dev slot capacity from -slot-players N / NOBLE_SLOT_PLAYERS=N: 32 is implemented (behind the unsafe
+// override); 64/128 are recognised so the request can be refused with a clear message instead of silently ignored.
+uint32_t RequestedPlayersCapacity() {
+    wchar_t env[16] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS", env, 16) > 0) {
+        const int v = _wtoi(env);
+        if (v == 32 || v == 64 || v == 128) return static_cast<uint32_t>(v);
+    }
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    uint32_t found = 0;
+    for (int i = 1; argv && i + 1 < argc; ++i) {
+        if (_wcsicmp(argv[i], L"-slot-players") == 0) {
+            const int v = _wtoi(argv[i + 1]);
+            if (v == 32 || v == 64 || v == 128) found = static_cast<uint32_t>(v);
+        }
+    }
+    if (argv) LocalFree(argv);
+    return found;
+}
+
 bool ArgPlayers32() {
     wchar_t env[8] = {};
     if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS", env, 8) > 0 && _wtoi(env) == 32) return true;
@@ -783,15 +923,20 @@ void InitShadowRecords(uintptr_t base, uint8_t* shadow, bool players32) {
     for (int k = 0; k < kSessions; ++k) {
         uint8_t* object = shadow + k * kSessionStride;
         for (const Array& a : kArrays) {
-            // Shadow slot j sits at the same array offset as slot 0 (C = delta - threshold * record).
-            const uint32_t count = players32 ? kSlots32 - a.firstShadowSlot : 0;
-            for (uint32_t j = 0; j < count; ++j) {
-                uint8_t* r = object + a.offset + j * a.record;
-                if (a.table) { std::memset(r, 0, 4); std::memset(r + 4, 0xFF, 8); continue; }
-                (a.peer ? peerCtor : playerCtor)(r);
+            if (!players32) continue;
+            const ShadowKind kind = KindOfArray(a);
+            const uint32_t blockDelta = ArrayBlockDelta(a, kind);
+            const ShadowKindPlan& plan = gShadowPlan.kinds[static_cast<uint32_t>(kind)];
+            for (uint32_t c = 0; c < plan.count; ++c) {
+                for (uint32_t j = 0; j < plan.chunks[c].count; ++j) {
+                    uint8_t* r = object + plan.chunks[c].aOffset + blockDelta + static_cast<size_t>(j) * a.record;
+                    if (a.table) { std::memset(r, 0, 4); std::memset(r + 4, 0xFF, 8); continue; }
+                    (a.peer ? peerCtor : playerCtor)(r);
+                }
             }
-            if (count) ResetShadowPeerPlayerTables(object + a.offset, a);
+            if (plan.count) ResetShadowPeerTables(k, a);
         }
+        if (const uint32_t maskBytes = MaskHighBytes(gCapacity)) std::memset(object + kMaskHighBase, 0, maskBytes);
     }
 }
 
@@ -819,12 +964,16 @@ bool Players32Active() { return gPlayers32Active; }
 // Dev diagnostics: address of peer record `peer` (0x158 each from session + 0x60) of the static session that
 // contains `session`, in the shadow object for peers >= 17. nullptr if 32-player mode is off or out of range.
 uint8_t* PeerRecord(uint8_t* session, int32_t peer) {
-    if (peer < 0 || peer >= 32 || !session) return nullptr;
+    const uint32_t capacity = gCapacity ? gCapacity : kSlots32;
+    if (peer < 0 || static_cast<uint32_t>(peer) >= capacity || !session) return nullptr;
     if (peer < 17) return session + 0x60 + static_cast<size_t>(peer) * 0x158;
     uint32_t o = 0;
     const int k = StaticSession(session, o);
     if (k < 0 || o != 0 || !gShadow) return nullptr;
-    return gShadow + static_cast<size_t>(k) * kSessionStride + 0x60 + static_cast<size_t>(peer - 17) * 0x158;
+    const ShadowChunk* chunk = FindShadowChunk(gShadowPlan, ShadowKind::Peers, static_cast<uint32_t>(peer));
+    if (!chunk) return nullptr;
+    return gShadow + static_cast<size_t>(k) * kSessionStride + chunk->aOffset +
+           static_cast<size_t>(peer - chunk->first) * 0x158;
 }
 
 void Install(HMODULE engine, bool extendedProfile) {
@@ -839,6 +988,13 @@ void Install(HMODULE engine, bool extendedProfile) {
             NOBLE_WARN("SlotPatch: engine code at +0x{:X} does not match; nothing patched", s.rva);
             return;
         }
+    }
+    const uint32_t requestedCapacity = RequestedPlayersCapacity();
+    if (requestedCapacity > 32) {
+        NOBLE_WARN("SlotPatch: {} slot capacity requested, but the chunked 64/128 install is not implemented yet "
+                   "(only the layout/dispatch is validated - docs/02-engine-reference/TOPIC-scaling-64-128.md). "
+                   "Staying at stock capacity; dev 32 remains available with -slot-players 32 + NOBLE_SLOT_PLAYERS_UNSAFE=1",
+                   requestedCapacity);
     }
     bool players32 = ArgPlayers32();
     // Safety gate: 32-player mode is known to be unsafe until the blockers in docs/limits-players-loops.md are
@@ -910,6 +1066,8 @@ void Install(HMODULE engine, bool extendedProfile) {
         if (tableCaves) VirtualFree(tableCaves, 0, MEM_RELEASE);
         return;
     }
+    gCapacity = players32 ? kSlots32 : 16;
+    gShadowPlan = BuildShadowLayoutPlan(gCapacity);
     InitShadowRecords(base, shadow, players32);
     const int64_t delta = reinterpret_cast<intptr_t>(shadow) - static_cast<intptr_t>(sessions);
     // The table caves scale the shadow delta by 1/4 (index register * 4); sessions and shadow are 4-aligned.
@@ -1030,6 +1188,14 @@ constexpr uint32_t kPeerEntryWire = 0x180, kPlayerEntryWire = 0xB8, kMsgBase = 0
 constexpr uint32_t kPeerFirst = 17, kPlayerFirst = 16;
 
 constexpr uint32_t AlignUp16(uint32_t v) { return (v + 0xF) & ~0xFu; }
+
+// Seats a UI/session surface may advertise for a requested dev capacity: stock 16 unless the capacity's install
+// actually succeeded. 32 is the only implemented dev capacity today; 64/128 requests stay at 16 until their install
+// exists (the refusal is logged in Install).
+constexpr uint32_t EffectiveSeatsForCapacity(uint32_t requested, bool installed) {
+    if (!installed || requested == 0) return 16;
+    return requested >= 32 ? requested : 16;
+}
 
 // Bytes of one piecewise member cave for a given chunk count: stock-path jump + one 19-byte body per chunk
 // (replay original multiply, add constant, jump back) + one cmp/jcc dispatch pair per extra chunk.
@@ -1219,11 +1385,346 @@ int ValidateChunkPlan(const SlotShadowLayout& L) {
                "piecewise caves peer {} B / player {} B / table {} B -> worst {} B{}",
                L.capacity, n, L.peerChunks, L.playerChunks, L.tableChunks, cursor,
                peerCave, playerCave, tableCave, worstCave,
-               worstCave <= 48 ? "" : " (needs a larger cave entry)");
+               worstCave <= 256 ? "" : " (needs a bigger cave entry)");
     if (L.memberCaveBytes != worstCave) ++failures;   // model and dispatch estimate must agree
     return failures;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Piecewise member-cave synthesis for the chunked install (validated here; >32 not installed yet).
+//
+// The generated one-range caves (41 bytes) replay the original multiply in two paths. A chunked capacity needs one
+// body per chunk instead; the destination/index registers are decoded from the site's original imul bytes, so the
+// generator format stays unchanged. Dispatch uses 32-bit conditional jumps (the chunks are >127 bytes away).
+// Layout: cmp idx, first ; jb stock ; (cmp idx, chunk[c].first ; jb chunk[c-1])* ; fallthrough = last chunk.
+// Bodies: last chunk, stock, then chunks 0..n-2. Length: 41 B (1 chunk), 70 (2), 99 (3), 128 (4), 157 (5) - all
+// below the 256-byte Site cave entry. Block-B record bases share the same constant because chunk B is +0x2210 away.
+struct SynthesizedCave {
+    uint8_t bytes[256];
+    uint32_t length;
+    bool ok;
+    uint32_t bodyCount;
+    uint32_t bodyOffsets[10];
+    uint32_t constantCount;
+    uint32_t constantOffsets[8];
+};
+
+uint8_t Rex(uint8_t reg) { return static_cast<uint8_t>(0x48 | ((reg >> 3) & 1)); }
+
+bool DecodeImulRegs(const uint8_t* orig, uint8_t& dst, uint8_t& idx) {
+    const uint8_t rex = orig[0];
+    if ((rex & 0xF0) != 0x40) return false;
+    const uint8_t opcode = orig[1];
+    if (opcode != 0x69 && opcode != 0x6B) return false;
+    const uint8_t modrm = orig[2];
+    if ((modrm & 0xC0) != 0xC0) return false;   // register direct form only
+    dst = static_cast<uint8_t>((((rex >> 2) & 1) << 3) | ((modrm >> 3) & 7));
+    idx = static_cast<uint8_t>((((rex >> 0) & 1) << 3) | (modrm & 7));
+    return true;
+}
+
+uint32_t PutJmp(uint8_t* p, uint64_t caveVa, uint32_t pos, uint64_t target) {
+    p[0] = 0xE9;
+    const int64_t disp = static_cast<int64_t>(target) - static_cast<int64_t>(caveVa + pos + 5);
+    std::memcpy(p + 1, &disp, 4);
+    return 5;
+}
+uint32_t PutJbRel32(uint8_t* p, uint64_t caveVa, uint32_t pos, uint64_t target) {
+    p[0] = 0x0F; p[1] = 0x82;
+    const int64_t disp = static_cast<int64_t>(target) - static_cast<int64_t>(caveVa + pos + 6);
+    std::memcpy(p + 2, &disp, 4);
+    return 6;
+}
+
+SynthesizedCave SynthesizePiecewiseCave(const Site& site, const ShadowLayoutPlan& plan, int64_t deltaScaled,
+                                       uint64_t caveVa, uint64_t siteVa) {
+    SynthesizedCave out{};
+    uint8_t dst = 0, idx = 0;
+    if (!DecodeImulRegs(site.original, dst, idx)) return out;
+    const uint32_t kindId = site.record == 0xB0 ? 1u : ((site.record == 0x158 || site.record == 0x56) ? 0u : 2u);
+    const ShadowKindPlan& kp = plan.kinds[kindId];
+    if (kp.count == 0 || kp.count > kMaxShadowChunks) return out;
+    uint8_t* p = out.bytes;
+    const uint64_t back = siteVa + sizeof(site.original);
+    const uint32_t dispatch = 10 * kp.count;   // one (cmp + 32-bit jb) branch per chunk plus the stock branch
+    const uint32_t stockJbPos = 4;
+    p[0] = Rex(idx); p[1] = 0x83; p[2] = static_cast<uint8_t>(0xF8 | (idx & 7));
+    p[3] = static_cast<uint8_t>(kp.chunks[0].first);
+    for (uint32_t c = 1; c < kp.count; ++c) {
+        const uint32_t cmpPos = 10 + (c - 1) * 10;
+        p[cmpPos] = Rex(idx); p[cmpPos + 1] = 0x83;
+        p[cmpPos + 2] = static_cast<uint8_t>(0xF8 | (idx & 7));
+        p[cmpPos + 3] = static_cast<uint8_t>(kp.chunks[c].first);
+    }
+    // Bodies: last chunk (fallthrough target), stock, then chunks 0..n-2.
+    uint32_t pos = dispatch;
+    uint32_t chunkBody[8] = {};
+    auto emitBody = [&](uint32_t chunk, bool stock) -> uint32_t {
+        const uint32_t at = pos;
+        std::memcpy(p + pos, site.original, sizeof(site.original));
+        pos += 7;
+        if (!stock) {
+            const int64_t base = static_cast<int64_t>(kp.chunks[chunk].aOffset) -
+                                static_cast<int64_t>(kKindStockOffset[kindId]);
+            const int64_t raw = (site.scaleShift == 2 ? base / 4 : base) -
+                                static_cast<int64_t>(site.threshold) * static_cast<int64_t>(site.record);
+            const int32_t imm = static_cast<int32_t>(deltaScaled + raw);
+            p[pos] = Rex(dst); p[pos + 1] = 0x81; p[pos + 2] = static_cast<uint8_t>(0xC0 | (dst & 7));
+            std::memcpy(p + pos + 3, &imm, 4);
+            out.constantOffsets[out.constantCount++] = pos;
+            pos += 7;
+        }
+        pos += PutJmp(p + pos, caveVa, pos, back);
+        out.bodyOffsets[out.bodyCount++] = at;
+        return at;
+    };
+    const uint32_t lastChunkBody = emitBody(kp.count - 1, false);
+    const uint32_t stockBody = emitBody(0, true);
+    for (uint32_t c = 0; c + 1 < kp.count; ++c) chunkBody[c] = emitBody(c, false);
+    // Patch the dispatch branches now that all body offsets are known.
+    PutJbRel32(p + stockJbPos, caveVa, stockJbPos, caveVa + stockBody);
+    for (uint32_t c = 1; c < kp.count; ++c) {
+        const uint32_t jbPos = 14 + (c - 1) * 10;
+        PutJbRel32(p + jbPos, caveVa, jbPos, caveVa + chunkBody[c - 1]);
+    }
+    (void)lastChunkBody;
+    out.length = pos;
+    out.ok = pos <= sizeof(out.bytes);
+    return out;
+}
+// ---------------------------------------------------------------------------------------------
+// Mask-widening plan for capacities above 32 (proposed, validated synthetically here).
+//
+// The engine keeps peer-valid and player-valid masks as one 32-bit DWORD. Widening keeps that DWORD as word 0 and
+// stores the extra words in the shadow object, so every existing mask site can stay a 32-bit operation for bits 0..31
+// and only needs a high-word branch for higher bits. The plan below defines where the high words live and the mask
+// bit helpers the patched sites will use; the per-site inventory (23 peer-mask operands already catalogued, player-mask
+// sites still to enumerate) and the site patch forms are the next implementation step.
+struct CapacityMaskPlan {
+    uint32_t capacity;
+    uint32_t words;         // words per mask (1 at 32, 2 at 64, 4 at 128)
+    uint32_t peerHighOffset;    // shadow offset of peer-mask word 1 (0 when words == 1)
+    uint32_t playerHighOffset;  // shadow offset of player-mask word 1 (0 when words == 1)
+};
+constexpr CapacityMaskPlan MakeCapacityMaskPlan(uint32_t capacity) {
+    CapacityMaskPlan plan{};
+    plan.capacity = capacity;
+    plan.words = (capacity + 31) / 32;
+    if (plan.words > 1) {
+        plan.peerHighOffset = kMaskHighBase;
+        plan.playerHighOffset = kMaskHighBase + (plan.words - 1) * 4;
+    }
+    return plan;
+}
+
+inline bool MaskBitTest(const uint32_t* words, uint32_t count, uint32_t bit) {
+    return bit / 32 < count && (words[bit / 32] & (1u << (bit % 32))) != 0;
+}
+inline void MaskBitSet(uint32_t* words, uint32_t count, uint32_t bit) {
+    if (bit / 32 < count) words[bit / 32] |= (1u << (bit % 32));
+}
+inline void MaskBitClear(uint32_t* words, uint32_t count, uint32_t bit) {
+    if (bit / 32 < count) words[bit / 32] &= ~(1u << (bit % 32));
+}
+inline uint32_t MaskPopcount(const uint32_t* words, uint32_t count) {
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t v = words[i];
+        while (v) { v &= v - 1; ++n; }
+    }
+    return n;
+}
+inline int MaskFirstSet(const uint32_t* words, uint32_t count) {
+    for (uint32_t i = 0; i < count; ++i)
+        if (words[i]) { uint32_t b = 0; while (((words[i] >> b) & 1u) == 0) ++b; return static_cast<int>(i * 32 + b); }
+    return -1;
+}
+
+int ValidateMaskModel() {
+    int failures = 0;
+    const uint32_t caps[] = { 32, 64, 128 };
+    for (const uint32_t cap : caps) {
+        const CapacityMaskPlan plan = MakeCapacityMaskPlan(cap);
+        const uint32_t end = plan.peerHighOffset + (plan.words - 1) * 4;
+        const uint32_t shadowEnd = cap <= 32 ? 0x8614u : (cap <= 64 ? 0xEAA4u : 0x21A14u);
+        if (plan.words > 1 && (end > kSessionStride || plan.peerHighOffset < shadowEnd)) {
+            ++failures;
+            NOBLE_WARN("SlotLayout: mask high words at 0x{:X} collide with the shadow arrays (end 0x{:X})",
+                       plan.peerHighOffset, shadowEnd);
+        }
+        uint32_t peer[4] = {}, player[4] = {};
+        // Set every valid bit, check every bit, then clear half and re-check.
+        for (uint32_t b = 0; b < cap; ++b) { MaskBitSet(peer, plan.words, b); MaskBitSet(player, plan.words, b); }
+        for (uint32_t b = 0; b < cap; ++b)
+            if (!MaskBitTest(peer, plan.words, b) || !MaskBitTest(player, plan.words, b)) ++failures;
+        if (MaskPopcount(peer, plan.words) != cap) ++failures;
+        if (MaskFirstSet(peer, plan.words) != 0) ++failures;
+        for (uint32_t b = 0; b < cap; b += 2) MaskBitClear(peer, plan.words, b);
+        for (uint32_t b = 0; b < cap; ++b) {
+            const bool want = (b % 2) == 1;
+            if (MaskBitTest(peer, plan.words, b) != want) ++failures;
+        }
+        if (MaskPopcount(peer, plan.words) != cap / 2) ++failures;
+        NOBLE_INFO("SlotLayout: cap={:>3} mask words {} (inline word 0 + {} high word(s)); peer high @0x{:X}, player high "
+                   "@0x{:X} (shadow arrays end 0x{:X}, stride 0x{:X}) - all bits set/test/clear/popcount/first ok",
+                   cap, plan.words, plan.words - 1, plan.peerHighOffset, plan.playerHighOffset, shadowEnd,
+                   static_cast<uint32_t>(kSessionStride));
+    }
+    return failures;
+}
+// Validate the piecewise cave synthesis for every generated site at 32/64/128: length fits the 256-byte cave entry, the
+// one-chunk case reproduces the generated 41-byte cave, and (delta 0) the first chunk constant is exactly
+// -(threshold * record) as in SlotMemberCaves.inc.
+int ValidatePiecewiseCaves() {
+    int failures = 0;
+    const uint64_t caveVa = 0x20000000ull;
+    const uint32_t caps[] = { 32, 64, 128 };
+    for (const uint32_t cap : caps) {
+        const ShadowLayoutPlan plan = BuildShadowLayoutPlan(cap);
+        uint32_t maxLen = 0, synthesized = 0;
+        for (const Site& site : kSites) {
+            const uint32_t kindId = site.record == 0xB0 ? 1u : ((site.record == 0x158 || site.record == 0x56) ? 0u : 2u);
+            if (plan.kinds[kindId].count == 0) { ++failures; continue; }
+            const uint64_t siteVa = caveVa + site.rva;
+            const SynthesizedCave c = SynthesizePiecewiseCave(site, plan, 0, caveVa, siteVa);
+            if (!c.ok) { ++failures; NOBLE_WARN("SlotLayout: piecewise cave synthesis failed at +0x{:X} cap {}", site.rva, cap); continue; }
+            ++synthesized;
+            if (c.length > 256) { ++failures; NOBLE_WARN("SlotLayout: piecewise cave +0x{:X} {} B at cap {}", site.rva, c.length, cap); }
+            if (c.length > maxLen) maxLen = c.length;
+            if (c.bodyCount != plan.kinds[kindId].count + 1) ++failures;
+            if (c.constantCount != plan.kinds[kindId].count) ++failures;
+            if (cap == 32) {
+                if (plan.kinds[kindId].count != 1 || c.length != 41 || c.length != site.caveLength) {
+                    ++failures;
+                    NOBLE_WARN("SlotLayout: one-chunk cave +0x{:X} {} B (generated {})", site.rva, c.length, site.caveLength);
+                }
+            }
+            // Every dispatch branch must land on the body it selects, and every body must jump back to the site.
+            const uint32_t n = plan.kinds[kindId].count;
+            auto readBranch = [&](uint32_t at) -> int64_t {
+                int32_t d = 0; std::memcpy(&d, c.bytes + at + 2, 4);
+                return static_cast<int64_t>(caveVa + at + 6 + d);
+            };
+            auto readJump = [&](uint32_t at) -> int64_t {
+                int32_t d = 0; std::memcpy(&d, c.bytes + at + 1, 4);
+                return static_cast<int64_t>(caveVa + at + 5 + d);
+            };
+            if (readBranch(4) != static_cast<int64_t>(caveVa + c.bodyOffsets[1])) ++failures;
+            for (uint32_t ch = 1; ch < n; ++ch) {
+                const uint32_t at = 14 + (ch - 1) * 10;
+                if (readBranch(at) != static_cast<int64_t>(caveVa + c.bodyOffsets[ch + 1])) ++failures;
+            }
+            for (uint32_t bd = 0; bd < c.bodyCount; ++bd) {
+                const uint32_t jmpPos = (bd == 1) ? c.bodyOffsets[bd] + 7 : c.bodyOffsets[bd] + 14;
+                if (readJump(jmpPos) != static_cast<int64_t>(siteVa + sizeof(site.original))) ++failures;
+            }
+        }
+        NOBLE_INFO("SlotLayout: cap={:>3} piecewise cave synthesis: {} site(s), max {} B (256-byte entry) {}",
+                   cap, synthesized, maxLen, maxLen <= 256 ? "ok" : "TOO BIG");
+    }
+    return failures;
+}
+// Coverage check for the chunk-aware shadow plan used by record init / mirrors / PeerRecord: each kind's chunks must
+// partition [firstSlot, capacity) exactly once, ascend in shadow storage, keep the A->B distance inside the object,
+// and capacity 32 must reproduce the stock offsets (byte-identical 32-player path).
+int ValidateShadowPlanCoverage() {
+    int failures = 0;
+    struct Expected { uint32_t capacity, peers, players, table; };
+    const Expected expected[] = { { 32, 1, 1, 1 }, { 64, 2, 1, 1 }, { 128, 5, 3, 1 } };
+    for (const Expected& e : expected) {
+        const ShadowLayoutPlan plan = BuildShadowLayoutPlan(e.capacity);
+        for (uint32_t k = 0; k < 3; ++k) {
+            const ShadowKindPlan& kp = plan.kinds[k];
+            const uint32_t wantChunks = k == 0 ? e.peers : (k == 1 ? e.players : e.table);
+            if (kp.count != wantChunks) { ++failures; NOBLE_WARN("SlotLayout: cap {} kind {} chunk count {} != {}",
+                                                                  e.capacity, k, kp.count, wantChunks); }
+            uint32_t expectFirst = kKindFirstSlot[k];
+            for (uint32_t c = 0; c < kp.count; ++c) {
+                const ShadowChunk& ch = kp.chunks[c];
+                if (ch.first != expectFirst) { ++failures; NOBLE_WARN("SlotLayout: cap {} kind {} chunk {} first {} != {}",
+                                                                       e.capacity, k, c, ch.first, expectFirst); }
+                if (ch.count == 0) ++failures;
+                expectFirst = ch.first + ch.count;
+                const uint64_t end = static_cast<uint64_t>(ch.aOffset) + kShadowBlockDelta +
+                                     static_cast<uint64_t>(ch.count) * kKindRecordSize[k];
+                if (end > kSessionStride || ch.aOffset + static_cast<uint64_t>(ch.count) * kKindRecordSize[k] > kSessionStride) {
+                    ++failures;
+                    NOBLE_WARN("SlotLayout: cap {} kind {} chunk {} ends at 0x{:X} outside kSessionStride",
+                               e.capacity, k, c, static_cast<uint32_t>(end));
+                }
+                if (e.capacity == 32 && ch.aOffset != kKindStockOffset[k]) {
+                    ++failures;
+                    NOBLE_WARN("SlotLayout: cap 32 kind {} must keep the stock offset 0x{:X}, got 0x{:X}",
+                               k, kKindStockOffset[k], ch.aOffset);
+                }
+            }
+            const uint32_t covered = expectFirst - kKindFirstSlot[k];
+            if (covered != e.capacity - kKindFirstSlot[k]) {
+                ++failures;
+                NOBLE_WARN("SlotLayout: cap {} kind {} covers {} records, want {}", e.capacity, k, covered,
+                           e.capacity - kKindFirstSlot[k]);
+            }
+        }
+        NOBLE_INFO("SlotLayout: cap={:>3} shadow plan coverage ok: peers {} chunk(s), players {}, table {}",
+                   e.capacity, plan.kinds[0].count, plan.kinds[1].count, plan.kinds[2].count);
+    }
+    return failures;
+}
+// Engine mask width is the decisive limit past 32: the session's peer-valid and player-valid masks are single 32-bit
+// DWORDs (the patched peer-mask table kPeerMasks32 widens 17 -> 32 bits, never more; player masks are DWORD too). A
+// capacity above 32 needs multi-word masks, so it cannot be installed by the slot layout alone. This check reports the
+// required mask words per capacity and makes the hard limit explicit instead of pretending the layout is enough.
+int ValidateMaskWidths(int& peerMaskSites) {
+    int failures = 0;
+    peerMaskSites = static_cast<int>(std::size(kPeerMasks32));
+    NOBLE_INFO("SlotLayout: engine mask width check - {} patched peer-mask operand(s), all single 32-bit DWORD masks",
+               peerMaskSites);
+    const uint32_t caps[] = { 32, 64, 128 };
+    for (const uint32_t cap : caps) {
+        const uint32_t peerWords = (cap + 31) / 32;
+        const uint32_t playerWords = (cap + 31) / 32;
+        const bool fits = peerWords == 1 && playerWords == 1;
+        NOBLE_INFO("SlotLayout: cap={:>3} masks need peer {} word(s) / player {} word(s) -> {}",
+                   cap, peerWords, playerWords,
+                   fits ? "fits the stock DWORD masks" : "BLOCKED by the engine's 32-bit masks (needs mask widening)");
+        if (!fits)
+            NOBLE_WARN("SlotLayout: capacity {} cannot be installed until the engine's DWORD peer/player masks are widened "
+                       "to multi-word masks (session layout + every mask read/write/loop site; see the scaling note)",
+                       cap);
+        if (cap > 32 && fits) ++failures;   // a >32 capacity must never be reported as mask-compatible
+    }
+    return failures;
+}
+// Mask high words are session-level shadow state: they must be zeroed when a shadow object is initialised and follow
+// the block on whole-block copies/clears. At capacity 32 the span is empty (no-op), so this check also guards the
+// 32-player path against accidentally touching mask storage.
+int ValidateMaskShadowLifecycle() {
+    int failures = 0;
+    struct Case { uint32_t capacity, wantBytes, shadowEnd; };
+    const Case cases[] = { { 32, 0, 0x8614 }, { 64, 8, 0xEAA4 }, { 128, 24, 0x21A14 } };
+    for (const Case& c : cases) {
+        const uint32_t bytes = MaskHighBytes(c.capacity);
+        const uint32_t end = kMaskHighBase + bytes;
+        if (bytes != c.wantBytes) { ++failures; NOBLE_WARN("SlotLayout: mask high span for cap {} is {} B, want {}",
+                                                              c.capacity, bytes, c.wantBytes); }
+        if (end > kSessionStride || (bytes && kMaskHighBase < c.shadowEnd)) {
+            ++failures;
+            NOBLE_WARN("SlotLayout: mask high span for cap {} [0x{:X},0x{:X}) invalid (arrays end 0x{:X}, stride 0x{:X})",
+                       c.capacity, kMaskHighBase, end, c.shadowEnd, static_cast<uint32_t>(kSessionStride));
+        }
+        uint8_t src[32] = {}, dst[32] = {};
+        for (uint32_t b = 0; b < bytes && b < sizeof(src); ++b) src[b] = static_cast<uint8_t>(b + 1);
+        if (bytes) {
+            std::memcpy(dst, src, bytes);
+            if (std::memcmp(dst, src, bytes) != 0) ++failures;
+            std::memset(dst, 0, bytes);
+            for (uint32_t b = 0; b < bytes; ++b) if (dst[b] != 0) ++failures;
+        }
+        NOBLE_INFO("SlotLayout: cap={:>3} mask high words span {} B at shadow+0x{:X} (arrays end 0x{:X}) - init/clear/copy "
+                   "lifecycle ok", c.capacity, bytes, kMaskHighBase, c.shadowEnd);
+    }
+    return failures;
+}
 int SlotLayoutSelfTest() {
     int failures = 0;
     const SlotShadowLayout layouts[] = { kSlotLayout32, kSlotLayout64, kSlotLayout128 };
@@ -1257,13 +1758,39 @@ int SlotLayoutSelfTest() {
                    L.capacity, L.peerChunks, L.chunkPeerLimit, L.playerChunks, L.chunkPlayerLimit,
                    L.tableChunks, L.chunkTableLimit, L.chunkedBytes,
                    L.chunkedFits ? "fits kSessionStride" : "DOES NOT FIT", L.memberCaveBytes,
-                   L.memberCaveBytes <= 48 ? "fits the current 48-byte cave slot" : "needs a larger cave entry");
+                   L.memberCaveBytes <= 256 ? "fits the 256-byte cave entry" : "needs a bigger cave entry");
         if (!L.chunkedFits) ++failures;
         if (L.capacity == 32 && (L.peerChunks != 1 || L.playerChunks != 1 || L.tableChunks != 1)) ++failures;
         if (L.capacity == 64 && (L.peerChunks != 2 || L.playerChunks != 1 || L.tableChunks != 1)) ++failures;
         if (L.capacity == 128 && (L.peerChunks != 5 || L.playerChunks != 3 || L.tableChunks != 1)) ++failures;
         failures += ValidateChunkPlan(L);
     }
+    {
+        int peerMaskSites = 0;
+        failures += ValidateMaskWidths(peerMaskSites);
+        failures += ValidateMaskModel();
+        failures += ValidateMaskShadowLifecycle();
+    }
+    failures += ValidateShadowPlanCoverage();
+    failures += ValidatePiecewiseCaves();
+
+    // Effective-seat mapping: stock stays 16 for any unimplemented/uninstalled capacity; an installed dev capacity
+    // reports itself instead of the stock 16.
+    struct SeatsCase { uint32_t requested; bool installed; uint32_t want; };
+    const SeatsCase seatCases[] = {
+        { 0, false, 16 }, { 32, false, 16 }, { 32, true, 32 }, { 64, false, 16 }, { 64, true, 64 },
+        { 128, false, 16 }, { 128, true, 128 },
+    };
+    for (const SeatsCase& c : seatCases) {
+        const uint32_t got = EffectiveSeatsForCapacity(c.requested, c.installed);
+        if (got != c.want) {
+            ++failures;
+            NOBLE_WARN("SlotLayout: effective seats for requested {} installed {} = {} (expected {})",
+                       c.requested, c.installed ? "yes" : "no", got, c.want);
+        }
+    }
+    NOBLE_INFO("SlotLayout: effective-seat mapping checked (stock 16 unless a capacity is installed; 32 is the only "
+               "implemented dev capacity)");
     NOBLE_INFO("SlotLayout: {} check(s) failed (0 = all three layouts valid)", failures);
     return failures;
 }

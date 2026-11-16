@@ -75,10 +75,23 @@ preserved inside each chunk pair. Chunk capacity: 25 peer records, 49 player rec
 The self-test also simulates the dispatch itself: for every record index it checks that the per-range constant maps
 both the block-A base and the block-A base + 0x2210 (block B) to the intended chunk offset (`+ (index - first) *
 record`), that chunk pairs end inside `kSessionStride`, and that chunks of one kind cannot overlap. Cost of the
-chunked model: the member-cave entry must grow from 48 to >=160 bytes (worst measured piecewise cave is 140 B at
+chunked model: the member-cave entry has been grown from 48 to 256 bytes (worst measured piecewise cave is 140 B at
 128; 53 sites -> ~8.5 KB of cave code, fine), and the pointer-stepping loops (9 step caves) and whole-array
 copy/clear mirrors must hop chunk boundaries instead of assuming one contiguous array. The validated plan is to use
 the chunked model for >32 capacity and keep the proven stock-relative single-block layout (biases 0) for 32.
+
+Shadow record access is now chunk-aware (`BuildShadowLayoutPlan`): record constructors, the whole-array copy/clear
+mirrors, the free-peer slot-table reset and the `PeerRecord` diagnostic all iterate the plan's chunks. Capacity 32
+builds one chunk per kind at the stock offsets (biases 0), so the proven 32-player path is unchanged; plan coverage is
+asserted for 32/64/128 in the self-test. The S1/S2 side areas used by `0x396828` are still 15 contiguous peer records
+(32-only) and must grow with chunk-copy support for a 64/128 install.
+
+Piecewise cave bytes for a chunked capacity are **synthesised from the site's original instruction**, not generated:
+the destination/index registers are decoded from each caved `imul` (REX + 69/6B + ModRM), so the existing 53 member and
+67 table sites need no generator-format change. The self-test synthesises all 120 sites for 32/64/128 and validates
+lengths and control flow (every dispatch branch must land on the body it selects, every body must jump back to the
+site): measured maxima **41 B (32), 70 B (64), 157 B (128)** inside the 256-byte cave entry. Capacity 32 still installs
+the generated 41-byte two-path caves; the synthesised one-chunk form matches them byte length-wise and constant-wise.
 
 ## 3. Wire and message limits (measured/bounded, not yet fixed)
 
@@ -97,6 +110,59 @@ message sizes per type (`0x4E38D28` table, membership entry +0x14/+0x18); whethe
 message above 64 KiB or needs the membership update split into batches has to be established before 128 can work.
 Reach Renaissance (81-player ceiling; its 128 profile is two players per machine and is not exposed) is the closest
 external calibration.
+
+**Hard engine limit - masks are 32-bit DWORDs.** The session's peer-valid and player-valid masks are single DWORDs (the
+32-player set widens 23 peer-mask operands from 17 to 32 bits; player masks such as the one at `session+0x170C` are DWORD
+too). A capacity above 32 therefore cannot be represented by the session at all: the 6-bit peer index would allow 64
+peers on the wire and the 64-player message would fit a 16-bit length, but the engine cannot mark more than 32
+peers/players **valid**. Multi-word mask widening - high-word mask storage (in the shadow object), every mask
+read/write/bit-scan loop site, the membership mask fields and the block copies - is a prerequisite for 64/128 and is
+significantly larger than the slot-layout work done so far. The headless self-test reports the gate explicitly
+(cap 64/128: `BLOCKED by the engine's 32-bit masks`).
+
+### 3.1 Mask-widening plan (validated model, patching still to do)
+
+Widening keeps the engine's existing DWORD as **word 0** and adds the high words in the shadow object, so every current
+mask site can keep its 32-bit operation for bits 0..31 and only needs a high-word branch for bits >= 32:
+
+| capacity | mask words | peer high words | player high words | shadow offsets (high word 1) |
+|---|---|---|---|---|
+| 32 | 1 | 0 | 0 | - (inline DWORD only) |
+| 64 | 2 | 1 | 1 | peers 0x28000, players 0x28004 |
+| 128 | 4 | 3 | 3 | peers 0x28000, players 0x2800C |
+
+The high-word area sits after the chunked shadow arrays (ends 0x8614 / 0xEAA4 / 0x21A14 for 32/64/128) and inside
+`kSessionStride` (0x61668), so it fits with room to spare. The bit operations the patched sites will use
+(`MaskBitTest`/`MaskBitSet`/`MaskBitClear`/`MaskPopcount`/`MaskFirstSet` over N words) are implemented and validated
+synthetically by `-test-slot-capacity` for every bit 0..capacity-1 at all three capacities (set/test/clear/popcount/
+first-set round-trips pass). The high words are now part of the shadow lifecycle: `InitShadowRecords` zeroes the peer/player
+high-mask span per shadow object, and the whole-session copy/clear mirrors carry it with the block (cleared when the
+source is not a session block). At capacity 32 the span is 0 bytes, so the path is unchanged; the self-test checks the
+spans (0 / 8 / 24 bytes at 32 / 64 / 128) and their placement after the chunked arrays.
+
+Patch forms planned for the site inventory: (a) mask reads (`test`/`and` with a DWORD mask) keep the 32-bit path for
+bits 0..31 and add a high-word check behind an index compare, the same piecewise-cave shape as the slot caves; (b) mask
+writes (`or`/`and`/`btr`/`bts`) split into a low word and a high-word store; (c) bit-scan loops (`bsf`/`bsr`/`bt`) iterate
+words low to high; (d) the session block copies/mirrors must copy the high words with the arrays; (e) the membership
+encoder/decoder and message payload widen the peer/player mask fields to 2 or 4 words. Site inventory: 23 peer-mask
+operands are already catalogued (`kPeerMasks32`); the player-mask sites still need enumerating from the engine before any
+of this is installed.
+
+**Site inventory started:** `tools/limits/scan_mask_sites.py` is a committed static scanner for mask-immediate sites
+(AND/TEST/MOV/OR/XOR with contiguous low-bit masks in `.text`). Its generated output,
+[`MASK-SITE-INVENTORY.md`](MASK-SITE-INVENTORY.md), currently lists 3905 mask-like immediates overall, **25 candidates
+inside the known session/player regions** to classify first (peer/player/team masks) and 9 of the 23 `kPeerMasks32`
+entries as mask-immediate patches (the rest are bounds/shift/field-width patches outside the scan's scope). Re-run with
+`python tools/limits/scan_mask_sites.py` after any engine update; the scan is heuristic, so each candidate must be
+confirmed by reading its function. Pass 1 of that classification is in [MASK-CLASSIFICATION-2026-11-16.md](MASK-CLASSIFICATION-2026-11-16.md) (player mask `+0x170C` and peer mask `+0x5C` are the confirmed widen targets; most raw `0xFFFF` hits are sentinels).
+
+Message-capacity model (`SlotMessage`): the extension builder's counts are now derived from `kSlotCapacity` (32 ->
+15 peer + 16 player entries) with static asserts pinning the generated tables, and the same `-test-slot-capacity`
+run validates the capacity model: 32 derives exactly the generated extension (0x2200 / message 0xA300); 64 would be
+0x6900 / 0xEA00 (fits a 16-bit length, but the player index needs 6 bits vs the stock 5); 128 would be 0xF700 /
+0x17800 (needs framing) and needs 7-bit peer/player fields. `Site.cave` was grown from 48 to 256 bytes for the
+piecewise caves (worst measured 140 B at 128), and `-slot-players 64|128` is now recognised and refused with a clear
+log instead of being silently ignored.
 
 ## 4. Engine/pool and UI work still required
 
@@ -119,6 +185,17 @@ external calibration.
    0x21A14 for 32/64/128) and that chunks of one kind cannot overlap. Exit 0 on 2026-11-16 for all three capacities:
    32 unchanged (ext 0x2200, msg 0xA300); 64 ext 0x6900 / msg 0xEA00 / peer 6 bits ok / player needs 6 / worst cave
    53 B; 128 ext 0xF700 / msg 0x17800 needs framing / peer+player 7 bits / 5 peer + 3 player chunks / worst cave 140 B.
+   Membership message: the same run's `SlotMessage::CapacitySelfTest()` derives extension/message size from the
+   capacity and asserts 32 equals the generated tables (ext 0x2200, message 0xA300); 64 is 0x6900 / 0xEA00 with the
+   player index needing 6 bits; 128 is 0xF700 / 0x17800 and needs framing plus 7-bit peer/player fields.
+   Shadow-plan coverage is asserted too: peers 1/2/5 chunks, players 1/1/3, table 1 for 32/64/128, each kind's chunks
+   partition [firstSlot, capacity) once, stay inside kSessionStride, and capacity 32 keeps the stock offsets.
+   Cave synthesis: all 120 caved sites are synthesised for 32/64/128 and checked (branch targets, jump-back targets,
+   one-chunk case 41 B == generated cave, maxima 41/70/157 B).
+   Mask width: the run reports 23 patched peer-mask operands and the required mask words per capacity: 32 fits the
+   stock DWORDs; 64/128 are reported BLOCKED (2/4 words needed) - the hard gate documented in section 3.
+   Mask model: the high-word shadow storage offsets and the bit helpers (test/set/clear/popcount/first-set) are
+   exercised for every bit 0..capacity-1 at 32/64/128 - section 3.1.
 2. Install-level sessions: declare C slots and join with 2 clients (proves shadow storage, message registration,
    encoder/decoder validity at capacity even without C clients).
 3. Forced high slots (`NOBLE_SLOT_HIGH=1`, free-slot scans start at peer 17 / player 16) can place a handful of
@@ -127,14 +204,52 @@ external calibration.
 
 ## 6. Ordered work list
 
-1. Install the chunked layout: grow the member-cave entry (48 -> >=160 B; measured worst case 140 B at 128), teach
-   the generator to emit piecewise index-range constants (25 peer / 49 player / 726 table records per chunk), and
-   make the 9 pointer-stepping step caves plus the whole-array copy/clear mirrors hop chunk boundaries. Keep the 32
-   path byte-identical.
-2. Wire the capacity into `SlotPatch` install behind dev env gates (e.g. `NOBLE_MP_SLOTS=64|128`), one capacity at
-   a time, with all-or-nothing byte checks and the install-level validation from section 5.
-3. Widen the membership encoder/decoder fields (peer/player index bits, multi-word masks) and the game-player event
+**Gating item for anything above 32: multi-word mask widening.** The storage model and bit helpers are implemented and
+validated (section 3.1); the slot layout, chunked caves and message-size model
+are ready, but no capacity >32 can be installed while the engine's peer/player valid masks are 32-bit DWORDs. Plan:
+high-word mask storage in the shadow object, enumerate and patch every mask read/write/bit-scan/loop site (23 peer-mask operands are
+already catalogued; player-mask sites must be enumerated), widen the membership mask fields, and extend the block
+copies. Only then can the chunked install and the wire-field widening be exercised.
+
+1. Install the chunked layout: record init, mirrors, peer-table reset, PeerRecord and the piecewise cave synthesis are
+   done and validated. What remains is capacity-gated installation (write the synthesised caves + chunked shadow
+   placement when the dev capacity is requested), growing the S1/S2 side areas with chunk copies, and making the 9
+   pointer-stepping step caves hop chunk boundaries. Keep the 32 path byte-identical.
+2. Wire the capacity into `SlotPatch` install behind dev env gates (`-slot-players` / `NOBLE_SLOT_PLAYERS`
+   = 64|128 is already recognised and refused with a clear log today), one capacity at a time, with
+   all-or-nothing byte checks and the install-level validation from section 5.
    index; add round-trip tests for synthetic peer/player counts.
 4. Solve the 128 message-size limit (channel/framing or batched membership updates); 64 fits the current 16-bit length.
 5. Raise engine pools and the session slot count at 64/128; re-measure memory and the setter churn.
 6. Generalize the UI surfaces (dev-gated) and the harness/test plan; measure with the multi-PC rig when available.
+
+## 8. Status 2026-11-16 (mask-widening groundwork rounds)
+
+**Done and validated synthetically (no engine/clients needed).**
+
+- Shadow layout model for 32/64/128: chunk plan, per-range dispatch constants simulated for every record index on both
+  block bases (A and A+0x2210), chunk placement/no-overlap/in-stride checks; shadow ends 0x8614 / 0xEAA4 / 0x21A14.
+- Chunk-aware shadow record handling: init, copy/clear mirrors, peer-table reset and `PeerRecord` all use the plan; at
+  capacity 32 it builds one stock chunk, so the installed 32-player path is unchanged (verified by smoke tests).
+- Piecewise cave synthesis for all 120 caved sites at 32/64/128: registers decoded from the original imul, control flow
+  (dispatch branch targets, jump-back targets) validated; maxima 41 / 70 / 157 bytes, all inside the 256-byte cave entry.
+- Message-capacity model: 32 derives exactly the generated extension (0x2200 / message 0xA300); 64 = 0x6900 / 0xEA00
+  (fits a 16-bit length, player index needs 6 bits); 128 = 0xF700 / 0x17800 (needs framing) and needs 7-bit fields.
+- Effective-seat mapping (stock 16 unless a capacity is installed) and `-slot-players 64|128` request recognition/refusal.
+- Mask widening: storage model (1/2/4 words, high words at shadow+0x28000..), bit helpers validated for every bit at all
+  three capacities, high words wired into the shadow init/clear/copy lifecycle (0/8/24-byte spans validated).
+- Mask site inventory: committed scanner (`tools/limits/scan_mask_sites.py`) + generated inventory + classification pass 1
+  (player mask `+0x170C` and peer mask `+0x5C` are the confirmed widen targets; most raw 0xFFFF hits are sentinels).
+
+**Still blocking anything above 32 players.**
+
+1. Implement the mask widening itself: high-word storage in real session shadows is modelled but no engine mask site is
+   patched yet; every confirmed mask read/write/bit-scan site must be widened, and the membership encoder/decoder mask
+   fields widened with them (inventory + classification pass 1 are the starting list).
+2. Then the chunked install (write synthesised caves + chunked shadow placement), S1/S2 side-area growth with chunk
+   copies, and chunk-hopping step caves.
+3. Then the wire fields (peer/player index bits), 128 message framing, engine pools and the UI surfaces.
+
+**Hardware/acceptance note.** 16-player acceptance needs 3-4 PCs x 4-5 instances or ~96-128 GB RAM on one machine (five
+players is the proven one-machine maximum); 32+ field testing is likewise hardware-gated. No user-facing cap or release
+change was made; version/release line is controlled by the release workflow (now v0.20.11).

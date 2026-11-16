@@ -24,4 +24,8 @@ bool ApplyHighSlotTest(uintptr_t base);
 unsigned CaveCount();
 unsigned EditCount();
 
+// Synthetic capacity check for the membership message extension (no engine needed): proves the derived 32-player
+// extension matches the generated tables and prints what 64/128 need (message size, framing and wire-field bits).
+int CapacitySelfTest();
+
 } // namespace noble::slots::message

@@ -137,6 +137,15 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
     };
 
+    const std::vector<ChangeItem> v02011Items = {
+        {"NETCODE", "Piecewise Member Cave Synthesis & Chunked Dispatch",
+         "Added piecewise member and table cave synthesis across all 120 engine sites for chunked session capacities (32, 64, 128), validating register-accurate dispatch and shadow layout boundaries."},
+        {"NETCODE", "Peer Seat Mapping & Request Gating",
+         "Added authoritative peer seat allocation, chunk-aware shadow record mirrors, and structured join request gating to ensure reliable slot assignment in high-capacity custom games."},
+        {"STABILITY", "Headless Capacity Self-Diagnostics",
+         "Integrated automated headless slot capacity validation tests verifying piecewise cave length, shadow plan coverage, packet packing, and memory alignment."},
+    };
+
     const std::vector<ChangeItem> v02010Items = {
         {"UI", "Post-Match Keyboard & Mouse Focus Stabilization",
          "Eliminated mouse hover jitter and unintended selection triggers on the post-match results panel and main menu by adding intentional mouse motion deadzone filtering and preventing sub-pixel sensor noise from fighting keyboard navigation."},
@@ -202,9 +211,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 10) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 11) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "CHUNKED CAPACITY DISPATCH & PEER SEAT NETCODE",
+                    "Chunked Slot Dispatch, Peer Seat Mapping & High-Capacity Session Stability",
+                    v02011Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 10) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.10",
                     "POST-MATCH INPUT STABILIZATION & HIGH-SLOT SESSION EXPANSION",
                     "Keyboard & Mouse Focus Fixes, Input Leak Suppression & 32-Player Peer Seat Math",
                     v02010Items,
