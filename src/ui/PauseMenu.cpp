@@ -10,6 +10,7 @@
 #include "SocialOverlay.hpp"
 #include "UiArt.hpp"
 #include "UiPad.hpp"
+#include "TeamColors.hpp"
 #include "audio/ReachAudio.hpp"
 #include "audio/VoiceChat.hpp"
 #include "career/Career.hpp"
@@ -72,6 +73,9 @@ std::atomic<bool> s_boardPointer{false}; // scoreboard actions own the pointer
 std::atomic<bool> s_boardReport{false};  // the Report window is up
 std::atomic<bool> s_showSettings{
     false};               // the SETTINGS page opened from the pause menu
+static bool s_teamPickerOpen = false;
+static int s_teamPickerRow = 0;
+static ULONGLONG s_teamPickerOpenedAt = 0;
 // Render (engine thread) vs HoldFrame (main thread). Recursive because the post-game state is also
 // touched from inside RenderImpl (guest match_over handling) and by ShowGameOver /
 // RefreshGameOverAward, which must not interleave with a frame being drawn.
@@ -1023,6 +1027,7 @@ void PauseMenu::Close() {
   s_resetPauseScroll = false;
   s_waitForRelease = true;
   s_confirmRestart = false;
+  s_teamPickerOpen = false;
   s_showSettings.store(false);
   (void)Window::TakeWheelSteps();
   if (s_open.exchange(false)) {
@@ -1151,6 +1156,45 @@ std::atomic<int> s_localTeam{
     1}; // from the lobby launch; the engine's own sides start at red
 std::atomic<bool> s_localTeamFromLobby{
     false}; // true once -lobby-teams told us the player's side
+std::atomic<int> s_matchTeamCount{
+    0}; // available teams in this match (2..8)
+
+static std::string GetCurrentMatchMode() {
+  if (!s_boardMode.empty())
+    return s_boardMode;
+  std::wstring wmode = ArgValue(Relaunch::CurrentGameArgs(), L"-mode");
+  if (wmode.empty())
+    wmode = ArgValue(GetCommandLineW(), L"-mode");
+  if (wmode.empty())
+    return {};
+  char mb[64] = {};
+  WideCharToMultiByte(CP_UTF8, 0, wmode.c_str(), -1, mb, sizeof(mb) - 1, nullptr, nullptr);
+  return mb;
+}
+
+static void WritePlayerDatumTeam(int teamZeroBased) {
+  __try {
+    const uintptr_t reachBase =
+        reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    if (reachBase) {
+      const uint32_t tlsIndex =
+          *reinterpret_cast<const uint32_t *>(reachBase + 0xC17B18);
+      const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+      const uintptr_t block =
+          *reinterpret_cast<const uintptr_t *>(tlsArray + tlsIndex * 8);
+      const uintptr_t arr =
+          block ? *reinterpret_cast<const uintptr_t *>(block + 0x18) : 0;
+      if (arr) {
+        const uintptr_t data = *reinterpret_cast<const uintptr_t *>(arr + 0x50);
+        if (data) {
+          *reinterpret_cast<int8_t *>(data + 0xAD) =
+              static_cast<int8_t>(teamZeroBased);
+        }
+      }
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+}
 
 int LocalTeamFromBoard() {
   std::lock_guard<std::mutex> lock(s_boardMutex);
@@ -1161,29 +1205,76 @@ int LocalTeamFromBoard() {
                              // the lobby assigned
 }
 
-void ChangeLocalTeam() {
-  const int from = LocalTeamFromBoard() == 2 ? 2 : 1;
-  const int to = from == 1 ? 2 : 1;
-  // HaloScript's team enum is 0-based (0 red, 1 blue); this is the same
-  // override the game's own team-switch path uses. If the game type does not
-  // allow it, the engine ignores it.
+} // namespace
+
+void PauseMenu::SetMatchTeamCount(int count) {
+  s_matchTeamCount.store(std::clamp(count, 2, kTeamCount));
+}
+
+int PauseMenu::GetMatchTeamCount() {
+  const int count = s_matchTeamCount.load();
+  if (count >= 2 && count <= kTeamCount) {
+    return count;
+  }
+  const std::string mode = GetCurrentMatchMode();
+  if (mode == "forge") {
+    return kTeamCount; // 8 teams in Forge for spawn and testing
+  }
+  int maxTeam = 2;
+  {
+    std::lock_guard<std::mutex> lock(s_boardMutex);
+    for (const auto &row : s_boardRows) {
+      if (row.team > maxTeam)
+        maxTeam = row.team;
+    }
+  }
+  return std::clamp(maxTeam, 2, kTeamCount);
+}
+
+void PauseMenu::ChangeLocalTeam(int toTeam) {
+  const int from = LocalTeamFromBoard();
+  const int maxTeams = GetMatchTeamCount();
+  int to = toTeam;
+  if (to < 1 || to > maxTeams) {
+    to = (from % maxTeams) + 1;
+  }
+  if (from == to && s_localTeamFromLobby.load())
+    return;
+
+  // 1. HaloScript team override (0-based)
   if (BlamEngine *engine = BlamEngine::Active()) {
     engine->ExecuteCommand("player_override_team 0 " + std::to_string(to - 1));
   }
-  // Update local scoreboard row and voice chat team without forcibly destroying
-  // the player entity or spawning controllable puppet clones.
+
+  // 2. Direct game player datum update (player 0 datum at arr + 0x50, team at +0xAD)
+  WritePlayerDatumTeam(to - 1);
+
+  // 3. Update local states
+  s_localTeam.store(to);
+  s_localTeamFromLobby.store(true);
+
+  // 4. Update local row in scoreboard
   {
     std::lock_guard<std::mutex> lock(s_boardMutex);
-    for (auto &row : s_boardRows)
+    for (auto &row : s_boardRows) {
       if (row.local)
         row.team = to;
+    }
   }
+
+  // 5. Update local voice chat channel
   VoiceChat::SetLocalTeam(to);
-  MenuSounds::Click();
+
+  // 6. Request biped suicide/respawn in gameplay modes (outside Forge)
+  const std::string mode = GetCurrentMatchMode();
+  if (mode != "forge") {
+    DevCheats::RequestLocalSuicide();
+  }
+
+  MenuSounds::Change();
   NOBLE_INFO("PauseMenu: CHANGE TEAM requested ({} -> {})",
-             from == 1 ? "red" : "blue", to == 1 ? "red" : "blue");
+             TeamStyleFor(from).name, TeamStyleFor(to).name);
 }
-} // namespace
 
 static std::string s_boardSession;
 
@@ -1479,7 +1570,8 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   };
   const bool canRestart = !restartArgs.empty() && !isGuest;
   const int curTeam = LocalTeamFromBoard();
-  const char *teamBadge = (curTeam == 2) ? "BLUE TEAM" : "RED TEAM";
+  const TeamStyle &curStyle = TeamStyleFor(curTeam);
+  const char *teamBadge = curStyle.name;
   std::vector<Entry> entries = {
       {"RESUME", nullptr, "Return to gameplay immediately.", nullptr, false,
        true},
@@ -1513,7 +1605,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   if (BlamEngine::GameTeamsEnabled() || isMultiOrForge) {
     teamEntry = static_cast<int>(entries.size());
     entries.push_back({"CHANGE TEAM", nullptr,
-                       "Swap your team assignment between Red Team and Blue Team.",
+                       "Switch your active team assignment.",
                        teamBadge, false, true});
   }
   const int leaveEntry = static_cast<int>(entries.size());
@@ -1556,7 +1648,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   static ULONGLONG s_lastMove = 0;
   const ULONGLONG now = GetTickCount64();
   bool challengeNavMoved = false;
-  if (navInteractive) {
+  if (navInteractive && !s_teamPickerOpen) {
     const bool goLeft =
         ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) || UiPad::Left();
     const bool goRight =
@@ -1627,10 +1719,9 @@ void PauseMenu::DrawMenu(HWND hwnd) {
       if (s_focus != 1)
         s_confirmRestart = false;
     }
-    // Red/Blue team color strip accent on CHANGE TEAM, crimson edge on QUIT.
+    // Multi-team color strip accent on CHANGE TEAM, crimson edge on QUIT.
     if (i == teamEntry) {
-      const ImU32 teamCol = (curTeam == 2) ? IM_COL32(95, 165, 255, 255)
-                                           : IM_COL32(235, 92, 82, 255);
+      const ImU32 teamCol = TeamStyleFor(curTeam).strip;
       dl->AddRectFilled(ImVec2(t1.x - 4.0f * s, t0.y + 6.0f * s),
                         ImVec2(t1.x - 1.0f * s, t1.y - 6.0f * s), teamCol);
     } else if (entries[i].danger && focused) {
@@ -1639,7 +1730,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     ImGui::PopID();
   }
 
-  if (navInteractive && s_pausePane == 0 &&
+  if (navInteractive && !s_teamPickerOpen && s_pausePane == 0 &&
       (UiPad::AcceptPressed() ||
        ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
        ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
@@ -1825,8 +1916,10 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     s_saveVariantNeedsFocus = true;
     ImGui::OpenPopup("##save_map_variant");
   } else if (teamEntry >= 0 && activated == teamEntry) {
+    s_teamPickerOpen = true;
+    s_teamPickerRow = std::clamp(curTeam - 1, 0, GetMatchTeamCount() - 1);
+    s_teamPickerOpenedAt = GetTickCount64();
     MenuSounds::Click();
-    ChangeLocalTeam();
   } else if (activated == leaveEntry) {
     MenuSounds::Click();
     Close();
@@ -1859,7 +1952,14 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   } else if (activated == quitEntry) {
     Close();
     QuitFromMatch(hwnd, "quit requested");
-  } else if (navInteractive &&
+  } else if (navInteractive && s_teamPickerOpen &&
+             (UiPad::BackPressed() ||
+              ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+              ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+    UiPad::ConsumeBack();
+    s_teamPickerOpen = false;
+    MenuSounds::Back();
+  } else if (navInteractive && !s_teamPickerOpen &&
              (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
               (s_pausePane == 1 && UiPad::BackPressed()))) {
     if (s_pausePane == 1) {
@@ -1961,6 +2061,137 @@ void PauseMenu::DrawMenu(HWND hwnd) {
       ImGui::PopStyleColor();
     }
     ImGui::EndPopup();
+  }
+
+  // ---- CHANGE TEAM Tactical Selection Modal ----
+  if (s_teamPickerOpen) {
+    const int numTeams = GetMatchTeamCount();
+    s_teamPickerRow = std::clamp(s_teamPickerRow, 0, numTeams - 1);
+
+    // Dim backdrop
+    dl->AddRectFilled(winPos, ImVec2(winPos.x + size.x, winPos.y + size.y),
+                      IM_COL32(0, 0, 0, 190));
+
+    // Nav inputs
+    static ULONGLONG s_pickerLastMove = 0;
+    const ULONGLONG pNow = GetTickCount64();
+    if (navInteractive && (pNow - s_pickerLastMove > 110)) {
+      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) {
+        s_teamPickerRow = (s_teamPickerRow + numTeams - 1) % numTeams;
+        s_pickerLastMove = pNow;
+        MenuSounds::Scroll();
+      } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) {
+        s_teamPickerRow = (s_teamPickerRow + 1) % numTeams;
+        s_pickerLastMove = pNow;
+        MenuSounds::Scroll();
+      }
+    }
+
+    const float modalW = std::clamp(380.0f * s, 320.0f * s, innerW * 0.55f);
+    const float modalHdrH = 50.0f * s;
+    const float modalFootH = 38.0f * s;
+    const float teamRowH = 40.0f * s;
+    const float teamRowGap = 5.0f * s;
+    const float modalBodyH = static_cast<float>(numTeams) * (teamRowH + teamRowGap) + 8.0f * s;
+    const float modalH = modalHdrH + modalBodyH + modalFootH;
+    const ImVec2 m0(winPos.x + (size.x - modalW) * 0.5f,
+                    winPos.y + (size.y - modalH) * 0.5f);
+    const ImVec2 m1(m0.x + modalW, m0.y + modalH);
+
+    // Frame & body background
+    dl->AddRectFilled(m0, m1, IM_COL32(11, 18, 29, 252), 4.0f * s);
+    DrawTacticalFrame(dl, m0, m1, s, true, false, false, false);
+
+    // Header strip
+    const ImVec2 mh1(m1.x, m0.y + modalHdrH);
+    dl->AddRectFilled(m0, mh1, IM_COL32(18, 28, 44, 250), 4.0f * s,
+                      ImDrawFlags_RoundCornersTop);
+    dl->AddLine(ImVec2(m0.x, mh1.y), mh1, IM_COL32(143, 216, 255, 120), 1.0f);
+    Text(dl, titleFont, 17.0f * s, ImVec2(m0.x + 16.0f * s, m0.y + 8.0f * s),
+         kAccent, "SELECT TEAM");
+    Text(dl, smallFont, 12.5f * s, ImVec2(m0.x + 16.0f * s, m0.y + 28.0f * s),
+         kTextDim, "CHOOSE YOUR SQUAD ASSIGNMENT");
+
+    // Team items
+    int pickedTeam = -1;
+    const float startY = mh1.y + 6.0f * s;
+    for (int t = 0; t < numTeams; ++t) {
+      const int teamNum = t + 1;
+      const TeamStyle &ts = TeamStyleFor(teamNum);
+      const float ry = startY + static_cast<float>(t) * (teamRowH + teamRowGap);
+      const ImVec2 r0(m0.x + 12.0f * s, ry);
+      const ImVec2 r1(m1.x - 12.0f * s, ry + teamRowH);
+      const bool isFocused = (s_teamPickerRow == t);
+      const bool isCurrent = (curTeam == teamNum);
+
+      ImGui::PushID(t);
+      ImGui::SetCursorScreenPos(r0);
+      if (ImGui::InvisibleButton("##team_btn", ImVec2(r1.x - r0.x, teamRowH))) {
+        s_teamPickerRow = t;
+        pickedTeam = teamNum;
+      }
+      if (ImGui::IsItemHovered() && NobleUi::IsMouseMoved(2.0f)) {
+        s_teamPickerRow = t;
+      }
+      ImGui::PopID();
+
+      // Card background
+      const ImU32 bgCol = isFocused ? IM_COL32(28, 50, 78, 240)
+                                    : (isCurrent ? IM_COL32(18, 26, 38, 220)
+                                                 : IM_COL32(14, 20, 30, 200));
+      dl->AddRectFilled(r0, r1, bgCol, 2.0f * s);
+      if (isFocused) {
+        dl->AddRect(r0, r1, IM_COL32(143, 216, 255, 220), 2.0f * s, 0, 1.5f);
+      } else {
+        dl->AddRect(r0, r1, IM_COL32(45, 65, 90, 100), 2.0f * s, 0, 1.0f);
+      }
+
+      // Team color strip indicator on left
+      dl->AddRectFilled(ImVec2(r0.x + 4.0f * s, r0.y + 4.0f * s),
+                        ImVec2(r0.x + 12.0f * s, r1.y - 4.0f * s), ts.strip,
+                        1.5f * s);
+
+      // Team name
+      Text(dl, titleFont, 15.5f * s,
+           ImVec2(r0.x + 22.0f * s, r0.y + (teamRowH - 18.0f * s) * 0.5f),
+           isFocused ? kText : kTextDim, ts.name);
+
+      // Current team badge indicator on right
+      if (isCurrent) {
+        const char *tag = "[ CURRENT ]";
+        const float tw = TextWidth(smallFont, 12.0f * s, tag);
+        Text(dl, smallFont, 12.0f * s,
+             ImVec2(r1.x - tw - 12.0f * s, r0.y + (teamRowH - 14.0f * s) * 0.5f),
+             IM_COL32(95, 235, 130, 240), tag);
+      }
+    }
+
+    // Accept / Confirm selection
+    if (navInteractive && (UiPad::AcceptPressed() ||
+                           ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                           ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
+      UiPad::ConsumeAccept();
+      pickedTeam = s_teamPickerRow + 1;
+    }
+
+    if (pickedTeam >= 1 && pickedTeam <= numTeams) {
+      ChangeLocalTeam(pickedTeam);
+      s_teamPickerOpen = false;
+    }
+
+    // Modal Footer Prompts
+    const ImVec2 mf0(m0.x, m1.y - modalFootH);
+    dl->AddLine(mf0, ImVec2(m1.x, mf0.y), IM_COL32(40, 65, 95, 120), 1.0f);
+    float pfx = m0.x + 16.0f * s;
+    const float pfy = mf0.y + 9.0f * s;
+    pfx += InputPrompts::Draw(dl, smallFont, ImVec2(pfx, pfy), 18.0f * s,
+                              InputPrompts::Prompt::Accept) + 8.0f * s;
+    Text(dl, smallFont, 12.0f * s, ImVec2(pfx, pfy + 2.0f * s), kTextDim, "Select");
+    pfx += TextWidth(smallFont, 12.0f * s, "Select") + 20.0f * s;
+
+    pfx += InputPrompts::Draw(dl, smallFont, ImVec2(pfx, pfy), 18.0f * s,
+                              InputPrompts::Prompt::Back) + 8.0f * s;
+    Text(dl, smallFont, 12.0f * s, ImVec2(pfx, pfy + 2.0f * s), kTextDim, "Cancel");
   }
 
   // ---- Bottom Input Prompts Strip ----
@@ -2776,13 +3007,13 @@ static void DrawScoreboardPanel() {
   }
 
   // Multi-team colors and names (supporting all 8 Reach multiplayer teams)
-  struct TeamStyle {
+  struct ScoreboardTeamStyle {
     const char *name;
     ImU32 headerCol;
     ImU32 rowBaseCol;
     ImU32 rowAltCol;
   };
-  static const TeamStyle kTeamStyles[8] = {
+  static const ScoreboardTeamStyle kTeamStyles[8] = {
       {"RED TEAM", IM_COL32(195, 42, 42, 245), IM_COL32(145, 30, 30, 150),
        IM_COL32(130, 25, 25, 150)},
       {"BLUE TEAM", IM_COL32(38, 92, 185, 245), IM_COL32(28, 62, 145, 150),

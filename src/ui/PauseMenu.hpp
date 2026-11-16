@@ -66,6 +66,11 @@ public:
     // The local player's own team, from the lobby launch (-lobby-teams): the roster-less fallback row (a
     // direct launch with no server session) used to hardcode RED and disagreed with the lobby.
     static void SetLocalTeam(int team);
+    // The number of available teams in this match (2..8). Defaults to 8 in Forge / multi-team, 2 in 2-team modes.
+    static void SetMatchTeamCount(int count);
+    static int GetMatchTeamCount();
+    // Executes team change with engine synchronization, datum updates, and respawn cycle.
+    static void ChangeLocalTeam(int toTeam = -1);
     // A click while the scoreboard key is held: frees the pointer so the panel's player actions can be used. Esc, the
     // scoreboard key or CLOSE give the pointer back to the game. Slot 36 input poll.
     static void EnterScoreboardPointer();
