@@ -137,6 +137,15 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
     };
 
+    const std::vector<ChangeItem> v02010Items = {
+        {"UI", "Post-Match Keyboard & Mouse Focus Stabilization",
+         "Eliminated mouse hover jitter and unintended selection triggers on the post-match results panel and main menu by adding intentional mouse motion deadzone filtering and preventing sub-pixel sensor noise from fighting keyboard navigation."},
+        {"UI", "Post-Match Input Settling & Click Leak Prevention",
+         "Introduced transition settle periods and physical mouse button release guards when returning from a game, preventing gameplay firing inputs or reveal skip clicks from accidentally activating post-game menu buttons."},
+        {"ENGINE", "High-Capacity Session Slot Management",
+         "Optimized 32-player peer seat structure math and memory alignment safeguards for high-capacity multiplayer and custom game sessions."},
+    };
+
     const std::vector<ChangeItem> v0209Items = {
         {"CAMERA", "3rd-Person Camera & Dynamic Reticle",
          "Implemented engine-level 3rd-person camera hooks with dynamic reticle screen projection, aiming raycasts, vehicle first-person support, and smooth field-of-view interpolation."},
@@ -193,9 +202,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 9) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 10) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "POST-MATCH INPUT STABILIZATION & HIGH-SLOT SESSION EXPANSION",
+                    "Keyboard & Mouse Focus Fixes, Input Leak Suppression & 32-Player Peer Seat Math",
+                    v02010Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 9) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.9",
                     "3RD-PERSON CAMERA, DYNAMIC RETICLE & SCOREBOARD SYNC",
                     "3rd-Person Engine Hooks, Raycasted Dynamic Reticle, Seated Cameras & Mode-Correct Scoreboards",
                     v0209Items,

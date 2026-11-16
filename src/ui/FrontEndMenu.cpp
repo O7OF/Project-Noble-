@@ -1940,10 +1940,7 @@ int DrawList(const Ui &ui, const char *id, ImVec2 pos, float width,
     const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
     ImGui::PopID();
     ImGui::PopID();
-    const bool mouseMoved =
-        ImGui::GetIO().MouseDelta.x * ImGui::GetIO().MouseDelta.x +
-            ImGui::GetIO().MouseDelta.y * ImGui::GetIO().MouseDelta.y >
-        0.0f;
+    const bool mouseMoved = NobleUi::IsMouseMoved(2.5f);
     if (hovered && selected != i && mouseMoved) {
       if (hoverSelects)
         selected = i;
@@ -3157,7 +3154,7 @@ int PickerRow(
         bool chosen = ImGui::InvisibleButton("##c", ImVec2(vw, rowH));
         const bool over = ImGui::IsItemHovered();
         const bool selectable = !enabled || enabled(i);
-        if (over && selectable && (mouseDelta.x != 0.0f || mouseDelta.y != 0.0f))
+        if (over && selectable && NobleUi::IsMouseMoved(2.5f))
           s_cursor = i;
         if (acceptKey && i == s_cursor && selectable)
           chosen = true;
@@ -4750,7 +4747,12 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
     (void)Window::TakeLeftClicks();
     (void)Window::TakeWheelSteps();
     (void)Window::TakeTypedChars();
-    s_waitMouseRelease = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    s_waitMouseRelease = true;
+  }
+  const bool lDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+  const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+  if (!lDown && !rDown) {
+    s_waitMouseRelease = false;
   }
 
   const bool vcOwnsPointer = UiPad::IsVirtualCursorControllingMouse();
@@ -4764,7 +4766,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
         io.AddMouseWheelEvent(0.0f, wheel);
       }
     }
-  } else if (!settling && focused && GetCursorPos(&cursor) &&
+  } else if (focused && GetCursorPos(&cursor) &&
              ScreenToClient(hwnd, &cursor) && client.right > 0 &&
              client.bottom > 0) {
     const float sx = io.DisplaySize.x / static_cast<float>(client.right);
@@ -4772,10 +4774,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
     io.AddMousePosEvent(static_cast<float>(cursor.x) * sx,
                         static_cast<float>(cursor.y) * sy);
 
-    const bool lDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    if (!lDown)
-      s_waitMouseRelease = false;
-    if (resetEdges || s_waitMouseRelease) {
+    if (resetEdges || settling || s_waitMouseRelease) {
       (void)Window::TakeLeftClicks();
       (void)Window::TakeWheelSteps();
       io.AddMouseButtonEvent(0, false);
@@ -4787,7 +4786,6 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO &io) {
       } else {
         io.AddMouseButtonEvent(0, lDown);
       }
-      const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
       io.AddMouseButtonEvent(1, rDown);
 
       const float wheel = Window::TakeWheelSteps();
@@ -5270,7 +5268,7 @@ void ContainerMatchEnded(OverlayContext &ctx, DWORD exitCode) {
   s_resetInputEdges.store(true);
   s_resetFrameTimer.store(true);
   s_resetScreenTransition.store(true);
-  s_postMatchInputSettleUntil.store(GetTickCount64() + 300);
+  s_postMatchInputSettleUntil.store(GetTickCount64() + 450);
   if (!s_holdFrameOwned.load()) {
     // Give HostSlot1_FrameTick a fresh grace period to resume presenting before
     // HoldFrame considers taking over (prevents dual-thread clear/3D flicker).
@@ -5577,8 +5575,7 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
         st.quitChoice = 1 - st.quitChoice;
         MenuSounds::Scroll();
       }
-      const bool mouseMovedQuit = ImGui::GetIO().MouseDelta.x != 0.0f ||
-                                  ImGui::GetIO().MouseDelta.y != 0.0f;
+      const bool mouseMovedQuit = NobleUi::IsMouseMoved(2.5f);
       const bool yes =
           ActionButton(ui, "quit_yes", ImVec2(b0.x + 24.0f * ui.s, btnY), btnW,
                        "YES", st.quitChoice == 0, st.quitChoice == 0);

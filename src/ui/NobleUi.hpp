@@ -71,6 +71,10 @@ void DrawTacticalBar(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float fraction, ImU32
 void DrawChallengeCard(const Career::Challenge& c, float width, bool focused,
                        bool& outHovered, bool& outClicked, bool compact = false);
 
+// Returns true when the physical mouse moved intentionally (exceeding minDistance deadzone,
+// rejecting stationary high-DPI sensor jitter and unpark/resize delta spikes).
+bool IsMouseMoved(float minDistance = 2.5f);
+
 // Text helpers (font may be nullptr = current font).
 float TextWidth(ImFont* font, float px, const char* text);
 void Text(ImDrawList* dl, ImFont* font, float px, ImVec2 pos, ImU32 col, const char* text, float wrapWidth = 0.0f);
