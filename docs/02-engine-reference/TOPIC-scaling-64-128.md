@@ -120,6 +120,31 @@ read/write/bit-scan loop site, the membership mask fields and the block copies -
 significantly larger than the slot-layout work done so far. The headless self-test reports the gate explicitly
 (cap 64/128: `BLOCKED by the engine's 32-bit masks`).
 
+### 3.1 Mask-widening plan (validated model, patching still to do)
+
+Widening keeps the engine's existing DWORD as **word 0** and adds the high words in the shadow object, so every current
+mask site can keep its 32-bit operation for bits 0..31 and only needs a high-word branch for bits >= 32:
+
+| capacity | mask words | peer high words | player high words | shadow offsets (high word 1) |
+|---|---|---|---|---|
+| 32 | 1 | 0 | 0 | - (inline DWORD only) |
+| 64 | 2 | 1 | 1 | peers 0x28000, players 0x28004 |
+| 128 | 4 | 3 | 3 | peers 0x28000, players 0x2800C |
+
+The high-word area sits after the chunked shadow arrays (ends 0x8614 / 0xEAA4 / 0x21A14 for 32/64/128) and inside
+`kSessionStride` (0x61668), so it fits with room to spare. The bit operations the patched sites will use
+(`MaskBitTest`/`MaskBitSet`/`MaskBitClear`/`MaskPopcount`/`MaskFirstSet` over N words) are implemented and validated
+synthetically by `-test-slot-capacity` for every bit 0..capacity-1 at all three capacities (set/test/clear/popcount/
+first-set round-trips pass).
+
+Patch forms planned for the site inventory: (a) mask reads (`test`/`and` with a DWORD mask) keep the 32-bit path for
+bits 0..31 and add a high-word check behind an index compare, the same piecewise-cave shape as the slot caves; (b) mask
+writes (`or`/`and`/`btr`/`bts`) split into a low word and a high-word store; (c) bit-scan loops (`bsf`/`bsr`/`bt`) iterate
+words low to high; (d) the session block copies/mirrors must copy the high words with the arrays; (e) the membership
+encoder/decoder and message payload widen the peer/player mask fields to 2 or 4 words. Site inventory: 23 peer-mask
+operands are already catalogued (`kPeerMasks32`); the player-mask sites still need enumerating from the engine before any
+of this is installed.
+
 Message-capacity model (`SlotMessage`): the extension builder's counts are now derived from `kSlotCapacity` (32 ->
 15 peer + 16 player entries) with static asserts pinning the generated tables, and the same `-test-slot-capacity`
 run validates the capacity model: 32 derives exactly the generated extension (0x2200 / message 0xA300); 64 would be
@@ -158,6 +183,8 @@ log instead of being silently ignored.
    one-chunk case 41 B == generated cave, maxima 41/70/157 B).
    Mask width: the run reports 23 patched peer-mask operands and the required mask words per capacity: 32 fits the
    stock DWORDs; 64/128 are reported BLOCKED (2/4 words needed) - the hard gate documented in section 3.
+   Mask model: the high-word shadow storage offsets and the bit helpers (test/set/clear/popcount/first-set) are
+   exercised for every bit 0..capacity-1 at 32/64/128 - section 3.1.
 2. Install-level sessions: declare C slots and join with 2 clients (proves shadow storage, message registration,
    encoder/decoder validity at capacity even without C clients).
 3. Forced high slots (`NOBLE_SLOT_HIGH=1`, free-slot scans start at peer 17 / player 16) can place a handful of
@@ -166,9 +193,10 @@ log instead of being silently ignored.
 
 ## 6. Ordered work list
 
-**Gating item for anything above 32: multi-word mask widening.** The slot layout, chunked caves and message-size model
+**Gating item for anything above 32: multi-word mask widening.** The storage model and bit helpers are implemented and
+validated (section 3.1); the slot layout, chunked caves and message-size model
 are ready, but no capacity >32 can be installed while the engine's peer/player valid masks are 32-bit DWORDs. Plan:
-high-word mask storage in the shadow object, patch every mask read/write/bit-scan/loop site (23 peer-mask operands are
+high-word mask storage in the shadow object, enumerate and patch every mask read/write/bit-scan/loop site (23 peer-mask operands are
 already catalogued; player-mask sites must be enumerated), widen the membership mask fields, and extend the block
 copies. Only then can the chunked install and the wire-field widening be exercised.
 

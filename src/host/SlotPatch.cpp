@@ -1466,6 +1466,87 @@ SynthesizedCave SynthesizePiecewiseCave(const Site& site, const ShadowLayoutPlan
     out.ok = pos <= sizeof(out.bytes);
     return out;
 }
+// ---------------------------------------------------------------------------------------------
+// Mask-widening plan for capacities above 32 (proposed, validated synthetically here).
+//
+// The engine keeps peer-valid and player-valid masks as one 32-bit DWORD. Widening keeps that DWORD as word 0 and
+// stores the extra words in the shadow object, so every existing mask site can stay a 32-bit operation for bits 0..31
+// and only needs a high-word branch for higher bits. The plan below defines where the high words live and the mask
+// bit helpers the patched sites will use; the per-site inventory (23 peer-mask operands already catalogued, player-mask
+// sites still to enumerate) and the site patch forms are the next implementation step.
+struct CapacityMaskPlan {
+    uint32_t capacity;
+    uint32_t words;         // words per mask (1 at 32, 2 at 64, 4 at 128)
+    uint32_t peerHighOffset;    // shadow offset of peer-mask word 1 (0 when words == 1)
+    uint32_t playerHighOffset;  // shadow offset of player-mask word 1 (0 when words == 1)
+};
+constexpr uint32_t kMaskHighBase = 0x28000;   // after the chunked shadow arrays (max end 0x261C8 at 128)
+constexpr CapacityMaskPlan MakeCapacityMaskPlan(uint32_t capacity) {
+    CapacityMaskPlan plan{};
+    plan.capacity = capacity;
+    plan.words = (capacity + 31) / 32;
+    if (plan.words > 1) {
+        plan.peerHighOffset = kMaskHighBase;
+        plan.playerHighOffset = kMaskHighBase + (plan.words - 1) * 4;
+    }
+    return plan;
+}
+
+inline bool MaskBitTest(const uint32_t* words, uint32_t count, uint32_t bit) {
+    return bit / 32 < count && (words[bit / 32] & (1u << (bit % 32))) != 0;
+}
+inline void MaskBitSet(uint32_t* words, uint32_t count, uint32_t bit) {
+    if (bit / 32 < count) words[bit / 32] |= (1u << (bit % 32));
+}
+inline void MaskBitClear(uint32_t* words, uint32_t count, uint32_t bit) {
+    if (bit / 32 < count) words[bit / 32] &= ~(1u << (bit % 32));
+}
+inline uint32_t MaskPopcount(const uint32_t* words, uint32_t count) {
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t v = words[i];
+        while (v) { v &= v - 1; ++n; }
+    }
+    return n;
+}
+inline int MaskFirstSet(const uint32_t* words, uint32_t count) {
+    for (uint32_t i = 0; i < count; ++i)
+        if (words[i]) { uint32_t b = 0; while (((words[i] >> b) & 1u) == 0) ++b; return static_cast<int>(i * 32 + b); }
+    return -1;
+}
+
+int ValidateMaskModel() {
+    int failures = 0;
+    const uint32_t caps[] = { 32, 64, 128 };
+    for (const uint32_t cap : caps) {
+        const CapacityMaskPlan plan = MakeCapacityMaskPlan(cap);
+        const uint32_t end = plan.peerHighOffset + (plan.words - 1) * 4;
+        const uint32_t shadowEnd = cap <= 32 ? 0x8614u : (cap <= 64 ? 0xEAA4u : 0x21A14u);
+        if (plan.words > 1 && (end > kSessionStride || plan.peerHighOffset < shadowEnd)) {
+            ++failures;
+            NOBLE_WARN("SlotLayout: mask high words at 0x{:X} collide with the shadow arrays (end 0x{:X})",
+                       plan.peerHighOffset, shadowEnd);
+        }
+        uint32_t peer[4] = {}, player[4] = {};
+        // Set every valid bit, check every bit, then clear half and re-check.
+        for (uint32_t b = 0; b < cap; ++b) { MaskBitSet(peer, plan.words, b); MaskBitSet(player, plan.words, b); }
+        for (uint32_t b = 0; b < cap; ++b)
+            if (!MaskBitTest(peer, plan.words, b) || !MaskBitTest(player, plan.words, b)) ++failures;
+        if (MaskPopcount(peer, plan.words) != cap) ++failures;
+        if (MaskFirstSet(peer, plan.words) != 0) ++failures;
+        for (uint32_t b = 0; b < cap; b += 2) MaskBitClear(peer, plan.words, b);
+        for (uint32_t b = 0; b < cap; ++b) {
+            const bool want = (b % 2) == 1;
+            if (MaskBitTest(peer, plan.words, b) != want) ++failures;
+        }
+        if (MaskPopcount(peer, plan.words) != cap / 2) ++failures;
+        NOBLE_INFO("SlotLayout: cap={:>3} mask words {} (inline word 0 + {} high word(s)); peer high @0x{:X}, player high "
+                   "@0x{:X} (shadow arrays end 0x{:X}, stride 0x{:X}) - all bits set/test/clear/popcount/first ok",
+                   cap, plan.words, plan.words - 1, plan.peerHighOffset, plan.playerHighOffset, shadowEnd,
+                   static_cast<uint32_t>(kSessionStride));
+    }
+    return failures;
+}
 // Validate the piecewise cave synthesis for every generated site at 32/64/128: length fits the 256-byte cave entry, the
 // one-chunk case reproduces the generated 41-byte cave, and (delta 0) the first chunk constant is exactly
 // -(threshold * record) as in SlotMemberCaves.inc.
@@ -1632,6 +1713,7 @@ int SlotLayoutSelfTest() {
     {
         int peerMaskSites = 0;
         failures += ValidateMaskWidths(peerMaskSites);
+        failures += ValidateMaskModel();
     }
     failures += ValidateShadowPlanCoverage();
     failures += ValidatePiecewiseCaves();
