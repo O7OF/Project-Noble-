@@ -393,6 +393,35 @@ that is a much larger, permanent operations commitment and the part of RR with t
 fragility.
 
 
+## 9. What RR's model costs to run (cash vs time)
+
+RR is a **free fan project** (its README says so, and the binaries are unsigned). There is no evidence in the shipped
+package of paid software or a commercial service; the costs are infrastructure the project/community chooses to run,
+plus the users' own MCC copies. Estimates below are ballpark figures for the order of magnitude, not RR's actual bills.
+
+| Cost item | What RR's approach implies | Rough cash cost |
+|---|---|---|
+| Development tools | Rust toolchain, Ghidra, WebView2 runtime, vgmstream, GitHub - all free/open source; no purchased engine, no IDE licences | $0 |
+| Code signing | README explicitly says Windows may warn because the program is unsigned - so no code-signing certificate | $0 (optional cert ~$100-500/yr if they ever wanted one) |
+| Master/directory + server browser | small VPS is enough (list management, not game traffic) | ~$5-20/mo + domain ~$10-15/yr; TLS via Let's Encrypt is free |
+| Voice service | low-bitrate voice; small VPS/VM | ~$5-50/mo depending on concurrency |
+| Relay/NAT traversal | **the only cost that scales with players**: UDP game traffic relayed when direct connections fail. Direct/LAN play keeps this near zero; a popular relay can reach hundreds of GB-TB/month | ~$0 at hobby scale; ~$50-150/mo at a few hundred relayed players; $1000+/mo if thousands relay everything |
+| Updates/patches | ~740 MB of tag packs per fresh install; updates are whatever the release does. GitHub Releases hosting is free with soft limits; a CDN/S3 mirror is ~$0.05-0.10/GB | $0 on GitHub; ~$50-90 per 1,000 full downloads if self-hosted |
+| Dedicated servers | players/community start these from the menus on their own PCs or rented machines | $0 to the project - hosts pay their own VM/PC bandwidth |
+| Player-side licences | everyone needs their own MCC + Halo: Reach (Steam) | ~$10-40 per player on sale; a testing rig needs one per PC/account |
+| **Engineering time** | the real cost: Rust client + engine patching + own transport/membership + master/browser/voice/dedicated + WebView UI + packs + version chasing every MCC update | dominant; years of person-time as hobbyists, or a large salary bill if contracted |
+| Support/moderation/ops | player reports, big-lobby bugs, server admin tooling, platform/Proton issues | ongoing volunteer time |
+
+**Bottom line.** Cash-wise the RR model can start close to **$0-30/month** (a small master/voice VPS plus a domain, free
+GitHub updates, players hosting games), and grows with relay bandwidth, update egress and support as the player base
+grows. It is *free to play*, not free to operate at scale - and the dominant cost is not servers but the permanent
+engineering/maintenance ownership of a network stack and launcher that must chase MCC engine updates.
+
+**Versus Noble.** Staying MCC-integrated means **no master/relay/voice/update-hosting bill at all** (MCC carries the
+network and its own services; Noble ships patches/mods). Noble's cost is engine-patch engineering plus test hardware;
+the RR model trades that for capability (64/81/128, dedicated/relay) and a permanent operations + bandwidth burden.
+
+
 ## 7. Open questions
 
 - Where does the **88** figure come from? Not in RR 0.1.50; likely 81/128 confusion. Need a source link.
