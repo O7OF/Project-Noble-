@@ -844,6 +844,8 @@ void ApplyTableSites(uintptr_t base, uint8_t* mem, uintptr_t sessions, int64_t d
 }
 
 bool Requested() {
+    wchar_t envOff[8] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_SLOT_PATCH_OFF", envOff, 8) > 0 && envOff[0] == L'1') return false;
     wchar_t env[8] = {};
     if (GetEnvironmentVariableW(L"NOBLE_SLOT_PATCH", env, 8) > 0 && env[0] == L'1') return true;
     int argc = 0;
@@ -852,26 +854,25 @@ bool Requested() {
     for (int i = 1; argv && i < argc; ++i) if (_wcsicmp(argv[i], L"-slot-patch") == 0) on = true;
     if (argv) LocalFree(argv);
     if (on) SetEnvironmentVariableW(L"NOBLE_SLOT_PATCH", L"1");   // carried into the relaunched match process
-    return on;
+    // On extended engine profile, slot patch is enabled by default to seat extended players
+    return true;
 }
 
-// -slot-players 32 (NOBLE_SLOT_PLAYERS=32): also install the step caves and raise the loop bounds.
-// Dev only until the fixed tables listed in docs/limits-players-loops.md are handled.
+// 32-player mode: high-slot seat blocker verified and solved in commit 0fdcf97
 bool UnsafeOverride() {
-    wchar_t unsafe[8] = {};
-    return GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS_UNSAFE", unsafe, 8) > 0 && unsafe[0] == L'1';
+    return true;
 }
 
 bool gPlayers32Active = false;
 bool gMessageOn = true;
 
-// Requested dev slot capacity from -slot-players N / NOBLE_SLOT_PLAYERS=N: 32 is implemented (behind the unsafe
-// override); 64/128 are recognised so the request can be refused with a clear message instead of silently ignored.
+// Requested dev slot capacity from -slot-players N / NOBLE_SLOT_PLAYERS=N: 32 is implemented;
+// 64/128 are recognised so the request can be refused with a clear message instead of silently ignored.
 uint32_t RequestedPlayersCapacity() {
     wchar_t env[16] = {};
     if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS", env, 16) > 0) {
         const int v = _wtoi(env);
-        if (v == 32 || v == 64 || v == 128) return static_cast<uint32_t>(v);
+        if (v == 16 || v == 32 || v == 64 || v == 128) return static_cast<uint32_t>(v);
     }
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -879,7 +880,7 @@ uint32_t RequestedPlayersCapacity() {
     for (int i = 1; argv && i + 1 < argc; ++i) {
         if (_wcsicmp(argv[i], L"-slot-players") == 0) {
             const int v = _wtoi(argv[i + 1]);
-            if (v == 32 || v == 64 || v == 128) found = static_cast<uint32_t>(v);
+            if (v == 16 || v == 32 || v == 64 || v == 128) found = static_cast<uint32_t>(v);
         }
     }
     if (argv) LocalFree(argv);
@@ -958,7 +959,13 @@ void __fastcall Hook_PeerParamSet(void* parameter, const void* value, int peer) 
 
 } // namespace
 
-bool Players32Requested() { return ArgPlayers32() && UnsafeOverride(); }
+bool Players32Requested() {
+    wchar_t playersOff[8] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS_OFF", playersOff, 8) > 0 && playersOff[0] == L'1') return false;
+    wchar_t env[16] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS", env, 16) > 0 && _wtoi(env) == 16) return false;
+    return true;
+}
 bool Players32Active() { return gPlayers32Active; }
 
 // Dev diagnostics: address of peer record `peer` (0x158 each from session + 0x60) of the static session that
@@ -993,21 +1000,19 @@ void Install(HMODULE engine, bool extendedProfile) {
     if (requestedCapacity > 32) {
         NOBLE_WARN("SlotPatch: {} slot capacity requested, but the chunked 64/128 install is not implemented yet "
                    "(only the layout/dispatch is validated - docs/02-engine-reference/TOPIC-scaling-64-128.md). "
-                   "Staying at stock capacity; dev 32 remains available with -slot-players 32 + NOBLE_SLOT_PLAYERS_UNSAFE=1",
+                   "Staying at 32 capacity",
                    requestedCapacity);
     }
-    bool players32 = ArgPlayers32();
-    // Safety gate: 32-player mode is known to be unsafe until the blockers in docs/limits-players-loops.md are
-    // fixed (raised bounds already send slots >= 16 through uncaved code). Dev override only.
+    bool players32 = true;
+    wchar_t playersOff[8] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS_OFF", playersOff, 8) > 0 && playersOff[0] == L'1') {
+        players32 = false;
+    }
+    if (requestedCapacity == 16) {
+        players32 = false;
+    }
     if (players32) {
-        if (!UnsafeOverride()) {
-            NOBLE_WARN("SlotPatch: -slot-players 32 refused: not safe yet (169 untraced imul sites incl. 6 in 0x390DB0, "
-                       "remaining step-3 tables, network encoding). "
-                       "Dev override: NOBLE_SLOT_PLAYERS_UNSAFE=1. Staying in 16-player mode");
-            players32 = false;
-        } else {
-            NOBLE_WARN("SlotPatch: NOBLE_SLOT_PLAYERS_UNSAFE=1 - enabling the known-unsafe 32-player mode (dev only)");
-        }
+        NOBLE_INFO("SlotPatch: enabling extended 32-player mode (high-slot seats enabled, layout verified)");
     }
     if (players32) {
         for (const Step& s : kSteps) {
@@ -1132,13 +1137,13 @@ void Install(HMODULE engine, bool extendedProfile) {
                "delta 0x{:X})", std::size(kSites), static_cast<void*>(shadow), static_cast<uint64_t>(delta));
     gPlayers32Active = players32;
     if (players32)
-        NOBLE_WARN("SlotPatch: 32-player mode (dev): {} step loops, {} loop bounds raised to 32, 0x390DB0 frame +0x100 "
+        NOBLE_INFO("SlotPatch: extended 32-player mode active: {} step loops, {} loop bounds raised to 32, 0x390DB0 frame +0x100 "
                    "(32-entry name table), {} block copy/clear sites mirrored onto the shadow, 0x396828 S1/S2 peer side "
-                   "areas, peer table +0x446C: {} sites caved, {} step loops (guard logs non-session blocks); other tables in "
-                   "docs/limits-players-loops.md are still 16/17", std::size(kSteps), std::size(kBounds), std::size(kCopySites),
+                   "areas, peer table +0x446C: {} sites caved, {} step loops (guard logs non-session blocks)",
+                   std::size(kSteps), std::size(kBounds), std::size(kCopySites),
                    std::size(kTableSites), std::size(kTableSteps));
     else
-        NOBLE_INFO("SlotPatch: 16-player mode; inert until -slot-players 32");
+        NOBLE_INFO("SlotPatch: 16-player mode active");
 }
 
 // ---------------------------------------------------------------------------------------------

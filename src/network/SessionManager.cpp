@@ -193,7 +193,7 @@ void SessionManager::BeaconLoop() {
 #ifndef NOBLE_DEDICATED
         players += static_cast<int>(NetworkTransport::Get().GetGamePeerCount());
 #endif
-        players = std::clamp(players, 0, 64); // the beacon parser accepts 0..64
+        players = std::clamp(players, 0, 128); // the beacon parser accepts 0..128
         // Beacon payload: NOBL_BEACON|Name|Mode|Map|Gametype|Players|MaxPlayers|Port|HasPass|ModId|ModTitle
         // The two mod fields are appended so older clients (which stop after HasPass) still parse the beacon.
         std::ostringstream ss;
@@ -272,7 +272,7 @@ void SessionManager::DiscoveryListenerLoop() {
                 int players = 0, maxPlayers = 0, port = 0;
                 if (tokens.size() >= 9 &&
                     ParseInt(tokens[5], players) && ParseInt(tokens[6], maxPlayers) && ParseInt(tokens[7], port) &&
-                    players >= 0 && players <= 64 && maxPlayers >= 1 && maxPlayers <= 64 &&
+                    players >= 0 && players <= 128 && maxPlayers >= 1 && maxPlayers <= 128 &&
                     port >= 1 && port <= 65535) {
                     DiscoveredSession session;
                     session.hostAddress = ipStr;

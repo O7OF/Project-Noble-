@@ -1198,7 +1198,7 @@ void ServerBrowser::RenderServerList() {
                 badges.push_back({ "STALE", IM_COL32(90, 78, 40, 220), IM_COL32(240, 220, 160, 255) });
             }
             if (s.maxPlayers > fe::EffectiveMultiplayerCap()) {
-                badges.push_back({ "17+ UNSUPPORTED", IM_COL32(150, 60, 150, 230), IM_COL32(255, 240, 255, 255) });
+                badges.push_back({ "EXCEEDS CAPACITY", IM_COL32(150, 60, 150, 230), IM_COL32(255, 240, 255, 255) });
             }
         }
 
@@ -1531,7 +1531,8 @@ void ServerBrowser::RenderServerDetails() {
     if (s.maxPlayers > fe::EffectiveMultiplayerCap()) {
         ImGui::Spacing();
         wrappedLine(true, ImVec4{1.0f, 0.62f, 0.35f, 1.0f},
-                    "This host advertises more players than the engine can seat (17+ joins do not work yet).");
+                    "This host advertises more players than this client can seat (supported up to " +
+                    std::to_string(fe::EffectiveMultiplayerCap()) + " players).");
     }
 
     if (s.isPasswordProtected) {

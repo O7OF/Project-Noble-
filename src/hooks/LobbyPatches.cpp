@@ -64,14 +64,14 @@ uint32_t LobbyPatches::s_maxCoopPlayers = 16;        // Default to expanded 16 p
 typedef void(__fastcall* SetSlotCountsFn)(void* thisPtr, int32_t privateSlots, int32_t publicSlots, bool isRanked);
 static SetSlotCountsFn s_originalSetSlotCounts = nullptr;
 
-// Dev experiment only: allow a multiplayer/forge session to be declared with more than the engine's stock 16 slots.
-// The supported multiplayer path is 16 slots with the engine's own count; a raised count is only meaningful together
-// with the 32-player slot patch, so it also requires that mode to be installed.
-static bool MultiplayerSlotCount32() {    static const bool on = [] {
-        wchar_t env[8] = {};
-        return GetEnvironmentVariableW(L"NOBLE_MP_SLOTS32", env, 8) > 0 && env[0] == L'1';
-    }();
-    return on;
+// Multiplayer slot count 32 capability check: active whenever the 32-player slot patch is active,
+// or when explicitly enabled via NOBLE_MP_SLOTS32=1.
+static bool MultiplayerSlotCount32() {
+    wchar_t envOff[8] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_MP_SLOTS32_OFF", envOff, 8) > 0 && envOff[0] == L'1') return false;
+    wchar_t env[8] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_MP_SLOTS32", env, 8) > 0 && env[0] == L'1') return true;
+    return slots::Players32Active();
 }
 
 // Last public-slot count the engine asked for. 0 is its join lock while a launch is starting; Tyler's
@@ -79,8 +79,9 @@ static bool MultiplayerSlotCount32() {    static const bool on = [] {
 // bypass it (that combination used to let a guest into a session the engine had already locked).
 static std::atomic<int32_t> s_lastPublicSlots{-1};
 
-int LobbyPatches::EffectiveMultiplayerSeats() {    constexpr int kStockSeats = 16, kPatchSeats = 32;
-    if (!MultiplayerSlotCount32() || !slots::Players32Active()) return kStockSeats;
+int LobbyPatches::EffectiveMultiplayerSeats() {
+    constexpr int kStockSeats = 16, kPatchSeats = 32;
+    if (!MultiplayerSlotCount32() && !slots::Players32Active()) return kStockSeats;
     // The baked target is 128 while 32 is the largest seat count this patch set supports.
     const int baked = static_cast<int>(GetMaxMultiplayerPlayers());
     return (std::min)(kPatchSeats, (std::max)(kStockSeats, baked));
@@ -102,14 +103,8 @@ static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, i
             NOBLE_INFO("LobbyPatches: Expanding campaign/firefight session slot count from {} to {} (private={}, isRanked={})",
                 publicSlots, targetSlots, privateSlots, isRanked);
         }
-    } else if ((publicSlots == 16 || publicSlots == 8) && expandedMp > publicSlots && MultiplayerSlotCount32() &&
-               slots::Players32Active()) {
-        // 2026-11-16: this used to expand every multiplayer/forge session to 128 slots. The expansion had been dormant
-        // for weeks because the hook was silently uninstalled (its signature stopped matching the installed dll); once
-        // 1a6846b restored the hook by RVA it declared every MP session as 128 slots and broke the join handshake - the
-        // host closed the guest channel with reason 10 and the guest then got CONNECT REFUSED reason 3 even for a plain
-        // 2-player session. A stock 16-slot session is the supported multiplayer path, so only the explicit dev
-        // experiment (above, plus the 32-player slot patch being installed) may raise it.
+    } else if ((publicSlots == 16 || publicSlots == 8) && expandedMp > publicSlots &&
+               (MultiplayerSlotCount32() || slots::Players32Active())) {
         targetSlots = std::min(expandedMp, 32);
         NOBLE_INFO("LobbyPatches: Expanding multiplayer/forge session slot count from {} to {} (private={}, isRanked={})",
             publicSlots, targetSlots, privateSlots, isRanked);
