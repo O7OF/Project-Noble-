@@ -250,6 +250,14 @@ copies. Only then can the chunked install and the wire-field widening be exercis
    copies, and chunk-hopping step caves.
 3. Then the wire fields (peer/player index bits), 128 message framing, engine pools and the UI surfaces.
 
+**Regression fixed 2026-11-16 (round 11).** The chunk-aware shadow record init uses `gShadow` (via `ShadowChunkPtr`),
+but `Install` assigned `gSessions`/`gShadow` only after `InitShadowRecords`, so every `-slot-patch -slot-players 32`
+launch crashed with `0xC0000005` during install. Fixed by assigning the globals before the shadow init. Re-verified:
+direct 32-mode host install (120 sites, game session started), normal 2-player smoke (peermask/pmask 0x3, 0 crashes)
+and a 3-instance `-Slot32 -High` run: 3/3 instances alive, 0 crashes, host seated `p0:8 p17:8` with the 0xA300
+membership message. The **second** high-slot guest did not seat within that run's window - the slot-18 join path
+remains open (likely the join-side slot allocation/scan, not the seat itself).
+
 **Hardware/acceptance note.** 16-player acceptance needs 3-4 PCs x 4-5 instances or ~96-128 GB RAM on one machine (five
 players is the proven one-machine maximum); 32+ field testing is likewise hardware-gated. No user-facing cap or release
 change was made; version/release line is controlled by the release workflow (now v0.20.11).
