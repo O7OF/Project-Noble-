@@ -38,6 +38,7 @@ struct AppearanceProfile {
     std::array<float, 3> secondaryCustomRgb = {0.267f, 0.545f, 0.314f};
     std::array<float, 3> accentCustomRgb = {0.471f, 0.788f, 0.808f};
     std::array<float, 3> lightsCustomRgb = {0.106f, 0.839f, 0.529f};
+    float lightsBrightness = 1.0f; // Spartan armor lights brightness multiplier (x0.5..x65.5, step 0.5)
 
     // Dedicated Elite Color indices (separate from Spartan customizations)
     int elitePrimaryColor = 1;    // Steel
@@ -49,6 +50,7 @@ struct AppearanceProfile {
     std::array<float, 3> eliteSecondaryCustomRgb = {0.267f, 0.545f, 0.314f};
     std::array<float, 3> eliteAccentCustomRgb = {0.471f, 0.788f, 0.808f};
     std::array<float, 3> eliteLightsCustomRgb = {0.106f, 0.839f, 0.529f};
+    float eliteLightsBrightness = 1.0f;
 
     // Spartan selections (catalog indices)
     int helmetIndex = 0;         // Mark V [B]

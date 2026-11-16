@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <array>
 #include <cstdint>
@@ -64,6 +64,7 @@ struct ReachArmorySelection {
     std::array<float, 3> secondaryRgb = { 0.100f, 0.100f, 0.100f };
     std::array<float, 3> accentRgb = { 0.471f, 0.788f, 0.808f };   // third/detail colour (Cyan)
     std::array<float, 3> lightsRgb = { 0.106f, 0.839f, 0.529f };   // 4th slot: lights / illumination
+    float lightsBrightness = 1.0f;                                 // Spartan armor lights intensity multiplier (x0.5..x65.5, step 0.5)
     std::array<float, 3> visorRgb = { 0.69f, 0.25f, 0.02f };
     // True when the colour was picked on the wheel instead of from Reach's 30-colour palette. Only those
     // colours have to be forced onto the game (see SyncMatchLiveBipeds); palette colours travel in the
