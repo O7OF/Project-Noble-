@@ -1,4 +1,6 @@
 #include "FrontEndInternal.hpp"
+#include "hooks/LobbyPatches.hpp"
+#include "host/SlotPatch.hpp"
 
 namespace noble {
 namespace fe {
@@ -2981,6 +2983,16 @@ int ClickRow(const Ui &ui, const char *id, ImVec2 pos, float width,
   return change;
 }
 
+// The one capability source for multiplayer seat counts. Stock engines seat 16 players (17 peer records); the
+// only path above that is the dev-only 32-player slot patch, and even installed a 17th player cannot join yet
+// (high-slot blocker, NOTE-HIGHSLOT). So the menus keep every displayed/advertised cap at 16 until that mode is
+// genuinely active in this process - never the picker's raw number.
+int EffectiveMultiplayerCap() {
+  // One capability source for the whole client (menus, -max-players clamp, session target, adverts): see
+  // LobbyPatches::EffectiveMultiplayerSeats.
+  return noble::LobbyPatches::EffectiveMultiplayerSeats();
+}
+
 // An OptionRow whose middle can also be clicked: it opens a list of every
 // choice, so a player picks one directly instead of stepping the arrows through
 // them all. The middle shows that it is clickable: a plate and underline on
@@ -2993,7 +3005,8 @@ int PickerRow(
     const Ui &ui, const char *id, ImVec2 pos, float width, const char *label,
     const char *value, bool focused,
     const std::function<void(std::vector<std::string> &, int &)> &fill,
-    int *picked, bool openNow, const char *note, bool labelOpens) {
+    int *picked, bool openNow, const char *note, bool labelOpens,
+    const std::function<bool(int)> &enabled, const char *disabledReason) {
   if (picked)
     *picked = -1;
   ImGui::PushID(id);
@@ -3045,10 +3058,22 @@ int PickerRow(
     fill(choices, current);
     const float rowH = 30.0f * ui.s;
     const int count = static_cast<int>(choices.size());
+    // Choices the caller marked unavailable (e.g. player counts the engine cannot seat yet): drawn dim,
+    // skipped by the keyboard/nav cursor and not pickable, with a one-line reason under the list.
+    bool anyDisabled = false;
+    for (int i = 0; i < count; ++i) {
+      if (enabled && !enabled(i)) {
+        anyDisabled = true;
+        break;
+      }
+    }
+    const bool showDisabledReason =
+        anyDisabled && disabledReason && *disabledReason;
+    const float disabledReasonH = showDisabledReason ? 30.0f * ui.s : 0.0f;
     // Fit the room on screen: below the row, or above it when there is more
     // space there; the list scrolls (mouse wheel or its scrollbar) when the
     // choices don't all fit. The bottom keeps clear of the key hints.
-    const float wanted = count * rowH + 8.0f * ui.s;
+    const float wanted = count * rowH + 8.0f * ui.s + disabledReasonH;
     const float below = ui.origin.y + ui.size.y - 84.0f * ui.s - (pos.y + h);
     const float above = pos.y - (ui.origin.y + 8.0f * ui.s);
     const bool openUp = wanted > below && above > below;
@@ -3077,13 +3102,22 @@ int PickerRow(
         s_cursor = std::max(0, current);
       bool cursorMoved = false;
       bool acceptKey = false;
+      // Keyboard/nav cursor stepping skips choices the caller disabled, so 24/32 cannot be landed on.
+      auto stepCursor = [&](int delta) {
+        if (count <= 0) return;
+        for (int n = 0; n < count; ++n) {
+          s_cursor = (s_cursor + delta + count) % count;
+          if (!enabled || enabled(s_cursor))
+            return;
+        }
+      };
       if (wasOpen && count > 0) {
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
-          s_cursor = (s_cursor + 1) % count;
+          stepCursor(1);
           cursorMoved = true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
-          s_cursor = (s_cursor + count - 1) % count;
+          stepCursor(-1);
           cursorMoved = true;
         }
         acceptKey = ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
@@ -3102,9 +3136,10 @@ int PickerRow(
         const ImVec2 p = ImGui::GetCursorScreenPos();
         bool chosen = ImGui::InvisibleButton("##c", ImVec2(vw, rowH));
         const bool over = ImGui::IsItemHovered();
-        if (over && (mouseDelta.x != 0.0f || mouseDelta.y != 0.0f))
+        const bool selectable = !enabled || enabled(i);
+        if (over && selectable && (mouseDelta.x != 0.0f || mouseDelta.y != 0.0f))
           s_cursor = i;
-        if (acceptKey && i == s_cursor)
+        if (acceptKey && i == s_cursor && selectable)
           chosen = true;
         if ((firstFrame && i == current) || (cursorMoved && i == s_cursor))
           ImGui::SetScrollHereY(0.5f);
@@ -3119,17 +3154,34 @@ int PickerRow(
         const std::string text = Upper(choices[i].c_str());
         const float tw =
             TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, text.c_str());
+        // A disabled choice stays readable but grey, with no current/hover highlight.
+        const ImU32 choiceCol =
+            !selectable ? IM_COL32(112, 124, 138, 235)
+                        : (i == current || i == s_cursor) ? kWhite : kDim;
         pd->AddText(NobleStyle::TitleFont(), 18.0f * ui.s,
                     ImVec2(p.x + (vw - tw) * 0.5f, p.y + 5.0f * ui.s),
-                    i == current || i == s_cursor ? kWhite : kDim,
-                    text.c_str());
+                    choiceCol, text.c_str());
         ImGui::PopID();
-        if (chosen) {
+        if (chosen && selectable) {
           if (picked)
             *picked = i;
           MenuSounds::Change();
           ImGui::CloseCurrentPopup();
         }
+      }
+      if (showDisabledReason) {
+        // Why the greyed choices cannot be picked, inside the same list (and only while one is disabled).
+        const ImVec2 np = ImGui::GetCursorScreenPos();
+        pd->AddLine(ImVec2(np.x + 6.0f * ui.s, np.y + 2.0f * ui.s),
+                    ImVec2(np.x + vw - 6.0f * ui.s, np.y + 2.0f * ui.s),
+                    IM_COL32(90, 112, 134, 120), 1.0f);
+        const std::string fitted =
+            Ellipsize(NobleStyle::SmallFont(), 13.0f * ui.s, Upper(disabledReason),
+                      vw - 16.0f * ui.s);
+        pd->AddText(NobleStyle::SmallFont(), 13.0f * ui.s,
+                    ImVec2(np.x + 8.0f * ui.s, np.y + 8.0f * ui.s),
+                    IM_COL32(232, 178, 96, 235), fitted.c_str());
+        ImGui::Dummy(ImVec2(vw, 26.0f * ui.s));
       }
       s_scrolledFor = popupId;
       ImGui::EndPopup();

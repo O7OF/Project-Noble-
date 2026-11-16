@@ -30,6 +30,12 @@ struct ServerEntry {
     std::string region;         // "US East", "US West", "UK", "LAN", "YOU"
     std::string mapDescription; // player-facing map blurb (stock) or mod map blurb
     std::string modDescription; // host mod title/description when the game is modded
+    // Freshness: a row that drops out of one refresh is kept and flagged instead of vanishing, so the browser
+    // can say "not heard lately" (and a join cannot be attempted against a dead listing without feedback).
+    // LAN rows age out faster than master-server rows (the LAN beacon repeats every 1.5 s).
+    double lastSeen = 0.0;      // ImGui time of the refresh that last listed this row
+    int ageSeconds = 0;         // seconds since it was last heard (0 = listed in the current refresh)
+    bool heard = true;          // false: kept from an earlier refresh, not heard in the latest scan
 };
 
 // SERVERS tab of the front-end menu: LAN games (UDP beacons from SessionManager), games listed on

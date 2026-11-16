@@ -75,6 +75,14 @@ static bool MultiplayerSlotCount32() {
     return on;
 }
 
+int LobbyPatches::EffectiveMultiplayerSeats() {
+    constexpr int kStockSeats = 16, kPatchSeats = 32;
+    if (!MultiplayerSlotCount32() || !slots::Players32Active()) return kStockSeats;
+    // The baked target is 128 while 32 is the largest seat count this patch set supports.
+    const int baked = static_cast<int>(GetMaxMultiplayerPlayers());
+    return (std::min)(kPatchSeats, (std::max)(kStockSeats, baked));
+}
+
 static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, int32_t publicSlots, bool isRanked) {
     NOBLE_INFO("LobbyPatches: set_slot_counts private={} public={} ranked={}", privateSlots, publicSlots, isRanked);
     int32_t targetSlots = publicSlots;
@@ -397,6 +405,28 @@ void LobbyPatches::ResetRemotePlayerJoined() {
 
 size_t LobbyPatches::GetRemotePlayerAddCount() {
     return s_remotePlayersJoinedCount.load();
+}
+
+size_t LobbyPatches::GetGamePlayerCount() {
+    size_t count = 0;
+    __try {
+        if (!s_reachBase) return 0;
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+        const uintptr_t arr = block ? *reinterpret_cast<const uintptr_t*>(block + 0x18) : 0;
+        if (!arr) return 0;
+        const uint64_t size = *reinterpret_cast<const uint64_t*>(arr + 0x20);
+        const uintptr_t data = *reinterpret_cast<const uintptr_t*>(arr + 0x50);
+        if (!data || size < 0x80 || size > 0x4000) return 0;
+        for (int i = 0; i < 16; ++i) {   // the game-player array has 16 stock entries; slots beyond read other memory
+            const uintptr_t d = data + static_cast<size_t>(i) * size;
+            if (*reinterpret_cast<const uint16_t*>(d) != 0) ++count;   // datum salt word is zero on an empty slot
+        }
+    } __except (1) {
+        return 0;
+    }
+    return count;
 }
 
 typedef uint64_t(__fastcall* EncodeMessageFn)(void* table, void* stream, int32_t type, int32_t size, void* data);

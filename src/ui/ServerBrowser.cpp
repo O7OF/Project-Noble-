@@ -35,11 +35,31 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+// Defined in FrontEndMenu.cpp and declared in FrontEndInternal.hpp: the browser needs the one capability number
+// but not the whole front-end header.
+namespace noble::fe {
+int EffectiveMultiplayerCap();
+}
+
 namespace noble {
 
 namespace {
 
 float U(float px) { return px * NobleUi::Scale(); }
+
+// Freshness thresholds in seconds. Online follows the RR reference (STALE=30 / NOT_HEARD=75 / DROP=120); a
+// LAN row is heard every ~1.5 s and its beacon is pruned after 4 s, so it ages much faster.
+constexpr int kLanStaleSeconds = 5, kLanNotHeardSeconds = 15, kLanDropSeconds = 30;
+constexpr int kOnlineStaleSeconds = 30, kOnlineNotHeardSeconds = 75, kOnlineDropSeconds = 120;
+
+bool IsLanRow(const ServerEntry& s) { return s.source == "LAN"; }
+bool RowIsFull(const ServerEntry& s) { return s.maxPlayers > 0 && s.playerCount >= s.maxPlayers; }
+bool RowIsStale(const ServerEntry& s) {
+    return !s.heard && s.ageSeconds >= (IsLanRow(s) ? kLanStaleSeconds : kOnlineStaleSeconds);
+}
+bool RowNotHeardLately(const ServerEntry& s) {
+    return !s.heard && s.ageSeconds >= (IsLanRow(s) ? kLanNotHeardSeconds : kOnlineNotHeardSeconds);
+}
 
 // Design option switch for the list presentation: "-server-browser-style 1|2|3".
 //   2 = large picture cards on a blue-glass panel (Tyler's pick, default),
@@ -342,6 +362,8 @@ ServerBrowser::ServerBrowser() {
 
 void ServerBrowser::RefreshServers() {
     const SettingsData settings = Settings::Get().Snapshot();
+    const double now = ImGui::GetTime();
+    const std::vector<ServerEntry> previous = m_servers;
     std::vector<ServerEntry> list;
     auto add = [&](ServerEntry e) {
         if (e.hostAddress.empty() || e.maxPlayers <= 0 || e.mapName.empty()) return;
@@ -372,8 +394,10 @@ void ServerBrowser::RefreshServers() {
             }
             e.port = cfg.port;
             e.ping = 0;
-            e.playerCount = 1;
-            e.maxPlayers = cfg.maxPlayers;
+            // Real session size (host plus joined peers) and never a cap the engine cannot seat: the lobby's
+            // advertised number is already clamped by the UI, this keeps a stale config honest too.
+            e.playerCount = 1 + static_cast<int>(NetworkTransport::Get().GetGamePeerCount());
+            e.maxPlayers = (std::min)(cfg.maxPlayers, fe::EffectiveMultiplayerCap());
             e.gameMode = cfg.gameMode;
             e.mapName = cfg.mapName;
             e.variantName = cfg.gametypeName;
@@ -410,6 +434,16 @@ void ServerBrowser::RefreshServers() {
         e.region = "LAN";
         // Our own beacon heard on the LAN: already listed as "YOU".
         if (sessions.IsHosting() && d.port == sessions.GetHostConfig().port && d.sessionName == sessions.GetHostConfig().sessionName) continue;
+        // Test evidence (T3): log a LAN row's real counts when they change.
+        {
+            static std::unordered_map<std::string, int> s_loggedLanCounts;
+            const std::string logKey = Key(e.hostAddress, e.port);
+            auto it = s_loggedLanCounts.find(logKey);
+            if (it == s_loggedLanCounts.end() || it->second != e.playerCount) {
+                s_loggedLanCounts[logKey] = e.playerCount;
+                NOBLE_INFO("ServerBrowser: LAN row '{}' players={}/{}", e.name, e.playerCount, e.maxPlayers);
+            }
+        }
         add(e);
     }
 
@@ -519,6 +553,36 @@ void ServerBrowser::RefreshServers() {
             list.push_back(std::move(demo));
         }
     }
+    // Freshness: every row heard in this scan is current; rows that dropped out are kept briefly (flagged
+    // heard=false with their age) instead of vanishing on the next refresh, so the browser can say "not heard
+    // lately" and never pretend a dead listing is joinable. After the source's DROP threshold the row is gone.
+    for (ServerEntry& e : list) {
+        e.lastSeen = now;
+        e.ageSeconds = 0;
+        e.heard = true;
+    }
+    for (const ServerEntry& old : previous) {
+        if (old.source == "YOU") continue; // the hosted row is rebuilt above while hosting, gone when stopped
+        const std::string key = Key(old.hostAddress, old.port);
+        bool listed = false;
+        for (const ServerEntry& e : list) {
+            if (Key(e.hostAddress, e.port) == key) {
+                listed = true;
+                break;
+            }
+        }
+        if (listed) continue;
+        const double age = old.lastSeen > 0.0 ? (now - old.lastSeen) : 0.0;
+        const double dropAfter = IsLanRow(old) ? kLanDropSeconds : kOnlineDropSeconds;
+        if (age > dropAfter) continue;
+        ServerEntry kept = old;
+        kept.heard = false;
+        kept.ageSeconds = static_cast<int>(age);
+        kept.isFavorite = std::find(settings.favorites.begin(), settings.favorites.end(), key) !=
+                          settings.favorites.end();
+        list.push_back(std::move(kept));
+    }
+
     // Keep the selection on the same server if it is still listed.
     std::string selectedKey;
     if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
@@ -1121,6 +1185,18 @@ void ServerBrowser::RenderServerList() {
             if (s.build.find("-dev") != std::string::npos) badges.push_back({ "DEV", IM_COL32(95, 78, 175, 230), IM_COL32(240, 238, 255, 255) });
             const bool compatible = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
             if (!compatible) badges.push_back({ "OLD/MISMATCH", IM_COL32(190, 52, 52, 235), IM_COL32(255, 242, 242, 255) });
+            // Honesty verdicts: a full row, a listing we stopped hearing from, and a host that advertises more
+            // seats than the engine can seat (17+ cannot be joined yet).
+            if (RowIsFull(s)) {
+                badges.push_back({ "FULL", IM_COL32(190, 52, 52, 235), IM_COL32(255, 242, 242, 255) });
+            } else if (RowNotHeardLately(s)) {
+                badges.push_back({ "NOT HEARD LATELY", IM_COL32(120, 96, 40, 235), IM_COL32(255, 236, 190, 255) });
+            } else if (RowIsStale(s)) {
+                badges.push_back({ "STALE", IM_COL32(90, 78, 40, 220), IM_COL32(240, 220, 160, 255) });
+            }
+            if (s.maxPlayers > fe::EffectiveMultiplayerCap()) {
+                badges.push_back({ "17+ UNSUPPORTED", IM_COL32(150, 60, 150, 230), IM_COL32(255, 240, 255, 255) });
+            }
         }
 
         float badgeBlockW = 0.0f;
@@ -1134,8 +1210,12 @@ void ServerBrowser::RenderServerList() {
         const std::string displayName = EllipsizeLabel(titleFont, namePx, s.name.empty() ? "Unnamed Halo: Reach Server" : s.name, maxNameW);
         const ImVec2 nameSz = titleFont->CalcTextSizeA(namePx, FLT_MAX, 0.0f, displayName.c_str());
         const float rowTopY = compact ? c0.y + U(7.0f) : (style == 2 ? c0.y + U(17.0f) : c0.y + U(13.0f));
+        // A row we have stopped hearing from is dimmed so it does not read like a live game.
         dl->AddText(titleFont, namePx, ImVec2(textLeft, rowTopY),
-                    selected ? IM_COL32(255, 250, 238, 255) : IM_COL32(228, 238, 248, 255), displayName.c_str());
+                    RowIsStale(s) ? IM_COL32(150, 162, 176, 235)
+                    : selected ? IM_COL32(255, 250, 238, 255)
+                               : IM_COL32(228, 238, 248, 255),
+                    displayName.c_str());
 
         float bx = textLeft + nameSz.x + 8.0f * sScale;
         for (const auto& b : badges) {
@@ -1160,6 +1240,12 @@ void ServerBrowser::RenderServerList() {
         }
         if (!s.region.empty() && s.region != "YOU") subLine += "   |   " + s.region;
         else if (!s.source.empty()) subLine += "   |   " + s.source;
+        if (compact) {
+            // The compact style has no badge row: put the verdict in the subtitle instead.
+            if (RowIsFull(s)) subLine += "   |   FULL";
+            else if (RowNotHeardLately(s)) subLine += "   |   NOT HEARD LATELY";
+            else if (RowIsStale(s)) subLine += "   |   STALE";
+        }
 
         const std::string subClip = EllipsizeLabel(bodyFont, subPx, subLine, infoW);
         dl->AddText(bodyFont, subPx, ImVec2(textLeft, rowSubY), IM_COL32(158, 182, 206, 230), subClip.c_str());
@@ -1416,6 +1502,29 @@ void ServerBrowser::RenderServerDetails() {
                                             : IM_COL32(245, 95, 85, 255);
         drawInfoRow("PING", pingStr, pingCol);
     }
+    {
+        // Honest state: a full session cannot be joined and a listing that stopped reappearing is flagged
+        // instead of silently disappearing between refreshes.
+        const bool full = RowIsFull(s);
+        const bool notHeard = RowNotHeardLately(s);
+        const bool stale = RowIsStale(s);
+        const char *state = full ? "FULL"
+                            : notHeard ? "NOT HEARD LATELY"
+                            : stale ? "STALE"
+                                    : "READY";
+        const ImU32 stateCol = full ? IM_COL32(245, 110, 90, 255)
+                              : (notHeard || stale) ? IM_COL32(255, 198, 72, 255)
+                                                    : IM_COL32(82, 224, 128, 255);
+        drawInfoRow("STATUS", state, stateCol);
+        if (!s.heard) {
+            drawInfoRow("LAST HEARD", std::to_string(s.ageSeconds) + " s ago");
+        }
+    }
+    if (s.maxPlayers > fe::EffectiveMultiplayerCap()) {
+        ImGui::Spacing();
+        wrappedLine(true, ImVec4{1.0f, 0.62f, 0.35f, 1.0f},
+                    "This host advertises more players than the engine can seat (17+ joins do not work yet).");
+    }
 
     if (s.isPasswordProtected) {
         ImGui::Spacing();
@@ -1491,13 +1600,23 @@ void ServerBrowser::RenderServerDetails() {
             ImGui::EndDisabled();
         } else {
             const bool modMissing = !s.modId.empty() && !ModInstalledCached(s.modId);
-            const std::string joinLabel = modMissing ? "DOWNLOAD MOD & JOIN"
-                                         : s.inProgress ? "JOIN IN PROGRESS"
-                                                        : "JOIN PRE-GAME LOBBY";
-            if (NobleStyle::PrimaryButton(joinLabel.c_str(), ImVec2(-1, U(40))) || (triggerFocusedBtn && s_detailBtnIdx == 0)) {
+            const bool full = RowIsFull(s);
+            const std::string joinLabel =
+                full ? ("SERVER FULL (" + std::to_string(s.playerCount) + "/" +
+                        std::to_string(s.maxPlayers) + ")")
+                     : modMissing ? "DOWNLOAD MOD & JOIN"
+                     : s.inProgress ? "JOIN IN PROGRESS"
+                                    : "JOIN PRE-GAME LOBBY";
+            if (full) {
+                // Never start a join that the host will reject: a full row is visibly unjoinable.
+                ImGui::BeginDisabled();
+                NobleStyle::PrimaryButton(joinLabel.c_str(), ImVec2(-1, U(40)));
+                ImGui::EndDisabled();
+            } else if (NobleStyle::PrimaryButton(joinLabel.c_str(), ImVec2(-1, U(40))) ||
+                       (triggerFocusedBtn && s_detailBtnIdx == 0)) {
                 AttemptJoin(s);
+                focusOutline(0);
             }
-            focusOutline(0);
         }
     }
 
@@ -1567,6 +1686,13 @@ bool ServerBrowser::JoinBlockedByVersion(const ServerEntry& s) {
 
 void ServerBrowser::AttemptJoin(const ServerEntry& s) {
     if (JoinBlockedByVersion(s)) return;
+    if (RowIsFull(s)) {
+        // The host has no seats: say so instead of starting a connection it will refuse.
+        m_status = "Can't join: this session is full (" + std::to_string(s.playerCount) + "/" +
+                   std::to_string(s.maxPlayers) + ").";
+        NOBLE_WARN("ServerBrowser join refused (full): {}", m_status);
+        return;
+    }
     if (!CanStartJoinNow(m_status)) return;
     if (m_joinLobbyHandler) {
         StampJoinAttemptNow();
@@ -1581,7 +1707,14 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
     (void)hasPassword;
     const std::string key = Key(address, port);
     for (const auto& known : m_servers) {
-        if (known.hostAddress == address && known.port == port && JoinBlockedByVersion(known)) return;
+        if (known.hostAddress != address || known.port != port) continue;
+        if (JoinBlockedByVersion(known)) return;
+        if (RowIsFull(known)) {
+            m_status = "Can't join: this session is full (" + std::to_string(known.playerCount) + "/" +
+                       std::to_string(known.maxPlayers) + ").";
+            NOBLE_WARN("ServerBrowser join refused (full): {}", m_status);
+            return;
+        }
     }
     if (!CanStartJoinNow(m_status)) return;
 

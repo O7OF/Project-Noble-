@@ -3642,20 +3642,32 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
               ++focusRows;
               y += 36.0f * ui.s;
             }
-            // 48+ seats are untested and the 128-player work is on Tyler's hold; multiplayer also
-            // "stopped at 34 players" in his 2026-11-15 report. Clamp the picker to the implemented
-            // 32-slot work (stock 16 stays the default); Claude's session/replication work owns
-            // re-enabling higher counts (see project-docs\NOTE-NETWORK-HANDOFF-TO-CLAUDE.md).
+            // 17-32 player sessions do not work yet: the 32-player engine mode is a dev-only
+            // slot patch (src/host/SlotPatch.cpp) and a 17th player still cannot join. Keep 24/32 in
+            // the list so an existing config round-trips, but grey them out with the reason and never
+            // run with a cap the engine session cannot seat (EffectiveMultiplayerCap is 16 until the
+            // 32-player mode is actually active).
             static const int kCaps[] = {4, 8, 12, 16, 24, 32};
             constexpr int kNumCaps =
                 static_cast<int>(sizeof(kCaps) / sizeof(kCaps[0]));
-            int capIdx = 3;
+            const int effectiveCap = EffectiveMultiplayerCap();
+            const bool capsDisabled = kCaps[kNumCaps - 1] > effectiveCap;
+            auto capEnabled = [&](int ci) { return kCaps[ci] <= effectiveCap; };
+            if (st.sessionMaxPlayers > effectiveCap) {
+              NOBLE_INFO("FrontEndPickers: max players {} capped to {} (17-32 "
+                         "needs the 32-player slot patch, dev-only)",
+                         st.sessionMaxPlayers, effectiveCap);
+              st.sessionMaxPlayers = effectiveCap;
+            }
+            int capIdx = 0;
             for (int ci = 0; ci < kNumCaps; ++ci) {
               if (kCaps[ci] >= st.sessionMaxPlayers) {
                 capIdx = ci;
                 break;
               }
             }
+            if (!capEnabled(capIdx))
+              capIdx = 0;
             char capText[32];
             std::snprintf(capText, sizeof(capText), "%d PLAYERS",
                           kCaps[capIdx]);
@@ -3669,11 +3681,22 @@ DrawTacticalMapGrid(const Ui &ui, MenuState &st, ImVec2 gridPos,
                   current = capIdx;
                 },
                 &capPicked,
-                navReady && st.focusRow == focusRows && AcceptPressed());
+                navReady && st.focusRow == focusRows && AcceptPressed(),
+                nullptr, true, capEnabled,
+                capsDisabled ? "NEEDS THE 32-PLAYER SLOT PATCH (DEV)" : nullptr);
             if (dc) {
-              capIdx = (capIdx + dc + kNumCaps) % kNumCaps;
-              st.sessionMaxPlayers = kCaps[capIdx];
-            } else if (capPicked >= 0) {
+              // Step to the next choice that is actually available (24/32 are disabled).
+              int next = capIdx;
+              for (int n = 0; n < kNumCaps; ++n) {
+                next = (next + dc + kNumCaps) % kNumCaps;
+                if (capEnabled(next))
+                  break;
+              }
+              if (capEnabled(next)) {
+                capIdx = next;
+                st.sessionMaxPlayers = kCaps[capIdx];
+              }
+            } else if (capPicked >= 0 && capEnabled(capPicked)) {
               st.sessionMaxPlayers = kCaps[capPicked];
             }
             y += 36.0f * ui.s;

@@ -2063,6 +2063,17 @@ static void UpdateLiveScoreboard() {
         matched->name = nameUtf8;
       }
       if (!matched) {
+        // A row added from the transport peer list while the engine table was empty (LAN/direct launch):
+        // give it the engine's real name instead of adding a duplicate row for the same player.
+        for (auto &existing : s_boardRows) {
+          if (existing.name.rfind("PLAYER ", 0) == 0) {
+            matched = &existing;
+            existing.name = nameUtf8;
+            break;
+          }
+        }
+      }
+      if (!matched) {
         PauseMenu::ScoreboardEntry entry;
         entry.name = nameUtf8;
         entry.local = isLocalPlayer;
@@ -2133,6 +2144,77 @@ static void UpdateLiveScoreboard() {
       row.ping = ms; // -1 means unknown and is drawn as "-"
     } else if (row.ping < 0) {
       row.ping = 0;
+    }
+  }
+
+  // Direct/LAN launches pass no -session-id, so main.cpp never seeds the board from the master roster, and the
+  // engine results table can stay empty (or list only the local player) while several peers are already in the
+  // session. The transport knows every peer in the session, so top the board up to the live player count with
+  // placeholder rows (unknown names stay "PLAYER n"); a named engine row that arrives later reuses its
+  // placeholder (above). Also runs when the engine table has rows, which is the normal LAN/direct-launch case.
+  {
+    const size_t transportPeers = NetworkTransport::Get().GetGamePeerCount();
+    const size_t gamePlayers = LobbyPatches::GetGamePlayerCount();
+    // Authoritative live player count: the engine's own game-player table when it has entries; otherwise the
+    // transport peer count (direct connects) or the msg-27 counter. Never let transport bookkeeping invent rows.
+    size_t livePlayers = gamePlayers;
+    if (livePlayers < 2) {
+      livePlayers = (std::max)(transportPeers + 1, LobbyPatches::GetRemotePlayerAddCount() + 1);
+    }
+    if (livePlayers > 16) livePlayers = 16;
+    if (livePlayers > 0 && s_boardRows.size() < livePlayers) {
+      if (s_boardRows.empty()) {
+        PauseMenu::ScoreboardEntry me;
+        me.name =
+            snap.playerName.empty() ? std::string("NobleSix") : snap.playerName;
+        me.tag = snap.serviceTag;
+        me.local = true;
+        me.team = s_localTeam.load();
+        me.rank = localRank;
+        me.ping = 0;
+        s_boardRows.push_back(me);
+      }
+      auto placeholderName = [&]() {
+        return "PLAYER " + std::to_string(s_boardRows.size() + 1);
+      };
+      const auto pings = NetworkTransport::Get().GetAllPeerPingsMs();
+      for (const auto &kv : pings) {
+        if (s_boardRows.size() >= livePlayers)
+          break;
+        if (kv.first == 0 ||
+            kv.first == NetworkTransport::Get().GetLocalMachineId())
+          continue;
+        bool known = false;
+        for (const auto &row : s_boardRows) {
+          if (row.machine == kv.first) {
+            known = true;
+            break;
+          }
+        }
+        if (known)
+          continue;
+        PauseMenu::ScoreboardEntry entry;
+        entry.machine = kv.first;
+        entry.ping = kv.second;
+        entry.name = placeholderName();
+        entry.team = s_localTeam.load();
+        s_boardRows.push_back(entry);
+      }
+      // Peers without a measured round-trip time still get a row.
+      while (s_boardRows.size() < livePlayers) {
+        PauseMenu::ScoreboardEntry entry;
+        entry.name = placeholderName();
+        entry.team = s_localTeam.load();
+        s_boardRows.push_back(entry);
+      }
+      static size_t s_lastLiveRosterLogged = 0;
+      if (s_lastLiveRosterLogged != s_boardRows.size()) {
+        s_lastLiveRosterLogged = s_boardRows.size();
+        NOBLE_INFO("PauseMenu: live roster {} player(s) (transport {}, "
+                   "membership {})",
+                   s_boardRows.size(), transportPeers,
+                   LobbyPatches::GetRemotePlayerAddCount());
+      }
     }
   }
 }
@@ -4047,7 +4129,21 @@ void PauseMenu::DrawLoading() {
   const size_t engineExpected = static_cast<size_t>((std::max)(0, BlamEngine::WaitingRemotePlayersExpected()));
   const size_t engineJoined = static_cast<size_t>((std::max)(0, BlamEngine::WaitingRemotePlayersJoined()));
   const size_t joined = 1 + (std::max)(peers, engineJoined);
-  const int wanted = (std::max)({expectedPlayers, static_cast<int>(players.size()), 1 + static_cast<int>(engineExpected)});
+  // The row count comes from live session membership too: a direct/LAN launch has no lobby roster (main.cpp
+  // only knows the local name), so sizing from `players` alone drew 1 row while N were already in the session.
+  const int wanted =
+      (std::max)({expectedPlayers, static_cast<int>(players.size()),
+                  1 + static_cast<int>(engineExpected), 1 + static_cast<int>(peers)});
+  // Test evidence (T2): log once whenever the live roster size changes.
+  {
+    static int s_lastLiveRoster = -1;
+    if (s_lastLiveRoster != wanted) {
+      s_lastLiveRoster = wanted;
+      NOBLE_INFO("PauseMenu: loading roster {} player(s) (transport {}, "
+                 "membership {})",
+                 wanted, peers, engineJoined);
+    }
+  }
   const size_t total = static_cast<size_t>(wanted);
   const bool online = expectedPlayers > 1 || peers > 0 || joiner || engineExpected > 0;
   const bool waitingForPlayers = expectedPlayers > static_cast<int>(joined) || engineExpected > engineJoined;

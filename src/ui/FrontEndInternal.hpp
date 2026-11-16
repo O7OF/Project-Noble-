@@ -435,7 +435,7 @@ struct MenuState {
   uint64_t lobbySkulls = 0;
   int lobbyMaxPlayers = 16;
   int sessionMaxPlayers =
-      16; // players the Custom Game / Forge lobby will allow (4..128)
+      16; // picker value; above EffectiveMultiplayerCap() (16 today) it is clamped/disabled
   int ffMaxPlayers = 16; // players the Firefight lobby will allow (4..16)
   std::string lobbyHostEndpoint;
   std::vector<LobbyPlayer> lobbyRoster;
@@ -712,12 +712,21 @@ void DrawMiddleHint(const Ui &ui, ImVec2 pos, float width, const char *value,
 int ClickRow(const Ui &ui, const char *id, ImVec2 pos, float width,
              const char *label, const char *value, bool focused, bool *clicked,
              bool down = false);
+// `enabled`, when given, is asked per choice index: a disabled choice is drawn dim in the list, cannot be
+// picked and the arrow/nav stepping skips it. `disabledReason` is shown under the choices (only while a choice
+// is disabled) so the player can read why a value is unavailable instead of just finding it dead.
 int PickerRow(
     const Ui &ui, const char *id, ImVec2 pos, float width, const char *label,
     const char *value, bool focused,
     const std::function<void(std::vector<std::string> &, int &)> &fill,
     int *picked, bool openNow = false, const char *note = nullptr,
-    bool arrowHint = true);
+    bool arrowHint = true,
+    const std::function<bool(int)> &enabled = {},
+    const char *disabledReason = nullptr);
+// How many seats the next multiplayer session can really declare. Stock engines seat 16; the 17-32 path is a
+// dev-only 32-player slot patch (src/host/SlotPatch.cpp) where a 17th player still cannot join, so the picker,
+// lobby header, advert and server-browser row all clamp to this number instead of the picked one.
+int EffectiveMultiplayerCap();
 bool ActionButton(const Ui &ui, const char *id, ImVec2 pos, float width,
                   const char *label, bool primary = true,
                   bool focused = false);

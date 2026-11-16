@@ -2,6 +2,11 @@
 #include "UPnP.hpp"
 #include "common/Logger.hpp"
 
+#ifndef NOBLE_DEDICATED
+// The beacon publishes the host's real session size; the dedicated server has no Noble P2P transport.
+#include "NetworkTransport.hpp"
+#endif
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <sstream>
@@ -170,6 +175,13 @@ void SessionManager::BeaconLoop() {
     destAddr.sin_addr.s_addr = INADDR_BROADCAST;
 
     while (!m_stopThreads && m_isHosting) {
+        // Real session size: the host itself plus every peer already in the match. This used to be the
+        // literal 1, so a LAN browser always showed 1/N however many players were in.
+        int players = 1;
+#ifndef NOBLE_DEDICATED
+        players += static_cast<int>(NetworkTransport::Get().GetGamePeerCount());
+#endif
+        players = std::clamp(players, 0, 64); // the beacon parser accepts 0..64
         // Beacon payload: NOBL_BEACON|Name|Mode|Map|Gametype|Players|MaxPlayers|Port|HasPass|ModId|ModTitle
         // The two mod fields are appended so older clients (which stop after HasPass) still parse the beacon.
         std::ostringstream ss;
@@ -177,7 +189,7 @@ void SessionManager::BeaconLoop() {
            << m_activeConfig.sessionName << "|"
            << m_activeConfig.gameMode << "|"
            << m_activeConfig.mapName << "|"
-           << m_activeConfig.gametypeName << "|1|"
+           << m_activeConfig.gametypeName << "|" << players << "|"
            << m_activeConfig.maxPlayers << "|"
            << m_activeConfig.port << "|"
            << (!m_activeConfig.password.empty() ? "1" : "0") << "|"

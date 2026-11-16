@@ -268,6 +268,16 @@ void SetupHostLobby(MenuState &st, const std::string &mapScenario,
   st.lobbyModFolder = mod ? mod->folder : std::filesystem::path();
   st.lobbyDifficulty = diff;
   st.lobbySkulls = skulls;
+  // The lobby header, the master advert and the LAN beacon all read this number, so clamp it to the seats
+  // the engine session can really declare (16 today; 24/32 need the dev-only 32-player slot patch) instead
+  // of advertising a count no session can seat.
+  const int effectiveCap = EffectiveMultiplayerCap();
+  if (maxPlayers > effectiveCap) {
+    NOBLE_INFO("FrontEndLobby: max players requested {} -> session seats {} "
+               "(17-32 needs the 32-player slot patch, dev-only)",
+               maxPlayers, effectiveCap);
+    maxPlayers = effectiveCap;
+  }
   st.lobbyMaxPlayers = maxPlayers;
   st.lobbyLaunchPending = false;
   st.lobbyMenuRow = 0;
@@ -2588,9 +2598,17 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   Text(ui, NobleStyle::TitleFont(), 18.0f,
        ImVec2(px + 10.0f * ui.s, headY + 4.0f * ui.s), kWhite,
        "MY GAME SESSION");
+  // Count over the seats the engine can really declare, never a stale/demo number above that. A
+  // test/demo roster that already exceeds the cap still needs its rows to fit, so the denominator is the
+  // larger of the effective cap and the roster actually in.
+  const int headerCap =
+      (std::min)(st.lobbyMaxPlayers, EffectiveMultiplayerCap());
+  const int rosterCount = static_cast<int>(st.lobbyRoster.size());
+  const int slotCount =
+      std::clamp(std::max(headerCap, rosterCount), 1, 128);
   char countBuf[32];
   std::snprintf(countBuf, sizeof(countBuf), "%zu/%d", st.lobbyRoster.size(),
-                st.lobbyMaxPlayers);
+                slotCount);
   const float countW =
       TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, countBuf);
   Text(ui, NobleStyle::TitleFont(), 18.0f,
@@ -2598,10 +2616,15 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
        countBuf);
   ui.dl->AddLine(ImVec2(px, headY + headH), ImVec2(px + pw, headY + headH),
                  kRuleLine, 1.0f);
+  // A local LAN lobby has no master-server roster, so this panel cannot see players before the match: say
+  // that instead of letting "1 player" read as the whole session (players join in game).
+  if (st.isLobbyHost && st.lobbyNetMode == 0) {
+    Text(ui, NobleStyle::SmallFont(), 14.0f,
+         ImVec2(px + 10.0f * ui.s, headY + panelH + 6.0f * ui.s), kDim,
+         "LAN SESSION - PLAYERS JOIN IN GAME; THE FULL ROSTER IS IN THE MATCH",
+         pw - 20.0f * ui.s);
+  }
 
-  const int rosterCount = static_cast<int>(st.lobbyRoster.size());
-  const int slotCount =
-      std::clamp(std::max(st.lobbyMaxPlayers, rosterCount), 1, 128);
   const int openSlots = std::max(0, slotCount - rosterCount);
   const auto &ownProf = UIManager::GetArmorCustomizer().GetProfile();
   const std::string localName = AuthClient::Get().IsLoggedIn()
