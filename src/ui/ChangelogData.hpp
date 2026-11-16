@@ -137,6 +137,13 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
     };
 
+    const std::vector<ChangeItem> v0209Items = {
+        {"CAMERA", "3rd-Person Camera & Dynamic Reticle",
+         "Implemented engine-level 3rd-person camera hooks with dynamic reticle screen projection, aiming raycasts, vehicle first-person support, and smooth field-of-view interpolation."},
+        {"UI", "All-Mode Roster & Scoreboard Sync",
+         "Multiplayer, Campaign, Firefight, and Forge scoreboards now seed real player names and tags from the launch roster, correctly identifying local players and displaying mode-accurate team columns."},
+    };
+
     const std::vector<ChangeItem> v0208Items = {
         {"NETCODE", "Modded Custom Games Join-in-Progress",
          "Guests now resolve host mod content overrides on stock maps and launch matches with their matching local mod installed, preventing content mismatch aborts and desyncs."},
@@ -186,9 +193,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 8) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 9) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "3RD-PERSON CAMERA, DYNAMIC RETICLE & SCOREBOARD SYNC",
+                    "3rd-Person Engine Hooks, Raycasted Dynamic Reticle, Seated Cameras & Mode-Correct Scoreboards",
+                    v0209Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 8) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.8",
                     "MODDED CUSTOM GAMES JOIN-IN-PROGRESS & SESSION LOCKS",
                     "Stock-Map Content Mod Resolution, Session Lock Gating & Join-in-Progress Polish",
                     v0208Items,
