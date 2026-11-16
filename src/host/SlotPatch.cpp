@@ -1364,6 +1364,160 @@ int ValidateChunkPlan(const SlotShadowLayout& L) {
     return failures;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Piecewise member-cave synthesis for the chunked install (validated here; >32 not installed yet).
+//
+// The generated one-range caves (41 bytes) replay the original multiply in two paths. A chunked capacity needs one
+// body per chunk instead; the destination/index registers are decoded from the site's original imul bytes, so the
+// generator format stays unchanged. Dispatch uses 32-bit conditional jumps (the chunks are >127 bytes away).
+// Layout: cmp idx, first ; jb stock ; (cmp idx, chunk[c].first ; jb chunk[c-1])* ; fallthrough = last chunk.
+// Bodies: last chunk, stock, then chunks 0..n-2. Length: 41 B (1 chunk), 70 (2), 99 (3), 128 (4), 157 (5) - all
+// below the 256-byte Site cave entry. Block-B record bases share the same constant because chunk B is +0x2210 away.
+struct SynthesizedCave {
+    uint8_t bytes[256];
+    uint32_t length;
+    bool ok;
+    uint32_t bodyCount;
+    uint32_t bodyOffsets[10];
+    uint32_t constantCount;
+    uint32_t constantOffsets[8];
+};
+
+uint8_t Rex(uint8_t reg) { return static_cast<uint8_t>(0x48 | ((reg >> 3) & 1)); }
+
+bool DecodeImulRegs(const uint8_t* orig, uint8_t& dst, uint8_t& idx) {
+    const uint8_t rex = orig[0];
+    if ((rex & 0xF0) != 0x40) return false;
+    const uint8_t opcode = orig[1];
+    if (opcode != 0x69 && opcode != 0x6B) return false;
+    const uint8_t modrm = orig[2];
+    if ((modrm & 0xC0) != 0xC0) return false;   // register direct form only
+    dst = static_cast<uint8_t>((((rex >> 2) & 1) << 3) | ((modrm >> 3) & 7));
+    idx = static_cast<uint8_t>((((rex >> 0) & 1) << 3) | (modrm & 7));
+    return true;
+}
+
+uint32_t PutJmp(uint8_t* p, uint64_t caveVa, uint32_t pos, uint64_t target) {
+    p[0] = 0xE9;
+    const int64_t disp = static_cast<int64_t>(target) - static_cast<int64_t>(caveVa + pos + 5);
+    std::memcpy(p + 1, &disp, 4);
+    return 5;
+}
+uint32_t PutJbRel32(uint8_t* p, uint64_t caveVa, uint32_t pos, uint64_t target) {
+    p[0] = 0x0F; p[1] = 0x82;
+    const int64_t disp = static_cast<int64_t>(target) - static_cast<int64_t>(caveVa + pos + 6);
+    std::memcpy(p + 2, &disp, 4);
+    return 6;
+}
+
+SynthesizedCave SynthesizePiecewiseCave(const Site& site, const ShadowLayoutPlan& plan, int64_t deltaScaled,
+                                       uint64_t caveVa, uint64_t siteVa) {
+    SynthesizedCave out{};
+    uint8_t dst = 0, idx = 0;
+    if (!DecodeImulRegs(site.original, dst, idx)) return out;
+    const uint32_t kindId = site.record == 0xB0 ? 1u : ((site.record == 0x158 || site.record == 0x56) ? 0u : 2u);
+    const ShadowKindPlan& kp = plan.kinds[kindId];
+    if (kp.count == 0 || kp.count > kMaxShadowChunks) return out;
+    uint8_t* p = out.bytes;
+    const uint64_t back = siteVa + sizeof(site.original);
+    const uint32_t dispatch = 10 * kp.count;   // one (cmp + 32-bit jb) branch per chunk plus the stock branch
+    const uint32_t stockJbPos = 4;
+    p[0] = Rex(idx); p[1] = 0x83; p[2] = static_cast<uint8_t>(0xF8 | (idx & 7));
+    p[3] = static_cast<uint8_t>(kp.chunks[0].first);
+    for (uint32_t c = 1; c < kp.count; ++c) {
+        const uint32_t cmpPos = 10 + (c - 1) * 10;
+        p[cmpPos] = Rex(idx); p[cmpPos + 1] = 0x83;
+        p[cmpPos + 2] = static_cast<uint8_t>(0xF8 | (idx & 7));
+        p[cmpPos + 3] = static_cast<uint8_t>(kp.chunks[c].first);
+    }
+    // Bodies: last chunk (fallthrough target), stock, then chunks 0..n-2.
+    uint32_t pos = dispatch;
+    uint32_t chunkBody[8] = {};
+    auto emitBody = [&](uint32_t chunk, bool stock) -> uint32_t {
+        const uint32_t at = pos;
+        std::memcpy(p + pos, site.original, sizeof(site.original));
+        pos += 7;
+        if (!stock) {
+            const int64_t base = static_cast<int64_t>(kp.chunks[chunk].aOffset) -
+                                static_cast<int64_t>(kKindStockOffset[kindId]);
+            const int64_t raw = (site.scaleShift == 2 ? base / 4 : base) -
+                                static_cast<int64_t>(site.threshold) * static_cast<int64_t>(site.record);
+            const int32_t imm = static_cast<int32_t>(deltaScaled + raw);
+            p[pos] = Rex(dst); p[pos + 1] = 0x81; p[pos + 2] = static_cast<uint8_t>(0xC0 | (dst & 7));
+            std::memcpy(p + pos + 3, &imm, 4);
+            out.constantOffsets[out.constantCount++] = pos;
+            pos += 7;
+        }
+        pos += PutJmp(p + pos, caveVa, pos, back);
+        out.bodyOffsets[out.bodyCount++] = at;
+        return at;
+    };
+    const uint32_t lastChunkBody = emitBody(kp.count - 1, false);
+    const uint32_t stockBody = emitBody(0, true);
+    for (uint32_t c = 0; c + 1 < kp.count; ++c) chunkBody[c] = emitBody(c, false);
+    // Patch the dispatch branches now that all body offsets are known.
+    PutJbRel32(p + stockJbPos, caveVa, stockJbPos, caveVa + stockBody);
+    for (uint32_t c = 1; c < kp.count; ++c) {
+        const uint32_t jbPos = 14 + (c - 1) * 10;
+        PutJbRel32(p + jbPos, caveVa, jbPos, caveVa + chunkBody[c - 1]);
+    }
+    (void)lastChunkBody;
+    out.length = pos;
+    out.ok = pos <= sizeof(out.bytes);
+    return out;
+}
+// Validate the piecewise cave synthesis for every generated site at 32/64/128: length fits the 256-byte cave entry, the
+// one-chunk case reproduces the generated 41-byte cave, and (delta 0) the first chunk constant is exactly
+// -(threshold * record) as in SlotMemberCaves.inc.
+int ValidatePiecewiseCaves() {
+    int failures = 0;
+    const uint64_t caveVa = 0x20000000ull;
+    const uint32_t caps[] = { 32, 64, 128 };
+    for (const uint32_t cap : caps) {
+        const ShadowLayoutPlan plan = BuildShadowLayoutPlan(cap);
+        uint32_t maxLen = 0, synthesized = 0;
+        for (const Site& site : kSites) {
+            const uint32_t kindId = site.record == 0xB0 ? 1u : ((site.record == 0x158 || site.record == 0x56) ? 0u : 2u);
+            if (plan.kinds[kindId].count == 0) { ++failures; continue; }
+            const uint64_t siteVa = caveVa + site.rva;
+            const SynthesizedCave c = SynthesizePiecewiseCave(site, plan, 0, caveVa, siteVa);
+            if (!c.ok) { ++failures; NOBLE_WARN("SlotLayout: piecewise cave synthesis failed at +0x{:X} cap {}", site.rva, cap); continue; }
+            ++synthesized;
+            if (c.length > 256) { ++failures; NOBLE_WARN("SlotLayout: piecewise cave +0x{:X} {} B at cap {}", site.rva, c.length, cap); }
+            if (c.length > maxLen) maxLen = c.length;
+            if (c.bodyCount != plan.kinds[kindId].count + 1) ++failures;
+            if (c.constantCount != plan.kinds[kindId].count) ++failures;
+            if (cap == 32) {
+                if (plan.kinds[kindId].count != 1 || c.length != 41 || c.length != site.caveLength) {
+                    ++failures;
+                    NOBLE_WARN("SlotLayout: one-chunk cave +0x{:X} {} B (generated {})", site.rva, c.length, site.caveLength);
+                }
+            }
+            // Every dispatch branch must land on the body it selects, and every body must jump back to the site.
+            const uint32_t n = plan.kinds[kindId].count;
+            auto readBranch = [&](uint32_t at) -> int64_t {
+                int32_t d = 0; std::memcpy(&d, c.bytes + at + 2, 4);
+                return static_cast<int64_t>(caveVa + at + 6 + d);
+            };
+            auto readJump = [&](uint32_t at) -> int64_t {
+                int32_t d = 0; std::memcpy(&d, c.bytes + at + 1, 4);
+                return static_cast<int64_t>(caveVa + at + 5 + d);
+            };
+            if (readBranch(4) != static_cast<int64_t>(caveVa + c.bodyOffsets[1])) ++failures;
+            for (uint32_t ch = 1; ch < n; ++ch) {
+                const uint32_t at = 14 + (ch - 1) * 10;
+                if (readBranch(at) != static_cast<int64_t>(caveVa + c.bodyOffsets[ch + 1])) ++failures;
+            }
+            for (uint32_t bd = 0; bd < c.bodyCount; ++bd) {
+                const uint32_t jmpPos = (bd == 1) ? c.bodyOffsets[bd] + 7 : c.bodyOffsets[bd] + 14;
+                if (readJump(jmpPos) != static_cast<int64_t>(siteVa + sizeof(site.original))) ++failures;
+            }
+        }
+        NOBLE_INFO("SlotLayout: cap={:>3} piecewise cave synthesis: {} site(s), max {} B (256-byte entry) {}",
+                   cap, synthesized, maxLen, maxLen <= 256 ? "ok" : "TOO BIG");
+    }
+    return failures;
+}
 // Coverage check for the chunk-aware shadow plan used by record init / mirrors / PeerRecord: each kind's chunks must
 // partition [firstSlot, capacity) exactly once, ascend in shadow storage, keep the A->B distance inside the object,
 // and capacity 32 must reproduce the stock offsets (byte-identical 32-player path).
@@ -1383,7 +1537,7 @@ int ValidateShadowPlanCoverage() {
                 const ShadowChunk& ch = kp.chunks[c];
                 if (ch.first != expectFirst) { ++failures; NOBLE_WARN("SlotLayout: cap {} kind {} chunk {} first {} != {}",
                                                                        e.capacity, k, c, ch.first, expectFirst); }
-                if (ch.count == 0) { ++failures; }
+                if (ch.count == 0) ++failures;
                 expectFirst = ch.first + ch.count;
                 const uint64_t end = static_cast<uint64_t>(ch.aOffset) + kShadowBlockDelta +
                                      static_cast<uint64_t>(ch.count) * kKindRecordSize[k];
@@ -1451,6 +1605,7 @@ int SlotLayoutSelfTest() {
         failures += ValidateChunkPlan(L);
     }
     failures += ValidateShadowPlanCoverage();
+    failures += ValidatePiecewiseCaves();
 
     // Effective-seat mapping: stock stays 16 for any unimplemented/uninstalled capacity; an installed dev capacity
     // reports itself instead of the stock 16.
