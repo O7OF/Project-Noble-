@@ -137,6 +137,15 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
     };
 
+    const std::vector<ChangeItem> v0203Items = {
+        {"SECURITY", "Anti-Reversing & Code Hardening",
+         "Hardened release executable against reverse engineering with encrypted string literals (compile-time obfuscation for endpoints and internal names), aggressive COMDAT folding, and disabled RTTI."},
+        {"SECURITY", "Symbol Stripping & Optimization",
+         "Stripped symbol and map files from release packages, optimized code generation, and removed trace strings from shipped release binaries."},
+        {"DIAGNOSTICS", "Streamlined Crash & Diagnostics",
+         "Release builds write clean mini-dumps without background log file overhead, and Settings diagnostics report dump status directly for fast troubleshooting."},
+    };
+
     const std::vector<ChangeItem> v0202Items = {
         {"SETTINGS", "Settings Menu Save Fix & Diagnostics",
          "Added settingsVersion 2 gating so music volume (50%) and custom paddle keys never revert to defaults on load; hardened save pipeline with per-process temp files (settings.json.<pid>.tmp), MoveFileExW replace, in-place fallbacks, on-screen failure warnings, and full save diagnostics."},
@@ -152,9 +161,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 2) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 3) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "CODE OBFUSCATION, ANTI-REVERSING & BUILD HARDENING",
+                    "Compile-Time String Encryption, Symbol Stripping, COMDAT Folding & Crash Diagnostics",
+                    v0203Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 2) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.2",
                     "SETTINGS SAVE FIXES, END-MATCH UI & POST-GAME CRASH FIXES",
                     "Settings File Versioning, Controller Apply, Post-Match Report Stability & Non-Host Crash Fixes",
                     v0202Items,
