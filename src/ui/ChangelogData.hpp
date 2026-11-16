@@ -137,6 +137,13 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
     };
 
+    const std::vector<ChangeItem> v0208Items = {
+        {"NETCODE", "Modded Custom Games Join-in-Progress",
+         "Guests now resolve host mod content overrides on stock maps and launch matches with their matching local mod installed, preventing content mismatch aborts and desyncs."},
+        {"NETCODE", "Join-Lock Gating & Slot Parity",
+         "Refusal overrides are now cleanly gated on public slot availability (respecting the engine's launch join-locks) preventing guests from being forced into locked sessions."},
+    };
+
     const std::vector<ChangeItem> v0207Items = {
         {"NETCODE", "Firefight & Match Join-in-Progress",
          "Suppressed premature match aborts (reason 6) and dropped join-in-progress refusal gates during active host sessions so late-joining players smoothly complete handshakes without kicking guests back to the main menu."},
@@ -179,9 +186,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 7) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 8) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "MODDED CUSTOM GAMES JOIN-IN-PROGRESS & SESSION LOCKS",
+                    "Stock-Map Content Mod Resolution, Session Lock Gating & Join-in-Progress Polish",
+                    v0208Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 7) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.7",
                     "JOIN-IN-PROGRESS STABILITY, SETTINGS MIGRATION FIX & PERFORMANCE",
                     "Smooth Match Handshakes, Settings Reset Prevention, Loading Roster & CPU Optimizations",
                     v0207Items,
