@@ -130,23 +130,25 @@ subset of the same design; RR's `machine_index_bits`/`machine_set_bytes` config 
 and its M128 two-players-per-machine approach (players > machines) is worth considering to keep peer/machine masks
 smaller than the player count.
 
-## 3. Features RR has that Noble does not (and how RR does them)
+## 3. Feature comparison: where RR differs from Noble (corrected 2026-11-16)
 
-Confidence: observed/proven from the shipped UI + changelog + binary strings unless marked inferred. "Noble today"
-describes the state of our workstream as of 2026-11-16; confirm before acting on any single row.
+Confidence: RR side observed/proven from the shipped files, changelog and binary strings; the **Noble side is
+owner-confirmed as of 2026-11-16** where noted. This is not a "Noble is missing X" list for everything - Noble has
+accounts, credits, challenges, commendations, ranks, voice chat, regular chat, moderation/reports and (likely) host
+protection. Those should not be treated as gaps. Rows below only call out real differences or things still to verify.
 
 ### 3.1 Networking, servers and matchmaking
 
-| Feature | How RR does it | Noble today |
-|---|---|---|
-| Public server browser with host options | master/directory server (`rr-master`), browser process, lobby rows carry game type/map/players/ping/region/version facts; version tags advertise host profiles (e.g. a 64-player host fact) | Noble has a server browser path for MCC networking; no public master/directory of its own |
-| Dedicated servers | host runs a dedicated server from the menus; server.ini options incl. `big_lobby=81` (80 players + host), playlists, admin dashboard, lasting bans, restart/next-game, UPnP port request | none |
-| Relay/NAT traversal | RR's own relay path (players "joined through the relay" get host scores/colours/kicks); master/browser/voice services | Noble relies on MCC networking; no relay service |
-| Parties & social | parties up to 81, party leader transfer, friends board, close-friends online notices, invites board, whisper, Leave Party, View Card | Noble has lobby/social UI but no 81-party or friends/clan service |
-| Moderation | kick/ban by player number, host protection / Lock Game, moderator popups to all menus, player reports with the chat's reason list | partial/no |
-| Match rotation / map vote | rotations (playlists) of maps + game types, server playlists with shuffle and player counts, map vote keeps everyone | Noble has lobby/map picker only |
-| In-match chat + voice | chat in matches/rotations/dedicated servers; voice service (`rr-voice`) with mute in scoreboard, speaker icons | Noble has chat/voice chat work but not an RR-style voice service |
-| Host migration | not supported in big lobbies: game ends, guests return to menus (documented) | Noble sessions end/close similarly today |
+| Area | RR | Noble (confirmed/known) | Difference |
+|---|---|---|---|
+| Server browser | own master/directory service (`rr-master`) and browser process; listings carry game type/map/players/ping/region/version facts and host-profile facts | Noble has a server browser path (MCC-network based) | RR runs its own public directory and advertises host profiles; Noble browser is the MCC path |
+| Dedicated servers | hosts dedicated servers from the menus; `server.ini` options incl. `big_lobby=81` (80 players + host), playlists, admin dashboard, lasting bans, restart/next-game, UPnP | not part of the current Noble client (verify if scheduled) | dedicated-server tooling/capacity is RR-only so far |
+| Relay / NAT traversal | own relay path (players joined through the relay get host scores/colours/kicks), master/browser/voice services | Noble relies on MCC networking | RR owns the relay layer |
+| Parties and social | parties up to 81, leader transfer, friends board, close-friends notices, invites, whisper, View Card, clans | Noble has social/lobby UI and parties within MCC limits (exact feature set to verify) | RR's party scale (81) and extra social boards are larger |
+| Moderation and reports | kick/ban by number, moderator popups, reports from scoreboard/chat, host protection / Lock Game | **Noble has moderation, reports and likely host protection (owner-confirmed)** | both have it; RR adds big-lobby/UI variants - not a gap |
+| Match rotation / map vote | rotations (playlists) of maps + game types, server playlists with shuffle/player counts, map vote keeps everyone | Noble has lobby/map picker (rotations/playlists to verify) | playlist/rotation tooling is RR-only as far as we know |
+| In-match chat and voice | chat in matches/rotations/servers; own voice service (`rr-voice`) with mute in scoreboard, speaker icons | **Noble has regular chat and voice chat (owner-confirmed)** | both; RR integrates voice into its own scoreboard/UI - verify Noble's current UX |
+| Host migration | not supported in big lobbies: game ends, guests return to menus | Noble sessions end/close similarly today | both effectively lack it; RR documents the limitation |
 
 ### 3.2 Armour, appearance and the colour-changing lights
 
@@ -178,36 +180,44 @@ The decompiled files for exactly these functions are in
 
 
 
-| Feature | How RR does it | Noble today |
-|---|---|---|
-| **Armor Light Glow colour** (the light/armour-light colour feature) | UI sends an exact RGB look value plus a brightness index; the client's `glow` module parses the colour/brightness level, paints the armour light draws (draw hook, per-frame `frame`/`frames`, paint list) with sRGB conversion; armory uses a menu-specific glow | Noble has visor/armour colour customisation but not an armour-light glow painter |
-| **Armor Light Brightness x1..x64** | brightness levels 1,2,3,5,8,12,16,24,32,50,64 (indices) sent as a look level; default applies when the player hasn't picked | not present |
-| Per-piece armour colours (Spartan and Elite) | exact RGB per piece (helmet, shoulders, chest, forearms, wrist, utility, knees) sent as look entries; Elite primary/secondary per piece; undermap in the client | Noble has armour/visor colour sets but not per-piece exact RGB |
-| Colour wheel + exact colours | WebView colour wheel, exact RGB swatches, custom colours beyond the stock palette | Noble has palette-based customisation |
-| Elite armour pack | custom tag pack `rr_elite_pack.map` + `rrpmcg` player-model customisation metadata; extra pieces, presets, colours; one glow colour for all Elite lights/visor | Noble has mod packs; no equivalent Elite pack integration |
-| Armor effects, poses, nameplates, emblems | armour effects (e.g. armour_fx), 360-style emblem editor + special animated emblems, poses, player cards, nameplates | partial: Noble has emblems/armour customizer pieces |
-| Armor Voucher / mailbox / credits | accounts, credits, challenges/commendations, mailbox with gifts and voucher events, career ranks | Noble has no progression service |
+
+| Area | RR | Noble (confirmed/known) | Difference |
+|---|---|---|---|
+| **Armor Light Glow colour** | exact RGB sent per look, applied by a draw hook to armour-light draws (see 3.2.1) | Noble has armour/visor colour customisation; **armour-light glow painter not confirmed in Noble** | likely RR-only feature - verify current Noble armour-light support |
+| **Armor Light Brightness x1..x64** | level index 0..10, table 1,2,3,5,8,12,16,24,32,50,64 | not known in Noble | RR-only as far as we know |
+| Per-piece armour colours | exact RGB per piece (helmet, shoulders, chest, forearms, wrist, utility, knees), Elite primary/secondary per piece | Noble ships armour/visor customisation and mod packs (exact per-piece/exact-RGB support to verify) | RR exposes exact RGB per piece; verify Noble's current level |
+| Colour wheel / exact colours | WebView colour wheel, exact RGB swatches beyond the stock palette | Noble uses palette-based customisation (known) | custom exact colour picking is an RR UX difference |
+| Elite armour pack | `rr_elite_pack.map` + `.rrpmcg` metadata: extra pieces, presets, one glow colour for Elite lights/visor | Noble has mod packs/VFS; Elite-pack equivalent not confirmed | content/UX difference to verify |
+| Armour effects, poses, nameplates, emblems | armour effects, 360-style emblem editor + special animated emblems, poses, player cards, nameplates | Noble ships armour/visors and emblems/customisation (owner-confirmed areas); verify effects/poses/nameplates | overlapping; compare item by item rather than assuming gaps |
+| Credits / challenges / commendations / ranks / mailbox | accounts, credits, challenges/commendations, ranks, mailbox with gifts and Armor Voucher events | **Noble has accounts, credits, challenges, commendations, ranks (owner-confirmed)**; mailbox/voucher events to verify | progression is shared; mailbox/voucher-event shape is the only candidate gap |
 
 ### 3.3 Forge, Firefight, Campaign, Theater
 
-| Feature | How RR does it | Noble today |
-|---|---|---|
-| Expanded Forge | Forge piece limit past 1,024/1,302, $600k budget, big-map File Share, vehicles past the limit, Forge on the 10 Firefight maps, Sandbox Evolved Forge World (auto-built ~1.1 GB map), map converter | Noble has Forge work (AI/limits investigations) but not this content pipeline |
-| Forge Firefight (AI authoring) | place Covenant spawns/firing positions/dropship waypoints; AI walk/cover/cross floors; AI limit 96/128/192 experimental; Save and Test; dropships (4 Phantoms + 4 Pelicans); wave traits | Noble has Forge AI work (asked about AI toggle); no shipping equivalent |
-| Firefight online | rotations, 16 players (32 host option), skulls/scoring, voice packs (Firefight voices), Elite players, lives/respawns, Join in progress | Noble has Firefight? (campaign co-op 4) — no shipping big-Firefight online |
-| Campaign online | 4-player co-op online, mission checkpoints, scoring, skulls screen, campaign mods' missions | Noble has campaign co-op (4, more parked) |
-| Theater/films | games saved as films, film browser/playback up to 64 players, run reports | Noble has theater? not in our workstream |
+| Area | RR | Noble (confirmed/known) | Difference |
+|---|---|---|---|
+| Expanded Forge | piece limits past 1,024/1,302, $600k budget, File Share of big maps, vehicles past the limit, Forge on the 10 Firefight maps, Sandbox Evolved Forge World (auto-built ~1.1 GB), map converter | Noble has Forge and Forge AI work (limits/authoring work in progress) | RR raises the content/authoring limits further; Noble has its own Forge path |
+| Forge Firefight (AI authoring) | Covenant spawns/firing positions/dropship waypoints; AI walks/cover/crosses floors; AI limit 96/128/192 experimental; Save and Test; 4 Phantoms + 4 Pelicans; wave traits | Noble has Forge AI work (toggle/limits investigations), no shipping equivalent confirmed | authoring tooling is RR-only as far as we know |
+| Firefight online | rotations, 16 players (32 host option), skulls/scoring, voice packs, Elite players, lives/respawns, join-in-progress | Noble runs Reach modes via MCC; large Firefight/rotation support to verify | RR's big-Firefight + rotations are ahead |
+| Campaign online | 4-player co-op online, checkpoints, scoring, skulls screen, campaign mods' missions | **Noble has 4-player campaign co-op; more than 4 parked (known)** | both 4-player; RR adds mod-mission picker/checkpoints UI |
+| Theater / films | films saved, browser/playback up to 64 players, run reports | Noble has theater paths (verify scope) | RR's big-lobby theater is a reference point |
 
 ### 3.4 UI, platform and content operations
 
-| Feature | How RR does it | Noble today |
-|---|---|---|
-| Entire UI as WebView2 HTML/JS | `themes/classic` with themed menu screens, animations, intro video, loading screens, controller/OSK/accessibility, keyboard/mouse + controller navigation | Noble UI is in-engine; RR's approach is a WebView layer |
-| Theme system | multiple themes (`themes/classic`, other folders), per-theme assets/music/movies, style tokens | Noble has UI theming? (not in this workstream) |
-| In-menu updates, changelog, guides, MOTD, bug reports | launcher checks updates; WebView changelog/guides; bug-report export bundles latest run logs | Noble has updater/changelog paths |
-| Linux/Steam Deck support | Proton wrapper path, Steam shortcut docs, WebView2 under Proton notes, Vulkan requirement | Noble is Windows/MCC-focused |
-| Map/game-type sharing | File Share packs rotations and Forge maps; import playlists; mods download; Maps folder management | Noble has mod VFS and packs but not this sharing flow |
-| Content as tag packs | `.map` packs plus RR metadata (`.rrreloc` relocation/patch records, `.rrneeds` tag dependencies, `.rrpmcg` model customisation, `.rremotes` animation remotes), cached/prepared packs | Noble has mod packs/VFS; RR's per-pack metadata is a reference design |
+| Area | RR | Noble (confirmed/known) | Difference |
+|---|---|---|---|
+| UI stack | WebView2 HTML/JS (`themes/classic`) with animations, intro video, controller/OSK, themes | Noble UI is in-engine | architecture difference, not a feature gap per se; RR's WebView approach is a reference for menu/content velocity |
+| In-menu updates/changelog/guides/MOTD/bug reports | launcher updater, WebView changelog/guides, bug-report export bundles | **Noble has updater/changelog paths (known)**; guides/MOTD/bug-report bundles to verify | partially overlapping; RR's bug-report bundle is a reference |
+| Linux/Steam Deck support | Proton wrapper path, Steam shortcut docs, WebView2-under-Proton notes, Vulkan requirement | Noble is Windows/MCC-focused (known) | RR-only platform support |
+| Map/game-type sharing | File Share packs rotations + Forge maps; import playlists; mods download; Maps folder management | Noble has mod VFS/packs (known); File-Share-style exchange to verify | RR's sharing flow is a reference |
+| Content as tag packs | `.map` packs + RR metadata (`.rrreloc`, `.rrneeds`, `.rrpmcg`, `.rremotes`), cached/prepared packs | Noble has mod packs/VFS (known) | comparable; RR's per-pack metadata is a reference design |
+
+### 3.5 Noble capabilities explicitly not to treat as gaps
+
+Owner-confirmed 2026-11-16: **accounts, credits, challenges, commendations, ranks, voice chat, regular chat,
+moderation and reports**, and (likely) **host protection**. Also known from the Noble workstream: armour/visor
+customisation, mod packs/VFS, server-browser path, lobby/picker, campaign co-op (4), updater/changelog. Do not copy RR
+features into Noble to "catch up" on these; they exist here already.
+
 
 ## 4. Other useful reference points for Noble
 
