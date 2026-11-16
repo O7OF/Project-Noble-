@@ -30,6 +30,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02015Items = {
+        {"UI", "Party Widget & Lobby Player Card Overhaul",
+         "Redesigned the top-right party card and lobby player rows into unified tactical cards, integrating rank badges, emblem frames, and status indicators with zero alignment jitter."},
+        {"UI", "Full Nameplate Artwork Rendering",
+         "Eliminated edge cropping on player nameplates, ensuring all custom banners, emblems, and insignia (such as Insider badges) render completely without cutoff."},
+        {"ACCOUNT", "First-Launch Login Flow",
+         "Streamlined startup onboarding so selecting Regular/Returning Player or New Player immediately opens the login menu to sign in or register."},
+        {"ONLINE", "Server Browser & Online Play Gating",
+         "Gated Server Browser and online multiplayer behind active logins, automatically defaulting sessions to local LAN play mode when signed out."},
+    };
+
     const std::vector<ChangeItem> v02014Items = {
         {"MULTIPLAYER", "Extended 32-Player Matches",
          "Custom Games and Forge lobbies now support expanded matches up to 32 players with full roster and scoreboard tracking."},
@@ -237,9 +248,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 14) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 15) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "EXTENDED PARTY CARDS, NAMEPLATE FIXES & ONLINE LOGIN FLOW",
+                    "Unified Lobby Player Cards, Zero Nameplate Cutoff, First-Start Login & Auto Local Play Mode",
+                    v02015Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 14) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.14",
                     "EXTENDED 32-PLAYER LOBBIES, HIGH-CAPACITY NETCODE & BROWSER FILTERS",
                     "32-Player Custom Games & Forge, Widened Network Discovery, Dynamic Browser Filters & Multi-Column Rosters",
                     v02014Items,

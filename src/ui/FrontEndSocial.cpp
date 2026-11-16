@@ -1008,6 +1008,9 @@ bool DrawFirstStart(const Ui &ui) {
     s_focus = 0;
     NOBLE_INFO("FrontEndMenu: first start answered (setup: {})", setup);
     MenuSounds::Click();
+    if (!AuthClient::Get().IsLoggedIn()) {
+      OpenAccountModal();
+    }
   };
 
   ImGuiIO &io = ImGui::GetIO();
