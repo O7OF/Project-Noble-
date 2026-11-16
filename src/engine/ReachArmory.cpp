@@ -881,13 +881,17 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
             const uint32_t rmshPacked = *reinterpret_cast<const uint32_t*>(te + 0x04);
             uint8_t* rmsh = unpackPtr(rmshPacked);
             if (!rmsh) continue;
-            const int32_t spCount = *reinterpret_cast<const int32_t*>(rmsh + 0x1C);
-            const uint32_t spPacked = *reinterpret_cast<const uint32_t*>(rmsh + 0x20);
+            int32_t spCount = *reinterpret_cast<const int32_t*>(rmsh + 0x38);
+            uint32_t spPacked = *reinterpret_cast<const uint32_t*>(rmsh + 0x3C);
+            if (spCount <= 0 || spCount > 8 || !spPacked) {
+                spCount = *reinterpret_cast<const int32_t*>(rmsh + 0x1C);
+                spPacked = *reinterpret_cast<const uint32_t*>(rmsh + 0x20);
+            }
             if (spCount <= 0 || spCount > 8 || !spPacked) continue;
             uint8_t* spBase = unpackPtr(spPacked);
             if (!spBase) continue;
             for (int si = 0; si < spCount; ++si) {
-                uint8_t* sp = spBase + static_cast<size_t>(si) * 0xAC;
+                uint8_t* sp = spBase + static_cast<size_t>(si) * 0xB0;
                 const int32_t f4Count = *reinterpret_cast<const int32_t*>(sp + 0x1C);
                 const uint32_t f4Packed = *reinterpret_cast<const uint32_t*>(sp + 0x20);
                 if (f4Count <= 0 || f4Count > 64 || !f4Packed) continue;
@@ -895,17 +899,9 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                 if (!f4) continue;
 
                 if (!previewElite) {
-                    // 1) spartan_armor (26 float4s, f4[1][0] == 3.0f):
-                    //    f4[22] (+0x160) = self_illum_color (Armor Lights on legs, back, and chest -> Colors > Lights)
-                    if (lightsRgb && f4Count == 26 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[23 * 4 + 0] - 1.0f) < 0.1f) {
-                        f4[22 * 4 + 0] = lightsRgb[0] * 2.2f;
-                        f4[22 * 4 + 1] = lightsRgb[1] * 2.2f;
-                        f4[22 * 4 + 2] = lightsRgb[2] * 2.2f;
-                        f4[22 * 4 + 3] = 1.0f;
-                    }
-                    // 2) spartan_rubber_suit (21 float4s, f4[1][0] == 18.0f):
+                    // 1) spartan_rubber_suit (21 float4s, f4[1][0] == 18.0f):
                     //    f4[2] (+0x20) = albedo_color, f4[9] (+0x90) = material_color_0, f4[10] (+0xA0) = material_color_1
-                    else if (undersuitRgb && f4Count == 21 && std::abs(f4[1 * 4 + 0] - 18.0f) < 0.1f) {
+                    if (undersuitRgb && f4Count == 21 && std::abs(f4[1 * 4 + 0] - 18.0f) < 0.1f) {
                         f4[2 * 4 + 0] = undersuitRgb[0];
                         f4[2 * 4 + 1] = undersuitRgb[1];
                         f4[2 * 4 + 2] = undersuitRgb[2];
@@ -918,6 +914,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                         f4[10 * 4 + 1] = undersuitRgb[1] * 0.45f + 0.02f;
                         f4[10 * 4 + 2] = undersuitRgb[2] * 0.45f + 0.02f;
                         f4[10 * 4 + 3] = 1.0f;
+                        *reinterpret_cast<int32_t*>(sp + 0xAC) = -1;
                     }
                     // 3) spartan_helmet_interior_visor (21 float4s, f4[1][0] == 3.0f, f4[8][0] == 1.0f):
                     //    f4[17] (+0x110) = visor specular/env tint, f4[6] (+0x60) & f4[7] (+0x70) = visor reflection tint
@@ -935,6 +932,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                         f4[17 * 4 + 1] = visorRgb[1];
                         f4[17 * 4 + 2] = visorRgb[2];
                         f4[17 * 4 + 3] = 1.0f;
+                        *reinterpret_cast<int32_t*>(sp + 0xAC) = -1;
                     }
                     // 4) Secondary visor material (24 float4s, f4[1][0] == 10.0f):
                     //    f4[9] (+0x90) & f4[10] (+0xA0) = visor gold/reflection tint
@@ -948,6 +946,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                         f4[10 * 4 + 1] = visorRgb[1];
                         f4[10 * 4 + 2] = visorRgb[2];
                         f4[10 * 4 + 3] = 1.0f;
+                        *reinterpret_cast<int32_t*>(sp + 0xAC) = -1;
                     }
                 }
             }
@@ -960,6 +959,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     (void)words;
+    (void)lightsRgb;
 }
 
 
@@ -2202,6 +2202,7 @@ void SaveSelectionFile(const ReachArmorySelection& sel) {
     j["secondary"] = sel.secondaryRgb;
     j["accent"] = sel.accentRgb;
     j["lights"] = sel.lightsRgb;
+    j["lights_brightness"] = sel.lightsBrightness;
     j["visor_rgb"] = sel.visorRgb;
     j["custom"] = nlohmann::json::array({ sel.primaryCustom, sel.secondaryCustom, sel.accentCustom, sel.lightsCustom });
     j["primary_index"] = sel.primaryColorIndex;
@@ -2233,6 +2234,10 @@ void LoadSelectionFile(ReachArmorySelection& sel) {
         rgb("secondary", sel.secondaryRgb);
         rgb("accent", sel.accentRgb);
         rgb("lights", sel.lightsRgb);
+        if (j.contains("lights_brightness") && j["lights_brightness"].is_number()) {
+            const float rawB = std::clamp(j["lights_brightness"].get<float>(), 0.5f, 65.5f);
+            sel.lightsBrightness = std::clamp(std::round(rawB * 2.0f) * 0.5f, 0.5f, 65.5f);
+        }
         rgb("visor_rgb", sel.visorRgb);
         if (j.contains("visor") && j["visor"].is_string()) sel.visor = j["visor"].get<std::string>();
         if (j.contains("custom") && j["custom"].is_array() && j["custom"].size() == 4) {
@@ -2338,6 +2343,12 @@ std::string ReachArmory::GetTargetScene() {
     return s_targetScene;
 }
 
+static std::atomic<bool> s_cachedLightsActive{false};
+static std::atomic<float> s_cachedLightsR{0.471f};
+static std::atomic<float> s_cachedLightsG{0.788f};
+static std::atomic<float> s_cachedLightsB{0.808f};
+static std::atomic<float> s_cachedLightsBrightness{1.0f};
+
 void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
     bool pieceChanged = false;
     {
@@ -2368,6 +2379,10 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
         s_selection = sel;
     }
     if (pieceChanged) s_previewDirty.store(true);
+    s_cachedLightsR.store(sel.lightsRgb[0], std::memory_order_relaxed);
+    s_cachedLightsG.store(sel.lightsRgb[1], std::memory_order_relaxed);
+    s_cachedLightsB.store(sel.lightsRgb[2], std::memory_order_relaxed);
+    s_cachedLightsBrightness.store(std::clamp(sel.lightsBrightness, 0.5f, 65.5f), std::memory_order_relaxed);
     s_selectionGeneration.fetch_add(1);
     SaveSelectionFile(sel);   // a match process reads this instead of running the Armory
 }
@@ -2523,103 +2538,265 @@ static uint32_t LocalUnitDatum(uintptr_t base) {
     }
 }
 
-// Per-draw-call Pixel Shader constant buffer override for Spartan armor lights (haloreach+0x262CE8).
-// In campaign and multiplayer maps, Spartan 'rmsh' shader constant blocks live in the shared tag heap and are not
-// exposed in the map-local tag table [hr+0xC1A600], or when modified in-place would affect every Spartan on the map.
-// When haloreach.dll renders a mesh part, hr+0x263FA4 writes the current object datum to [hr+0xB43B38], and
-// hr+0x262CE8 allocates and fills the Pixel Shader constant buffer at [hr+0x4E38968] (byte size [hr+0x4E38974] =
-// numFloat4s * 16). Hooking hr+0x262CE8 lets us override f4[22] (+0x160, self_illum_color) in the transient PS
-// constant buffer for the local player's Spartan (and the Armory preview Spartan) without touching shared tag memory
-// or other players' Spartans.
-using SetupPsConstantsFn = void(__fastcall*)(void* rmshProp, void* templatePass, void* routingInfo);
+// Per-draw-call Pixel Shader constant buffer override for Spartan armor lights (haloreach+0x262CE8 & +0x262840).
+// When haloreach.dll renders a mesh part:
+// 1. hr+0x263FA4 writes the current object datum to [hr+0xB43B38].
+// 2. hr+0x262CE8 allocates the transient PS constant buffer at [hr+0x4E38968] (byte size [hr+0x4E38974] =
+//    templatePass->psConstantCount * 16) and routes static rmsh float4 constants (srcF4Idx = entry[2]) into target
+//    constant buffer registers (dstReg = entry[0]).
+// 3. hr+0x262840 evaluates animated shader parameter functions into the stack f4Copy array [rbp+0x90] and records
+//    (srcF4Idx, dstReg) pairs into [rbp-0x70], which hr+0x26339D..0x2633C5 copies into [hr+0x4E38968] AFTER hr+0x262CE8.
+// Hooking both hr+0x262CE8 and hr+0x262840 (and invalidating the pre-baked static constant buffer handle [sp+0xAC] = -1)
+// overrides self_illum_color (f4[22]) for the local player's Spartan (and the Armory preview Spartan) without affecting
+// other players' Spartans in a match.
+using SetupPsConstantsFn = void(__fastcall*)(void* sp, void* templatePass, void* routingInfo);
+using EvalAnimParamsFn = void(__fastcall*)(int32_t a1,
+                                           float* f4Copy,
+                                           uint16_t* outPairs,
+                                           int16_t* outCount,
+                                           const uint16_t* stepWord,
+                                           uint8_t* spPlus50,
+                                           uint8_t* spPlus5C);
 static SetupPsConstantsFn s_origSetupPsConstants = nullptr;
+static EvalAnimParamsFn s_origEvalAnimParams = nullptr;
 static std::atomic<bool> s_psHookAttempted{false};
 static std::atomic<uint32_t> s_cachedLocalUnitDatum{0xFFFFFFFFu};
-static std::atomic<bool> s_cachedLightsActive{false};
-static std::atomic<float> s_cachedLightsR{0.471f};
-static std::atomic<float> s_cachedLightsG{0.788f};
-static std::atomic<float> s_cachedLightsB{0.808f};
+static std::atomic<int> s_spartanLightsDiagCount{0};
 
-static void ApplySpartanLightsToPsBufferSEH(uintptr_t base, uint32_t localUnit, float r, float g, float b, bool menuMode) {
+static bool IsLocalSpartanRenderObjectSEH(uintptr_t base, uint32_t localUnit, bool menuMode) {
+    if (menuMode) return true;
     __try {
-        const uint32_t psBytes = *reinterpret_cast<const uint32_t*>(base + 0x4E38974);
-        if (psBytes != 26u * 16u) return; // spartan_armor has 26 float4 PS constants (0x1A0 bytes)
-        float* psBuf = *reinterpret_cast<float* const*>(base + 0x4E38968);
-        if (!psBuf) return;
-        // Verify spartan_armor signature: f4[1].x == 3.0f and f4[23].x == 1.0f (self_illum_intensity)
-        if (std::abs(psBuf[1 * 4 + 0] - 3.0f) >= 0.1f || std::abs(psBuf[23 * 4 + 0] - 1.0f) >= 0.1f) return;
-
-        if (!menuMode) {
-            const uint32_t renderedObj = *reinterpret_cast<const uint32_t*>(base + 0xB43B38);
-            if (localUnit == 0xFFFFFFFFu || renderedObj == 0xFFFFFFFFu) return;
-            if (renderedObj != localUnit) {
-                // Also check if renderedObj is a child object attached to localUnit (e.g., armor attachment)
-                bool isLocalAttachment = false;
-                const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
-                const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(
-                    __readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
-                if (tlsArray) {
-                    const uint8_t* objTable = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x10);
-                    if (objTable) {
-                        const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
-                        const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(objTable + 0x50);
-                        const uint16_t idx = static_cast<uint16_t>(renderedObj & 0xFFFFu);
-                        if (entries && idx < maxObjects) {
-                            const uint8_t* objPtr = *reinterpret_cast<const uint8_t* const*>(entries + static_cast<size_t>(idx) * 0x18 + 0x10);
-                            if (objPtr) {
-                                const uint32_t parentDatum = *reinterpret_cast<const uint32_t*>(objPtr + 0x10);
-                                if (parentDatum == localUnit) isLocalAttachment = true;
-                            }
-                        }
+        const uint32_t renderedObj = *reinterpret_cast<const uint32_t*>(base + 0xB43B38);
+        if (localUnit == 0xFFFFFFFFu || renderedObj == 0xFFFFFFFFu) return false;
+        if (renderedObj == localUnit) return true;
+        // Also check if renderedObj is a child object attached to localUnit (e.g., armor attachment)
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(
+            __readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (tlsArray) {
+            const uint8_t* objTable = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x10);
+            if (objTable) {
+                const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
+                const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(objTable + 0x50);
+                const uint16_t idx = static_cast<uint16_t>(renderedObj & 0xFFFFu);
+                if (entries && idx < maxObjects) {
+                    const uint8_t* objPtr = *reinterpret_cast<const uint8_t* const*>(entries + static_cast<size_t>(idx) * 0x18 + 0x10);
+                    if (objPtr) {
+                        const uint32_t parentDatum = *reinterpret_cast<const uint32_t*>(objPtr + 0x10);
+                        if (parentDatum == localUnit) return true;
                     }
                 }
-                if (!isLocalAttachment) return;
             }
         }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return false;
+}
 
-        psBuf[22 * 4 + 0] = r * 2.2f;
-        psBuf[22 * 4 + 1] = g * 2.2f;
-        psBuf[22 * 4 + 2] = b * 2.2f;
-        psBuf[22 * 4 + 3] = 1.0f;
+static float LinearToSrgbChannel(float c) {
+    c = std::clamp(c, 0.0f, 1.0f);
+    return (c <= 0.0031308f) ? (c * 12.92f) : (1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f);
+}
+
+static bool IsSpartanArmorLightsShader(int32_t f4Count, const float* f4) {
+    // Compiled spartan_armor postprocess_definition has 5 real_vectors_4d (f4Count == 5), where:
+    //   f4[3] = self_illum_color, stock value (49/255, 112/255, 188/255, 1.0) = (0.192, 0.439, 0.737, 1.0)
+    //   f4[4] = self_illum_intensity (~0.897 evaluated at runtime)
+    return f4Count == 5 &&
+           std::abs(f4[3 * 4 + 0] - 0.192f) < 0.08f &&
+           std::abs(f4[3 * 4 + 1] - 0.439f) < 0.08f &&
+           std::abs(f4[3 * 4 + 2] - 0.737f) < 0.08f;
+}
+
+static void ApplySpartanLightsToPsBufferSEH(uintptr_t base,
+                                            void* spRaw,
+                                            void* templatePassRaw,
+                                            void* routingInfoRaw,
+                                            uint32_t localUnit,
+                                            float r,
+                                            float g,
+                                            float b,
+                                            float brightness,
+                                            bool menuMode) {
+    __try {
+        if (!spRaw || !templatePassRaw || !routingInfoRaw) return;
+        uint8_t* sp = static_cast<uint8_t*>(spRaw);
+        const int32_t f4Count = *reinterpret_cast<const int32_t*>(sp + 0x1C);
+        const uint32_t f4Packed = *reinterpret_cast<const uint32_t*>(sp + 0x20);
+        if (f4Count <= 0 || f4Count > 64 || !f4Packed) return;
+        const uint64_t* pointerBases = reinterpret_cast<const uint64_t*>(base + 0x4E39F20);
+        const float* f4 = reinterpret_cast<const float*>(pointerBases[f4Packed >> 28] + static_cast<uint64_t>(f4Packed) * 4u);
+        if (!f4 || !IsSpartanArmorLightsShader(f4Count, f4)) return;
+
+        const bool isLocal = IsLocalSpartanRenderObjectSEH(base, localUnit, menuMode);
+        if (!isLocal) return;
+
+        const uint32_t psBytes = *reinterpret_cast<const uint32_t*>(base + 0x4E38974);
+        float* psBuf = *reinterpret_cast<float* const*>(base + 0x4E38968);
+        if (!psBuf || psBytes < 16u) return;
+        const uint32_t maxRegs = psBytes / 16u;
+
+        const float useR = LinearToSrgbChannel(r);
+        const float useG = LinearToSrgbChannel(g);
+        const float useB = LinearToSrgbChannel(b);
+        const float mult = std::clamp(brightness, 0.5f, 65.5f);
+
+        const uint8_t* tp = static_cast<const uint8_t*>(templatePassRaw);
+        const uint8_t* rt = static_cast<const uint8_t*>(routingInfoRaw);
+        const uint16_t packed = *reinterpret_cast<const uint16_t*>(tp + 8);
+        const uint32_t count = packed >> 10;
+        const uint32_t start = packed & 0x3FFu;
+        for (uint32_t i = 0; i < count; ++i) {
+            const uint8_t* entry = rt + static_cast<size_t>(start + i) * 4u;
+            const uint8_t dstReg = entry[0];
+            const uint8_t srcF4Idx = entry[2];
+            if (srcF4Idx == 3u && dstReg < maxRegs) {
+                psBuf[dstReg * 4 + 0] = useR;
+                psBuf[dstReg * 4 + 1] = useG;
+                psBuf[dstReg * 4 + 2] = useB;
+                psBuf[dstReg * 4 + 3] = 1.0f;
+            } else if (srcF4Idx == 4u && dstReg < maxRegs && psBuf[dstReg * 4 + 0] > 0.0f) {
+                psBuf[dstReg * 4 + 0] *= mult;
+            }
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
 
-static void __fastcall Hook_SetupPsConstants(void* rmshProp, void* templatePass, void* routingInfo) {
+static void ApplySpartanLightsToAnimParamsSEH(uintptr_t base,
+                                              float* f4Copy,
+                                              uint16_t* outPairs,
+                                              int16_t* outCount,
+                                              uint8_t* spPlus50,
+                                              uint32_t localUnit,
+                                              float r,
+                                              float g,
+                                              float b,
+                                              float brightness,
+                                              bool menuMode) {
+    __try {
+        if (!f4Copy || !outPairs || !outCount || !spPlus50) return;
+        uint8_t* sp = spPlus50 - 0x50;
+        const int32_t f4Count = *reinterpret_cast<const int32_t*>(sp + 0x1C);
+        const uint32_t f4Packed = *reinterpret_cast<const uint32_t*>(sp + 0x20);
+        if (f4Count <= 0 || f4Count > 64 || !f4Packed) return;
+        const uint64_t* pointerBases = reinterpret_cast<const uint64_t*>(base + 0x4E39F20);
+        const float* f4 = reinterpret_cast<const float*>(pointerBases[f4Packed >> 28] + static_cast<uint64_t>(f4Packed) * 4u);
+        if (!f4 || !IsSpartanArmorLightsShader(f4Count, f4)) return;
+
+        const bool isLocal = IsLocalSpartanRenderObjectSEH(base, localUnit, menuMode);
+        if (!isLocal) return;
+
+        const float useR = LinearToSrgbChannel(r);
+        const float useG = LinearToSrgbChannel(g);
+        const float useB = LinearToSrgbChannel(b);
+        const float mult = std::clamp(brightness, 0.5f, 65.5f);
+
+        f4Copy[3 * 4 + 0] = useR;
+        f4Copy[3 * 4 + 1] = useG;
+        f4Copy[3 * 4 + 2] = useB;
+        f4Copy[3 * 4 + 3] = 1.0f;
+        // Scale self_illum_intensity (f4[4].x) by the selected Lights Brightness multiplier (x0.5..x65.5, step 0.5).
+        if (f4Copy[4 * 4 + 0] > 0.0f) {
+            f4Copy[4 * 4 + 0] *= mult;
+        }
+
+        const int diag = s_spartanLightsDiagCount.fetch_add(1, std::memory_order_relaxed);
+        if (diag < 5) {
+            const uint32_t renderedObj = *reinterpret_cast<const uint32_t*>(base + 0xB43B38);
+            (void)renderedObj;
+            NOBLE_INFO("ReachArmory: applied Spartan armor lights to obj=0x{:X} (menuMode={}, sRGB=({:.3f},{:.3f},{:.3f}), brightness=x{:.1f}, intensity={:.3f})",
+                       renderedObj, menuMode, useR, useG, useB, mult, f4Copy[4 * 4 + 0]);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+static void __fastcall Hook_SetupPsConstants(void* sp, void* templatePass, void* routingInfo) {
     if (s_origSetupPsConstants) {
-        s_origSetupPsConstants(rmshProp, templatePass, routingInfo);
+        s_origSetupPsConstants(sp, templatePass, routingInfo);
     }
     if (!s_cachedLightsActive.load(std::memory_order_relaxed)) return;
     HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
     ApplySpartanLightsToPsBufferSEH(
         reinterpret_cast<uintptr_t>(hReach),
+        sp,
+        templatePass,
+        routingInfo,
         s_cachedLocalUnitDatum.load(std::memory_order_relaxed),
         s_cachedLightsR.load(std::memory_order_relaxed),
         s_cachedLightsG.load(std::memory_order_relaxed),
         s_cachedLightsB.load(std::memory_order_relaxed),
+        s_cachedLightsBrightness.load(std::memory_order_relaxed),
+        s_menuMode.load(std::memory_order_relaxed));
+}
+
+static void __fastcall Hook_EvalAnimParams(int32_t a1,
+                                           float* f4Copy,
+                                           uint16_t* outPairs,
+                                           int16_t* outCount,
+                                           const uint16_t* stepWord,
+                                           uint8_t* spPlus50,
+                                           uint8_t* spPlus5C) {
+    if (s_origEvalAnimParams) {
+        s_origEvalAnimParams(a1, f4Copy, outPairs, outCount, stepWord, spPlus50, spPlus5C);
+    }
+    if (!s_cachedLightsActive.load(std::memory_order_relaxed)) return;
+    HMODULE hReach = noble::ReachModule();
+    if (!hReach) return;
+    ApplySpartanLightsToAnimParamsSEH(
+        reinterpret_cast<uintptr_t>(hReach),
+        f4Copy,
+        outPairs,
+        outCount,
+        spPlus50,
+        s_cachedLocalUnitDatum.load(std::memory_order_relaxed),
+        s_cachedLightsR.load(std::memory_order_relaxed),
+        s_cachedLightsG.load(std::memory_order_relaxed),
+        s_cachedLightsB.load(std::memory_order_relaxed),
+        s_cachedLightsBrightness.load(std::memory_order_relaxed),
         s_menuMode.load(std::memory_order_relaxed));
 }
 
 static void EnsureSpartanLightsPsHook(uintptr_t base) {
     if (!base || s_psHookAttempted.exchange(true)) return;
-    static const uint8_t kExpectedPrologue[11] = {
+    static const uint8_t kExpectedPsPrologue[11] = {
         0x48, 0x8B, 0xC4,             // mov rax, rsp
         0x48, 0x89, 0x58, 0x08,       // mov [rax+8], rbx
         0x48, 0x89, 0x68, 0x10        // mov [rax+10h], rbp
     };
-    uint8_t* target = reinterpret_cast<uint8_t*>(base + 0x262CE8);
-    uint8_t actual[sizeof(kExpectedPrologue)] = {};
-    if (!SafeCopyMem(actual, target, sizeof(actual)) ||
-        std::memcmp(actual, kExpectedPrologue, sizeof(kExpectedPrologue)) != 0) {
-        NOBLE_WARN("ReachArmory: unexpected prologue at haloreach+0x262CE8; per-draw Spartan lights PS hook skipped.");
-        return;
+    uint8_t* psTarget = reinterpret_cast<uint8_t*>(base + 0x262CE8);
+    uint8_t psActual[sizeof(kExpectedPsPrologue)] = {};
+    if (SafeCopyMem(psActual, psTarget, sizeof(psActual)) &&
+        std::memcmp(psActual, kExpectedPsPrologue, sizeof(kExpectedPsPrologue)) == 0) {
+        if (HookManager::InstallHook(psTarget,
+                                     reinterpret_cast<void*>(&Hook_SetupPsConstants),
+                                     reinterpret_cast<void**>(&s_origSetupPsConstants),
+                                     "haloreach_setup_ps_constants")) {
+            NOBLE_INFO("ReachArmory: installed Spartan armor lights PS constant buffer hook at haloreach+0x262CE8.");
+        }
+    } else {
+        NOBLE_WARN("ReachArmory: unexpected prologue at haloreach+0x262CE8; PS constant hook skipped.");
     }
-    if (HookManager::InstallHook(target,
-                                 reinterpret_cast<void*>(&Hook_SetupPsConstants),
-                                 reinterpret_cast<void**>(&s_origSetupPsConstants),
-                                 "haloreach_setup_ps_constants")) {
-        NOBLE_INFO("ReachArmory: installed Spartan armor lights PS constant buffer hook at haloreach+0x262CE8.");
+
+    static const uint8_t kExpectedAnimPrologue[11] = {
+        0x48, 0x8B, 0xC4,             // mov rax, rsp
+        0x48, 0x89, 0x58, 0x10,       // mov [rax+10h], rbx
+        0x48, 0x89, 0x68, 0x18        // mov [rax+18h], rbp
+    };
+    uint8_t* animTarget = reinterpret_cast<uint8_t*>(base + 0x262840);
+    uint8_t animActual[sizeof(kExpectedAnimPrologue)] = {};
+    if (SafeCopyMem(animActual, animTarget, sizeof(animActual)) &&
+        std::memcmp(animActual, kExpectedAnimPrologue, sizeof(kExpectedAnimPrologue)) == 0) {
+        if (HookManager::InstallHook(animTarget,
+                                     reinterpret_cast<void*>(&Hook_EvalAnimParams),
+                                     reinterpret_cast<void**>(&s_origEvalAnimParams),
+                                     "haloreach_eval_anim_params")) {
+            NOBLE_INFO("ReachArmory: installed Spartan animated shader parameter hook at haloreach+0x262840.");
+        }
+    } else {
+        NOBLE_WARN("ReachArmory: unexpected prologue at haloreach+0x262840; animated param hook skipped.");
     }
 }
 
@@ -2683,6 +2860,7 @@ void ReachArmory::NotifyEngineTick() {
     s_cachedLightsR.store(sel.lightsRgb[0], std::memory_order_relaxed);
     s_cachedLightsG.store(sel.lightsRgb[1], std::memory_order_relaxed);
     s_cachedLightsB.store(sel.lightsRgb[2], std::memory_order_relaxed);
+    s_cachedLightsBrightness.store(std::clamp(sel.lightsBrightness, 0.5f, 65.5f), std::memory_order_relaxed);
     s_cachedLightsActive.store(!sel.previewElite && !sel.previewMarine, std::memory_order_relaxed);
     ApplyLocalEmblem(sel);
 }
@@ -2790,9 +2968,10 @@ void ReachArmory::SyncMatchLiveBipeds() {
     s_cachedLightsR.store(sel.lightsRgb[0], std::memory_order_relaxed);
     s_cachedLightsG.store(sel.lightsRgb[1], std::memory_order_relaxed);
     s_cachedLightsB.store(sel.lightsRgb[2], std::memory_order_relaxed);
+    s_cachedLightsBrightness.store(std::clamp(sel.lightsBrightness, 0.5f, 65.5f), std::memory_order_relaxed);
     s_cachedLightsActive.store(!sel.isElite, std::memory_order_relaxed);
     const bool customVisor = (sel.visorColorIndex >= 5);
-    const bool customLights = !sel.isElite && (sel.lightsCustom || sel.lightsColorIndex != 14);
+    const bool customLights = !sel.isElite && (sel.lightsCustom || sel.lightsColorIndex != 14 || std::abs(sel.lightsBrightness - 1.0f) > 0.01f);
     if (!sel.primaryCustom && !sel.secondaryCustom && !sel.accentCustom && !sel.lightsCustom && !customVisor && !customLights) return;
 
     // Apply live visor reflection and suit constants to active map shader tags ('rmsh')

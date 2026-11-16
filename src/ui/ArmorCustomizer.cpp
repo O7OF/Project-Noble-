@@ -1331,6 +1331,8 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.secondaryRgb = colorRgb(secCust, secRgbArr, sCol);
     sel.accentRgb = colorRgb(accCust, accRgbArr, aCol);
     sel.lightsRgb = colorRgb(lgtCust, lgtRgbArr, lCol);
+    const float rawLightsB = previewingElite ? m_profile.eliteLightsBrightness : m_profile.lightsBrightness;
+    sel.lightsBrightness = std::clamp(std::round(rawLightsB * 2.0f) * 0.5f, 0.5f, 65.5f);
     sel.primaryCustom = priCust;
     sel.secondaryCustom = secCust;
     sel.accentCustom = accCust;
@@ -1380,6 +1382,7 @@ void ArmorCustomizer::SyncToReachArmory() const {
                a.eliteArmorEffectIndex == b.eliteArmorEffectIndex &&
                a.primaryRgb == b.primaryRgb && a.secondaryRgb == b.secondaryRgb &&
                a.accentRgb == b.accentRgb && a.lightsRgb == b.lightsRgb && a.visorRgb == b.visorRgb &&
+               std::abs(a.lightsBrightness - b.lightsBrightness) < 1e-3f &&
                a.lightsCustom == b.lightsCustom &&
                a.marinePieces == b.marinePieces && a.marineColors == b.marineColors && a.previewMarine == b.previewMarine &&
                a.femalePieces == b.femalePieces && a.marineFemale == b.marineFemale &&
@@ -1460,6 +1463,10 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
         loadCustom("secondary_custom", "secondary_custom_rgb", m_profile.secondaryCustom, m_profile.secondaryCustomRgb);
         loadCustom("accent_custom", "accent_custom_rgb", m_profile.accentCustom, m_profile.accentCustomRgb);
         loadCustom("lights_custom", "lights_custom_rgb", m_profile.lightsCustom, m_profile.lightsCustomRgb);
+        if (j.contains("lights_brightness") && j["lights_brightness"].is_number()) {
+            const float rawB = std::clamp(j["lights_brightness"].get<float>(), 0.5f, 65.5f);
+            m_profile.lightsBrightness = std::clamp(std::round(rawB * 2.0f) * 0.5f, 0.5f, 65.5f);
+        }
 
         // Only seed Elite colors from Spartan if "elite" block is completely missing (legacy profiles)
         if (!j.contains("elite")) {
@@ -1475,6 +1482,7 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
             m_profile.eliteSecondaryCustomRgb = m_profile.secondaryCustomRgb;
             m_profile.eliteAccentCustomRgb = m_profile.accentCustomRgb;
             m_profile.eliteLightsCustomRgb = m_profile.lightsCustomRgb;
+            m_profile.eliteLightsBrightness = m_profile.lightsBrightness;
         }
 
         if (j.contains("spartan") && j["spartan"].is_object()) {
@@ -1623,6 +1631,10 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
             loadCustomElite("secondary_custom", "secondary_custom_rgb", m_profile.eliteSecondaryCustom, m_profile.eliteSecondaryCustomRgb);
             loadCustomElite("accent_custom", "accent_custom_rgb", m_profile.eliteAccentCustom, m_profile.eliteAccentCustomRgb);
             loadCustomElite("lights_custom", "lights_custom_rgb", m_profile.eliteLightsCustom, m_profile.eliteLightsCustomRgb);
+            if (el.contains("lights_brightness") && el["lights_brightness"].is_number()) {
+                const float rawB = std::clamp(el["lights_brightness"].get<float>(), 0.5f, 65.5f);
+                m_profile.eliteLightsBrightness = std::clamp(std::round(rawB * 2.0f) * 0.5f, 0.5f, 65.5f);
+            }
             if (el.contains("armor_set") && el["armor_set"].is_number_integer()) {
                 // A preset equips its own six permutations (the mixed presets reference the extra pieces),
                 // then the explicit *_index values below win for looks saved after mixing by hand.
@@ -1814,6 +1826,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
         j["secondary_custom_rgb"] = { m_profile.secondaryCustomRgb[0], m_profile.secondaryCustomRgb[1], m_profile.secondaryCustomRgb[2] };
         j["accent_custom_rgb"] = { m_profile.accentCustomRgb[0], m_profile.accentCustomRgb[1], m_profile.accentCustomRgb[2] };
         j["lights_custom_rgb"] = { m_profile.lightsCustomRgb[0], m_profile.lightsCustomRgb[1], m_profile.lightsCustomRgb[2] };
+        j["lights_brightness"] = std::clamp(std::round(m_profile.lightsBrightness * 2.0f) * 0.5f, 0.5f, 65.5f);
 
         j["spartan"] = {
             {"helmet", m_profile.spartanHelmetGroup},
@@ -1882,6 +1895,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
             {"secondary_custom_rgb", { m_profile.eliteSecondaryCustomRgb[0], m_profile.eliteSecondaryCustomRgb[1], m_profile.eliteSecondaryCustomRgb[2] }},
             {"accent_custom_rgb", { m_profile.eliteAccentCustomRgb[0], m_profile.eliteAccentCustomRgb[1], m_profile.eliteAccentCustomRgb[2] }},
             {"lights_custom_rgb", { m_profile.eliteLightsCustomRgb[0], m_profile.eliteLightsCustomRgb[1], m_profile.eliteLightsCustomRgb[2] }},
+            {"lights_brightness", std::clamp(std::round(m_profile.eliteLightsBrightness * 2.0f) * 0.5f, 0.5f, 65.5f)},
             {"armor_set", m_profile.eliteArmorSet},
             {"armor_set_id", kEliteSets[m_profile.eliteArmorSet].stringId},
             {"helmet_index", m_profile.eliteHelmetIndex},
@@ -2139,6 +2153,10 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 } else if (_wcsicmp(argv[i], L"-armory-yaw") == 0) {
                     // "-armory-yaw <degrees>": turn the preview character (dev test, 2026-11-12).
                     ReachArmory::SetYawRotation(static_cast<float>(_wtof(argv[i + 1])) * 3.14159265f / 180.f);
+                } else if (_wcsicmp(argv[i], L"-armory-lights-brightness") == 0) {
+                    const float rawB = std::clamp(static_cast<float>(_wtof(argv[i + 1])), 0.5f, 65.5f);
+                    m_profile.lightsBrightness = std::clamp(std::round(rawB * 2.0f) * 0.5f, 0.5f, 65.5f);
+                    m_syncedInitial = false;
                 } else if (_wcsicmp(argv[i], L"-armory-scene") == 0) {
                     // "-armory-scene c_helmet": open on a close-up camera like a click on that row (dev test, 2026-11-13).
                     std::string sc; for (const wchar_t* c = argv[i + 1]; c && *c; ++c) sc.push_back(static_cast<char>(*c));
@@ -2392,6 +2410,9 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     // ---- Slot rows for the species being edited.
     int speciesInt = m_marineTab ? 2 : static_cast<int>(m_profile.species);
     int bodyInt = static_cast<int>(m_profile.bodyType);
+    int lightsBrightnessIdx = std::clamp(
+        static_cast<int>(std::round((m_profile.lightsBrightness - 0.5f) * 2.0f)),
+        0, 130);
     std::vector<SlotRow> rows;
     rows.reserve(28);
     {
@@ -2521,6 +2542,21 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             l.scene = "c_full_spartan";
             l.options = s_reachColorOptions;
             rows.push_back(std::move(l));
+
+            static const auto s_lightsBrightnessOptions = []() {
+                std::vector<PickOption> opts;
+                opts.reserve(131);
+                for (int i = 0; i <= 130; ++i) {
+                    char lbl[16];
+                    std::snprintf(lbl, sizeof(lbl), "x%.1f", 0.5f + static_cast<float>(i) * 0.5f);
+                    opts.push_back({ lbl, "Spartan armor lights brightness multiplier (x0.5 to x65.5 in 0.5 intervals)." });
+                }
+                return opts;
+            }();
+            SlotRow lb{ "COLORS", "Lights Brightness", RowKind::List, &lightsBrightnessIdx };
+            lb.scene = "c_full_spartan";
+            lb.options = s_lightsBrightnessOptions;
+            rows.push_back(std::move(lb));
         }
         // 2026-11-12 (Tyler): Lights row hidden - the Honor Guard glow is fixed gold until the Lights colour can
         // drive it (see HANDOFF-ELITE-2026-11-12-NIGHT, "Lights idea"). Flip kShowEliteLights to bring it back.
@@ -2735,7 +2771,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     if (m_previewSpecies == PlayerSpecies::Spartan) {
         bool reset = false;
         for (SlotRow& r : rows) {
-            if (!r.index || r.options.empty() || r.index == &speciesInt || r.index == &bodyInt) continue;
+            if (!r.index || r.options.empty() || r.index == &speciesInt || r.index == &bodyInt || r.index == &lightsBrightnessIdx) continue;
             const int v = optionPos(r, *r.index);
             if (r.options[v].locked || r.options[v].forSale) {
                 const int fallback = optionValue(r, 0);
@@ -2787,8 +2823,13 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             }
         }
         const int stored = optionValue(r, value);
-        if (*r.index == stored && r.index != &speciesInt && r.index != &bodyInt) return;
+        if (*r.index == stored && r.index != &speciesInt && r.index != &bodyInt && r.index != &lightsBrightnessIdx) return;
         *r.index = stored;
+        if (r.index == &lightsBrightnessIdx) {
+            const float newB = std::clamp(0.5f + static_cast<float>(lightsBrightnessIdx) * 0.5f, 0.5f, 65.5f);
+            if (std::abs(m_profile.lightsBrightness - newB) < 1e-4f) return;
+            m_profile.lightsBrightness = newB;
+        }
         if (r.index == &m_profile.visorColorIndex) m_visorSelection = stored;
         if (r.kind == RowKind::Colour) {   // a palette choice replaces any custom wheel colour
             if (r.index == &m_profile.primaryColor) m_profile.primaryCustom = false;
@@ -3357,13 +3398,125 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
         y += 38.0f * s;
 
+        // Interactive Lights Brightness slider (x0.5 .. x65.5 in 0.5 intervals), shown on both Lights and Lights Brightness rows
+        const bool isLightsRow = (row.index == &m_profile.lightsColor || row.index == &lightsBrightnessIdx);
+        const bool isLightsBrightnessRow = (row.index == &lightsBrightnessIdx);
+        if (isLightsRow) {
+            const float slH = 34.0f * s;
+            const ImVec2 sl0(pickX + pad, y), sl1(k1.x - pad, y + slH);
+            dl->AddRectFilled(sl0, sl1, IM_COL32(16, 26, 38, 225), 2.5f * s);
+            NobleUi::DrawTacticalFrame(dl, sl0, sl1, s, isLightsBrightnessRow && m_pane == 0, false, false, false);
+
+            int curBIdx = std::clamp(static_cast<int>(std::round((m_profile.lightsBrightness - 0.5f) * 2.0f)), 0, 130);
+            bool bChanged = false;
+
+            TextAt(dl, smallFont, 13.0f * s, ImVec2(sl0.x + 8.0f * s, sl0.y + 9.0f * s), kAccentCol, "BRIGHTNESS");
+            const float lblW = 92.0f * s;
+            const float stepBtnW = 24.0f * s;
+            const float stepBtnH = 24.0f * s;
+            const float btnY = sl0.y + (slH - stepBtnH) * 0.5f;
+
+            // [-0.5] button
+            const ImVec2 minus0(sl0.x + lblW, btnY), minus1(minus0.x + stepBtnW, btnY + stepBtnH);
+            ImGui::SetCursorScreenPos(minus0);
+            const bool clickMinus = ImGui::InvisibleButton("##lights_b_minus", ImVec2(stepBtnW, stepBtnH));
+            const bool hovMinus = !m_showColorModal && ImGui::IsItemHovered();
+            dl->AddRectFilled(minus0, minus1, hovMinus ? IM_COL32(48, 84, 114, 240) : IM_COL32(22, 36, 52, 230), 2.0f * s);
+            NobleUi::DrawTacticalFrame(dl, minus0, minus1, s, false, false, hovMinus, false);
+            TextAt(dl, bodyFont, 16.0f * s, ImVec2(minus0.x + (stepBtnW - TextW(bodyFont, 16.0f * s, "-")) * 0.5f, minus0.y + 3.0f * s),
+                   curBIdx > 0 ? kWhiteCol : kDimCol, "-");
+            if (clickMinus && curBIdx > 0) {
+                curBIdx = std::max(0, curBIdx - 1);
+                bChanged = true;
+                MenuSounds::Click();
+            }
+
+            // [+0.5] button on right before slider's text readout
+            const ImVec2 plus0(sl1.x - stepBtnW - 6.0f * s, btnY), plus1(plus0.x + stepBtnW, btnY + stepBtnH);
+            ImGui::SetCursorScreenPos(plus0);
+            const bool clickPlus = ImGui::InvisibleButton("##lights_b_plus", ImVec2(stepBtnW, stepBtnH));
+            const bool hovPlus = !m_showColorModal && ImGui::IsItemHovered();
+            dl->AddRectFilled(plus0, plus1, hovPlus ? IM_COL32(48, 84, 114, 240) : IM_COL32(22, 36, 52, 230), 2.0f * s);
+            NobleUi::DrawTacticalFrame(dl, plus0, plus1, s, false, false, hovPlus, false);
+            TextAt(dl, bodyFont, 16.0f * s, ImVec2(plus0.x + (stepBtnW - TextW(bodyFont, 16.0f * s, "+")) * 0.5f, plus0.y + 3.0f * s),
+                   curBIdx < 130 ? kWhiteCol : kDimCol, "+");
+            if (clickPlus && curBIdx < 130) {
+                curBIdx = std::min(130, curBIdx + 1);
+                bChanged = true;
+                MenuSounds::Click();
+            }
+
+            // Interactive slider bar (snaps to 0.5 intervals from x0.5 to x65.5)
+            const float barX0 = minus1.x + 8.0f * s;
+            const float barX1 = plus0.x - 8.0f * s;
+            const float valTextW = 58.0f * s;
+            const ImVec2 trk0(barX0, sl0.y), trk1(barX1, sl1.y);
+            ImGui::SetCursorScreenPos(trk0);
+            ImGui::InvisibleButton("##lights_b_slider", ImVec2(std::max(16.0f, barX1 - barX0), slH));
+            const bool slHov = !m_showColorModal && ImGui::IsItemHovered();
+            const bool slAct = !m_showColorModal && ImGui::IsItemActive();
+            if (slAct) {
+                const float trackSpan = std::max(1.0f, (barX1 - valTextW) - barX0);
+                const float rawT = std::clamp((ImGui::GetIO().MousePos.x - barX0) / trackSpan, 0.0f, 1.0f);
+                const int newIdx = std::clamp(static_cast<int>(std::round(rawT * 130.0f)), 0, 130);
+                if (newIdx != curBIdx) {
+                    curBIdx = newIdx;
+                    bChanged = true;
+                }
+            } else if (slHov && ImGui::GetIO().MouseWheel != 0.0f) {
+                const int wheelSteps = NobleUi::ConsumeWheelSteps("##lights_b_wheel", ImGui::GetIO().MouseWheel);
+                if (wheelSteps != 0) {
+                    const int newIdx = std::clamp(curBIdx + wheelSteps, 0, 130);
+                    if (newIdx != curBIdx) {
+                        curBIdx = newIdx;
+                        bChanged = true;
+                        MenuSounds::Scroll();
+                    }
+                }
+            }
+
+            const float curB = 0.5f + static_cast<float>(curBIdx) * 0.5f;
+            char bValBuf[16];
+            std::snprintf(bValBuf, sizeof(bValBuf), "x%.1f", curB);
+            NobleUi::DrawSlider(dl,
+                                ImVec2(barX0, sl0.y + 4.0f * s),
+                                ImVec2(barX1, sl1.y - 4.0f * s),
+                                static_cast<float>(curBIdx) / 130.0f,
+                                1.0f / 130.0f,
+                                bValBuf,
+                                slHov || slAct || isLightsBrightnessRow,
+                                false,
+                                valTextW);
+
+            if (bChanged) {
+                lightsBrightnessIdx = curBIdx;
+                m_profile.lightsBrightness = 0.5f + static_cast<float>(curBIdx) * 0.5f;
+                if (isLightsBrightnessRow) {
+                    m_gridCursor = curBIdx;
+                    m_pickerScrollToEquipped = true;
+                }
+                m_dirty = true;
+                SyncToReachArmory();
+                static uint64_t s_lastBSave = 0;
+                if (GetTickCount64() - s_lastBSave > 300 || !slAct) {
+                    s_lastBSave = GetTickCount64();
+                    SaveProfile(m_profilePath);
+                }
+            }
+            if (ImGui::IsItemDeactivated() && m_dirty) {
+                SaveProfile(m_profilePath);
+            }
+
+            y += slH + 8.0f * s;
+        }
+
         // Grid geometry + visual cell sorting (Unlocked -> For Sale -> Locked)
         const bool colourGrid = row.kind == RowKind::Colour;
         const bool isNameplate = std::strcmp(row.label, "Nameplate") == 0;
         const bool isEmblemSymbol = std::strcmp(row.label, "Emblem") == 0;
         const bool isEmblemBackground = std::strcmp(row.label, "Emblem Background") == 0;
         const bool isEmblem = isEmblemSymbol || isEmblemBackground;
-        const int cols = colourGrid ? 10 : isEmblem ? 4 : isNameplate ? 1 : 2;
+        const int cols = colourGrid ? 10 : (isEmblem || isLightsBrightnessRow) ? 4 : isNameplate ? 1 : 2;
 
         std::vector<int> tileOf(static_cast<size_t>(n));
         if (!colourGrid) {

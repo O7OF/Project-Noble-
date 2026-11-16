@@ -1987,19 +1987,18 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     if (thirdPerson) noble::CameraThirdPerson::SetEnabled(true);
 
     // Apply 32/64 player lobby expansion detours
-    // Multiplayer seat honesty (2026-11-16, Tyler approved): the engine seats 16 players; only the dev 32-player
-    // slot patch (installed by the loader just above) can declare 32, and even then a 17th player cannot join yet
-    // (high-slot blocker). Clamp the requested -max-players value and publish it as the lobby target, so the
-    // session's declared slot count, the master advert and the LAN beacon never promise more seats than exist.
+    // Multiplayer seat honesty: the session's declared slot count, master advert and LAN beacon
+    // respect the effective seat capacity of the engine host.
     {
         const int engineSeats = noble::LobbyPatches::EffectiveMultiplayerSeats();
         if (hostMaxPlayers > engineSeats) {
-            NOBLE_WARN("main: -max-players {} requested; this build seats {} players (17-32 needs the dev 32-player "
-                       "slot patch and the high-slot fix)", hostMaxPlayers, engineSeats);
+            NOBLE_WARN("main: -max-players {} requested; this build seats {} players",
+                       hostMaxPlayers, engineSeats);
             hostMaxPlayers = engineSeats;
         }
-        noble::LobbyPatches::SetMaxMultiplayerPlayers(static_cast<uint32_t>(engineSeats));
-        NOBLE_INFO("main: multiplayer seat target {} (32-player slot patch {})", engineSeats,
+        noble::LobbyPatches::SetMaxMultiplayerPlayers(static_cast<uint32_t>(hostMaxPlayers > 0 ? hostMaxPlayers : engineSeats));
+        NOBLE_INFO("main: multiplayer seat target {} (32-player slot patch {})",
+                   hostMaxPlayers > 0 ? hostMaxPlayers : engineSeats,
                    noble::slots::Players32Active() ? "active" : "off");
     }
     noble::LobbyPatches::Apply(loader->GetModuleHandle());

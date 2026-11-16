@@ -677,8 +677,8 @@ void MasterServerClient::DoList() {
                     s.name = Str(item, "name", 64);
                     s.address = Str(item, "address", 64);
                     s.port = static_cast<uint16_t>(Int(item, "port", 11774, 1, 65535));
-                    s.playerCount = Int(item, "player_count", 0, 0, 64);
-                    s.maxPlayers = Int(item, "max_players", 16, 1, 64);
+                    s.playerCount = Int(item, "player_count", 0, 0, 128);
+                    s.maxPlayers = Int(item, "max_players", 16, 1, 128);
                     s.map = Str(item, "map", 64);
                     s.mode = Str(item, "mode", 32);
                     s.inProgress = item.value("in_progress", false);
