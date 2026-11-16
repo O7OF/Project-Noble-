@@ -11,6 +11,9 @@
 Confidence tags: **proven** = read directly from the shipped RR files or our logs; **observed** = seen in shipped
 files but not executed by us; **inferred** = deduced from binary strings/structure; **open** = unresolved.
 
+> Companion: RR-TAKE-LIST-2026-11-16.md - the explicit can-take / cannot-take list for other agent workflows
+> (off-limits code/assets vs ideas and reference material).
+
 ## 1. What the shipped package is
 
 | Piece | Evidence | Notes |
