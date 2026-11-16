@@ -69,7 +69,17 @@ static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, i
     int32_t targetSlots = publicSlots;
     const int32_t expandedMp = static_cast<int32_t>(LobbyPatches::GetMaxMultiplayerPlayers());
     const int32_t expandedCoop = static_cast<int32_t>(LobbyPatches::GetMaxCoopPlayers());
-    if ((publicSlots == 16 || publicSlots == 8) && expandedMp > publicSlots) {
+    // Campaign/firefight sessions use this same setter; never expand a campaign session to the multiplayer slot count -
+    // the engine re-applies its own (16) count every frame and a 128-slot campaign session makes the setter churn forever
+    // (observed 1000+ calls per launch, stuck launch state 1, engine error 2).
+    if (LobbyPatches::IsCampaignCoop()) {
+        // A zero public-slot count is the engine's join lock while a launch is starting; never override it.
+        targetSlots = publicSlots == 0 ? 0 : std::min(16, std::max(publicSlots, expandedCoop));
+        if (targetSlots != publicSlots) {
+            NOBLE_INFO("LobbyPatches: Expanding campaign/firefight session slot count from {} to {} (private={}, isRanked={})",
+                publicSlots, targetSlots, privateSlots, isRanked);
+        }
+    } else if ((publicSlots == 16 || publicSlots == 8) && expandedMp > publicSlots) {
         targetSlots = std::min(expandedMp, 128);
         NOBLE_INFO("LobbyPatches: Expanding multiplayer/forge session slot count from {} to {} (private={}, isRanked={})",
             publicSlots, targetSlots, privateSlots, isRanked);
@@ -1291,7 +1301,7 @@ static void InitializeCampaignSessionSlots() {
         if (!session) return;
         done.store(true);
         s_originalSetSlotCounts(reinterpret_cast<void*>(session + 0x30), 0, 16, false);
-        NOBLE_WARN("LobbyPatches: campaign >4 probe: initialised session slot counts to 16");
+        NOBLE_WARN("LobbyPatches: campaign >4 probe: initialised session slot counts to 16 (membership {:#x})", session + 0x30);
     } __except (1) {
     }
 }
@@ -2486,6 +2496,13 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
     // Pattern from ReachPatterns in NobleCoreMath: "48 89 5C 24 ? 48 89 74 24 ? 57 48 83 EC 20 8B DA 48 8B F9 85 D2"
     std::string_view sigSetSlotCounts = "48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC 20 8B DA 48 8B F9 85 D2";
     uintptr_t matchSetSlots = SigScanner::FindPattern(base, size, sigSetSlotCounts);
+    if (!matchSetSlots) {
+        // MCC build 738dd2d2...0894: c_network_session_membership::set_slot_counts was identified statically as
+        // FUN_18039C5C8 (signature matches the retail symbol: stores privateSlots at +0x14, publicSlots at +0x18,
+        // ranked at +0x1C, calls managed_session_modify_slot_counts, bumps the membership counters).
+        matchSetSlots = base + 0x39C5C8;
+        NOBLE_INFO("LobbyPatches: set_slot_counts pattern miss; using proven RVA hr+0x39C5C8");
+    }
     if (matchSetSlots) {
         if (HookManager::InstallHook(reinterpret_cast<void*>(matchSetSlots),
                                      reinterpret_cast<void*>(&Hook_SetSlotCounts),
