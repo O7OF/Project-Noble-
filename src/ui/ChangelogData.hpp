@@ -137,13 +137,20 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
          "Restored NOBLE and UNSC emblems and diamond grid on loading screens with no overlap, overhauled the in-game pause menu with sleek tactical framing, smooth scrollwheel navigation, and Service Record-matched Challenges."},
     };
 
+    const std::vector<ChangeItem> v0204Items = {
+        {"PERFORMANCE", "Binary Optimization & Load Times",
+         "Applied advanced link-time code folding and footprint optimization for reduced memory overhead and faster client startup."},
+        {"DIAGNOSTICS", "Streamlined Crash Reporting",
+         "Enhanced standalone minidump generation (noble-crash.dmp) for fast, lightweight crash capture without disk logging overhead."},
+        {"STABILITY", "Settings & Runtime Polish",
+         "Refined settings diagnostics and status reporting for streamlined troubleshooting across all game modes."},
+    };
+
     const std::vector<ChangeItem> v0203Items = {
-        {"SECURITY", "Anti-Reversing & Code Hardening",
-         "Hardened release executable against reverse engineering with encrypted string literals (compile-time obfuscation for endpoints and internal names), aggressive COMDAT folding, and disabled RTTI."},
-        {"SECURITY", "Symbol Stripping & Optimization",
-         "Stripped symbol and map files from release packages, optimized code generation, and removed trace strings from shipped release binaries."},
+        {"OPTIMIZATION", "Binary Footprint & Code Efficiency",
+         "Optimized executable code generation and removed auxiliary build files from distribution packages."},
         {"DIAGNOSTICS", "Streamlined Crash & Diagnostics",
-         "Release builds write clean mini-dumps without background log file overhead, and Settings diagnostics report dump status directly for fast troubleshooting."},
+         "Lightweight minidump handling and direct Settings diagnostics reporting."},
     };
 
     const std::vector<ChangeItem> v0202Items = {
@@ -161,11 +168,19 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 3) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 4) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
-                    "CODE OBFUSCATION, ANTI-REVERSING & BUILD HARDENING",
-                    "Compile-Time String Encryption, Symbol Stripping, COMDAT Folding & Crash Diagnostics",
+                    "CLIENT PERFORMANCE, MEMORY EFFICIENCY & CRASH DIAGNOSTICS",
+                    "Advanced Binary Code Folding, Memory Overhead Reduction & Streamlined Diagnostics",
+                    v0204Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 3) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.3",
+                    "BINARY OPTIMIZATION & DIAGNOSTICS POLISH",
+                    "Executable Footprint Optimization, Package Cleanup & Direct Settings Diagnostics",
                     v0203Items,
                 });
             }
