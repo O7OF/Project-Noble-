@@ -2714,6 +2714,18 @@ static void DumpMembershipPayload(std::string& out, const uint8_t* p) {
                       static_cast<unsigned long long>(*reinterpret_cast<const uint64_t*>(e + 0x9)));
         out += buf;
     }
+    // Tail flags/values: 0x2518 (local-host id), 0x2520/0x2524 + 0x2528/0x252c (peer/player index consistency checks
+    // the consumer rejects on), 0x2530.. set_slot_counts, 0x253e.. secondary id. Plus the 0x2500-0x2550 bytes.
+    std::snprintf(buf, sizeof(buf), " | tail b18 %02X v1C %08X b20 %02X v24 %08X b28 %02X v2C %08X b30 %02X v34 %08X v38 %08X b3C %02X b3E %02X v40 %08X",
+                  p[0x2518], *reinterpret_cast<const uint32_t*>(p + 0x251C), p[0x2520],
+                  *reinterpret_cast<const uint32_t*>(p + 0x2524), p[0x2528], *reinterpret_cast<const uint32_t*>(p + 0x252C),
+                  p[0x2530], *reinterpret_cast<const uint32_t*>(p + 0x2534), *reinterpret_cast<const uint32_t*>(p + 0x2538),
+                  p[0x253C], p[0x253E], *reinterpret_cast<const uint32_t*>(p + 0x2540));
+    out += buf;
+    char hex[0x50 * 3 + 1] = {};
+    for (int i = 0; i < 0x50; ++i) std::snprintf(hex + i * 3, 4, "%02X ", p[0x2500 + i]);
+    out += " | 2500: ";
+    out += hex;
 }
 
 static uint64_t __fastcall Hook_MemberConsume(uint8_t* block, uint8_t* payload) {
