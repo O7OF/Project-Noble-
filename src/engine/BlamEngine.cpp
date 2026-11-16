@@ -1156,6 +1156,16 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
 
     if (isGuest) {
+        // Campaign co-op guests start their engine in the multiplayer engine class (0x0C = 3). The session/game mode
+        // still comes from the host over the network; the local block only selects the engine start class, and the MP
+        // class takes the network join path instead of the campaign external-launch abort when joining a host whose
+        // mission is already running (join-in-progress). Verified: campaign guest joins mid-mission and stays in the
+        // mission without the abort/GameResults path (it remains a spectator until the next mission start, which is the
+        // standard Halo co-op model - players join while the host is in the lobby/loading window).
+        if (isCampaign) {
+            block[0x0C] = 0x03;
+            NOBLE_INFO("BlamEngine: campaign guest launch block uses the multiplayer engine class (0x0C=3) for network join");
+        }
         // Guest mode: 1 local active player, target host machine at 0x2F8.
         // Note: +0xF0..+0xF7 is the 8-byte s_player_identifier copied by haloreach.dll (State 6,
         // RVA 0xE804) into 0x182A1E94C and sent in join-request. It MUST be unique per client so
@@ -1876,9 +1886,14 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         // the launch size ends the mission instead of being seated. Only widen when the roster is already over the
         // engine's stock 4-player co-op size, so the proven 1-4 player launches keep their exact block.
         if (hostWithGuests && declaredPlayers > 4) {
-            constexpr int kCoopCapacity = 8;
-            declaredPlayers = std::min(16, std::max(declaredPlayers, kCoopCapacity));
-            NOBLE_INFO("BlamEngine: co-op roster is over 4; creating the session with capacity {} (0xE8)", declaredPlayers);
+            // Stock campaign co-op supports four players; the game engine's start cap aborts the session when the launch
+            // declares more (verified 2026-11-16: declaring 5+ makes the engine close the session at simulation start,
+            // while declaring 4 keeps it running and an extra joiner is tolerated in the session membership as a
+            // non-active entry). Declare the stock maximum until the engine cap is lifted for the 16-player goal.
+            constexpr int kCampaignCoopEngineCap = 4;
+            declaredPlayers = std::min(kCampaignCoopEngineCap, declaredPlayers);
+            NOBLE_INFO("BlamEngine: campaign co-op launch declares {} player(s) (0xE8, stock engine cap {})",
+                       declaredPlayers, kCampaignCoopEngineCap);
         }
         launchBlock[0xE8] = static_cast<uint8_t>(declaredPlayers);
         NOBLE_INFO("BlamEngine: launch block declares {} player(s) (0xE8), {} expected peer(s), mode {}",
@@ -1954,7 +1969,13 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                                                     std::memory_order_relaxed);
                         const ULONGLONG now = GetTickCount64();
                         const ULONGLONG elapsed = now - waitStart;
-                        if (playersJoined >= targetPeers || (elapsed >= 8000ULL && channelPeers >= targetPeers)) {
+                        // The membership counter increments per decoded msg 27 and can over-count when a guest
+                        // re-sends its join request, so it is not a reliable readiness signal on its own. Wait for the
+                        // real network game-peer count (channels established) instead; the old counter-based check
+                        // remains as a late fallback so a session that never reports channels still starts.
+                        const bool ready = channelPeers >= targetPeers ||
+                                           (playersJoined >= targetPeers && elapsed >= 20000ULL);
+                        if (ready) {
                             const int settleMs = settleLonger ? 1200 : 500;
                             NOBLE_INFO("BlamEngine: {}/{} remote player(s) in session (membership: {}, engine peers: {}, elapsed {} ms); settling {} ms for world replication",
                                        std::max(playersJoined, channelPeers), targetPeers, playersJoined, channelPeers, elapsed, settleMs);

@@ -139,6 +139,10 @@ static int32_t __fastcall Hook_EvaluateCoopInsertionPoint(void* thisPtr) {
     if (s_originalEvaluateCoopInsertionPoint) {
         result = s_originalEvaluateCoopInsertionPoint(thisPtr);
     }
+    static std::atomic<int> insertLog{0};
+    if (insertLog.fetch_add(1) < 20) {
+        NOBLE_WARN("LobbyPatches: evaluate_coop_insertion_point -> {}", result);
+    }
     if (result < 0) {
         NOBLE_WARN("LobbyPatches: evaluate_coop_insertion_point returned {} (incompatible); overriding to 0 (mission start) for co-op network play", result);
         result = 0;
@@ -351,6 +355,23 @@ static uint64_t __fastcall Hook_EncodeMessage(void* table, void* stream, int32_t
     }
     // Session teardown messages: who asked for it. A guest that leaves on its own (msg 12) or disbands (14) used to be
     // logged only as an effect; the caller RVA says which engine path decided it.
+    if (type == 7 || type == 39 || type == 43) {
+        static std::atomic<int> launchMsgLog[64];
+        if (launchMsgLog[type & 63].fetch_add(1) < 5) {
+            NOBLE_WARN("LobbyPatches: [{} pid {}] SEND msg{} caller hr+0x{:X} stack {}", RefuseRole(), GetCurrentProcessId(),
+                       type, CallerRva(_ReturnAddress()), ReachStack());
+        }
+    }
+    if (type == 37) {
+        static std::atomic<int> msg37OutLog{0};
+        if (msg37OutLog.fetch_add(1) < 40) {
+            char hex[48 * 3 + 1] = {};
+            const auto* p = static_cast<const uint8_t*>(data);
+            for (int i = 0; i < 48 && p; ++i) std::snprintf(hex + i * 3, 4, "%02X ", static_cast<unsigned>(p[i]));
+            NOBLE_WARN("LobbyPatches: [{} pid {}] SEND msg37 size {} caller hr+0x{:X} stack {} bytes: {}", RefuseRole(),
+                       GetCurrentProcessId(), size, CallerRva(_ReturnAddress()), ReachStack(), hex);
+        }
+    }
     if (type == 12 || type == 14 || type == 15) {
         NOBLE_WARN("LobbyPatches: [{} pid {}] SEND msg {} ({}) from hr+0x{:X} - session teardown requested here",
                    RefuseRole(), GetCurrentProcessId(), type, SessionMessageName(type), CallerRva(_ReturnAddress()));
@@ -365,6 +386,16 @@ static uint64_t __fastcall Hook_DecodeMessage(void* table, void* stream, int32_t
     const int32_t t = type ? *type : -1;
     if (t == 27 && (ok & 0xFF) != 0) {
         s_remotePlayersJoinedCount.fetch_add(1);
+    }
+    if (t == 37) {
+        static std::atomic<int> msg37InLog{0};
+        if (msg37InLog.fetch_add(1) < 40) {
+            char hex[48 * 3 + 1] = {};
+            const auto* p = static_cast<const uint8_t*>(buffer);
+            for (int i = 0; i < 48 && p; ++i) std::snprintf(hex + i * 3, 4, "%02X ", static_cast<unsigned>(p[i]));
+            NOBLE_WARN("LobbyPatches: [{} pid {}] RECV msg37 size {} bytes: {}", RefuseRole(), GetCurrentProcessId(),
+                       size ? *size : -1, hex);
+        }
     }
     if (t >= 0 && t < 64 && s_msgInCount[t].fetch_add(1) < 15) {
         NOBLE_INFO("LobbyPatches: [{} pid {}] RECV msg {} ({}) size {} decoded {}", RefuseRole(), GetCurrentProcessId(), t,
@@ -654,11 +685,339 @@ static void __fastcall Hook_SetGameEnded(void* thisPtr, bool force) {
     if (s_originalSetGameEnded) s_originalSetGameEnded(thisPtr, force);
 }
 
+// External-launch readiness check (hr+0x41EB80(param) -> bool). hr+0x3AA268 calls it for a campaign guest; when it
+// returns 0 the engine does AbortGame(reason=6). Probes for the campaign join-in-progress work (item #3): log the
+// inputs so the failing condition (no launch source, wrong mode byte, session state, ...) is visible.
+static LONG CALLBACK WatchHandler(EXCEPTION_POINTERS* info);   // defined below (player0/manager watches)
+static void DumpGamePlayers(char* out, size_t cap);            // defined below (team-count diagnostics)
+static uintptr_t s_player0Flags;                               // defined below (game-player flags watch target)
+static void ArmPlayer0Watch();                                 // defined below
+
+// Arms the existing Dr0 flags watch on the first game-player flags word (campaign co-op activation tracing).
+static void ArmCampaignPlayerFlagsWatch() {
+    __try {
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+        const uintptr_t arr = block ? *reinterpret_cast<const uintptr_t*>(block + 0x18) : 0;
+        const uint64_t size = arr ? *reinterpret_cast<const uint64_t*>(arr + 0x20) : 0;
+        const uintptr_t data = arr ? *reinterpret_cast<const uintptr_t*>(arr + 0x50) : 0;
+        if (data && size >= 0x80 && size <= 0x4000) {
+            s_player0Flags = data + 4;
+            ArmPlayer0Watch();
+        }
+    } __except (1) {
+    }
+}
+
+// Campaign-JIP local-player-manager watch: the guest's launch-ready abort comes from localPlayerManager+0x20 staying 1
+// (see launch_ready). The working pre-mission flow advances it 2 -> 3. Dr2 write watch on that field logs the writer
+// (caller RVA + stack) so the missing launch-data apply step can be identified.
+static uintptr_t s_localManagerStateAddr = 0;
+static uintptr_t s_localManagerIdentityAddr = 0;
+static std::atomic<int> s_managerWatchHits{0};
+static std::atomic<int> s_managerIdentityWatchHits{0};
+static DWORD WINAPI ArmManagerWatchThread(void* param) {
+    const DWORD tid = static_cast<DWORD>(reinterpret_cast<uintptr_t>(param));
+    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE, tid);
+    if (!th) return 0;
+    bool ok = false;
+    if (SuspendThread(th) != static_cast<DWORD>(-1)) {
+        CONTEXT c = {};
+        c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+        if (GetThreadContext(th, &c)) {
+            c.Dr2 = s_localManagerStateAddr;
+            c.Dr7 = (c.Dr7 & ~0x0F000010ull) | (1ull << 4) | (1ull << 24) | (3ull << 26);   // L2, write, 4 bytes
+            if (s_localManagerIdentityAddr) {
+                c.Dr3 = s_localManagerIdentityAddr;
+                c.Dr7 = (c.Dr7 & ~0xF0000000ull) | (1ull << 6) | (1ull << 28) | (2ull << 30);   // L3, write, 8 bytes
+            }
+            ok = SetThreadContext(th, &c) != FALSE;
+        }
+        ResumeThread(th);
+    }
+    CloseHandle(th);
+    // Logged after resume: the game thread may hold the logger lock while suspended.
+    NOBLE_WARN("LobbyPatches: local player manager state write watch {} at {:#x} (thread {})",
+               ok ? "armed" : "FAILED", s_localManagerStateAddr, tid);
+    return 0;
+}
+static void ArmManagerWatch() {
+    static bool armed = false;
+    if (armed || !s_localManagerStateAddr) return;
+    armed = true;
+    if (HANDLE t = CreateThread(nullptr, 0, &ArmManagerWatchThread,
+                                reinterpret_cast<void*>(static_cast<uintptr_t>(GetCurrentThreadId())), 0, nullptr))
+        CloseHandle(t);
+}
+
+typedef uint8_t(__fastcall* LaunchReadyFn)(uint8_t* param);
+static LaunchReadyFn s_originalLaunchReady = nullptr;
+static std::atomic<int> s_launchReadyLogCount{0};
+static uint8_t __fastcall Hook_LaunchReady(uint8_t* param) {
+    if (param && !s_localManagerStateAddr) {
+        const uintptr_t src = *reinterpret_cast<uintptr_t*>(param + 8);
+        if (src) {
+            s_localManagerStateAddr = src + 0x20;
+            s_localManagerIdentityAddr = src + 0x14;
+            AddVectoredExceptionHandler(1, &WatchHandler);
+            ArmManagerWatch();
+        }
+    }
+    // Campaign co-op: watch the first game-player flags word to catch the 0x8 -> 0x1 "player active" activation.
+    if (s_campaignCoop.load() && !s_player0Flags) ArmCampaignPlayerFlagsWatch();
+    // Campaign-JIP probe: dump the game-player table periodically (log only; enabled with NOBLE_JIP_DUMP=1).
+    static const bool dumpPlayers = [] {
+        wchar_t env[8] = {};
+        return GetEnvironmentVariableW(L"NOBLE_JIP_DUMP", env, 8) > 0 && env[0] != L'0';
+    }();
+    if (dumpPlayers && s_campaignCoop.load()) {
+        static ULONGLONG lastDumpTick = 0;
+        const ULONGLONG tick = GetTickCount64();
+        if (tick - lastDumpTick > 5000) {
+            lastDumpTick = tick;
+            char dump[1024];
+            DumpGamePlayers(dump, sizeof(dump));
+            NOBLE_WARN("LobbyPatches: [{} pid {}] player table dump: {}", RefuseRole(), GetCurrentProcessId(), dump);
+        }
+    }
+    const uint8_t result = s_originalLaunchReady ? s_originalLaunchReady(param) : 0;
+    const int call = s_launchReadyLogCount.fetch_add(1);
+    if (result == 0 || call < 3) {
+        uintptr_t src = 0, sess = 0;
+        int srcState = -99, sessState = -99, srcExtra20 = -99, srcExtra3C = -99;
+        if (param) {
+            src = *reinterpret_cast<uintptr_t*>(param + 8);
+            sess = *reinterpret_cast<uintptr_t*>(param + 0x18);
+            if (src) {
+                srcState = *reinterpret_cast<int*>(src + 0x10);
+                srcExtra20 = *reinterpret_cast<int*>(src + 0x20);
+                srcExtra3C = *reinterpret_cast<int*>(src + 0x3C);
+            }
+            if (sess) sessState = *reinterpret_cast<int*>(sess + 0x60EF8);
+        }
+        int modeSet = -1, modeVal = -1;
+        if (s_reachBase) {
+            modeSet = *reinterpret_cast<uint8_t*>(s_reachBase + 0x2A1FD40);
+            modeVal = *reinterpret_cast<uint8_t*>(s_reachBase + 0x2A1FD48);
+        }
+        NOBLE_WARN("LobbyPatches: launch_ready -> {} (src 0x{:X} srcState {} src+0x20 {} src+0x3C {} sess 0x{:X} sessState {} modeSet {} modeVal {})",
+                   result, src, srcState, srcExtra20, srcExtra3C, sess, sessState, modeSet, modeVal);
+    }
+    return result;
+}
+
+// Player identity mapping check (hr+0x41FBE8): finds the local player's identity hash among the session peer records
+// and returns 0 when none matches; hr+0x3AA268 then AbortGame(6). Campaign-JIP probe: log the local hash vs peer hashes.
+// The per-peer hash is a murmur-style fold of the peer's first 8 identity bytes (hr+0x3A922C does the same fold).
+typedef uint8_t(__fastcall* IdentityMatchFn)(uint8_t* a1, uint64_t a2, int a3, uint32_t a4, uint64_t a5, uint32_t mask,
+                                             uint64_t peerRecords);
+static IdentityMatchFn s_originalIdentityMatch = nullptr;
+static std::atomic<int> s_identityMatchLogCount{0};
+static uint32_t HashPeerIdentity8(const uint8_t* p) {
+    uint64_t v = 0;
+    std::memcpy(&v, p, sizeof(v));
+    const uint32_t a = static_cast<uint32_t>(v), b = static_cast<uint32_t>(v >> 32);
+    uint32_t h = ((b * 0x5BD1E995u) >> 0x18 ^ (b * 0x5BD1E995u));
+    h = h * 0x5BD1E995u;
+    h ^= a * 0x5BD1E995u;
+    h = h * 0x5BD1E995u;
+    const uint32_t u = ((h >> 0xD) ^ h) * 0x5BD1E995u;
+    return (u >> 0xF) ^ u;
+}
+static uint8_t __fastcall Hook_IdentityMatch(uint8_t* a1, uint64_t a2, int a3, uint32_t a4, uint64_t a5, uint32_t mask,
+                                             uint64_t peerRecords) {
+    const uint8_t result = s_originalIdentityMatch ? s_originalIdentityMatch(a1, a2, a3, a4, a5, mask, peerRecords) : 0;
+    const int call = s_identityMatchLogCount.fetch_add(1);
+    if (result == 0 || call < 3) {
+        uintptr_t src = a1 ? *reinterpret_cast<uintptr_t*>(a1 + 8) : 0;
+        int localInt = -1, localSlot = -1;
+        int localShort = -1;
+        if (src) {
+            localInt = *reinterpret_cast<int*>(src + 0x15);
+            localSlot = *reinterpret_cast<int*>(src + 0x1C);
+            localShort = *reinterpret_cast<int*>(src + 0x19);
+        }
+        char peers[640] = {};
+        size_t n = 0;
+        for (int i = 0; i < 17 && n + 48 < sizeof(peers); ++i) {
+            if (!(mask & (1u << i))) continue;
+            const auto* rec = reinterpret_cast<const uint8_t*>(peerRecords + static_cast<uint64_t>(i) * 0x158);
+            n += std::snprintf(peers + n, sizeof(peers) - n, " p%d=%08X", i,
+                               static_cast<unsigned>(HashPeerIdentity8(rec)));
+        }
+        NOBLE_WARN("LobbyPatches: identity_match -> {} (mode {} a3 {} a4 0x{:X} mask 0x{:X} local {}/{} slot {} |{})",
+                   result, a1 ? *reinterpret_cast<int*>(a1 + 0x20) : -1, a3, a4, mask, localInt, localShort, localSlot,
+                   peers);
+    }
+    return result;
+}
+
+// Player-create gate (hr+0x420298(param_1, playerIndex a2, peerRecord a3, sessionPlayerId a4) -> bool). The launch-ready
+// path uses it to seat the joining player; if it returns false the player stays unseated (spectator). Campaign-JIP probe:
+// log the player-slot states it checks (DAT_182D1B960[slot*0x634] vs 7, DAT_182D1B7CC[slot*0x634] vs 5) and the result.
+typedef uint8_t(__fastcall* PlayerCreateFn)(uint64_t a1, uint32_t a2, uint64_t a3, int32_t a4);
+static PlayerCreateFn s_originalPlayerCreate = nullptr;
+static std::atomic<int> s_playerCreateLogCount{0};
+static uint8_t __fastcall Hook_PlayerCreate(uint64_t a1, uint32_t a2, uint64_t a3, int32_t a4) {
+    const uint8_t result = s_originalPlayerCreate ? s_originalPlayerCreate(a1, a2, a3, a4) : 0;
+    if (s_playerCreateLogCount.fetch_add(1) < 20) {
+        int b960 = -1, b7cc = -1, engineState = -1, engine52 = -1, av = -1;
+        if (s_reachBase && a4 >= 0 && a4 < 16) {
+            b960 = *reinterpret_cast<const uint8_t*>(s_reachBase + 0x2D1B960 + static_cast<size_t>(a4) * 0x634);
+            b7cc = *reinterpret_cast<const uint8_t*>(s_reachBase + 0x2D1B7CC + static_cast<size_t>(a4) * 0x634);
+        }
+        if (a1) {
+            const uintptr_t lvar3 = *reinterpret_cast<uintptr_t*>(a1 + 8);
+            if (lvar3) {
+                engineState = *reinterpret_cast<const int*>(lvar3 + 0x10);
+                engine52 = *reinterpret_cast<const uint8_t*>(lvar3 + 0x52);
+            }
+        }
+        NOBLE_WARN("LobbyPatches: player_create -> {} (slot {} a3 0x{:X} a4 {} b960 {} b7cc {} engineState {} engine52 {})",
+                   result, a2, a3, a4, b960, b7cc, engineState, engine52);
+    }
+    return result;
+}
+
+// Controller/player apply state machine (hr+0x3CDF38) called from the msg-37 dispatch. It either applies a player
+// (FUN_1803CDDC0 -> player created) or sets a rejection state; the pre-mission guest reaches the manager state 4 through
+// it, the JIP guest does not. Campaign-JIP probe: log the inputs and the object's mapping fields.
+typedef int64_t(__fastcall* ControllerApplyFn)(uint64_t a1, int32_t a2, int64_t a3, int32_t a4, int64_t a5, char a6,
+                                              int32_t a7);
+static ControllerApplyFn s_originalControllerApply = nullptr;
+static std::atomic<int> s_controllerApplyLogCount{0};
+static int64_t __fastcall Hook_ControllerApply(uint64_t a1, int32_t a2, int64_t a3, int32_t a4, int64_t a5, char a6,
+                                              int32_t a7) {
+    int f40 = -1, f44 = -1, f3c = -1, f50 = -1, f54 = -1;
+    if (a1) {
+        f40 = *reinterpret_cast<const int*>(a1 + 0x40);
+        f44 = *reinterpret_cast<const int*>(a1 + 0x44);
+        f3c = *reinterpret_cast<const int*>(a1 + 0x3C);
+        f50 = *reinterpret_cast<const int*>(a1 + 0x50);
+        f54 = *reinterpret_cast<const int*>(a1 + 0x54);
+    }
+    const int64_t result = s_originalControllerApply ? s_originalControllerApply(a1, a2, a3, a4, a5, a6, a7) : 0;
+    if (s_controllerApplyLogCount.fetch_add(1) < 24) {
+        int f50After = -1, f54After = -1;
+        if (a1) {
+            f50After = *reinterpret_cast<const int*>(a1 + 0x50);
+            f54After = *reinterpret_cast<const int*>(a1 + 0x54);
+        }
+        NOBLE_WARN("LobbyPatches: controller_apply -> {} (p2 {} p3 {} p4 {} p6 {} p7 {} | f40 {} f44 {} f3c {} f50 {}->{} f54 {}->{})",
+                   result, a2, static_cast<int>(a3), a4, a6, a7, f40, f44, f3c, f50, f50After, f54, f54After);
+    }
+    return result;
+}
+
+// Per-player update/activation step (hr+0x47A3C(playerIndex)). The working flow flips game-player flags 0x8 -> 0x9 ->
+// 0x1 through this path within a second of game start; on the JIP guest the entry stays 0x8. Log the per-index calls and
+// the flags value each time it runs (first 60 calls).
+typedef void(__fastcall* PlayerUpdateStepFn)(uint32_t playerIndex);
+static PlayerUpdateStepFn s_originalPlayerUpdateStep = nullptr;
+static std::atomic<int> s_playerUpdateStepLog{0};
+static uint32_t ReadGamePlayerFlags(uint32_t index) {
+    __try {
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+        const uintptr_t arr = block ? *reinterpret_cast<const uintptr_t*>(block + 0x18) : 0;
+        const uint64_t size = arr ? *reinterpret_cast<const uint64_t*>(arr + 0x20) : 0;
+        const uintptr_t data = arr ? *reinterpret_cast<const uintptr_t*>(arr + 0x50) : 0;
+        if (!data || size < 0x80 || size > 0x4000) return 0xFFFFFFFFu;
+        return *reinterpret_cast<const uint32_t*>(data + static_cast<uintptr_t>(index) * size + 4);
+    } __except (1) {
+        return 0xFFFFFFFFu;
+    }
+}
+static void __fastcall Hook_PlayerUpdateStep(uint32_t playerIndex) {
+    const int n = s_playerUpdateStepLog.fetch_add(1);
+    if (n < 60) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] player_update_step index {} flags before 0x{:X}", RefuseRole(),
+                   GetCurrentProcessId(), playerIndex & 0xFFFF, ReadGamePlayerFlags(playerIndex & 0xFFFF));
+    }
+    if (s_originalPlayerUpdateStep) s_originalPlayerUpdateStep(playerIndex);
+}
+
+// Per-player update loop entry (hr+0x57434(param_1, float* time)). It early-returns when param_1 < 1; the player
+// activation chain (FUN_180047A3C) hangs off this call. Campaign-JIP probe: log param_1 on host vs guest.
+typedef void(__fastcall* PlayerUpdateLoopFn)(int32_t, float*);
+static PlayerUpdateLoopFn s_originalPlayerUpdateLoop = nullptr;
+static std::atomic<int> s_playerUpdateLoopLog{0};
+static void __fastcall Hook_PlayerUpdateLoop(int32_t a1, float* a2) {
+    const int n = s_playerUpdateLoopLog.fetch_add(1);
+    if (n < 40) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] player_update_loop a1 {} t {:.3f}", RefuseRole(), GetCurrentProcessId(), a1,
+                   a2 ? a2[0] : 0.0f);
+    }
+    if (s_originalPlayerUpdateLoop) s_originalPlayerUpdateLoop(a1, a2);
+}
+
+// Simulation update gate (hr+0x3AAB08 -> bool). The main loop only runs the per-player update (FUN_180057434, which
+// drives the game-player activation chain) when this returns 1. Campaign-JIP probe: log the gate inputs on host/guest -
+// the condition needs c_game_engine+0x20 == 4 and a thread-local game context field.
+static int ReadTlsCtx4() {
+    __try {
+        const auto tls = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t ctx = *reinterpret_cast<const uintptr_t*>(tls + 0x48);
+        return ctx ? *reinterpret_cast<const int*>(ctx + 4) : 0;
+    } __except (1) {
+        return 0;
+    }
+}
+typedef uint8_t(__fastcall* SimGateFn)();
+static SimGateFn s_originalSimGate = nullptr;
+static std::atomic<int> s_simGateLog{0};
+static uint8_t __fastcall Hook_SimGate() {
+    const uint8_t result = s_originalSimGate ? s_originalSimGate() : 0;
+    const int n = s_simGateLog.fetch_add(1);
+    static int lastTuple[5] = { -1, -1, -1, -1, -1 };
+    bool changed = false;
+    int modeSetL = -1, f2L = -1, f3L = -1, engine10L = -1, engine20L = -1, ctx4L = -1;
+    if (s_reachBase) {
+        modeSetL = *reinterpret_cast<const uint8_t*>(s_reachBase + 0x4E0E8F0);
+        f2L = *reinterpret_cast<const uint8_t*>(s_reachBase + 0x4E0E8F2);
+        f3L = *reinterpret_cast<const uint8_t*>(s_reachBase + 0x4E0E8F3);
+        const auto engine = *reinterpret_cast<const uintptr_t*>(s_reachBase + 0x4E0E908);
+        if (engine) {
+            engine10L = *reinterpret_cast<const int*>(engine + 0x10);
+            engine20L = *reinterpret_cast<const int*>(engine + 0x20);
+        }
+    }
+    ctx4L = ReadTlsCtx4();
+    const int tuple[5] = { result, engine10L, engine20L, ctx4L, f3L };
+    changed = std::memcmp(tuple, lastTuple, sizeof(tuple)) != 0;
+    std::memcpy(lastTuple, tuple, sizeof(tuple));
+    if (n < 8 || (changed && n < 400)) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] sim_gate -> {} (modeSet {} f2 {} f3 {} engine+10 {} engine+20 {} ctx+4 {})",
+                   RefuseRole(), GetCurrentProcessId(), result, modeSetL, f2L, f3L, engine10L, engine20L, ctx4L);
+    }
+    return result;
+}
+
+// Launch reset (hr+0x3BF63C(manager, mode)): clears the local-player records/slots when the engine re-initialises for a
+// new launch. Probe logging only (event ordering for campaign join diagnostics).
+typedef uint64_t(__fastcall* LaunchResetFn)(uint64_t* manager, char mode);
+static LaunchResetFn s_originalLaunchReset = nullptr;
+static std::atomic<int> s_launchResetLog{0};
+static uint64_t __fastcall Hook_LaunchReset(uint64_t* manager, char mode) {
+    const int n = s_launchResetLog.fetch_add(1);
+    if (n < 20) {
+        int state = -1, f40 = -1;
+        if (manager) {
+            state = *reinterpret_cast<const int*>(reinterpret_cast<const uint8_t*>(manager) + 0x20);
+            f40 = *reinterpret_cast<const int*>(reinterpret_cast<const uint8_t*>(manager) + 0x40);
+        }
+        NOBLE_WARN("LobbyPatches: [{} pid {}] launch_reset called mode {} managerState {} f40 {}", RefuseRole(),
+                   GetCurrentProcessId(), static_cast<int>(mode), state, f40);
+    }
+    return s_originalLaunchReset ? s_originalLaunchReset(manager, mode) : 0;
+}
+
 // Team count for the game-over check (hr+0x133320(out last player?, out teams alive, out teams with players)). Called
 // every tick by 0x7A61C; logs the outputs whenever they change (first 40 changes) to see why the check ends the match.
 // Dumps the game's player datum array (TLS block [hr+0xC17B18] + 0x18; size at +0x20, data at +0x50, as the iterator
 // 0x1381C reads it): header dwords +0x20..+0x5F, then per slot: salt (i16 +0), flags (+4), team (i8 +0xAD).
-static uintptr_t s_player0Flags = 0;
 static void DumpGamePlayers(char* out, size_t cap) {
     out[0] = 0;
     __try {
@@ -685,6 +1044,39 @@ static void DumpGamePlayers(char* out, size_t cap) {
     }
 }
 
+// Campaign co-op join-in-progress: the game engine puts mid-mission joiners on their own team (t1, t2, ...), which
+// the campaign team/game-over check reads as several teams and ends the match. Force every present game player onto
+// team 0 while campaign co-op is active (the team is the int8 at game-player datum +0xAD; verified by DumpGamePlayers).
+// Runs on host and guest so both simulations agree; a real team change could be done through the engine's own
+// team-change function once its MCC address is proven, but the datum is what the game-over check reads this tick.
+static std::atomic<int> s_campaignTeamFixLogCount{0};
+void ForceCampaignPlayerTeams() {
+    if (!s_campaignCoop.load()) return;
+    __try {
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+        const uintptr_t arr = block ? *reinterpret_cast<const uintptr_t*>(block + 0x18) : 0;
+        if (!arr) return;
+        const uint64_t size = *reinterpret_cast<const uint64_t*>(arr + 0x20);
+        const uintptr_t data = *reinterpret_cast<const uintptr_t*>(arr + 0x50);
+        if (!data || size < 0x80 || size > 0x4000) return;
+        for (int i = 0; i < 16; ++i) {
+            auto* d = reinterpret_cast<uint8_t*>(data + static_cast<uintptr_t>(i) * size);
+            const uint32_t flags = *reinterpret_cast<const uint32_t*>(d + 4);
+            if (!flags) continue;
+            const int8_t team = *reinterpret_cast<const int8_t*>(d + 0xAD);
+            if (team == 0) continue;
+            if (s_campaignTeamFixLogCount.fetch_add(1) < 20) {
+                NOBLE_WARN("LobbyPatches: campaign JIP: forcing game player {} from team {} to 0 (flags 0x{:X})",
+                           i, team, flags);
+            }
+            *reinterpret_cast<int8_t*>(d + 0xAD) = 0;
+        }
+    } __except (1) {
+    }
+}
+
 // Hardware write watch on game player 0's flags (+4): at the high-slot join the host's own player goes from flags 0x8
 // to 0x2 ("left"), the team count drops to 0 and the match ends. Dr0 on the game thread, logged by a vectored handler.
 static std::atomic<int> s_watchHits{0};
@@ -702,6 +1094,24 @@ static LONG CALLBACK WatchHandler(EXCEPTION_POINTERS* info) {
                        RefuseRole(), GetCurrentProcessId(), id, CallerRva(reinterpret_cast<void*>(c->Rip)), c->Rcx, c->Rdx, c->R8, ReachStack());
         }
         lastId = id;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (c->Dr6 & 8) {
+        c->Dr6 = 0;
+        if (s_localManagerIdentityAddr && s_managerIdentityWatchHits.fetch_add(1) < 16) {
+            const uint64_t value = *reinterpret_cast<const uint64_t*>(s_localManagerIdentityAddr);
+            NOBLE_WARN("LobbyPatches: [{} pid {}] LOCAL PLAYER IDENTITY WRITE -> 0x{:016X} at hr+0x{:X} stack: {}", RefuseRole(),
+                       GetCurrentProcessId(), value, CallerRva(reinterpret_cast<void*>(c->Rip)), ReachStack());
+        }
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (c->Dr6 & 4) {
+        c->Dr6 = 0;
+        if (s_localManagerStateAddr && s_managerWatchHits.fetch_add(1) < 16) {
+            const int32_t value = *reinterpret_cast<const int32_t*>(s_localManagerStateAddr);
+            NOBLE_WARN("LobbyPatches: [{} pid {}] LOCAL PLAYER MANAGER STATE WRITE -> {} at hr+0x{:X} stack: {}", RefuseRole(),
+                       GetCurrentProcessId(), value, CallerRva(reinterpret_cast<void*>(c->Rip)), ReachStack());
+        }
         return EXCEPTION_CONTINUE_EXECUTION;
     }
     if (!(c->Dr6 & 1)) return EXCEPTION_CONTINUE_SEARCH;
@@ -753,6 +1163,7 @@ typedef void(__fastcall* TeamCountFn)(int32_t* a1, int32_t* alive, int32_t* team
 static TeamCountFn s_originalTeamCount = nullptr;
 static std::atomic<int> s_teamCountLogCount{0};
 static void __fastcall Hook_TeamCount(int32_t* a1, int32_t* alive, int32_t* teams) {
+    ForceCampaignPlayerTeams();   // keep campaign JIP players on team 0 before the game-over check reads team counts
     if (s_originalTeamCount) s_originalTeamCount(a1, alive, teams);
 
     // Keep at least 1 alive player and 1 team while the match is running to prevent false GameOver (0x7A61C)
@@ -813,6 +1224,7 @@ static void __fastcall Hook_PlayerSync(uint8_t* singleton, int32_t* count, void*
         last = state;
     }
     if (s_originalPlayerSync) s_originalPlayerSync(singleton, count, a3, records);
+    ForceCampaignPlayerTeams();   // campaign JIP: joiners must stay on the host's team 0
     const int32_t after = count ? *count : 0;
     for (int32_t k = before; records && k < after && k < before + 8; ++k) {
         const uint8_t* r = records + static_cast<size_t>(k) * 0xB8;
@@ -1363,8 +1775,37 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
               reinterpret_cast<void**>(&s_originalSavedFilmSessionMonitor), "c_saved_film_manager::session_monitor" },
             { 0x3C08B4, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_SetGameEnded),
               reinterpret_cast<void**>(&s_originalSetGameEnded), "c_game_engine::set_game_ended" },
+            { 0x41EB80, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_LaunchReady),
+              reinterpret_cast<void**>(&s_originalLaunchReady), "external_launch_ready" },
+            { 0x41FBE8, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_IdentityMatch),
+              reinterpret_cast<void**>(&s_originalIdentityMatch), "player_identity_match" },
+            { 0x420298, { 0x48, 0x89, 0x5C, 0x24, 0x10 }, reinterpret_cast<void*>(&Hook_PlayerCreate),
+              reinterpret_cast<void**>(&s_originalPlayerCreate), "player_create" },
+            { 0x3CDF38, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_ControllerApply),
+              reinterpret_cast<void**>(&s_originalControllerApply), "controller_apply" },
+            { 0x47A3C, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_PlayerUpdateStep),
+              reinterpret_cast<void**>(&s_originalPlayerUpdateStep), "player_update_step" },
+            { 0x57434, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_PlayerUpdateLoop),
+              reinterpret_cast<void**>(&s_originalPlayerUpdateLoop), "player_update_loop" },
+            { 0x3AAB08, { 0x48, 0x83, 0xEC, 0x28, 0x45 }, reinterpret_cast<void*>(&Hook_SimGate),
+              reinterpret_cast<void**>(&s_originalSimGate), "sim_gate" },
+            { 0x3BF63C, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_LaunchReset),
+              reinterpret_cast<void**>(&s_originalLaunchReset), "launch_reset" },
+        };
+        // Campaign-JIP diagnostic hooks are probe-only: a normal (non-NOBLE_JIP_PROBE) session must not carry the
+        // instrumentation detours. The fixes themselves are separate from these log hooks.
+        static const bool jipProbe = [] {
+            wchar_t env[8] = {};
+            return GetEnvironmentVariableW(L"NOBLE_JIP_PROBE", env, 8) > 0 && env[0] != L'0';
+        }();
+        const auto isProbeHook = [](const char* name) {
+            return std::strstr(name, "launch_ready") || std::strstr(name, "identity_match") ||
+                   std::strstr(name, "controller_apply") || std::strstr(name, "player_create") ||
+                   std::strstr(name, "player_update_step") || std::strstr(name, "player_update_loop") ||
+                   std::strstr(name, "sim_gate") || std::strstr(name, "launch_reset");
         };
         for (auto& h : theaterHooks) {
+            if (isProbeHook(h.name) && !jipProbe) continue;
             uint8_t* fn = reinterpret_cast<uint8_t*>(base + h.rva);
             if (h.rva + 5 <= size && std::memcmp(fn, h.sig, 5) == 0) {
                 if (HookManager::InstallHook(fn, h.detour, h.orig, h.name)) {
