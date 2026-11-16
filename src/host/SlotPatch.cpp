@@ -1564,6 +1564,31 @@ int ValidateShadowPlanCoverage() {
     }
     return failures;
 }
+// Engine mask width is the decisive limit past 32: the session's peer-valid and player-valid masks are single 32-bit
+// DWORDs (the patched peer-mask table kPeerMasks32 widens 17 -> 32 bits, never more; player masks are DWORD too). A
+// capacity above 32 needs multi-word masks, so it cannot be installed by the slot layout alone. This check reports the
+// required mask words per capacity and makes the hard limit explicit instead of pretending the layout is enough.
+int ValidateMaskWidths(int& peerMaskSites) {
+    int failures = 0;
+    peerMaskSites = static_cast<int>(std::size(kPeerMasks32));
+    NOBLE_INFO("SlotLayout: engine mask width check - {} patched peer-mask operand(s), all single 32-bit DWORD masks",
+               peerMaskSites);
+    const uint32_t caps[] = { 32, 64, 128 };
+    for (const uint32_t cap : caps) {
+        const uint32_t peerWords = (cap + 31) / 32;
+        const uint32_t playerWords = (cap + 31) / 32;
+        const bool fits = peerWords == 1 && playerWords == 1;
+        NOBLE_INFO("SlotLayout: cap={:>3} masks need peer {} word(s) / player {} word(s) -> {}",
+                   cap, peerWords, playerWords,
+                   fits ? "fits the stock DWORD masks" : "BLOCKED by the engine's 32-bit masks (needs mask widening)");
+        if (!fits)
+            NOBLE_WARN("SlotLayout: capacity {} cannot be installed until the engine's DWORD peer/player masks are widened "
+                       "to multi-word masks (session layout + every mask read/write/loop site; see the scaling note)",
+                       cap);
+        if (cap > 32 && fits) ++failures;   // a >32 capacity must never be reported as mask-compatible
+    }
+    return failures;
+}
 int SlotLayoutSelfTest() {
     int failures = 0;
     const SlotShadowLayout layouts[] = { kSlotLayout32, kSlotLayout64, kSlotLayout128 };
@@ -1603,6 +1628,10 @@ int SlotLayoutSelfTest() {
         if (L.capacity == 64 && (L.peerChunks != 2 || L.playerChunks != 1 || L.tableChunks != 1)) ++failures;
         if (L.capacity == 128 && (L.peerChunks != 5 || L.playerChunks != 3 || L.tableChunks != 1)) ++failures;
         failures += ValidateChunkPlan(L);
+    }
+    {
+        int peerMaskSites = 0;
+        failures += ValidateMaskWidths(peerMaskSites);
     }
     failures += ValidateShadowPlanCoverage();
     failures += ValidatePiecewiseCaves();

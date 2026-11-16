@@ -111,6 +111,15 @@ message above 64 KiB or needs the membership update split into batches has to be
 Reach Renaissance (81-player ceiling; its 128 profile is two players per machine and is not exposed) is the closest
 external calibration.
 
+**Hard engine limit - masks are 32-bit DWORDs.** The session's peer-valid and player-valid masks are single DWORDs (the
+32-player set widens 23 peer-mask operands from 17 to 32 bits; player masks such as the one at `session+0x170C` are DWORD
+too). A capacity above 32 therefore cannot be represented by the session at all: the 6-bit peer index would allow 64
+peers on the wire and the 64-player message would fit a 16-bit length, but the engine cannot mark more than 32
+peers/players **valid**. Multi-word mask widening - high-word mask storage (in the shadow object), every mask
+read/write/bit-scan loop site, the membership mask fields and the block copies - is a prerequisite for 64/128 and is
+significantly larger than the slot-layout work done so far. The headless self-test reports the gate explicitly
+(cap 64/128: `BLOCKED by the engine's 32-bit masks`).
+
 Message-capacity model (`SlotMessage`): the extension builder's counts are now derived from `kSlotCapacity` (32 ->
 15 peer + 16 player entries) with static asserts pinning the generated tables, and the same `-test-slot-capacity`
 run validates the capacity model: 32 derives exactly the generated extension (0x2200 / message 0xA300); 64 would be
@@ -147,6 +156,8 @@ log instead of being silently ignored.
    partition [firstSlot, capacity) once, stay inside kSessionStride, and capacity 32 keeps the stock offsets.
    Cave synthesis: all 120 caved sites are synthesised for 32/64/128 and checked (branch targets, jump-back targets,
    one-chunk case 41 B == generated cave, maxima 41/70/157 B).
+   Mask width: the run reports 23 patched peer-mask operands and the required mask words per capacity: 32 fits the
+   stock DWORDs; 64/128 are reported BLOCKED (2/4 words needed) - the hard gate documented in section 3.
 2. Install-level sessions: declare C slots and join with 2 clients (proves shadow storage, message registration,
    encoder/decoder validity at capacity even without C clients).
 3. Forced high slots (`NOBLE_SLOT_HIGH=1`, free-slot scans start at peer 17 / player 16) can place a handful of
@@ -154,6 +165,12 @@ log instead of being silently ignored.
    the chunked-layout cave install lands.
 
 ## 6. Ordered work list
+
+**Gating item for anything above 32: multi-word mask widening.** The slot layout, chunked caves and message-size model
+are ready, but no capacity >32 can be installed while the engine's peer/player valid masks are 32-bit DWORDs. Plan:
+high-word mask storage in the shadow object, patch every mask read/write/bit-scan/loop site (23 peer-mask operands are
+already catalogued; player-mask sites must be enumerated), widen the membership mask fields, and extend the block
+copies. Only then can the chunked install and the wire-field widening be exercised.
 
 1. Install the chunked layout: record init, mirrors, peer-table reset, PeerRecord and the piecewise cave synthesis are
    done and validated. What remains is capacity-gated installation (write the synthesised caves + chunked shadow
