@@ -3,7 +3,9 @@
 #include "common/Logger.hpp"
 
 #include <windows.h>
+#include <cstdio>
 #include <cstring>
+#include <intrin.h>
 #include <iterator>
 
 namespace noble::slots::message {
@@ -87,10 +89,40 @@ uint64_t __fastcall ProducerWithExtension(void* a, void* b, void* c, uint8_t* pa
         for (uint32_t j = 0; j < kExtPlayers; ++j) gPlayerCtor(ext + kExtPeers * kPeerEntry + j * kPlayerEntry);
     }
     const uint64_t r = gProducer(a, b, c, payload);
-    if (InterlockedIncrement(&gProducerCalls) <= 12 && payload)   // diagnostics for the first runs
-        NOBLE_INFO("SlotPatch: membership producer #{} payload {:p}: {} peers, {} players", gProducerCalls,
+    if (InterlockedIncrement(&gProducerCalls) <= 12 && payload) {   // diagnostics for the first runs
+        wchar_t probe[8] = {};
+        const bool slotProbe = GetEnvironmentVariableW(L"NOBLE_SLOT_PROBE", probe, 8) > 0 && probe[0] == L'1';
+        char extra[768] = {};
+        if (slotProbe && gBase) {
+            // Which payload is this (P1/P2 call site) and what did the producer put in it: the header ids, the tail
+            // checksum and the first peer/player entries. Needed to explain why a guest rejects an update.
+            const auto u32 = [payload](uint32_t off) { uint32_t v = 0; std::memcpy(&v, payload + off, 4); return v; };
+            const int peers = *reinterpret_cast<int16_t*>(payload + 0x14);
+            const int players = *reinterpret_cast<int16_t*>(payload + 0x16);
+            size_t n = std::snprintf(extra, sizeof(extra), " hdr %08X %08X %08X cks %08X", u32(0x08), u32(0x0C),
+                                     u32(0x10), u32(0x2548));
+            for (int i = 0; i < peers && i < 3 && n < sizeof(extra) - 200; ++i) {
+                const uint8_t* e = payload + 0x18 + static_cast<size_t>(i) * 0x180;
+                n += std::snprintf(extra + n, sizeof(extra) - n, " | peer[%d] %08X %08X %08X %08X f10 %02X", i,
+                                   *reinterpret_cast<const uint32_t*>(e + 0x0), *reinterpret_cast<const uint32_t*>(e + 0x4),
+                                   *reinterpret_cast<const uint32_t*>(e + 0x8), *reinterpret_cast<const uint32_t*>(e + 0xC),
+                                   e[0x10]);
+            }
+            for (int j = 0; j < players && j < 3 && n < sizeof(extra) - 220; ++j) {
+                const uint8_t* e = payload + 0x1998 + static_cast<size_t>(j) * 0xB8;
+                n += std::snprintf(extra + n, sizeof(extra) - n,
+                                   " | plr[%d] idx %d f4 %08X f8 %02X peer %d slot %d f18 %02X f1C %08X id %016llX", j,
+                                   *reinterpret_cast<const int32_t*>(e + 0x0), *reinterpret_cast<const uint32_t*>(e + 0x4),
+                                   e[0x8], *reinterpret_cast<const int16_t*>(e + 0x12), e[0x14], e[0x18],
+                                   *reinterpret_cast<const uint32_t*>(e + 0x1C),
+                                   static_cast<unsigned long long>(*reinterpret_cast<const uint64_t*>(e + 0x9)));
+            }
+        }
+        NOBLE_INFO("SlotPatch: membership producer #{} caller hr+0x{:X} payload {:p}: {} peers, {} players{}", gProducerCalls,
+                   gBase ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(_ReturnAddress()) - gBase) : 0,
                    static_cast<void*>(payload), *reinterpret_cast<int16_t*>(payload + 0x14),
-                   *reinterpret_cast<int16_t*>(payload + 0x16));
+                   *reinterpret_cast<int16_t*>(payload + 0x16), extra);
+    }
     return r;
 }
 

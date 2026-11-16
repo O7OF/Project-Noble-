@@ -2683,25 +2683,95 @@ static void CallGuestPlayerSyncProbe() {
 typedef uint64_t(__fastcall* MemberConsumeFn)(uint8_t* block, uint8_t* payload);
 static MemberConsumeFn s_originalMemberConsume = nullptr;
 static std::atomic<int> s_memberConsumeLogCount{0};
+
+// High-slot probe (NOBLE_SLOT_PROBE=1, read-only): decode the membership payload header and the first entries so a
+// rejected update (consumer returns false) can be explained. Payload layout per docs/limits-players-message.md:
+// +0x08/+0x0C/+0x10 ids, +0x14 peer count (i16), +0x16 player count (i16), peers at +0x18 (0x180 each), players at
+// +0x1998 (0xB8 each), tail checksum at +0x2548. Block is session+0x30, so block+8 is the session id the consumer
+// compares payload+0x0C against.
+static void DumpMembershipPayload(std::string& out, const uint8_t* p) {
+    if (!p) { out += " payload=(null)"; return; }
+    char buf[320];
+    const int peers = *reinterpret_cast<const int16_t*>(p + 0x14);
+    const int players = *reinterpret_cast<const int16_t*>(p + 0x16);
+    std::snprintf(buf, sizeof(buf), "hdr %08X %08X %08X cks %08X peers %d players %d",
+                  *reinterpret_cast<const uint32_t*>(p + 0x08), *reinterpret_cast<const uint32_t*>(p + 0x0C),
+                  *reinterpret_cast<const uint32_t*>(p + 0x10), *reinterpret_cast<const uint32_t*>(p + 0x2548), peers, players);
+    out += buf;
+    for (int i = 0; i < peers && i < 3; ++i) {
+        const uint8_t* e = p + 0x18 + static_cast<size_t>(i) * 0x180;
+        std::snprintf(buf, sizeof(buf), " | peer[%d] %08X %08X %08X %08X f10 %02X", i,
+                      *reinterpret_cast<const uint32_t*>(e + 0x0), *reinterpret_cast<const uint32_t*>(e + 0x4),
+                      *reinterpret_cast<const uint32_t*>(e + 0x8), *reinterpret_cast<const uint32_t*>(e + 0xC), e[0x10]);
+        out += buf;
+    }
+    for (int j = 0; j < players && j < 3; ++j) {
+        const uint8_t* e = p + 0x1998 + static_cast<size_t>(j) * 0xB8;
+        std::snprintf(buf, sizeof(buf), " | plr[%d] idx %d f4 %08X f8 %02X peer %d slot %d f18 %02X f1C %08X id %016llX", j,
+                      *reinterpret_cast<const int32_t*>(e + 0x0), *reinterpret_cast<const uint32_t*>(e + 0x4), e[0x8],
+                      *reinterpret_cast<const int16_t*>(e + 0x12), e[0x14], e[0x18],
+                      *reinterpret_cast<const uint32_t*>(e + 0x1C),
+                      static_cast<unsigned long long>(*reinterpret_cast<const uint64_t*>(e + 0x9)));
+        out += buf;
+    }
+}
+
 static uint64_t __fastcall Hook_MemberConsume(uint8_t* block, uint8_t* payload) {
     const bool log = s_memberConsumeLogCount.fetch_add(1) < 20;
     auto state = [](const uint8_t* b) {
         const uint8_t* s = b - 0x30;
         char buf[160];
-        std::snprintf(buf, sizeof(buf), "peermask %08X pmask %08X local peer %d +4468 %d +4434 %d",
+        std::snprintf(buf, sizeof(buf), "peermask %08X pmask %08X local peer %d +4468 %d +4434 %d msgSeq %08X f442C %02X",
                       *reinterpret_cast<const uint32_t*>(s + 0x5C), *reinterpret_cast<const uint32_t*>(s + 0x173C),
                       *reinterpret_cast<const int32_t*>(s + 0x4464), *reinterpret_cast<const int32_t*>(s + 0x4468),
-                      *reinterpret_cast<const int32_t*>(s + 0x4434));
+                      *reinterpret_cast<const int32_t*>(s + 0x4434), *reinterpret_cast<const uint32_t*>(s + 0x38),
+                      static_cast<unsigned>(*reinterpret_cast<const uint8_t*>(s + 0x445C)));
         return std::string(buf);
     };
     std::string before = (log && block) ? state(block) : std::string();
     const uint64_t r = s_originalMemberConsume ? s_originalMemberConsume(block, payload) : 0;
     if (log && block) {
-        NOBLE_WARN("LobbyPatches: [{} pid {}] membership consume (payload {} peers {} players) ret {} | before: {} | after: {}",
+        // Ret 0 means the consumer rejected the update and reset the local membership (the high-slot regression):
+        // the payload dump + the block's own session id/checksum say which check refused it.
+        std::string detail;
+        wchar_t probe[8] = {};
+        const bool slotProbe = GetEnvironmentVariableW(L"NOBLE_SLOT_PROBE", probe, 8) > 0 && probe[0] == L'1';
+        if (slotProbe) {
+            DumpMembershipPayload(detail, payload);
+            char tail[160];
+            std::snprintf(tail, sizeof(tail), " | block+8 %08X block+0x4430 %08X block+0x4434 %08X local %d",
+                          *reinterpret_cast<const uint32_t*>(block + 0x8),
+                          *reinterpret_cast<const uint32_t*>(block - 0x30 + 0x4430),
+                          *reinterpret_cast<const uint32_t*>(block - 0x30 + 0x4434),
+                          *reinterpret_cast<const int32_t*>(block - 0x30 + 0x4464));
+            detail += tail;
+        }
+        NOBLE_WARN("LobbyPatches: [{} pid {}] membership consume (payload {} peers {} players) ret {} | before: {} | after: {}|{}",
                    RefuseRole(), GetCurrentProcessId(), payload ? *reinterpret_cast<const int16_t*>(payload + 0x14) : -1,
-                   payload ? *reinterpret_cast<const int16_t*>(payload + 0x16) : -1, r, before, state(block));
+                   payload ? *reinterpret_cast<const int16_t*>(payload + 0x16) : -1, r, before, state(block), detail);
     }
     return r;
+}
+
+// High-slot probe (NOBLE_SLOT_PROBE=1, log-only): the player-REMOVE primitive hr+0x39D950(base = session+0x30,
+// playerIndex) clears the player mask bit, the count and the record. Its caller RVA names the path that removed the
+// joining player (msg-0x20 player-remove 0x42AB61, local-user drop 0x394E03, peer removal 0x39CA75, membership delta
+// 0x39E53E/0x39E59B, membership reset 0x39C6DF) - the high-slot question the static analysis could not settle.
+typedef void(__fastcall* PlayerRemoveProbeFn)(uint8_t* block, int32_t playerIndex);
+static PlayerRemoveProbeFn s_originalPlayerRemoveProbe = nullptr;
+static std::atomic<int> s_playerRemoveProbeLogCount{0};
+static void __fastcall Hook_PlayerRemoveProbe(uint8_t* block, int32_t playerIndex) {
+    if (block && playerIndex >= 0 && playerIndex < 32 && s_playerRemoveProbeLogCount.fetch_add(1) < 60) {
+        const uint8_t* rec = block + 0x1710 + static_cast<size_t>(playerIndex) * 0xB0;
+        NOBLE_WARN("LobbyPatches: [{} pid {}] PLAYER-REMOVE probe: caller hr+0x{:X} player {} pmask {:08X} peermask {:08X} "
+                   "local peer {} recPeer {} recSlot {} recId {:016X}",
+                   RefuseRole(), GetCurrentProcessId(), CallerRva(_ReturnAddress()), playerIndex,
+                   *reinterpret_cast<const uint32_t*>(block + 0x170C), *reinterpret_cast<const uint32_t*>(block + 0x2C),
+                   *reinterpret_cast<const int32_t*>(block - 0x30 + 0x4464),
+                   *reinterpret_cast<const int32_t*>(rec + 0xC), *reinterpret_cast<const int32_t*>(rec + 0x10),
+                   static_cast<unsigned long long>(*reinterpret_cast<const uint64_t*>(rec)));
+    }
+    if (s_originalPlayerRemoveProbe) s_originalPlayerRemoveProbe(block, playerIndex);
 }
 
 // Guest join gate (hr+0x411F38(join state) -> bool: the local peer's players are all known to the session; on true
@@ -3380,6 +3450,24 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                 }
             } else {
                 NOBLE_WARN("LobbyPatches: {} prologue mismatch at hr+0x{:X}; hook skipped", h.name, h.rva);
+            }
+        }
+    }
+
+    // High-slot probe (NOBLE_SLOT_PROBE=1): log-only detour on the player-remove primitive; makes the high-slot run
+    // say who removed the joining player. Never installed in normal runs.
+    {
+        wchar_t probe[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_SLOT_PROBE", probe, 8) > 0 && probe[0] == L'1') {
+            static const uint8_t kRemovePrologue[5] = { 0x4C, 0x63, 0xDA, 0x41, 0x83 };   // MOVSXD R11,EDX ; OR R8D,-1
+            uint8_t* fnRemove = reinterpret_cast<uint8_t*>(base + 0x39D950);
+            if (0x39D950 + 5 <= size && std::memcmp(fnRemove, kRemovePrologue, 5) == 0) {
+                if (HookManager::InstallHook(fnRemove, reinterpret_cast<void*>(&Hook_PlayerRemoveProbe),
+                                             reinterpret_cast<void**>(&s_originalPlayerRemoveProbe), "player_remove_probe")) {
+                    NOBLE_INFO("LobbyPatches: NOBLE_SLOT_PROBE=1 - player-remove probe installed at hr+0x39D950");
+                }
+            } else {
+                NOBLE_WARN("LobbyPatches: player-remove probe bytes differ at hr+0x39D950; probe skipped");
             }
         }
     }
