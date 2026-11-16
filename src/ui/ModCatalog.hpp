@@ -45,7 +45,10 @@ struct ModEntry {
     // makes their tag content differ even though the id matches - the engine then aborts or resets the session.
     bool hasVersion = false;
     int versionMajor = 0, versionMinor = 0, versionPatch = 0;
-    std::string VersionString() const;   // "0.9.0", empty when the manifest has no ModVersion
+    std::string VersionString() const {   // "0.9.0", empty when the manifest has no ModVersion
+        if (!hasVersion) return {};
+        return std::to_string(versionMajor) + "." + std::to_string(versionMinor) + "." + std::to_string(versionPatch);
+    }
     std::string title;
     std::string description;
     std::filesystem::path folder;

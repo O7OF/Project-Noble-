@@ -252,11 +252,6 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
 
 } // namespace
 
-std::string ModEntry::VersionString() const {
-    if (!hasVersion) return {};
-    return std::to_string(versionMajor) + "." + std::to_string(versionMinor) + "." + std::to_string(versionPatch);
-}
-
 const ModEntry* FindByWorkshopId(const std::vector<ModEntry>& mods, const std::string& workshopId) {
     if (workshopId.empty()) return nullptr;
     for (const ModEntry& mod : mods) {
