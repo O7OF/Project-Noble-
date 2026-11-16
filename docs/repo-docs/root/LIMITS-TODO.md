@@ -1,0 +1,172 @@
+# Extended Engine Limits: TODO
+
+Read `LIMITS-HANDOFF.md` first. Claim a task in `AGENT-STATUS.md` before starting, keep to the files
+listed, build after each task, and leave test steps for Tyler. Nothing is pushed without his OK.
+
+Owner key: **C** = Claude, **D** = DeepSeek. Swap tasks by noting it in `AGENT-STATUS.md`.
+
+
+## C12-L next steps (2026-11-10 01:00 ET, Claude Fable 5.2) - read first
+
+1. Build + `overnight_quick_high.bat`: tests batch 1 (register-held loop bounds 0x392E12 / 0x409898 / 0x4139E5 in SlotPatch.cpp). Pass = guest's local peer 17 reaches state >= 6 and sends msg 35.
+2. Batch 2 from `docs/limits-players-regbounds.md`: 0x39C922, 0x404E7C (count also passed to a callee / local array), 0x39BABA, 0x40938C, 0x4160F0 (need a cave each), then review the ~35 unreviewed rows.
+3. Uncaved join-path sites in 0x391F0C (0x3920F4, 0x39215D, 0x392571, 0x392631) and 0x395DE8 (0x395E2F, 0x395E6B, 0x395E85).
+4. Failed-join cleanup on the host (a failed guest stays in the list; second guest landed in 18/17).
+5. Leftovers: 16/17 tables, 32-player self-test of the membership message, second smaller buffer check, real >16 test, remove debug traces / hardware watch.
+6. When the join works end to end: re-read every 32-player file (SlotPatch.cpp, SlotMessage.*, Slot*.inc, LobbyPatches.cpp traces) as a final review.
+
+## Priorities (Tyler, 2026-11-09 10:20 ET) - read first
+1. **Multiplayer to 128 players** (C12-L; status in `LIMITS-HANDOFF.md`, `docs/limits-players-loops.md`; next blocker #32 = membership update message, 5-bit counts/indices).
+2. **Multiplayer optimization** (smooth netcode, no lag, hit registration) and **bug finding**.
+3. Later: swarm / 1,000-actor performance (`docs/swarm-test-notes.md`), Pelican + Spectre in Forge (`docs/pelican.md`), ReachVariantTool uses (`docs/HANDOFF-CONTENT-2026-11-09.md` section 3).
+Overnight 2026-11-09: Claude builds with build-dev.bat and runs one-PC tests itself (Tyler approved); summary in `docs/OVERNIGHT-2026-11-09.md`.
+## Phase 1: V16 (objects 32,767, 64-player rendering), behind a setting
+
+| # | Owner | Task | Files | Depends on | Done when |
+|---|---|---|---|---|---|
+| C1 | C | **DONE 05:05 (uncommitted, not MSVC-built yet).** `EngineLimits` builder: stock hash check, per-row stock-byte check, apply overwrites + append, verify output hash `b8810c3b…`, atomic write to `%LOCALAPPDATA%\Noble\engine\…`, cache, fallback with reason. Implements the header in the handoff exactly. | `src/host/EngineLimits.hpp/.cpp`, `CMakeLists.txt` (add sources, link `bcrypt`) | C2 format | Given Tyler's stock DLL, produces a file byte-identical to `REACH_MODIFIED_DLL.dll` |
+| C2 | C | **DONE 05:05.** Recipe compiler + diff format `.nlp`: header (magic `NLP1`, profile id, stock hash, output hash, output length), rows (offset, len, stock bytes, new bytes), append block; optional zlib. Loader for it in C1. | `tools/limits/build_recipe.py`, `data/limits/v16.nlp` (generated) | – | `build_recipe.py v16` round-trips: stock + nlp → V16 hash |
+| C3 | C | **DONE 05:05 (uncommitted).** `Loader::LoadReachDll(dllPath, dependencyRoot)`: dependency folder and MCC-binaries/xaudio lookup must come from the **stock** path. Keep the old one-argument overload. | `src/host/Loader.hpp/.cpp` | – | Sound still works when loading the copy |
+| D1 | D | Setting `extendedLimits` (int profile, default 0 = Stock), saved/loaded, included in export/import. SETTINGS row ("ENGINE LIMITS: Stock / Extended") with help text: "Raises the object and render limits. All players in a match must use the same setting. Takes effect after a restart." | `src/common/Settings.hpp/.cpp`, `src/ui/SettingsPanel.cpp` (one new row only) | – | Toggle persists across restarts |
+| D2 | D | Call `limits::PrepareEngineDll` before `LoadReachDll` in **both** `src/main.cpp` (step 8) and `src/dedicated/main.cpp` (dedicated: `-limits v16` command-line flag). Pass the result's `dllPath` plus the stock path to the new Loader overload. Log active profile and reason. `PrepareEngineDll` is implemented; call it directly. | `src/main.cpp` (step 8 block only), `src/dedicated/main.cpp` | header, C3 | Log shows "Engine limits: requested X, active Y" |
+| D3 | D | Session gating: host sends `ProfileNetworkId` in server registration and join handshake; browser shows a tag ("EXT"); joining with a different profile is refused before loading the map: "This server uses Extended engine limits. Change SETTINGS > ENGINE LIMITS and restart." Note what the private backend (`ServerTestDeploy`) needs (a new field it passes through) for O7/Tyler. | `src/network/MasterServerClient.*`, `src/ui/ServerBrowser.cpp`, join path in `src/ui/FrontEndMenu.cpp` (refusal message only) | D1 | Stock client can't join a V16 server and vice versa; clear message |
+| D4 | D | Campaign saves per profile: wherever campaign checkpoint/save files go (`VFS` user storage, see `src/vfs/VFS.cpp:76`), append `limits::SaveFolderSuffix(active)` to the folder. Films unchanged. | `src/vfs/VFS.*` (save path only) | D2 | V16 save and stock save never see each other |
+| D5 | D | Show the active profile: small "ENGINE: EXTENDED" line in the SETTINGS help / about area and in the crash log header. | `src/ui/SettingsPanel.cpp` (help text), logger startup line in `src/main.cpp` | D2 | Visible in UI and log |
+| T1 | Tyler | **Partly done 06:02:** V16 holds 6,516 live objects in Forge World (0 refusals); menu + match load fine. Remaining:  (a) 64-player custom game: every Spartan renders; (b) Forge: place more than 2,048 objects; (c) campaign: save and load in V16, then confirm stock saves are separate; (d) dedicated server on V16 + client on V16; (e) stock client refused by V16 server. | – | C1–D5 | All pass |
+
+## Phase 2: particles on top of V16
+
+| # | Owner | Task | Notes |
+|---|---|---|---|
+| C4 | C | **DONE 05:20 (uncommitted, not tested in game).** V16+particles = profile 2 `V16Particles`, `data/limits/v16p.nlp` (generated by `tools/limits/make_v16_particles.py STOCK_DLL`). Particle block placed at the end of V16's `.deltrac` (RVA `0x0AAE8200`; no free section header slot), 9 block fixups + 3 redirects recomputed and checked by disassembly; render bank 0xD80000, checkpoint 0x37B0000, total 0x8750000; V16's 2nd checkpoint buffer/queue moved to `0x18931020`/`0x1C0E1040`, image `0x1C0E2000`. Output sha256 `47bc0723…51b42bf`. | Test with the 65,000-particle emitter map, plus a campaign save/load. |
+| D6 | D | **Partly done 08:45 (DeepSeek, uncommitted).** ENGINE LIMITS row now cycles STOCK / EXTENDED (V16) / EXTENDED + PARTICLES, the settings clamp allows profile 2, and `noble-dedicated.exe -limits v16p` maps to `V16Particles`. Browser tag / join check still needs D3. | Small. |
+
+## Phase 3: Flood horde / AI limits (research first)
+
+| # | Owner | Task | Notes |
+|---|---|---|---|
+| C5 | C | Static-array audit for actors: find every fixed-size array/loop indexed by actor index that assumes ≤ 96 (search for `0x60` compares/bounds near actor datum use, and per-actor tables in `.data`). Write findings to `docs/limits-ai.md`. | Before touching the count. |
+| C6 | C/D | **09:12 addendum:** the `script node` pool is created by growable helper 0x13148 from 0x81854 (name "script node" 0x995F60, initial bytes `mov r8d,0xFC00` at 0x81846, 24-byte records) — 16,280 is its grown size, not a cap; patch point documented in `docs/limits-ai.md`. **Partly done 08:55 (DeepSeek, uncommitted, built).** From the live pool report: `det hs thread` 320 × 1,324 B → 1,024, `non-det hs thread` 4 × 1,324 → 32, `list object reference` 128 × 12 → 512 — all through the PoolResize rules, no engine rebuild. `script node` 16,280 × 24 B is **not** created by data_array_new (absent from the 114 `-pool-trace` POOLNEW lines), so the rule is inert until its constructor is found. `hs globals` 4,096 × 8 does go through it. | Needs an in-game script-heavy map test. |
+| C7 | C | Trampolines raising actors (96 → 256 first), command scripts (40 → 256), object lists (48 → 256), plus whatever C5 finds, as a new recipe merged into the profile system. | Only after C5/C6. Test with Renette's swarm script. |
+| D7 | D | Test map/mode support: a Firefight variant or script hook that spawns N Flood and reports live actor count, FPS and object count on screen (debug overlay, developer accounts only). | Helps C7 testing; reuses existing debug overlay patterns. |
+
+## Phase 4: light volumes
+
+| # | Owner | Task | Notes |
+|---|---|---|---|
+| C8 | D | **Full profile boots and survives 5 min of plasma Firefight (12:14).** Root cause was the missing main-bank operand (0x155A9): bank 4 stayed at V16's 0x27D0000 and overflowed by ~9.9 MB (crash 0x2C2E0B). BANK| diagnostic added to PoolReport.cpp (RVA 0x27BF270, stride 0x18F0, +0xA0/+0xA8, warns on overflow). main = 0x3250000 (V16 + V4 delta + ~1 MB margin over measured 51,649,416), light_volume* 65,535, zero-extra hashes unchanged. full.nlp stays out of the build dir until accepted. Remaining polish: decide whether the .hkwork message-queue control block is needed. | docs/limits-light-volumes-port.md |
+
+## Side items (unrelated, already reported by Tyler)
+
+| # | Owner | Task | Files |
+|---|---|---|---|
+| D8 | D | Loading screen: the "LOADING" text is partly covered by the mission text (Tyler's screenshot, 2026-11-08 04:16). Check layout at non-100 % Windows scaling and at 4K. | `src/ui/LoadScreen.cpp`, `src/ui/PauseMenu.cpp` (loading-screen drawing only) |
+| C9 | C | Challenges: 14 dailies (4/4/4/2), 7 weeklies (2/2/2 + 1 random of campaign/Firefight/multiplayer), never two LASO in one set, multiplayer challenges count in any non-campaign game, 8 new weekly Firefight challenges. **Done 2026-11-08 04:25, uncommitted** in `src/career/Career.cpp`. Needs Tyler's build and test. | `src/career/Career.cpp` |
+
+## Results so far
+
+- 2026-11-08: V16 loads in Noble (patched copy + `GetModuleFileNameW` redirect for files next to the DLL),
+  pool report shows object 32,767, spawn test reached **6,516 live objects** in Forge World.
+- Ceiling under V16 without the guard: **~6,500 moving objects**: scheduler jobs (16,384) run out; engine crashes at
+  haloreach+0x68B21F (free-job queue pop with no empty check).
+
+## Phase 1b: past the scheduler wall
+
+| # | Owner | Task | Notes |
+|---|---|---|---|
+| C10 | C | Either guard the free-job queue pop (refuse/skip the job when the queue is empty) or raise the scheduler again (16,384 → 65,536 jobs, with the dependency/queue/scratch arrays from `recipes/v16/SCHEDULER.md`). Guard first: it turns a crash into a slowdown. | Crash site: V16 `0x68B20C` (pop) called from `0x68AE1E`; object jobs dispatched from `0x46A5FF`. |
+- 2026-11-08 06:24: with the scheduler guard, **8,819 live objects** (8,750 spawned, 0 refused). Then one object
+  update asked for 73,497 jobs (scheduler holds 16,384, per-call scratch 16,384) and crashed at 0x68B21F.
+  Practical V16 + guard ceiling: **~8,000-8,500 moving objects**. Guard no longer waits on impossible requests.
+- Rendering past ~4,096 visible objects: flicker, and the player's weapon/HUD drops out (V16 visible render
+  list and cached render states are 4,096). Objects still exist; they are skipped for that frame.
+- **Engine player pool is 16** (`players` data array, unchanged by V16). Noble's lobby accepts up to 128,
+  but a match can only create 16 players.
+
+## Phase 1c: rendering and players
+
+| # | Owner | Task | Notes |
+|---|---|---|---|
+| C11 | C/D | **Runtime half attempted 09:10 (DeepSeek, opt-in only).** `cached object render states` added to PoolResize behind `-render-states N`; 16,384 crashes at `haloreach+0x27B01F` and 8,192 at `haloreach+0x6E58E` during map load — the game-state bank has no room for 624-byte records past 4,096, so the V16 append-block rebuild comes first (`docs/limits-render.md`). Default builds stay at 4,096. | Fixes flicker and the missing weapon/HUD with thousands of objects on screen. |
+| C12 | C/D | **Research done 09:14 (DeepSeek): `docs/limits-players.md`.** players 16 × 0x490 at RVA 0x43474 (count 0x43470, size 0x43465), fire team 16 × 0xD4 at 0x122E58, simulation view 16 × 0x118, LobbyPatches RVA set, milestones 16 -> 32 (~2-4 days) -> 64 (~1-2 weeks) -> 128 (~2-4 weeks). | Big. Lobby patch alone cannot do it. |
+| T2 | Tyler | F10 in a Forge match: 128 Spartan bodies in front of you. Check they all draw without flicker. | Rendering half of the 128-player question. |
+
+
+
+## Phase 3b: AI actors past 96 (2026-11-08, C7 working)
+
+**Result: 256 / 256 actors held for ~4 minutes in Firefight (Unearthed), AI fighting and dying and being
+re-placed with F7, no crash, flat memory (~6.5 GB private), clean exit.** Run: `noble-dev.exe -ai-actors 256`.
+
+What it took (all in Noble's own engine copy; the player's haloreach.dll is untouched):
+1. **AI game-state bank.** The AI pools are carved from game-state bank 1 (stock 0x220000, ~5 KB spare). Raising
+   actors overran into bank 2 (sound) and broke the next pool's header (main-menu crash at 0x134D5 / 0x13850).
+   `make_v16_particles.py` now builds both profiles (`--profile v16|v16p`) with bank 1 +6 MB (`--ai-bank-extra`,
+   operand at RVA 0x16155); checkpoint and total sizes grow with it. `--ai-bank-extra 0` reproduces GreenKnight's
+   exact V16 / V16+particles hashes. PoolResize reads the bank size from the loaded engine and never grows the
+   pools past the added room.
+2. **AI update scheduler (RVA 0x70ABBC).** Lists every live actor in a 96-entry, 12-byte stack array, sorts it,
+   sets each actor's update level. No bounds check: actor 97 tripped the stack cookie (fail-fast 0xC0000409 at
+   0x788A94, invisible to our crash handler). Frame grown 0x568 -> 0x30E8 (1,024 entries); five operands patched
+   (lea rbp, sub rsp, cookie store/load, epilogue lea). Hook `ai_update_stack` commits the stack pages first.
+3. **Diagnostics kept:** `-pool-trace` (every data_array_new with address), `-ai-pools a,b` (resize only these),
+   `gs_failure_report` hook (Extended): logs "STACK OVERRUN in haloreach+0x..." with the call stack before the
+   engine kills the process. Any further 96-sized stack table shows up there.
+
+| # | Owner | Task | Notes |
+|---|---|---|---|
+| C7a | C/D | **512 works; 1,024 still open.** 1,024 died at ~647 live actors in the 0x76EBF8 spawn-candidate list (512 × 0x2C). Fix 2 grew its frame; DeepSeek also raised its three 0x200 caps to 0x400 (08:32, untested). | Test with `-ai-actors 1024 -horde 900`. |
+| C7b | C/D | **DONE 08:25 (DeepSeek, uncommitted, built, untested).** F6 places several squads per 100 ms step, pending capped at the free actor slots; `-horde N` / `NOBLE_HORDE` auto-queues N actors 10 s into the match. | Removes the key spam from actor tests. |
+| C7c | C | Measure frame time at 256+ actors (main game thread is the limit). | 512 measured ~36 fps. |
+| C7d | D | **DONE 08:45 (DeepSeek, uncommitted, all three targets build).** SETTINGS > ENGINE > AI ACTORS (96 / 256 / 512 / 1024 experimental, disabled unless ENGINE LIMITS is Extended), saved + exported, copied to `NOBLE_AI_ACTORS` before the engine loads; `ProfileNetworkId(profile, aiActors)` now carries both. | Join gating (D3) still to come; host/clients must match. |
+
+- 2026-11-08 08:45 (DeepSeek): **1,024 actors verified unattended** (no Tyler needed): `-map ff_unearthed -mode
+  firefight -ai-actors 1024 -horde 1200` placed the full 1,024 pool in ~13 s and held ~760 live for a minute
+  without a crash (past the old ~647-live crash), three runs. Engine patch verified by disassembly (frame
+  0xB0E0, caps 0x400 x3). Frame rate at 1,024: ~18 fps (512: ~36 fps) — C7c data. Full report:
+  `AI-LIMITS-REPORT-2026-11-08.md`. Test command and PASS/FAIL lines are in `AGENT-STATUS.md`.
+
+## Status board (2026-11-08 13:50 ET, Claude) — full picture in LIMITS-HANDOFF.md "Status at end of 2026-11-08"
+
+| # | Task | State |
+|---|---|---|
+| C7 | AI actors 96 → 1,024 | **Done** (setting AI ACTORS; 973-982 live, 5 min) |
+| C11a | Render states 4,096 → 16,384 (render bank +8 MB) | **Done** (opt-in `-render-states`) |
+| C11b | V16 visible draw list 4,096 | Open (needs Tyler's eyes on 4,096+ visible objects) |
+| C6 | Script threads / references | **Done** (det hs thread 1,024, list object reference 512); script node grows by itself |
+| D6 | Particles profile in settings | **Done** |
+| C8 | Light volumes → profile Full | **Done** (DeepSeek port, reviewed; 5-min plasma + horde) |
+| D3 | Join check `limits_id` | Code done; **needs backend** to store/return the field |
+| C12 | 128 real players | In progress: trace runs 1-3 done (417 accesses / 136 sites); patch design written |
+| C12-1 | Run 4 (deaths/respawns/quit, Tyler plays the client) | **Waiting on Tyler** |
+| C12-2 | Site generator + runtime patcher (Noble-allocated caves) | Next (Claude) |
+| C12-3 | 32-slot test build + two-window check | After C12-2 |
+| C12-4 | Headless dedicated host (real engine session) | Open, needed for 64-128 |
+| — | Scheduler ceiling 16,384 jobs; effect lists 4 × 512 | Known limits, parked |
+
+## Next session (added 2026-11-08 20:30 ET)
+| # | Task | Notes |
+|---|---|---|
+| C7e | `-horde-full-lod` option for the F6/`-horde` test | Per placed squad call the cores behind the script commands `ai_force_active` and `ai_force_full_lod` (find them in the script command table like ai_set_team / ai_set_blind: name ptr at entry +0x10, handler at +0x28, thunk → core). Overrides the AI update scheduler's LOD (0x70ABBC) so every actor gets full updates. Tip from the community (model/AI modder): 987 actors fully active with no issues; also use the Grunt character's firing-point evaluators (tag-side, not engine). Measure FPS / frame time vs the normal horde. |
+| C12-L | 32 players: 11 pointer-stepping loops, bounds pass, C3 tables, pools, host player list | Start from `LIMITS-HANDOFF.md` status section, `docs/limits-players-audit.md`, `docs/limits-players-bounds-review.md`. |
+
+### C7e results (2026-11-08 21:45 ET) — done; stability/perf work parked, back to C12
+- New horde options: `-horde-full-lod` (ai_force_active 0x6C1A00 + ai_force_full_lod core 0x70AB58, actors stay
+  sighted), `-horde-infantry` (destroys the vehicle of any squad that spawns seated via object_destroy
+  0x47A854/0x1EB650, then skips that squad). Fixed: the option loop ignored the **last** argument; startup now
+  logs `SpawnTest: horde options | …`.
+- Unearthed, `-ai-actors 1024 -horde 1000 -horde-team 0 -horde-no-teleport`:
+  | Run | Live actors | FPS |
+  |---|---|---|
+  | normal LOD, dropships (3 runs) | ~700 → ~150 after Phantoms leave | 20-29 → 90-110 |
+  | full LOD, dropships | ~700 → ~145 | 20-25 → ~30 |
+  | **full LOD, infantry only (14 vehicle squads skipped)** | **980-1,020 for 11 min** | **~15.6** |
+- Takeaways: the post-wave "drop" was Phantoms leaving with riders aboard, not deaths. FPS scales with actor count
+  (main-thread AI, ~50-60 µs/actor/frame at full LOD); no crashes at 1,024. Without teleport, squads spawn at their
+  own map positions (player sees few). Horde mode design: dropship squads once per wave with their flight
+  scripts, bulk enemies on foot. Open: infantry-only with normal LOD for comparison.
+
+### C12-L status 2026-11-09 01:00 ET
+Steps 1-3 partly done (commits ce932a7 .. 88d67ec, not pushed, not run); 32-player mode is gated behind
+`NOBLE_SLOT_PLAYERS_UNSAFE=1`. Current blockers and the ordered next steps: `LIMITS-HANDOFF.md`, section
+"Status update 2026-11-09". Swarm zombie test parked: `docs/swarm-test-notes.md`.
