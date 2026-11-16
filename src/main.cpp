@@ -1729,7 +1729,9 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         wchar_t probe[8] = {};
         if (GetEnvironmentVariableW(L"NOBLE_ENGINE_LIMITS_PROBE", probe, 8) > 0) {
             const int value = _wtoi(probe);
-            if (value > 0 && value <= static_cast<int>(noble::limits::Profile::Full)) {
+            // 0 = Stock is allowed for the low-memory test profile Tyler approved on 2026-11-16 (dev builds only): a
+            // dev/test instance can run the stock engine pool layout to measure whether 16 instances fit on one machine.
+            if (value >= 0 && value <= static_cast<int>(noble::limits::Profile::Full)) {
                 requestedLimits = noble::limits::ProfileFromInt(value);
                 NOBLE_WARN("main: DEV PROBE NOBLE_ENGINE_LIMITS_PROBE={} bypasses the mode gate for '{}'; requested engine limits {}",
                            value, launchMode.empty() ? (showMenu ? "menu" : "match") : launchMode.c_str(),

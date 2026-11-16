@@ -32,6 +32,34 @@ game-player table 5/5 used, every guest at session state 4 with the msg 44 state
 drops to 4 peers/4 players, guest relaunched at t+52 s, re-seated as peer 4, rejoined guest resumes the msg 44 stream;
 screenshots under `build/bin/Release/data/userdata/claude-tests-2026-11-11/rejoin5-*`).
 
+## One-machine 16-player feasibility (measured 2026-11-16, Tyler approved the low-memory test profile)
+
+Tyler approved experimenting with a dev-only lower-memory test profile, the lowest possible client resolution and the
+cheapest window mode. Measurements on the pinned build (idle system baseline 12.8 GB used of 31.8 GB):
+
+| Config (one instance) | Peak working set | Peak private commit | System used |
+|---|---|---|---|
+| Low-spec 1280x720, borderless, Full limits (shipping pin) | 5.8 GB | 5.1 GB | 18.3 GB |
+| 640x360, windowed, Full limits | 6.1 GB | - | 19.1 GB |
+| 640x360, borderless, Full limits | 5.5 GB | - | 18.3 GB |
+| **640x360, borderless, Stock engine limits (low-mem profile)** | **5.0 GB** | **4.74 GB** | **18.8 GB** |
+
+- Resolution and window mode do **not** reduce the engine's memory (world/geometry/tag data dominates; named engine
+  pools total only 0.08 GB of capacity and the pinned AI actors add ~6 MB). The dev-only Stock-limits probe saves
+  ~0.5-0.8 GB per instance (~10%), which is implemented as `tools/mp-session-test.ps1 -LowMem` (640x360 borderless
+  settings template + `NOBLE_ENGINE_LIMITS_PROBE=0` + free-RAM guard `-MinFreeGb`), with templates
+  `lowmem-640x360-windowed.json` / `lowmem-640x360-borderless.json` and system/private-memory accounting in the
+  harness. The probe accepts Stock only in `NOBLE_DEV_BUILD`; the shipped pin stays Full + 1024.
+- Multi-instance attempts with the low-mem profile: 8 instances aborted the 1.5 GB free-RAM guard at 30.5 GB system
+  used (private commit 19.9 GB, later guests still loading); 6 instances aborted the 1 GB guard at 31.65 GB system
+  used (private 23.98 GB, sixth guest still loading). The already-proven safe maximum on this machine is **5 players**
+  (`fix5`/`stock5` runs).
+- **Conclusion: 16 players on this one machine is not achievable with the current hardware** - at ~4.7-5.5 GB private
+  commit per full client, 16 clients need roughly **76-88 GB**, against 31.8 GB installed (and ~19 GB realistically
+  available next to the OS/apps). Page-file-only operation would thrash and is not a usable acceptance environment.
+  Reaching the 16/32-player acceptance bar needs one of: (a) 3-4 PCs x 4-5 instances (recommended; the harness already
+  supports `-connect <host-ip>` and per-machine identities), or (b) a RAM upgrade to 96 GB+ on this machine. The
+  session/join layer itself is healthy and proven at 5 players on one machine.
 ## Remaining blockers
 
 1. **High-slot (peer 17 / player 16) join, milestone 2.** With `NOBLE_SLOT_HIGH=1` the host now promotes peer 17 to

@@ -20,7 +20,13 @@ param(
     # Leave/rejoin test: seconds after all instances are up when the chosen guest is hard-killed and relaunched.
     [int]$LeaveAt = 0,
     [int]$RejoinAt = 0,
-    [int]$LeaveGuest = 0
+    [int]$LeaveGuest = 0,
+    # Dev-only low-memory test profile (Tyler 2026-11-16): alternate settings template + engine limits/actor probe.
+    [string]$SettingsFile = '',
+    [int]$LimitsProbe = -1,
+    [double]$MinFreeGb = 1.5,
+    [int]$QuitAfterOverride = 0,
+    [switch]$LowMem
 )
 # Multiplayer N-instance LAN harness for Project Noble (2026-11-16, multiplayer workstream).
 # Host = build\bin\Release, guests = build\bin\Release2..ReleaseN (auto-created skeletons with junctions into
@@ -32,9 +38,16 @@ $repo = 'D:\Project-Noble-Closed-Source'
 $binRoot = Join-Path $repo 'build\bin'
 $hostDir = Join-Path $binRoot 'Release'
 $tplSettings = Join-Path $hostDir 'low-spec-settings.json'
+$lowMemTemplate = Join-Path $repo 'tools\lowmem-640x360-windowed.json'
+$lowMemTemplateBorderless = Join-Path $repo 'tools\lowmem-640x360-borderless.json'
+if (-not (Test-Path $lowMemTemplateBorderless)) { $lowMemTemplateBorderless = Join-Path $hostDir 'lowmem-640x360-borderless.json' }
+if ($LowMem) { $tplSettings = $lowMemTemplateBorderless; if ($LimitsProbe -lt 0) { $LimitsProbe = 0 } }
+elseif ($SettingsFile -ne '') { $tplSettings = $SettingsFile }
+elseif ($env:NOBLE_LOWMEM -eq '1') { $tplSettings = if (Test-Path $lowMemTemplate) { $lowMemTemplate } else { $tplSettings } }
 $capDir = Join-Path $hostDir 'data\userdata\claude-tests-2026-11-11'
 if ($Tag -eq '') { $Tag = ('mp' + $Players + $(if ($High) { 'h' } elseif ($Slot32) { 's32' } else { 'n' })) }
-if ($QuitAfter -le 0) { $QuitAfter = $HostWait + $Seconds + 40 }
+if ($QuitAfterOverride -gt 0) { $QuitAfter = $QuitAfterOverride }
+elseif ($QuitAfter -le 0) { $QuitAfter = $HostWait + $Seconds + 40 }
 if ($MaxPlayers -le 0) { $MaxPlayers = $Players }
 $suffix = if ($High) { 'high' } elseif ($Slot32) { 's32' } else { 'norm' }
 $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -136,6 +149,8 @@ $env:NOBLE_WINDOW_SECONDARY = '1'
 if ($Slot32) { $env:NOBLE_SLOT_PLAYERS_UNSAFE = '1' } else { Remove-Item Env:\NOBLE_SLOT_PLAYERS_UNSAFE -ErrorAction SilentlyContinue }
 if ($High) { $env:NOBLE_SLOT_HIGH = '1' } else { Remove-Item Env:\NOBLE_SLOT_HIGH -ErrorAction SilentlyContinue }
 if ($WaitPeersMs -gt 0) { $env:NOBLE_COOP_WAIT_MS = "$WaitPeersMs" } else { Remove-Item Env:\NOBLE_COOP_WAIT_MS -ErrorAction SilentlyContinue }
+if ($LimitsProbe -ge 0) { $env:NOBLE_ENGINE_LIMITS_PROBE = "$LimitsProbe" } else { Remove-Item Env:\NOBLE_ENGINE_LIMITS_PROBE -ErrorAction SilentlyContinue }
+if ($env:NOBLE_LOWMEM -eq '1') { if ($LimitsProbe -lt 0) { $env:NOBLE_ENGINE_LIMITS_PROBE = '0' } }
 
 $slotArgs = @()
 if ($Slot32) { $slotArgs = @('-slot-patch','-slot-players','32') }
@@ -182,6 +197,9 @@ try {
     # ---------------- run + resource sampling ----------------
     $start = Get-Date
     $peakTotal = 0.0
+    $peakPrivate = 0.0
+    $peakFreeGb = 99.0
+    $peakUsedGb = 0.0
     $aborted = $false
     $left = $false; $rejoined = $false
     $leaveIndex = $LeaveGuest
@@ -211,19 +229,36 @@ try {
         $ps = @(Get-Process noble-dev -ErrorAction SilentlyContinue)
         if ($ps.Count -eq 0) { break }
         $ws = 0.0
+        $priv = 0.0
         foreach ($p in $ps) {
             $mb = $p.WorkingSet64 / 1MB
             $ws += $mb
+            $priv += $p.PrivateMemorySize64 / 1MB
             $key = [string]$p.Id
             if (-not $peaks.ContainsKey($key) -or $peaks[$key] -lt $mb) { $peaks[$key] = $mb }
         }
         $wsGb = $ws / 1024.0
+        $privGb = $priv / 1024.0
         if ($wsGb -gt $peakTotal) { $peakTotal = $wsGb }
-        if ($wsGb -gt $RamAbortGb) { Write-Output ("ABORT: total working set " + [math]::Round($wsGb,1) + " GB > " + $RamAbortGb); $aborted = $true; break }
+        if ($privGb -gt $peakPrivate) { $peakPrivate = $privGb }
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+        if ($os) {
+            $freeGb = $os.FreePhysicalMemory / 1024.0 / 1024.0
+            $totalGb = $os.TotalVisibleMemorySize / 1024.0 / 1024.0
+            if ($freeGb -lt $peakFreeGb) { $peakFreeGb = $freeGb }
+            if (($totalGb - $freeGb) -gt $peakUsedGb) { $peakUsedGb = $totalGb - $freeGb }
+            if ($MinFreeGb -gt 0 -and $freeGb -lt $MinFreeGb) {
+                Write-Output ("ABORT: free physical memory " + [math]::Round($freeGb,2) + " GB < " + $MinFreeGb + " GB guard")
+                $aborted = $true; break
+            }
+        }
+        if ($RamAbortGb -gt 0 -and $wsGb -gt $RamAbortGb) { Write-Output ("ABORT: total working set " + [math]::Round($wsGb,1) + " GB > " + $RamAbortGb); $aborted = $true; break }
         Start-Sleep -Seconds 3
     }
     $alive = @($procs | Where-Object { -not $_.HasExited }).Count
     Write-Output ("run done: peak total working set " + [math]::Round($peakTotal,1) + " GB, instances still alive " + $alive + "/" + $procs.Count)
+    Write-Output ("private commit: peak " + [math]::Round($peakPrivate,2) + " GB")
+    Write-Output ("system memory: peak used " + [math]::Round($peakUsedGb,2) + " GB of " + [math]::Round(($totalGb),2) + " GB, lowest free " + [math]::Round($peakFreeGb,2) + " GB")
     for ($i = 0; $i -lt $procs.Count; ++$i) {
         $p = $procs[$i]
         $state = 'exited'
