@@ -69,6 +69,14 @@ SITES = [
     # the state 7 -> 8 readiness test in FUN_180392DB0 rejects peer 17 (it stays at 7 and the membership delta carries
     # state 7, which the guest consumer rejects). Same 0x56 dword-index shape as the msg 32 handler.
     (0x44B24C, '486bce564803c8', 'rcx', 'rsi', 0x56, 17, 2, 'imul rcx,rsi,0x56 / add rcx,rax (msg 33 player properties: peer player table)'),
+    # 2026-11-16 (high-slot delta corruption, ghidra-delta section J.4): message 27 (peer properties) resolves the
+    # owning peer's record with stock math. For peer 17 the property block then lands on session+0x1730 and its
+    # 0x120-byte copy overwrites player 0/1 records (player-record+0x10 became 4 = invalid slot, which the wire's
+    # 2-bit slot field cannot carry; the unmasked encoder then corrupted the peer field and the guest rejected the
+    # membership delta). These three sites are the peer record bases on that path.
+    (0x39D23E, '4969d758010000', 'rdx', 'r15', 0x158, 17, 0, 'imul rdx,r15,0x158 (msg 27 peer props: peer record base)'),
+    (0x39F04E, '4969c658010000', 'rax', 'r14', 0x158, 17, 0, 'imul rax,r14,0x158 (msg 27 props apply: peer record base)'),
+    (0x39F0C0, '4c69df58010000', 'r11', 'rdi', 0x158, 17, 0, 'imul r11,rdi,0x158 (msg 27 props apply: second peer base)'),
 ]
 stock, out = sys.argv[1], sys.argv[2]
 data = open(stock, 'rb').read()

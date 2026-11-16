@@ -1,4 +1,5 @@
 #include "SlotMessage.hpp"
+#include "SlotPatch.hpp"
 
 #include "common/Logger.hpp"
 
@@ -80,8 +81,42 @@ void CheckRegisteredSize() {
     }
 }
 
+// High-slot data repair (2026-11-16, ghidra-delta J.6 P1): while peer 17 is being established, an uncached peer
+// property write can land in the player 0/1 records and set a player record's slot dword to an invalid value (4).
+// The wire player entry only has a 2-bit slot field and the engine's encoder does not mask it, so slot 4 leaked
+// into the peer bit that precedes it: the host sent "peer 0 slot 4", the guest decoded "peer 1 slot 0", the
+// membership checksum no longer matched and the guest reset the session. Before the engine producer runs, repair
+// any invalid slot in the live membership block from the authoritative peer->player mapping table; the engine then
+// encodes (and checksums) consistent data. 32-player mode only; 16-player sessions never have an out-of-range slot
+// and stay byte-identical.
+void SanitizeMembershipBlock(uint8_t* block) {
+    if (!block || !slots::Players32Active()) return;
+    __try {
+        uint8_t* session = block - 0x38;   // producer's block pointer is session+0x38 (peer records at block+0x28)
+        const uint32_t playerMask = *reinterpret_cast<const uint32_t*>(block + 0x1704);   // session+0x173C
+        for (int i = 0; i < 16; ++i) {
+            if ((playerMask & (1u << i)) == 0) continue;
+            uint8_t* rec = block + 0x1708 + static_cast<size_t>(i) * 0xB0;   // session+0x1740 + i*0xB0
+            const uint32_t slot = *reinterpret_cast<const uint32_t*>(rec + 0x10);
+            if (slot <= 3) continue;
+            const int16_t peer = *reinterpret_cast<const int16_t*>(rec + 0x0C);
+            int fixed = 0;
+            if (uint8_t* peerRec = slots::PeerRecord(session, peer)) {
+                for (int j = 0; j < 4; ++j)
+                    if (*reinterpret_cast<const int32_t*>(peerRec + 0x144 + static_cast<size_t>(j) * 4) == i) fixed = j;
+            }
+            NOBLE_WARN("SlotPatch: membership producer repaired player {} slot {} -> {} (peer {}); invalid slot cannot be "
+                       "put on the wire", i, slot, fixed, peer);
+            *reinterpret_cast<uint32_t*>(rec + 0x10) = static_cast<uint32_t>(fixed);
+        }
+    } __except (1) {
+        NOBLE_WARN("SlotPatch: membership block sanitizer read fault; producer payload left as-is");
+    }
+}
+
 uint64_t __fastcall ProducerWithExtension(void* a, void* b, void* c, uint8_t* payload) {
     CheckRegisteredSize();
+    SanitizeMembershipBlock(static_cast<uint8_t*>(b));
     if (payload) {
         uint8_t* ext = payload + kMsgExtOffset;
         std::memset(ext, 0, kMsgExtBytes);
