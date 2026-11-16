@@ -250,3 +250,10 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
   orange flames regression captured unchanged. Screenshots saved in the claude-tests folder.
 - Next: more flame colours, then lightning; then Armory UI + profile persistence/replication, capability gating and
   distribution decision. Recipe committed: `docs/test-tools/armor_fx_add_variant.py`; doc updated.
+
+### 2026-11-16 18:15 - #15-B 30-colour scaling attempt (visor palette): partial, ext-tag blocker
+- Recolour pipeline works (bitmap pixel edit; gold palette renders via known-good particle). Generated 29 visor-colour
+  variants + 5 ext effect tags + render-model region/markers + 29 pmcg entries + 5 extra biped attachments; map rebuilt.
+- Blocker: effect-tag `locations` cannot gain elements through ManagedBlam Save (max 6 usable/tag); ext region/marker
+  path works with a stock particle, but custom particles in ext tags are not consistently visible. Blue variant restored
+  and verified; diagnostics documented in the RE doc; Armory UI wiring still pending.
