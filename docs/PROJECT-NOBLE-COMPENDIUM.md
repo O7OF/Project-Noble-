@@ -6,7 +6,7 @@
 
 > **How to read it.** Sections 1-4 are the current state and the multiplayer workstream; sections 5-6 are engine subsystem references; 7 is the day-to-day runbook; 8 is the failure archive and the genuinely open questions; the appendices are quick-reference tables. Claims carry a confidence tag; when two notes disagree the newer one wins and the discrepancy is called out.
 
-> **Version stamp.** Project Noble **v0.20.11**, repo `D:\Project-Noble-Closed-Source`, branch `wip-merge`, HEAD **`53a1a9c`** (latest upstream merge `30d4e61` brought in the v0.20.11 line; the commits below it are the high-slot seat fix, mod-version diagnostics, and the 32/64/128 capacity/chunked-layout, chunk-aware shadow-record and piecewise-cave work; this documentation commit sits on top). Both branches are pushed and identical at that commit. Engine reference: MCC `haloreach.dll` build 1.3528.0.0, SHA-256 `738dd2d2...0894`, image base `0x180000000`. Document built 2026-11-16. All RVAs are `haloreach.dll` RVAs (Ghidra address = `0x180000000` + RVA); a game update invalidates them.
+> **Version stamp.** Project Noble **v0.20.12**, repo `D:\Project-Noble-Closed-Source`, branch `wip-merge`, HEAD **`53a1a9c`** (latest upstream merge `30d4e61` brought in the v0.20.11 line; the commits below it are the high-slot seat fix, mod-version diagnostics, and the 32/64/128 capacity/chunked-layout, chunk-aware shadow-record and piecewise-cave work; this documentation commit sits on top). Both branches are pushed and identical at that commit. Engine reference: MCC `haloreach.dll` build 1.3528.0.0, SHA-256 `738dd2d2...0894`, image base `0x180000000`. Document built 2026-11-16. All RVAs are `haloreach.dll` RVAs (Ghidra address = `0x180000000` + RVA); a game update invalidates them.
 
 **Confidence legend**
 
@@ -67,7 +67,7 @@ Only `noble-dev` and `noble-client` are release gates. The dedicated server must
 | Branch parity | `main` and `wip-merge` are pushed and identical at `30d4e61` |
 | Release tags | the `v0.20.*` line is published through the release repo; the local clone carries tags only up to the `v0.19.x` line |
 
-### 1.4 The v0.20.0-v0.20.11 release line
+### 1.4 The v0.20.0-v0.20.12 release line
 
 Everything below is shipped in the merged `origin/main` line at HEAD. Sources: `release-notes\v0.20.*.md` and `src/ui/ChangelogData.hpp` (in-client changelog).
 
