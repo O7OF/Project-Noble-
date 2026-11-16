@@ -18,6 +18,7 @@
 #include "host/Loader.hpp"
 #include "host/EngineLimits.hpp"
 #include "host/SlotPatch.hpp"
+#include "host/SlotMessage.hpp"
 #include "hooks/HookManager.hpp"
 #include "hooks/SigScanner.hpp"
 #include "vfs/VFS.hpp"
@@ -946,7 +947,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Headless synthetic validation of the 32/64/128 slot-shadow layouts (no MCC, no window, no engine).
     // `-test-slot-capacity`: prints one line per capacity into the log and returns non-zero if a layout is invalid.
     if (std::wstring(pCmdLine ? pCmdLine : L"").find(L"-test-slot-capacity") != std::wstring::npos) {
-        const int failures = noble::slots::SlotLayoutSelfTest();
+        int failures = noble::slots::SlotLayoutSelfTest();
+        failures += noble::slots::message::CapacitySelfTest();
         noble::Logger::Shutdown();
         return failures == 0 ? 0 : 1;
     }

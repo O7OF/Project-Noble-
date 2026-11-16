@@ -43,10 +43,15 @@ constexpr uint32_t kProducerRva = 0x39DD4C;
 constexpr uint32_t kProducerCalls[] = { 0x396A28, 0x396A57 };
 constexpr uint32_t kPeerEntryCtorRva = 0x396E44;     // payload peer entry (0x180) ctor, rcx = entry
 constexpr uint32_t kPlayerEntryCtorRva = 0x396E60;   // payload player entry (0xB8) ctor
-constexpr uint32_t kExtPeers = 15;                   // peers 17..31
-constexpr uint32_t kExtPlayers = 16;                 // players 16..31
+// Installed capacity and the extension it implies: peers 17..C-1 (C-17 entries) + players 16..C-1 (C-16 entries).
+// The generated message tables (SlotMessageTable.inc) are the proven 32-player layout; the static asserts below pin
+// that, so a future 64/128 message generator cannot silently diverge from the extension builder.
+constexpr uint32_t kSlotCapacity = 32;
+constexpr uint32_t kExtPeers = kSlotCapacity - 17;   // peers 17..31 at capacity 32
+constexpr uint32_t kExtPlayers = kSlotCapacity - 16; // players 16..31 at capacity 32
 constexpr uint32_t kPeerEntry = 0x180, kPlayerEntry = 0xB8;
 static_assert(kExtPeers * kPeerEntry + kExtPlayers * kPlayerEntry == kMsgExtBytes, "extension layout");
+static_assert(kExtPeers == 15 && kExtPlayers == 16, "generated message tables are the 32-player extension");
 
 constexpr int32_t kPeerFirstShadow = 17, kPeerRecord = 0x158;
 constexpr int32_t kPlayerFirstShadow = 16, kPlayerRecord = 0xB0;
@@ -309,4 +314,41 @@ bool ApplyHighSlotTest(uintptr_t base) {
     return true;
 }
 
+// Synthetic validation of the membership-message capacity model (no engine needed). Proves that the extension
+// builder's derived counts match the generated 32-player tables, and computes what 64/128 need from the wire.
+constexpr uint32_t BitsForCapacity(uint32_t v) { uint32_t b = 0; while (v) { v >>= 1; ++b; } return b; }
+
+int CapacitySelfTest() {
+    int failures = 0;
+    NOBLE_INFO("SlotMessage: synthetic membership-message capacity validation (base 0x{:X}, 32-player tables)",
+               static_cast<uint32_t>(kMsgExtOffset));
+    const uint32_t caps[] = { 32, 64, 128 };
+    for (const uint32_t cap : caps) {
+        const uint64_t ext = static_cast<uint64_t>(cap - 17) * kPeerEntry +
+                             static_cast<uint64_t>(cap - 16) * kPlayerEntry;
+        const uint64_t size = static_cast<uint64_t>(kMsgExtOffset) + ext;
+        const uint32_t peerBits = BitsForCapacity(cap - 1);
+        const uint32_t playerBits = BitsForCapacity(cap - 1);
+        const bool fits16 = size <= 0xFFFF;
+        if (cap == 32 && (ext != kMsgExtBytes || size != kMsgSize)) {
+            ++failures;
+            NOBLE_ERROR("SlotMessage: capacity 32 derives ext 0x{:X}/size 0x{:X} but the generated tables are "
+                        "0x{:X}/0x{:X}", static_cast<uint32_t>(ext), static_cast<uint32_t>(size),
+                        static_cast<uint32_t>(kMsgExtBytes), static_cast<uint32_t>(kMsgSize));
+        }
+        NOBLE_INFO("SlotMessage: cap={:>3} ext 0x{:X} message 0x{:X} ({}), wire peer {}b / player {}b -> {}",
+                   cap, static_cast<uint32_t>(ext), static_cast<uint32_t>(size),
+                   fits16 ? "16-bit length ok" : "needs message/framing work", peerBits, playerBits,
+                   (peerBits <= 6 && playerBits <= 5) ? "ok for the stock fields" : "needs field widening");
+        if (!fits16)
+            NOBLE_WARN("SlotMessage: capacity {} message 0x{:X} exceeds 0xFFFF; needs a framing/batching change",
+                       cap, static_cast<uint32_t>(size));
+        if (peerBits > 6 || playerBits > 5)
+            NOBLE_WARN("SlotMessage: capacity {} needs peer {} bits / player {} bits (stock wire fields: peer 6, "
+                       "player 5) - widen the encoder/decoder before shipping this capacity",
+                       cap, peerBits, playerBits);
+    }
+    NOBLE_INFO("SlotMessage: {} check(s) failed (0 = the 32-player extension matches the generated tables)", failures);
+    return failures;
+}
 } // namespace noble::slots::message

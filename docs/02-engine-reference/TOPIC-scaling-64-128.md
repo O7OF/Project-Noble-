@@ -75,7 +75,7 @@ preserved inside each chunk pair. Chunk capacity: 25 peer records, 49 player rec
 The self-test also simulates the dispatch itself: for every record index it checks that the per-range constant maps
 both the block-A base and the block-A base + 0x2210 (block B) to the intended chunk offset (`+ (index - first) *
 record`), that chunk pairs end inside `kSessionStride`, and that chunks of one kind cannot overlap. Cost of the
-chunked model: the member-cave entry must grow from 48 to >=160 bytes (worst measured piecewise cave is 140 B at
+chunked model: the member-cave entry has been grown from 48 to 256 bytes (worst measured piecewise cave is 140 B at
 128; 53 sites -> ~8.5 KB of cave code, fine), and the pointer-stepping loops (9 step caves) and whole-array
 copy/clear mirrors must hop chunk boundaries instead of assuming one contiguous array. The validated plan is to use
 the chunked model for >32 capacity and keep the proven stock-relative single-block layout (biases 0) for 32.
@@ -98,6 +98,14 @@ message above 64 KiB or needs the membership update split into batches has to be
 Reach Renaissance (81-player ceiling; its 128 profile is two players per machine and is not exposed) is the closest
 external calibration.
 
+Message-capacity model (`SlotMessage`): the extension builder's counts are now derived from `kSlotCapacity` (32 ->
+15 peer + 16 player entries) with static asserts pinning the generated tables, and the same `-test-slot-capacity`
+run validates the capacity model: 32 derives exactly the generated extension (0x2200 / message 0xA300); 64 would be
+0x6900 / 0xEA00 (fits a 16-bit length, but the player index needs 6 bits vs the stock 5); 128 would be 0xF700 /
+0x17800 (needs framing) and needs 7-bit peer/player fields. `Site.cave` was grown from 48 to 256 bytes for the
+piecewise caves (worst measured 140 B at 128), and `-slot-players 64|128` is now recognised and refused with a clear
+log instead of being silently ignored.
+
 ## 4. Engine/pool and UI work still required
 
 - Pools: players / fire team / simulation view arrays are raised to 32 today; 64/128 needs the same raises plus the
@@ -119,6 +127,9 @@ external calibration.
    0x21A14 for 32/64/128) and that chunks of one kind cannot overlap. Exit 0 on 2026-11-16 for all three capacities:
    32 unchanged (ext 0x2200, msg 0xA300); 64 ext 0x6900 / msg 0xEA00 / peer 6 bits ok / player needs 6 / worst cave
    53 B; 128 ext 0xF700 / msg 0x17800 needs framing / peer+player 7 bits / 5 peer + 3 player chunks / worst cave 140 B.
+   Membership message: the same run's `SlotMessage::CapacitySelfTest()` derives extension/message size from the
+   capacity and asserts 32 equals the generated tables (ext 0x2200, message 0xA300); 64 is 0x6900 / 0xEA00 with the
+   player index needing 6 bits; 128 is 0xF700 / 0x17800 and needs framing plus 7-bit peer/player fields.
 2. Install-level sessions: declare C slots and join with 2 clients (proves shadow storage, message registration,
    encoder/decoder validity at capacity even without C clients).
 3. Forced high slots (`NOBLE_SLOT_HIGH=1`, free-slot scans start at peer 17 / player 16) can place a handful of
@@ -127,13 +138,13 @@ external calibration.
 
 ## 6. Ordered work list
 
-1. Install the chunked layout: grow the member-cave entry (48 -> >=160 B; measured worst case 140 B at 128), teach
-   the generator to emit piecewise index-range constants (25 peer / 49 player / 726 table records per chunk), and
-   make the 9 pointer-stepping step caves plus the whole-array copy/clear mirrors hop chunk boundaries. Keep the 32
-   path byte-identical.
-2. Wire the capacity into `SlotPatch` install behind dev env gates (e.g. `NOBLE_MP_SLOTS=64|128`), one capacity at
-   a time, with all-or-nothing byte checks and the install-level validation from section 5.
-3. Widen the membership encoder/decoder fields (peer/player index bits, multi-word masks) and the game-player event
+1. Install the chunked layout: the member-cave entry is grown (48 -> 256 B; worst measured case 140 B at 128), so
+   what remains is the generator emitting piecewise index-range bodies (25 peer / 49 player / 726 table records per
+   chunk) and the 9 pointer-stepping step caves plus the whole-array copy/clear mirrors hopping chunk boundaries.
+   Keep the 32 path byte-identical.
+2. Wire the capacity into `SlotPatch` install behind dev env gates (`-slot-players` / `NOBLE_SLOT_PLAYERS`
+   = 64|128 is already recognised and refused with a clear log today), one capacity at a time, with
+   all-or-nothing byte checks and the install-level validation from section 5.
    index; add round-trip tests for synthetic peer/player counts.
 4. Solve the 128 message-size limit (channel/framing or batched membership updates); 64 fits the current 16-bit length.
 5. Raise engine pools and the session slot count at 64/128; re-measure memory and the setter churn.

@@ -19,7 +19,9 @@ struct Site {
     uint32_t rva;
     uint8_t original[7];   // imul r64, r64, imm32
     uint32_t caveLength;
-    uint8_t cave[48];
+    // 256 bytes: one-range caves are 41 bytes today, but the chunked 64/128 layouts need a piecewise cave with one
+    // body per chunk (measured worst case 140 bytes at 128, see SlotLayoutSelfTest).
+    uint8_t cave[256];
     uint32_t constantAt;   // imm32 of `add dst, C`
     uint32_t backAt1, backAt2;   // rel32 of the two `jmp back`
     uint32_t record;       // 0xB0 player, 0x158 peer
@@ -746,6 +748,27 @@ bool UnsafeOverride() {
 bool gPlayers32Active = false;
 bool gMessageOn = true;
 
+// Requested dev slot capacity from -slot-players N / NOBLE_SLOT_PLAYERS=N: 32 is implemented (behind the unsafe
+// override); 64/128 are recognised so the request can be refused with a clear message instead of silently ignored.
+uint32_t RequestedPlayersCapacity() {
+    wchar_t env[16] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS", env, 16) > 0) {
+        const int v = _wtoi(env);
+        if (v == 32 || v == 64 || v == 128) return static_cast<uint32_t>(v);
+    }
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    uint32_t found = 0;
+    for (int i = 1; argv && i + 1 < argc; ++i) {
+        if (_wcsicmp(argv[i], L"-slot-players") == 0) {
+            const int v = _wtoi(argv[i + 1]);
+            if (v == 32 || v == 64 || v == 128) found = static_cast<uint32_t>(v);
+        }
+    }
+    if (argv) LocalFree(argv);
+    return found;
+}
+
 bool ArgPlayers32() {
     wchar_t env[8] = {};
     if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS", env, 8) > 0 && _wtoi(env) == 32) return true;
@@ -839,6 +862,13 @@ void Install(HMODULE engine, bool extendedProfile) {
             NOBLE_WARN("SlotPatch: engine code at +0x{:X} does not match; nothing patched", s.rva);
             return;
         }
+    }
+    const uint32_t requestedCapacity = RequestedPlayersCapacity();
+    if (requestedCapacity > 32) {
+        NOBLE_WARN("SlotPatch: {} slot capacity requested, but the chunked 64/128 install is not implemented yet "
+                   "(only the layout/dispatch is validated - docs/02-engine-reference/TOPIC-scaling-64-128.md). "
+                   "Staying at stock capacity; dev 32 remains available with -slot-players 32 + NOBLE_SLOT_PLAYERS_UNSAFE=1",
+                   requestedCapacity);
     }
     bool players32 = ArgPlayers32();
     // Safety gate: 32-player mode is known to be unsafe until the blockers in docs/limits-players-loops.md are
@@ -1031,6 +1061,14 @@ constexpr uint32_t kPeerFirst = 17, kPlayerFirst = 16;
 
 constexpr uint32_t AlignUp16(uint32_t v) { return (v + 0xF) & ~0xFu; }
 
+// Seats a UI/session surface may advertise for a requested dev capacity: stock 16 unless the capacity's install
+// actually succeeded. 32 is the only implemented dev capacity today; 64/128 requests stay at 16 until their install
+// exists (the refusal is logged in Install).
+constexpr uint32_t EffectiveSeatsForCapacity(uint32_t requested, bool installed) {
+    if (!installed || requested == 0) return 16;
+    return requested >= 32 ? requested : 16;
+}
+
 // Bytes of one piecewise member cave for a given chunk count: stock-path jump + one 19-byte body per chunk
 // (replay original multiply, add constant, jump back) + one cmp/jcc dispatch pair per extra chunk.
 constexpr uint32_t PiecewiseCaveBytes(uint32_t chunks) {
@@ -1219,7 +1257,7 @@ int ValidateChunkPlan(const SlotShadowLayout& L) {
                "piecewise caves peer {} B / player {} B / table {} B -> worst {} B{}",
                L.capacity, n, L.peerChunks, L.playerChunks, L.tableChunks, cursor,
                peerCave, playerCave, tableCave, worstCave,
-               worstCave <= 48 ? "" : " (needs a larger cave entry)");
+               worstCave <= 256 ? "" : " (needs a bigger cave entry)");
     if (L.memberCaveBytes != worstCave) ++failures;   // model and dispatch estimate must agree
     return failures;
 }
@@ -1257,13 +1295,30 @@ int SlotLayoutSelfTest() {
                    L.capacity, L.peerChunks, L.chunkPeerLimit, L.playerChunks, L.chunkPlayerLimit,
                    L.tableChunks, L.chunkTableLimit, L.chunkedBytes,
                    L.chunkedFits ? "fits kSessionStride" : "DOES NOT FIT", L.memberCaveBytes,
-                   L.memberCaveBytes <= 48 ? "fits the current 48-byte cave slot" : "needs a larger cave entry");
+                   L.memberCaveBytes <= 256 ? "fits the 256-byte cave entry" : "needs a bigger cave entry");
         if (!L.chunkedFits) ++failures;
         if (L.capacity == 32 && (L.peerChunks != 1 || L.playerChunks != 1 || L.tableChunks != 1)) ++failures;
         if (L.capacity == 64 && (L.peerChunks != 2 || L.playerChunks != 1 || L.tableChunks != 1)) ++failures;
         if (L.capacity == 128 && (L.peerChunks != 5 || L.playerChunks != 3 || L.tableChunks != 1)) ++failures;
         failures += ValidateChunkPlan(L);
     }
+    // Effective-seat mapping: stock stays 16 for any unimplemented/uninstalled capacity; an installed dev capacity
+    // reports itself instead of the stock 16.
+    struct SeatsCase { uint32_t requested; bool installed; uint32_t want; };
+    const SeatsCase seatCases[] = {
+        { 0, false, 16 }, { 32, false, 16 }, { 32, true, 32 }, { 64, false, 16 }, { 64, true, 64 },
+        { 128, false, 16 }, { 128, true, 128 },
+    };
+    for (const SeatsCase& c : seatCases) {
+        const uint32_t got = EffectiveSeatsForCapacity(c.requested, c.installed);
+        if (got != c.want) {
+            ++failures;
+            NOBLE_WARN("SlotLayout: effective seats for requested {} installed {} = {} (expected {})",
+                       c.requested, c.installed ? "yes" : "no", got, c.want);
+        }
+    }
+    NOBLE_INFO("SlotLayout: effective-seat mapping checked (stock 16 unless a capacity is installed; 32 is the only "
+               "implemented dev capacity)");
     NOBLE_INFO("SlotLayout: {} check(s) failed (0 = all three layouts valid)", failures);
     return failures;
 }
