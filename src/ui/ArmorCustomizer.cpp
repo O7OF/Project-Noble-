@@ -2155,7 +2155,21 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     ReachArmory::SetYawRotation(static_cast<float>(_wtof(argv[i + 1])) * 3.14159265f / 180.f);
                 } else if (_wcsicmp(argv[i], L"-armory-lights-brightness") == 0) {
                     const float rawB = std::clamp(static_cast<float>(_wtof(argv[i + 1])), 0.5f, 65.5f);
-                    m_profile.lightsBrightness = std::clamp(std::round(rawB * 2.0f) * 0.5f, 0.5f, 65.5f);
+                    const float snappedB = std::clamp(std::round(rawB * 2.0f) * 0.5f, 0.5f, 65.5f);
+                    m_profile.lightsBrightness = snappedB;
+                    m_profile.eliteLightsBrightness = snappedB;
+                    m_syncedInitial = false;
+                } else if (_wcsicmp(argv[i], L"-armory-lights-color") == 0) {
+                    const int colIdx = std::clamp(_wtoi(argv[i + 1]), 0, 29);
+                    m_profile.lightsColor = colIdx;
+                    m_profile.eliteLightsColor = colIdx;
+                    m_profile.lightsCustom = false;
+                    m_profile.eliteLightsCustom = false;
+                    m_syncedInitial = false;
+                } else if (_wcsicmp(argv[i], L"-armory-visor-color") == 0) {
+                    const int vIdx = std::clamp(_wtoi(argv[i + 1]), 0, static_cast<int>(kVisorColors.size()) - 1);
+                    m_profile.visorColorIndex = vIdx;
+                    m_visorSelection = vIdx;
                     m_syncedInitial = false;
                 } else if (_wcsicmp(argv[i], L"-armory-scene") == 0) {
                     // "-armory-scene c_helmet": open on a close-up camera like a click on that row (dev test, 2026-11-13).
@@ -2410,8 +2424,11 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     // ---- Slot rows for the species being edited.
     int speciesInt = m_marineTab ? 2 : static_cast<int>(m_profile.species);
     int bodyInt = static_cast<int>(m_profile.bodyType);
+    float& activeLightsBrightness = (m_previewSpecies == PlayerSpecies::Elite)
+        ? m_profile.eliteLightsBrightness
+        : m_profile.lightsBrightness;
     int lightsBrightnessIdx = std::clamp(
-        static_cast<int>(std::round((m_profile.lightsBrightness - 0.5f) * 2.0f)),
+        static_cast<int>(std::round((activeLightsBrightness - 0.5f) * 2.0f)),
         0, 130);
     std::vector<SlotRow> rows;
     rows.reserve(28);
@@ -2537,8 +2554,9 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         q.options = s_reachColorOptions;
         rows.push_back(std::move(p));
         rows.push_back(std::move(q));
-        if (!isElite) {
-            SlotRow l{ "COLORS", "Lights", RowKind::Colour, &m_profile.lightsColor };
+        {
+            int* lIdx = isElite ? &m_profile.eliteLightsColor : &m_profile.lightsColor;
+            SlotRow l{ "COLORS", "Lights", RowKind::Colour, lIdx };
             l.scene = "c_full_spartan";
             l.options = s_reachColorOptions;
             rows.push_back(std::move(l));
@@ -2549,7 +2567,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 for (int i = 0; i <= 130; ++i) {
                     char lbl[16];
                     std::snprintf(lbl, sizeof(lbl), "x%.1f", 0.5f + static_cast<float>(i) * 0.5f);
-                    opts.push_back({ lbl, "Spartan armor lights brightness multiplier (x0.5 to x65.5 in 0.5 intervals)." });
+                    opts.push_back({ lbl, "Armor lights brightness multiplier (x0.5 to x65.5 in 0.5 intervals)." });
                 }
                 return opts;
             }();
@@ -2557,15 +2575,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             lb.scene = "c_full_spartan";
             lb.options = s_lightsBrightnessOptions;
             rows.push_back(std::move(lb));
-        }
-        // 2026-11-12 (Tyler): Lights row hidden - the Honor Guard glow is fixed gold until the Lights colour can
-        // drive it (see HANDOFF-ELITE-2026-11-12-NIGHT, "Lights idea"). Flip kShowEliteLights to bring it back.
-        constexpr bool kShowEliteLights = false;
-        if (isElite && kShowEliteLights) {
-            SlotRow l{ "COLORS", "Lights", RowKind::Colour, &m_profile.eliteLightsColor };
-            l.scene = "c_full_spartan";
-            l.options = s_reachColorOptions;
-            rows.push_back(std::move(l));
         }
     }
 
@@ -2827,8 +2836,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         *r.index = stored;
         if (r.index == &lightsBrightnessIdx) {
             const float newB = std::clamp(0.5f + static_cast<float>(lightsBrightnessIdx) * 0.5f, 0.5f, 65.5f);
-            if (std::abs(m_profile.lightsBrightness - newB) < 1e-4f) return;
-            m_profile.lightsBrightness = newB;
+            if (std::abs(activeLightsBrightness - newB) < 1e-4f) return;
+            activeLightsBrightness = newB;
         }
         if (r.index == &m_profile.visorColorIndex) m_visorSelection = stored;
         if (r.kind == RowKind::Colour) {   // a palette choice replaces any custom wheel colour
@@ -3399,7 +3408,9 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         y += 38.0f * s;
 
         // Interactive Lights Brightness slider (x0.5 .. x65.5 in 0.5 intervals), shown on both Lights and Lights Brightness rows
-        const bool isLightsRow = (row.index == &m_profile.lightsColor || row.index == &lightsBrightnessIdx);
+        const bool isLightsRow = (row.index == &m_profile.lightsColor ||
+                                  row.index == &m_profile.eliteLightsColor ||
+                                  row.index == &lightsBrightnessIdx);
         const bool isLightsBrightnessRow = (row.index == &lightsBrightnessIdx);
         if (isLightsRow) {
             const float slH = 34.0f * s;
@@ -3407,7 +3418,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             dl->AddRectFilled(sl0, sl1, IM_COL32(16, 26, 38, 225), 2.5f * s);
             NobleUi::DrawTacticalFrame(dl, sl0, sl1, s, isLightsBrightnessRow && m_pane == 0, false, false, false);
 
-            int curBIdx = std::clamp(static_cast<int>(std::round((m_profile.lightsBrightness - 0.5f) * 2.0f)), 0, 130);
+            int curBIdx = std::clamp(static_cast<int>(std::round((activeLightsBrightness - 0.5f) * 2.0f)), 0, 130);
             bool bChanged = false;
 
             TextAt(dl, smallFont, 13.0f * s, ImVec2(sl0.x + 8.0f * s, sl0.y + 9.0f * s), kAccentCol, "BRIGHTNESS");
@@ -3490,7 +3501,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
 
             if (bChanged) {
                 lightsBrightnessIdx = curBIdx;
-                m_profile.lightsBrightness = 0.5f + static_cast<float>(curBIdx) * 0.5f;
+                activeLightsBrightness = 0.5f + static_cast<float>(curBIdx) * 0.5f;
                 if (isLightsBrightnessRow) {
                     m_gridCursor = curBIdx;
                     m_pickerScrollToEquipped = true;
