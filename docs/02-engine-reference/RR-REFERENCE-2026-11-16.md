@@ -85,6 +85,29 @@ system** with a dual machine/player model:
   M128 is experimental; `--m128-capacity` is multiplayer-only; `--m64-profile` is multiplayer-only (Firefight uses
   FF32); hosting above 64 uses the M128 profile while the stock 64 path stays unchanged.
 
+**Confirmed by the full demangled function index (2026-11-16).** The completed Ghidra analysis of `host-probe.exe`
+(24,608 functions; Ghidra's Rust demangler applied) exposes the capacity layer as real modules, not just strings:
+
+| Module / function | Evidence from the demangled index | Role (inferred) |
+|---|---|---|
+| `m64_transport::m81::masks::replacement_spans` | function 0x14000b9b0 and iterator closures | computes the byte spans to replace when widening/replacing M81 membership masks |
+| `m64_transport::m81::scheduler::{MASKS, SchedulerMasks, phase_action, initial_query, prioritize_native, clear_loss}` | statics at 0x14014a860 / 0x140150090 plus update closures | schedules the M81 transport; prioritises native traffic and tracks mask loss |
+| `m64_member::send81::{RECIPIENTS, Recipients}` | statics 0x14014a770 / 0x140150000 | membership sender for up to 81 machines, with a recipient set |
+| `memberx::{player_fields81, WireField, machine_props_valid, appearance_valid, drop_invalid_entries}` | many functions, e.g. 0x140081cd0 | membership wire-field model for 81 players (validation/rejection of machine/player fields) |
+| `m64_update::{ready_update, High}` | 0x140226020 and closures | applies the big-lobby membership update (full/delta) |
+| `m64_readers::forget` | 0x140005de0 | drops stale per-machine reader state |
+| `install_stream128` | 0x1400eeb50, 4,841 bytes | installs the 128-player stream/profile (M128) |
+| `reset_ppm64` | 0x1401eb740 | resets the P64/M64 player-state block |
+| `capacity::check_ff32_profile` | functions around 0x140388a30 | validates the FF32 (Firefight 32) profile |
+
+Together this is a **custom transport + membership stack for big lobbies**: a scheduler and mask-replacement
+layer (`m64_transport`), an 81-machine membership sender (`m64_member::send81`), an 81-player wire-field validator
+(`memberx`), a stream installer for 128 players (`install_stream128`), and profile checkers. That is the concrete
+architecture behind the shipped 64/81/128 claims; it is considerably more than widening arrays in place.
+
+Function names/addresses are in `decompiled/host-probe-analysis/function-index.csv` (24,608 rows, demangled); the
+matching decompiled C for these modules is being exported into the same folder.
+
 **Reference value for Noble:** RR proves the >32 path needs (1) separate machine and player capacity, (2) 64/128-bit
 membership mask sets and full/delta membership updates, (3) moved player blocks / enlarged player storage, (4) an
 explicit profile-selection surface and a UI that clamps to it, and (5) a transport/membership layer that accepts
@@ -215,13 +238,14 @@ Location (outside the repo): `C:\Users\tyler\Desktop\ReachRenaissance-Decompiled
 | `reports/` | PE/symbol recon, Rust source module list, capacity strings, changelog feature extract |
 | `GLOW-NOTES.md` | the armour-light glow feature notes (section 3.2 detail + where the code is) |
 
-Status 2026-11-16: launcher analysis complete (4378 functions); **host-probe targeted decompile complete** -
-400 functions exported (46,177 symbols available, 401 name matches), including the whole `host_probe::glow` module
-(`enabled`/`in_menu`/`arg`/`apply`/`frame`/`frames`/`glow_of`/`intensity_of`/`parse_hex`/`parse_level`), `host_probe::srgb`,
-the armour look/armour-pack systems, and the lobby/armour UI helpers (`index.csv` in the folder). The host-probe
-**full** analysis + full export (every function of the 22 MB binary) is still running in the background and can be
-resumed/awaited; the launcher, menu-overlay, rr-master, rr-browser and rr-voice binaries can be run the same way with
-`scripts/decompile-all.ps1`.
+Status 2026-11-16 (updated after the background job): launcher analysed (4,378 functions); **host-probe full
+analysis complete** - 24,608 functions, 1,530 s of auto-analysis, Ghidra's Rust demangler applied (the StackVariable
+analyzer logged a non-fatal ArrayIndexOutOfBoundsException; the program saved and is usable). Artifacts:
+`decompiled/host-probe-fast/` (364 C files, whole glow/srgb module + armour/look systems, mangled filenames),
+`decompiled/host-probe-analysis/function-index.csv` (24,608 demangled function names/addresses/sizes) and the
+demangled C export of the capacity/membership/transport modules (filter list in `scripts/export-filters.txt`). The
+other binaries can be run the same way with `scripts/decompile-all.ps1`; expect ~25 min of analysis for host-probe
+and a few minutes each for the rest.
 
 ## 6. Sources
 
