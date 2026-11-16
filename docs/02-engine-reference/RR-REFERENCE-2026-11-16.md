@@ -130,6 +130,57 @@ subset of the same design; RR's `machine_index_bits`/`machine_set_bytes` config 
 and its M128 two-players-per-machine approach (players > machines) is worth considering to keep peer/machine masks
 smaller than the player count.
 
+## 2.4 How RR's multiplayer works end to end (inferred)
+
+This is the best reconstruction from the shipped process layout, strings, changelog and the decompiled module names;
+treat the arrows as inferred and the named modules as observed. RR does not use MCC matchmaking: it starts the
+owned MCC Reach engine, patches it, and runs the lobby/session/directory/voice stack itself.
+
+```
+launcher (Reach Renaissance.exe)
+  -> finds MCC+Halo: Reach, checks the supported engine build (log: 'build check passed')
+  -> starts menu-overlay (WebView2 UI) + host-probe (game client / engine patcher)
+host-probe
+  -> launches Reach with RR's own launch block (data/launch_block_1.bin, lb_m_c_1.bin)
+  -> installs engine patches/hooks, including the capacity profile patches
+     (p64_actions::install_stream128 builds a patch table over 28 engine RVAs;
+      p64::Batch, m64_join::{code_sites,bit_branch_code}, capacity::machine_storage_plan)
+  -> runs its own session membership/transport layer
+     (m64_transport (incl. m81 scheduler/masks/NativeBudget), m64_member::send81,
+      memberx::player_fields81/WireField/validators, m64_update, m64_readers, resync paths)
+  -> engine runs the actual game (simulation, rendering, game rules)
+WebView2 menus <-> host-probe
+  -> lobby, armory, server browser, scoreboard, chat, career, forge UIs talk to the client
+services
+  -> rr-master: public directory/master
+  -> rr-browser: server browser / server admin tools
+  -> rr-voice: voice service
+```
+
+**Lobby and hosting.** A host picks a mode in the menus: `Offline`, `Host Online` (home network) or
+`Host on Server Browser` (public). Max Players chooses the engine profile (default, M64 over 32, M81 over 64 in
+multiplayer; FF32 in Firefight; Forge stays 32). The host-probe validates the choice (`lobby_profile::plan/check`,
+`capacity::check_ff32_profile`) and holds the lobby to that count; parties can be up to 81 (M81 machines).
+
+**Discovery and joining.** Public hosts are listed by the master/directory service and shown in the browser with
+game type/map/players/ping/region/version facts (version tags advertise the host profile). A join connects to the
+host either on the home network/directly or via RR's relay path; the client then performs RR's own admission
+(`m64_join`/membership modules) instead of stock MCC join logic. The host's membership sender builds full/delta
+updates for the machine set (63/81-machine recipient sets, checksum + resync handling) and the engine session is
+expanded to the selected profile.
+
+**In game.** The engine simulates and renders Reach; RR supplies the roster/scoreboard data (own scoreboard modules
+for the larger player counts), in-game chat over its own transport (`ingame_chat::transport`), and voice through
+`rr-voice`. Big-lobby membership is kept in sync by the transport/membership layer; if the host leaves an M81 lobby
+the game ends and guests return to menus (host migration is not supported, as RR documents).
+
+**What is proven vs inferred.** Observed directly: the process layout, launch-block files, engine build check, the
+capacity/profile flags and strings, the M128 patch-table installer, and the named transport/membership modules.
+Inferred: the exact split between RR's transport and the engine's stock network layer (RR clearly owns session
+membership/roster/chat and has a relay, but we have not traced the game-traffic path end to end). The decompile
+workspace can settle that: read `m64_transport`, `m64_member::send81`, `memberx`, `p64_actions`, `m64_join` and the
+network modules (`net::*`, `ingame_chat::transport`) next.
+
 ## 3. Feature comparison: where RR differs from Noble (corrected 2026-11-16)
 
 Confidence: RR side observed/proven from the shipped files, changelog and binary strings; the **Noble side is
