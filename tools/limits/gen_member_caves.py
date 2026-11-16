@@ -77,6 +77,19 @@ SITES = [
     (0x39D23E, '4969d758010000', 'rdx', 'r15', 0x158, 17, 0, 'imul rdx,r15,0x158 (msg 27 peer props: peer record base)'),
     (0x39F04E, '4969c658010000', 'rax', 'r14', 0x158, 17, 0, 'imul rax,r14,0x158 (msg 27 props apply: peer record base)'),
     (0x39F0C0, '4c69df58010000', 'r11', 'rdi', 0x158, 17, 0, 'imul r11,rdi,0x158 (msg 27 props apply: second peer base)'),
+    # 2026-11-16 #2 (seat path): FUN_18044FC94 is the per-frame duplicate-user/seat check that booted peer 17 with
+    # reason 9 every frame. Its loop bounds were already raised to 32 (SlotBounds 0x44FF31/0x44FF8B/0x44FFC4) but the
+    # peer record was still read with stock math, so peers 17..31 read player-record memory and the check booted the
+    # joining peer. Cave the peer stride so it reads the real shadow peer record.
+    (0x44FF46, '4969d058010000', 'rdx', 'r8', 0x158, 17, 0, 'imul rdx,r8,0x158 (FUN_18044FC94 duplicate-user/seat check)'),
+    # 2026-11-16 #2 (uncached player-add paths, NOTE-HIGHSLOT I/P2-P3): player-add acceptance (FUN_1803973BC) and the
+    # queued player-add apply (FUN_18039FB34) still use stock peer/player strides; for peer >= 17 they alias player
+    # records. 0x39752A is the peer dword player table (imul rcx,rsi,0x56 / movsxd rax,r12d), same 0x56 shape as msg 32.
+    (0x397424, '4869ce58010000', 'rcx', 'rsi', 0x158, 17, 0, 'imul rcx,rsi,0x158 (player-add accept: owning peer record)'),
+    (0x397503, '4969cdb0000000', 'rcx', 'r13', 0xB0, 16, 0, 'imul rcx,r13,0xb0 (player-add accept: existing player record)'),
+    (0x39752A, '486bce564963c4', 'rcx', 'rsi', 0x56, 17, 2, 'imul rcx,rsi,0x56 / movsxd rax,r12d (player-add accept: peer player table)'),
+    (0x39FB62, '4c69c858010000', 'r9', 'rax', 0x158, 17, 0, 'imul r9,rax,0x158 (queued player-add apply: peer record)'),
+    (0x39FB7D, '4869c8b0000000', 'rcx', 'rax', 0xB0, 16, 0, 'imul rcx,rax,0xb0 (queued player-add apply: player record)'),
 ]
 stock, out = sys.argv[1], sys.argv[2]
 data = open(stock, 'rb').read()
