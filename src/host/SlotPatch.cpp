@@ -1008,11 +1008,20 @@ struct SlotShadowLayout {
     int32_t peerBiasA, peerBiasB;       // added to the shadow constant: A: offset-stock, B: blockDelta+offset-stockB
     int32_t playerBiasA, playerBiasB;
     int32_t tableBiasA, tableBiasB;
-    uint32_t peerEntries, playerEntries;
+    uint32_t peerEntries, playerEntries, tableEntries;
     uint32_t peerBytes, playerBytes, tableBytes;
     uint32_t peerMaskWords;   // 32-bit words needed for a capacity-bit peer mask
     uint64_t msgExtBytes;     // membership message extension bytes for this capacity
     uint64_t msgSize;         // 0x8100 base + extension
+    // Chunked model (the alternative to per-site A/B classification): every shadow array is split into chunks that
+    // fit below the 0x2210 A->B distance, and chunk A is placed exactly 0x2210 before chunk B. A cave therefore
+    // only needs one constant per chunk (index range) and works for either block base, but pointer-stepping loops
+    // and the whole-array copy/clear mirrors have to hop chunks.
+    uint32_t chunkPeerLimit, chunkPlayerLimit, chunkTableLimit;   // records per chunk
+    uint32_t peerChunks, playerChunks, tableChunks;
+    uint32_t chunkedBytes;    // total shadow bytes for all chunk pairs (incl. the A->B gaps)
+    bool chunkedFits;         // the chunk plan fits inside kSessionStride
+    uint32_t memberCaveBytes; // estimated bytes for a piecewise member cave at this capacity (worst record kind)
 };
 
 constexpr uint32_t kStockPeerA = 0x60, kStockPlayerA = 0x1740, kStockTable = 0x446C;
@@ -1028,6 +1037,7 @@ constexpr SlotShadowLayout MakeSlotShadowLayout(uint32_t capacity) {
     L.blocksUsed = capacity <= 32 ? 1u : 2u;
     L.peerEntries = capacity - kPeerFirst;
     L.playerEntries = capacity - kPlayerFirst;
+    L.tableEntries = L.peerEntries;
     L.peerBytes = L.peerEntries * 0x158;
     L.playerBytes = L.playerEntries * 0xB0;
     L.tableBytes = L.peerEntries * 0xC;
@@ -1061,6 +1071,32 @@ constexpr SlotShadowLayout MakeSlotShadowLayout(uint32_t capacity) {
         L.tableBiasB = static_cast<int32_t>(kSessionStride) + static_cast<int32_t>(L.tableOffset) -
                        static_cast<int32_t>(kStockTable + kBlockDelta);
     }
+    // Chunked feasibility model: every array is split into chunks that fit below the 0x2210 A->B distance and
+    // chunk A is placed exactly 0x2210 before chunk B, so one cave constant per chunk works for either block base.
+    L.chunkPeerLimit = kBlockDelta / 0x158;     // 24 records
+    L.chunkPlayerLimit = kBlockDelta / 0xB0;    // 48 records
+    L.chunkTableLimit = kBlockDelta / 0xC;      // 1167 records
+    L.peerChunks = (L.peerEntries + L.chunkPeerLimit - 1) / L.chunkPeerLimit;
+    L.playerChunks = (L.playerEntries + L.chunkPlayerLimit - 1) / L.chunkPlayerLimit;
+    L.tableChunks = (L.tableEntries + L.chunkTableLimit - 1) / L.chunkTableLimit;
+    L.chunkedBytes = 0;
+    L.chunkedFits = true;
+    {
+        uint32_t cursor = 0;
+        const auto placeChunks = [&](uint32_t chunks, uint32_t perChunk, uint32_t record) {
+            for (uint32_t c = 0; c < chunks; ++c) {
+                const uint32_t a = (cursor + 0xF) & ~0xFu;
+                cursor = a + kBlockDelta + perChunk * record;   // A chunk + B chunk (upper bound; last may be short)
+            }
+        };
+        placeChunks(L.peerChunks, L.chunkPeerLimit, 0x158);
+        placeChunks(L.playerChunks, L.chunkPlayerLimit, 0xB0);
+        placeChunks(L.tableChunks, L.chunkTableLimit, 0xC);
+        L.chunkedBytes = cursor;
+        L.chunkedFits = cursor <= kSessionStride;
+    }
+    // Piecewise member cave: dispatch + one "orig + add + jmp" per chunk + stock fallback.
+    L.memberCaveBytes = 23 + L.peerChunks * 27;
     return L;
 }
 
@@ -1133,6 +1169,16 @@ int SlotLayoutSelfTest() {
             NOBLE_WARN("SlotLayout: capacity {} membership message would be 0x{:X} bytes (> 0xFFFF); needs a "
                        "message/framing change", L.capacity, static_cast<uint32_t>(L.msgSize));
         }
+        NOBLE_INFO("SlotLayout: cap={:>3} chunked model: peers {}x <= {} recs, players {}x <= {}, table {}x <= {}, "
+                   "shadow bytes 0x{:X} ({}), piecewise member cave ~{} bytes -> {}",
+                   L.capacity, L.peerChunks, L.chunkPeerLimit, L.playerChunks, L.chunkPlayerLimit,
+                   L.tableChunks, L.chunkTableLimit, L.chunkedBytes,
+                   L.chunkedFits ? "fits kSessionStride" : "DOES NOT FIT", L.memberCaveBytes,
+                   L.memberCaveBytes <= 48 ? "fits the current 48-byte cave slot" : "needs a larger cave entry");
+        if (!L.chunkedFits) ++failures;
+        if (L.capacity == 32 && (L.peerChunks != 1 || L.playerChunks != 1 || L.tableChunks != 1)) ++failures;
+        if (L.capacity == 64 && (L.peerChunks != 2 || L.playerChunks != 1 || L.tableChunks != 1)) ++failures;
+        if (L.capacity == 128 && (L.peerChunks != 5 || L.playerChunks != 3 || L.tableChunks != 1)) ++failures;
     }
     NOBLE_INFO("SlotLayout: {} check(s) failed (0 = all three layouts valid)", failures);
     return failures;

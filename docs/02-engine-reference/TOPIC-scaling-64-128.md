@@ -53,6 +53,31 @@ The constexpr model added in `src/host/SlotPatch.cpp` makes this explicit and va
 
 All three layouts are static_assert-ed to fit inside `kSessionStride = 0x61668` with no overlapping arrays.
 
+### 2.1 Two-block vs chunked shadow layout (decision)
+
+The two-block model above keeps each shadow array contiguous (good for the pointer-stepping loops and the whole-array
+copy/clear mirrors) but needs every cave/step site tagged with the block it addresses. That tagging is ambiguous for
+the generic helpers: e.g. `FUN_18039D620` (player add/update) takes a block pointer and its callers pass block-relative
+bases, so the same caved site can run for block A and block B at different times. A single constant cannot point A and
+B at two different shadow blocks.
+
+The alternative is a chunked layout that keeps one constant per index range: split every shadow array into chunks that
+fit below the 0x2210 A->B distance, and place chunk A exactly 0x2210 before chunk B. A site's cave then only needs a
+piecewise `if index < boundary: add Ck` dispatch and works for either block base, because the +0x2210 relationship is
+preserved inside each chunk pair. Chunk capacity: 25 peer records, 49 player records, 726 table entries per chunk.
+
+| capacity | peer chunks | player chunks | table chunks | chunked shadow bytes | piecewise member-cave size (est.) |
+|---|---|---|---|---|---|
+| 32 (current, stock layout kept) | 1 | 1 | 1 | 0xCB88 (upper bound) | ~50 B (current 41 B cave used) |
+| 64 | 2 | 1 | 1 | 0x10F38 | ~77 B |
+| 128 | 5 | 3 | 1 | 0x261C8 | ~158 B |
+
+All chunk plans fit inside `kSessionStride` (asserted by the self-test, see section 5). Cost of the chunked model: the
+member-cave entry must grow from 48 to >=160 bytes (53 sites -> ~8.5 KB of cave code, fine), and the pointer-stepping
+loops (9 step caves) and whole-array copy/clear mirrors must hop chunk boundaries instead of assuming one contiguous
+array. The validated plan is to use the chunked model for >32 capacity and keep the proven stock-relative single-block
+layout (biases 0) for 32.
+
 ## 3. Wire and message limits (measured/bounded, not yet fixed)
 
 | limit | stock | 32 (current) | needed for 64 | needed for 128 |
@@ -86,20 +111,22 @@ external calibration.
 ## 5. How this is validated without 64/128 clients
 
 1. `noble-dev.exe -test-slot-capacity` - headless, validates every layout (offsets, biases, overlap, stride, mask
-   words, extension/message sizes, required wire bits), exit code 0/non-zero. Evidence 2026-11-16: 32 unchanged
-   (ext 0x2200, msg 0xA300); 64 ext 0x6900 / msg 0xEA00 / peer 6 bits ok / player needs 6; 128 ext 0xF700 /
-   msg 0x17800 needs framing / peer+player need 7 bits.
+   words, extension/message sizes, required wire bits, and the chunked plan: chunk counts/limits, shadow bytes,
+   piecewise cave size), exit code 0/non-zero. Evidence 2026-11-16: 32 unchanged (ext 0x2200, msg 0xA300);
+   64 ext 0x6900 / msg 0xEA00 / peer 6 bits ok / player needs 6 / 2 peer + 1 player chunk, cave ~77 B;
+   128 ext 0xF700 / msg 0x17800 needs framing / peer+player need 7 bits / 5 peer + 3 player chunks, cave ~158 B.
 2. Install-level sessions: declare C slots and join with 2 clients (proves shadow storage, message registration,
    encoder/decoder validity at capacity even without C clients).
 3. Forced high slots (`NOBLE_SLOT_HIGH=1`, free-slot scans start at peer 17 / player 16) can place a handful of
    real clients at slots 17, 18, ... to exercise multiple shadow peers/players end-to-end; extend it per slot once
-   the A/B classification lands.
-4. Generator/self-tests for the widened encoder/decoder before a real 64/128 session is attempted.
+   real clients at slots 17, 18, ... to exercise multiple shadow peers/players end-to-end; extend it per slot once
+   the chunked-layout cave install lands.
 
 ## 6. Ordered work list
 
-1. Tag every generated member cave, table site, step loop and bound with its A/B shadow block (or table bias) so the
-   64/128 layout constants can be installed; keep the 32 path byte-identical (bias 0 assertion already in place).
+1. Install the chunked layout: grow the member-cave entry (48 -> >=160 B), teach the generator to emit piecewise
+   index-range constants (25 peer / 49 player / 726 table records per chunk), and make the 9 pointer-stepping step
+   caves plus the whole-array copy/clear mirrors hop chunk boundaries. Keep the 32 path byte-identical.
 2. Wire the capacity into `SlotPatch` install behind dev env gates (e.g. `NOBLE_MP_SLOTS=64|128`), one capacity at
    a time, with all-or-nothing byte checks and the install-level validation from section 5.
 3. Widen the membership encoder/decoder fields (peer/player index bits, multi-word masks) and the game-player event
