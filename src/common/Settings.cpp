@@ -295,6 +295,7 @@ void Settings::Load() {
 
     // Apply per-process command-line identity overrides passed by Relaunch::Start so multiple instances
     // running on the same PC retain their own logged-in account and player name across match relaunches.
+    bool sawIdentityOverride = false;
     {
         auto narrowUtf8 = [](const wchar_t* w) -> std::string {
             if (!w || !*w) return "";
@@ -309,6 +310,11 @@ void Settings::Load() {
         if (argv) {
             for (int i = 1; i + 1 < argc; ++i) {
                 const std::wstring arg = argv[i];
+                if (arg == L"-player-name" || arg == L"-service-tag" || arg == L"-account-user" ||
+                    arg == L"-account-token" || arg == L"-user-id" || arg == L"-account-dev" ||
+                    arg == L"-account-tester" || arg == L"-remember-account") {
+                    sawIdentityOverride = true;
+                }
                 if (arg == L"-player-name") {
                     d.playerName = narrowUtf8(argv[++i]);
                 } else if (arg == L"-service-tag") {
@@ -330,6 +336,7 @@ void Settings::Load() {
             LocalFree(argv);
         }
     }
+    m_identityFromCommandLine = sawIdentityOverride;
 
     if (!existed) {
         // New install: pace to the display instead of No limit, which held GPUs at 100 % (players can still pick
@@ -346,6 +353,62 @@ void Settings::Load() {
     if (!existed) {
         Save();
     }
+}
+
+void Settings::ReloadFromDisk() {
+    // The match child process - and every other Noble window on this PC - shares data\userdata\settings.json.
+    // Re-read it before drawing/using settings again so this process neither shows stale values nor writes them
+    // back over the newer file on its next APPLY. Identity fields stay on this process's launch-time values when
+    // it was relaunched with an identity (multiple windows on one PC must keep their own account and player name).
+    const bool keepIdentity = m_identityFromCommandLine;
+    SettingsData mine;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        mine = m_data;
+    }
+    Load();
+    if (keepIdentity) {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        m_data.playerName = mine.playerName;
+        m_data.serviceTag = mine.serviceTag;
+        m_data.accountUsername = mine.accountUsername;
+        m_data.accountToken = mine.accountToken;
+        m_data.accountUserId = mine.accountUserId;
+        m_data.isDeveloper = mine.isDeveloper;
+        m_data.isTester = mine.isTester;
+        m_data.rememberAccount = mine.rememberAccount;
+    }
+    const SettingsData after = Snapshot();
+    NOBLE_INFO("Settings: reloaded from disk (FOV {:.0f}, volume {:.2f}, identity {})",
+               after.fieldOfView, after.volumeGame,
+               keepIdentity ? "kept from this window's launch command line" : "from disk");
+}
+
+void Settings::TestReloadTick() {
+    // Test-only "-settings-reload-at <seconds>": fire ReloadFromDisk() once from the front-end loop. Same
+    // pattern as "-fov-test-at" in CameraFov: a deterministic hook so a test can prove that the menu process
+    // picks up a settings.json written by another Noble process.
+    static bool s_parsed = false, s_done = false;
+    static double s_at = 0.0;
+    static uint64_t s_start = 0;
+    const uint64_t now = GetTickCount64();
+    if (!s_parsed) {
+        s_parsed = true;
+        s_start = now;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-settings-reload-at") == 0) {
+                s_at = _wtof(argv[i + 1]);
+            }
+        }
+        if (argv) LocalFree(argv);
+        if (s_at <= 0.0) s_done = true;
+    }
+    if (s_done || now - s_start < static_cast<uint64_t>(s_at * 1000.0)) return;
+    s_done = true;
+    NOBLE_INFO("Settings: -settings-reload-at fired");
+    Settings::Get().ReloadFromDisk();
 }
 
 bool Settings::Save() {

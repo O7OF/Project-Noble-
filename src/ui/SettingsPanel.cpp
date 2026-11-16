@@ -382,6 +382,10 @@ void SettingsPanel::Render() {
     m_loaded = false;
   m_lastRenderFrame = frame;
   if (!m_loaded) {
+    // Another Noble process may have written settings.json while this window was idle (the match child saves
+    // the in-match SETTINGS page; a second window on the same PC shares the file). Refresh from disk before
+    // seeding the edit copy, so the panel never shows - or later writes back - values that are already stale.
+    Settings::Get().ReloadFromDisk();
     m_saved = Settings::Get().Snapshot();
     // Old saved menu-music values ("shuffle", piece names) play Reach's menu
     // theme: treat them as that track so they don't count as an unsaved change.

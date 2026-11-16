@@ -142,6 +142,10 @@ public:
 
     void Load();
     bool Save();
+    // Re-read the file that another Noble process may have written (the match child after in-match SETTINGS,
+    // or a second window on the same PC that shares data\userdata\settings.json). Keeps this process's
+    // command-line identity when it was relaunched with one, so multiple windows keep their own account/name.
+    void ReloadFromDisk();
 
     SettingsData Snapshot() const;
     bool Update(const SettingsData& data);   // replace and save; false when the file could not be written
@@ -150,6 +154,9 @@ public:
     // FRAME-RATE LIMIT default: the primary display's refresh rate, rounded down to the nearest offered limit
     // (60 Hz -> 60, 144 Hz -> 144, 75 Hz -> 60). Used for new installs and by SETTINGS' reset to defaults.
     static int DefaultFpsLimit();
+    // Test-only "-settings-reload-at <seconds>": calls ReloadFromDisk() once from the front-end loop, so a test
+    // can prove the menu picks up settings another Noble process wrote to the shared file.
+    static void TestReloadTick();
 
     std::filesystem::path FilePath() const;
     // Key bindings and preferences to a file and back, for moving them to another PC or sharing them. Account details, the
@@ -162,6 +169,7 @@ private:
     mutable std::recursive_mutex m_mutex;
     SettingsData m_data;
     bool m_loaded = false;
+    bool m_identityFromCommandLine = false;   // relaunched with -player-name / -account-* identity overrides
 };
 
 } // namespace noble

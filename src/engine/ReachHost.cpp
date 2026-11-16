@@ -674,6 +674,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     if (noble::BlamEngine::Active()) noble::BlamEngine::Active()->TickLiveDump();
     if (ReachArmory::IsMenuMode()) {
         CameraFov::TestMenuTick();   // test-only "-fov-apply-test-at": simulates SETTINGS > VIDEO > APPLY from the menu
+        Settings::TestReloadTick();  // test-only "-settings-reload-at": reload settings.json written by another process
         ReachArmory::Tick();
         if (a1 > 0x10000) {
             IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);

@@ -5054,6 +5054,22 @@ void ContainerMatchEnded(OverlayContext &ctx, DWORD exitCode) {
     return;
   }
 
+  // The match child process shares data\userdata\settings.json: options changed from the in-match SETTINGS
+  // page were saved by that process. Re-read the file before the menu draws again - otherwise the menu kept the
+  // values from before the match ("settings change when they go back to the main menu", 2026-11-16) and the
+  // next APPLY wrote those stale values back over the in-match changes.
+  Settings::Get().ReloadFromDisk();
+  {
+    const SettingsData reloaded = Settings::Get().Snapshot();
+    // Re-apply settings the restored menu surfaces live: audio volumes/mute and the controller virtual cursor.
+    // Window/display settings are left for the next launch or APPLY so the menu window is not resized under
+    // the player by an in-match resolution change.
+    ProcessAudio::ApplyAll(reloaded.volumeGame, reloaded.volumeMusic,
+                           reloaded.volumeOther, reloaded.masterMute);
+    UiPad::SetVirtualCursorEnabled(reloaded.padVirtualCursor);
+  }
+  NOBLE_INFO("FrontEndMenu: settings reloaded after the match");
+
   const bool isLobbyReturn =
       successor.find(L"-lobby-return") != std::wstring::npos;
   const bool isLeaveLobby = successor.empty() || successor == L"-leave-lobby" ||
