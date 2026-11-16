@@ -83,13 +83,18 @@ cheapest window mode. Measurements on the pinned build (idle system baseline 12.
    Remaining: guest names on direct/LAN launches are placeholders (`PLAYER n`) until the msg-27 identity data is used.
 ## Remaining blockers
 
-1. **High-slot (peer 17 / player 16) join, milestone 2.** With `NOBLE_SLOT_HIGH=1` the host now promotes peer 17 to
-   state 8 (`c33ef10`), but the follow-up membership **delta is rejected by the guest consumer** (ret 0 -> membership
-   reset -> guest sends msg 7, host CLOSE reason 10). Probe evidence (`ph5-20261116-112742`): the host's delta carries
-   player 0 with `peer 0 slot 4` while the guest decode shows `peer 1 slot 0` (slot 4 is out of the valid 0..3
-   range), so the delta's data/consistency check fails. Next step: find why the player-0 delta entry carries slot 4
-   and whether the producer/encoder fields for delta entries are consistent for high-slot peers (a further uncached
-   address path in the producer 0x39DD4C or the player-record slot write is likely).
+1. **High-slot (peer 17 / player 16) join, milestone 2 - membership layer FIXED, seat layer open.** Commit `48cd1d2`:
+   the message-27 peer-properties handler used stock peer math (`0x39D23E`/`0x39F04E`/`0x39F0C0`), whose peer-17
+   property copy overwrote player 0/1 records; player 0's slot became 4, the engine's 2-bit slot encoder leaked it
+   into the peer field (host sent `peer 0 slot 4`, guest decoded `peer 1 slot 0`) and the guest rejected the delta.
+   Three caves added (47 member caves) plus a producer-side invalid-slot sanitiser. Verified with `NOBLE_SLOT_PROBE=1`
+   and `NOBLE_SLOT_HIGH=1`: peer 17 reaches state 8 on both sides and the guest **accepts** the delta (ret 1, no
+   reset, msgSeq advances, peermask 0x20001 / pmask 0x10001, session state 6 local peer 17 record state 8).
+   **Remaining (next step):** the host still calls `boot_peer(17, reason 9)` every frame after msg 27 (Noble
+   suppresses it, `keeping peer 17`), i.e. the join-in-progress seat path still refuses the player; the guest channel
+   closes with reason 14 ~19 s later and the guest returns cleanly to the lobby. Next fixes are the still-uncaved
+   player-add/accept sites listed in the notes: `0x39740C`/`0x397503`/`0x39752A` (can_accept_player_join_request) and
+   `0x39FB62`/`0x39FB7D` (queued player-add apply), then a real 32-player session room.
 2. **16 players on one machine is not possible**: measured 5.2-5.9 GB working set per instance at 1280x720/30 fps/
    muted (23.9 GB for 5 of 31.8 GB). 16 instances need ~80-95 GB. Acceptance needs 3-4 PCs x 4-5 instances, or a
    Tyler-approved dev-only lower-memory profile for test instances. The harness already accepts `-connect <host-ip>`.
