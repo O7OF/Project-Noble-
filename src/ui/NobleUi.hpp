@@ -74,6 +74,7 @@ void DrawChallengeCard(const Career::Challenge& c, float width, bool focused,
 // Returns true when the physical mouse moved intentionally (exceeding minDistance deadzone,
 // rejecting stationary high-DPI sensor jitter and unpark/resize delta spikes).
 bool IsMouseMoved(float minDistance = 2.5f);
+void NotifyNavKey();
 
 // Text helpers (font may be nullptr = current font).
 float TextWidth(ImFont* font, float px, const char* text);

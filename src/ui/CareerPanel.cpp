@@ -316,12 +316,29 @@ void CareerPanel::Render() {
               IM_COL32(143, 216, 255, 55), 1.0f);
   ImGui::SetCursorScreenPos(ImVec2(tabOrigin.x, ruleY + 12.0f * s));
 
+  static double s_tabChangeTime = 0.0;
   if (s_prevTab != m_tab || (m_tab == 2 && s_prevCommendTab != m_commendTab)) {
     ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
     s_prevTab = m_tab;
     s_prevCommendTab = m_commendTab;
+    s_tabChangeTime = ImGui::GetTime();
   }
   ImGui::BeginChild("##careerBody", ImVec2(0, 0), ImGuiChildFlags_None);
+  if (s_tabChangeTime > 0.0) {
+    const double elapsed = ImGui::GetTime() - s_tabChangeTime;
+    if (elapsed < 0.18) {
+      const float t = static_cast<float>(elapsed / 0.18);
+      const float ease = 1.0f - std::pow(1.0f - t, 2.5f);
+      const int fadeAlpha = static_cast<int>((1.0f - ease) * 110.0f);
+      if (fadeAlpha > 0) {
+        ImDrawList *bdl = ImGui::GetWindowDrawList();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        bdl->AddRectFilled(
+            p0, ImVec2(p0.x + availW, p0.y + ImGui::GetWindowHeight()),
+            IM_COL32(8, 14, 22, fadeAlpha));
+      }
+    }
+  }
   // D-pad / Left Stick navigates tiles in all 4 tabs; Right Stick smoothly
   // scrolls everywhere, and LT/RT page-scrolls Record / Challenges / Ranks
   // while switching modes on Commendations.

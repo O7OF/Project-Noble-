@@ -2,6 +2,7 @@
 #include "common/ObfuscatedString.hpp"
 #include "common/EngineModule.hpp"
 #include "common/Logger.hpp"
+#include "common/Settings.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -571,7 +572,7 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
     }
     switch (uMsg) {
         case WM_MOUSEMOVE:
-            if (IsForeground(hwnd) && GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
+            if (IsForeground(hwnd) && (Settings::Get().Snapshot().mouseReticleCursor || GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0)) {
                 SetCursor(nullptr);
             }
             break;
@@ -643,12 +644,12 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
             // ReachHost clears the class cursor while it owns the mouse (mouse look) and restores the
             // arrow while a menu needs the pointer, so hide it only when the class cursor is cleared.
             if (LOWORD(lParam) == HTCLIENT && IsForeground(hwnd)) {
-                HCURSOR clsCursor = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
-                if (!clsCursor) {
+                if (Settings::Get().Snapshot().mouseReticleCursor || GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
                     SetCursor(nullptr);
                     return TRUE;
                 }
-                SetCursor(clsCursor);
+                HCURSOR clsCursor = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
+                SetCursor(clsCursor ? clsCursor : LoadCursorW(nullptr, IDC_ARROW));
                 return TRUE;
             }
             break;

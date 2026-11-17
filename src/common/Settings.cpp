@@ -185,6 +185,7 @@ void Settings::Load() {
             Read(j, "mouseSensitivityY", d.mouseSensitivityY);
             Read(j, "mouseAcceleration", d.mouseAcceleration);
             Read(j, "mouseSmoothing", d.mouseSmoothing);
+            Read(j, "mouseReticleCursor", d.mouseReticleCursor);
             Read(j, "invertLook", d.invertLook);
             Read(j, "toggleCrouch", d.toggleCrouch);
             Read(j, "toggleZoom", d.toggleZoom);
@@ -443,6 +444,7 @@ bool Settings::Save() {
         j["mouseSensitivityY"] = d.mouseSensitivityY;
         j["mouseAcceleration"] = d.mouseAcceleration;
         j["mouseSmoothing"] = d.mouseSmoothing;
+        j["mouseReticleCursor"] = d.mouseReticleCursor;
         j["invertLook"] = d.invertLook;
         j["toggleCrouch"] = d.toggleCrouch;
     j["toggleZoom"] = d.toggleZoom;

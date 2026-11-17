@@ -2,6 +2,7 @@
 
 #include "common/Settings.hpp"
 
+#include <cstdint>
 #include <imgui.h>
 #include <string>
 
@@ -76,6 +77,7 @@ private:
     void SyncBuffers();
 
     Cat m_cat = Cat::Graphics;
+    double m_catEnterTime = 0.0;
     bool m_loaded = false;
     int m_lastRenderFrame = 0;   // ImGui frame the panel was last drawn on (0 = never)
 

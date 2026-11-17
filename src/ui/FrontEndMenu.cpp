@@ -6502,15 +6502,39 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
 
   if (s_screenEnterTick != 0) {
     const ULONGLONG elapsed = GetTickCount64() - s_screenEnterTick;
-    if (elapsed < 150) {
-      const float t = static_cast<float>(elapsed) / 150.0f;
-      const float smooth = t * t * (3.0f - 2.0f * t);
-      const int alpha = static_cast<int>(std::round((1.0f - smooth) * 95.0f));
-      if (alpha > 0) {
+    constexpr ULONGLONG kTransitionMs = 260;
+    if (elapsed < kTransitionMs) {
+      const float t =
+          static_cast<float>(elapsed) / static_cast<float>(kTransitionMs);
+      const float ease = 1.0f - std::pow(1.0f - t, 3.0f);
+      const float rem = 1.0f - ease;
+
+      // 1. Soft atmospheric wash fade (deep UNSC blue-black)
+      const int bgAlpha = static_cast<int>(rem * 175.0f);
+      if (bgAlpha > 0) {
         ui.dl->AddRectFilled(vp->Pos,
                              ImVec2(vp->Pos.x + vp->Size.x,
                                     vp->Pos.y + vp->Size.y),
-                             IM_COL32(8, 13, 21, alpha));
+                             IM_COL32(6, 12, 20, bgAlpha));
+      }
+
+      // 2. Subtle cinematic horizon scan / accent bar sweep across top header
+      const float barY = ui.size.y * 0.14f;
+      const float sweepW = vp->Size.x * (0.3f + 0.7f * ease);
+      const int barAlpha = static_cast<int>(rem * 220.0f);
+      if (barAlpha > 0) {
+        ui.dl->AddLine(ImVec2(vp->Pos.x, vp->Pos.y + barY),
+                       ImVec2(vp->Pos.x + sweepW, vp->Pos.y + barY),
+                       IM_COL32(143, 224, 255, barAlpha), 1.5f * ui.s);
+        ui.dl->AddRectFilled(
+            ImVec2(vp->Pos.x, vp->Pos.y + barY),
+            ImVec2(vp->Pos.x + sweepW, vp->Pos.y + barY + 3.0f * ui.s),
+            IM_COL32(100, 195, 255, static_cast<int>(rem * 55.0f)));
+      }
+
+      // 3. Prevent any click-through across screens during the first 65 ms
+      if (elapsed < 65) {
+        UiPad::ConsumeAll();
       }
     }
   }

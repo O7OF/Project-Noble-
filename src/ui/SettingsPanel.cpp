@@ -348,6 +348,7 @@ void DrawControllerDiagram(float width, int layout, bool sticksSwapped,
 void SettingsPanel::SetTab(int tab) {
   const int n = static_cast<int>(Cat::Count);
   m_cat = static_cast<Cat>(((tab % n) + n) % n);
+  m_catEnterTime = ImGui::GetTime();
   m_focus = 0;
   m_focusInCategories = true;
 }
@@ -514,6 +515,7 @@ void SettingsPanel::Render() {
       // Zone 0: Left Column (Categories)
       if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) {
         m_cat = static_cast<Cat>((static_cast<int>(m_cat) + 1) % n);
+        m_catEnterTime = ImGui::GetTime();
         m_focus = 0;
         m_search[0] = 0;
         m_scrollToFocus = true;
@@ -522,6 +524,7 @@ void SettingsPanel::Render() {
       }
       if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) {
         m_cat = static_cast<Cat>((static_cast<int>(m_cat) + n - 1) % n);
+        m_catEnterTime = ImGui::GetTime();
         m_focus = 0;
         m_search[0] = 0;
         m_scrollToFocus = true;
@@ -567,6 +570,7 @@ void SettingsPanel::Render() {
     // Bumpers switch category smoothly from anywhere
     if (UiPad::TabPrev()) {
       m_cat = static_cast<Cat>((static_cast<int>(m_cat) + n - 1) % n);
+      m_catEnterTime = ImGui::GetTime();
       m_focus = 0;
       m_search[0] = 0;
       m_scrollToFocus = true;
@@ -575,6 +579,7 @@ void SettingsPanel::Render() {
     }
     if (UiPad::TabNext()) {
       m_cat = static_cast<Cat>((static_cast<int>(m_cat) + 1) % n);
+      m_catEnterTime = ImGui::GetTime();
       m_focus = 0;
       m_search[0] = 0;
       m_scrollToFocus = true;
@@ -669,6 +674,7 @@ void SettingsPanel::RenderCategories(float width, float height) {
     ImGui::PopID();
     if (clicked) {
       m_cat = static_cast<Cat>(i);
+      m_catEnterTime = ImGui::GetTime();
       m_focus = 0;
       m_focusInCategories = true;
       m_search[0] = 0;
@@ -821,6 +827,22 @@ void SettingsPanel::RenderRows(float width, float height) {
   }
   UiPad::ScrollWindow(false,
                       false); // right stick reads ahead of the focused row
+
+  if (m_catEnterTime > 0.0) {
+    const double elapsed = ImGui::GetTime() - m_catEnterTime;
+    if (elapsed < 0.18) {
+      const float t = static_cast<float>(elapsed / 0.18);
+      const float ease = 1.0f - std::pow(1.0f - t, 2.5f);
+      const int fadeAlpha = static_cast<int>((1.0f - ease) * 110.0f);
+      if (fadeAlpha > 0) {
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        dl->AddRectFilled(p0, ImVec2(p0.x + width, p0.y + height),
+                          IM_COL32(8, 14, 22, fadeAlpha));
+      }
+    }
+  }
+
   m_rowCount = 0;
   m_hover = Details{};
   m_focusDetails = Details{};
@@ -2124,6 +2146,12 @@ void SettingsPanel::KeyBindValue(int action) {
 
 void SettingsPanel::RenderKeyboardMouse() {
   Section("MOUSE");
+  if (Row("THEMED RETICLE CURSOR",
+          "Use the stylish controller-style circular reticle cursor with tactical crosshairs and click compression for in-app mouse navigation by default instead of the OS pointer.",
+          When::Apply, "On",
+          m_edit.mouseReticleCursor != m_saved.mouseReticleCursor)) {
+    ToggleValue(m_edit.mouseReticleCursor);
+  }
   if (Row("LOOK SENSITIVITY",
           "How far you turn for each bit of mouse movement. 1.00x is Noble's "
           "default.",
@@ -2901,7 +2929,8 @@ int SettingsPanel::CountDiff(const SettingsData &a, const SettingsData &b,
             (a.toggleCrouch != b.toggleCrouch) +
             (a.toggleZoom != b.toggleZoom) +
             (a.wheelUpAction != b.wheelUpAction) +
-            (a.wheelDownAction != b.wheelDownAction);
+            (a.wheelDownAction != b.wheelDownAction) +
+            (a.mouseReticleCursor != b.mouseReticleCursor);
     for (int i = 0; i < KeyBindings::kActionCount; ++i) {
       auto ia = a.keyOverrides.find(i);
       auto ib = b.keyOverrides.find(i);
@@ -3021,6 +3050,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     e.invertLook = d.invertLook;
     e.mouseAcceleration = d.mouseAcceleration;
     e.mouseSmoothing = d.mouseSmoothing;
+    e.mouseReticleCursor = d.mouseReticleCursor;
     e.toggleCrouch = d.toggleCrouch;
     e.toggleZoom = d.toggleZoom;
     e.wheelUpAction = d.wheelUpAction;

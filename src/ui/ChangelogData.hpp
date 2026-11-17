@@ -30,6 +30,20 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02024Items = {
+        {"UI & MOUSE", "Themed Reticle Cursor for Mouse & Keyboard",
+         "The in-app mouse now displays the stylish controller circular reticle cursor with tactical tick marks and tactile click compression by default instead of the OS pointer, with pixel-perfect alignment and toggleable in Settings."},
+        {"UI POLISH", "Cinematic Screen Transitions & Rock-Solid Focus",
+         "Implemented smooth atmospheric horizon-scan screen transitions across all menus, eliminated cross-screen click-through, and added intelligent navigation debounce to keep mouse and keyboard button focus precise and glitch-free."},
+    };
+
+    notes.push_back({
+        "v0.20.24",
+        "Themed In-App Mouse Reticle & Seamless UI Transitions",
+        "Themed Circular Reticle for Mouse Navigation + Glitch-Free UI Focus",
+        v02024Items
+    });
+
     const std::vector<ChangeItem> v02023Items = {
         {"AUDIO & ENGINE", "Cutscene Audio Unmute & Failsafe Watchdog",
          "Ensured gameplay, gunfire, and footstep sound effects cleanly restore upon skipping campaign cutscenes across all scenarios with active listener reset and sound class un-ducking."},

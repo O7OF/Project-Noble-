@@ -174,59 +174,87 @@ POINT s_lastPhysCursor{-99999, -99999};
 } // namespace
 
 bool Up() {
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) ||
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) ||
            (!IsVirtualCursorControllingMouse() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) ||
            ImGui::IsKeyPressed(ImGuiKey_UpArrow);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
 bool Down() {
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) ||
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) ||
            (!IsVirtualCursorControllingMouse() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) ||
            ImGui::IsKeyPressed(ImGuiKey_DownArrow);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
 bool Left() {
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
            (!IsVirtualCursorControllingMouse() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) ||
            ImGui::IsKeyPressed(ImGuiKey_LeftArrow);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
 bool Right() {
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
            (!IsVirtualCursorControllingMouse() && ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) ||
            ImGui::IsKeyPressed(ImGuiKey_RightArrow);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
-bool PageUp() { return ImGui::IsKeyPressed(ImGuiKey_GamepadL2); }
-bool PageDown() { return ImGui::IsKeyPressed(ImGuiKey_GamepadR2); }
+bool PageUp() {
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadL2);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
+}
+bool PageDown() {
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadR2);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
+}
 
 bool AcceptPressed() {
     if (s_acceptConsumed || ImGui::GetIO().WantTextInput) return false;
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) ||
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) ||
            ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
            ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
 
 bool BackPressed() {
     if (s_backConsumed) return false;
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
            ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
 
 bool ActionX() {
     if (s_xConsumed || ImGui::GetIO().WantTextInput) return false;
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false);
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
 
 bool ActionY() {
     if (s_yConsumed || ImGui::GetIO().WantTextInput) return false;
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
 
 bool TabPrev() {
     if (s_tabConsumed || ImGui::GetIO().WantTextInput) return false;
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false);
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
 
 bool TabNext() {
     if (s_tabConsumed || ImGui::GetIO().WantTextInput) return false;
-    return ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false);
+    const bool res = ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false);
+    if (res) NobleUi::NotifyNavKey();
+    return res;
 }
 
 void ConsumeAccept() { s_acceptConsumed = true; }
@@ -589,14 +617,38 @@ void DrawVirtualCursor(ImDrawList* dl) {
                       s_vcToastText.c_str());
     }
 
-    if (!(s_vcMenuActive && s_vcEnabled && s_vcConnected && s_vcControllingMouse && s_vcPosInit)) return;
+    if (!s_vcMenuActive) return;
 
-    const ImVec2 c(s_vcX, s_vcY);
-    const float outerR = (s_vcLmbHeld ? 9.5f : 12.5f) * s;
-    const float tickIn = (s_vcLmbHeld ? 4.5f : 5.5f) * s;
+    bool drawCursor = false;
+    ImVec2 c(0.0f, 0.0f);
+    bool isHeld = false;
+
+    if (s_vcEnabled && s_vcConnected && s_vcControllingMouse && s_vcPosInit) {
+        drawCursor = true;
+        c = ImVec2(s_vcX, s_vcY);
+        isHeld = s_vcLmbHeld;
+    } else if (Settings::Get().Snapshot().mouseReticleCursor) {
+        const bool inWindow = (io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f &&
+                               io.MousePos.x <= io.DisplaySize.x && io.MousePos.y <= io.DisplaySize.y &&
+                               io.MousePos.x != -FLT_MAX && io.MousePos.y != -FLT_MAX);
+        if (inWindow) {
+            drawCursor = true;
+            c = io.MousePos;
+            isHeld = io.MouseDown[0];
+        }
+    }
+
+    if (!drawCursor) return;
+
+    const bool anyHovered = ImGui::IsAnyItemHovered();
+    const float hoverBoost = anyHovered ? 1.0f * s : 0.0f;
+    const float outerR = (isHeld ? 9.5f : (12.5f + hoverBoost * 0.5f)) * s;
+    const float tickIn = (isHeld ? 4.5f : 5.5f) * s;
     const float tickOut = outerR + 4.5f * s;
-    const ImU32 coreCol = s_vcLmbHeld ? IM_COL32(255, 195, 85, 255) : IM_COL32(143, 224, 255, 250);
-    const ImU32 glowCol = s_vcLmbHeld ? IM_COL32(255, 180, 60, 75) : IM_COL32(100, 195, 255, 65);
+    const ImU32 coreCol = isHeld ? IM_COL32(255, 195, 85, 255)
+                                 : (anyHovered ? IM_COL32(165, 235, 255, 255) : IM_COL32(143, 224, 255, 250));
+    const ImU32 glowCol = isHeld ? IM_COL32(255, 180, 60, 75)
+                                 : (anyHovered ? IM_COL32(120, 215, 255, 80) : IM_COL32(100, 195, 255, 65));
 
     dl->AddCircleFilled(c, outerR + 2.0f * s, IM_COL32(6, 12, 20, 120), 28);
     dl->AddCircle(c, outerR + 2.5f * s, glowCol, 28, 3.0f * s);
@@ -607,7 +659,9 @@ void DrawVirtualCursor(ImDrawList* dl) {
     dl->AddLine(ImVec2(c.x + tickIn, c.y), ImVec2(c.x + tickOut, c.y), coreCol, lw);
     dl->AddLine(ImVec2(c.x, c.y - tickOut), ImVec2(c.x, c.y - tickIn), coreCol, lw);
     dl->AddLine(ImVec2(c.x, c.y + tickIn), ImVec2(c.x, c.y + tickOut), coreCol, lw);
-    dl->AddCircleFilled(c, 2.5f * s, IM_COL32(255, 255, 255, 255), 16);
+    dl->AddCircleFilled(c, (isHeld ? 2.8f : (anyHovered ? 2.6f : 2.2f)) * s,
+                        isHeld ? IM_COL32(255, 255, 255, 255)
+                               : (anyHovered ? IM_COL32(220, 248, 255, 255) : IM_COL32(255, 255, 255, 240)), 16);
 }
 
 } // namespace UiPad

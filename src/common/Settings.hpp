@@ -48,6 +48,7 @@ struct SettingsData {
     float mouseSensitivityY = 1.0f; // vertical look speed relative to horizontal (1 = same)
     float mouseAcceleration = 0.0f; // 0 = off: extra turn speed for fast flicks (0..1)
     float mouseSmoothing = 0.0f;    // 0 = off: evens out jitter, at the cost of a little latency (0..0.9)
+    bool mouseReticleCursor = true; // Use themed controller-style circular reticle cursor for mouse navigation
     bool invertLook = false;
     bool toggleCrouch = false;     // true: press Crouch once to stay crouched, press again to stand
     // true: Right Click/zoom key latches the third-person zoom instead of holding it (keyboard & mouse). The controller has

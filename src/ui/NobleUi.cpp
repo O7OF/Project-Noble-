@@ -577,6 +577,14 @@ void DrawChallengeCard(const Career::Challenge &c, float width, bool focused,
        c.done ? kDoneColour : kText, countStr.c_str());
 }
 
+static double s_lastNavKeyTime = 0.0;
+
+void NotifyNavKey() {
+  if (ImGui::GetCurrentContext()) {
+    s_lastNavKeyTime = ImGui::GetTime();
+  }
+}
+
 bool IsMouseMoved(float minDistance) {
   if (!ImGui::GetCurrentContext())
     return false;
@@ -584,7 +592,16 @@ bool IsMouseMoved(float minDistance) {
   const float dx = io.MouseDelta.x;
   const float dy = io.MouseDelta.y;
   const float dsq = dx * dx + dy * dy;
-  return (dsq >= (minDistance * minDistance) && dsq < 250000.0f);
+  if (dsq < (minDistance * minDistance) || dsq >= 250000.0f)
+    return false;
+  // If keyboard or gamepad navigation key was pressed recently (< 320ms), require a deliberate
+  // mouse movement (>= 12.0f px) so physical mouse jitter/hand weight never steals or glitches focus.
+  const double now = ImGui::GetTime();
+  if (now - s_lastNavKeyTime < 0.32) {
+    const float deliberate = std::max(minDistance * 2.5f, 12.0f);
+    return dsq >= (deliberate * deliberate);
+  }
+  return true;
 }
 
 } // namespace NobleUi
