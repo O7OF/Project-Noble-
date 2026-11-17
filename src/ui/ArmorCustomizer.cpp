@@ -609,7 +609,7 @@ struct SimpleOption {
     const char* description;
 };
 
-constexpr std::array<SimpleOption, 7> kArmorEffects = {{
+constexpr std::array<SimpleOption, 32> kArmorEffects = {{
     {"NONE", "default", "Standard combat configuration without external armor particle effects."},
     {"BIRTHDAY PARTY", "birthday_party", "Celebratory confetti and cheering crowd audio headshot effect."},
     {"HEART ATTACK", "heart_attack", "Cupid arrows and floating hearts trail the operator in combat."},
@@ -617,6 +617,31 @@ constexpr std::array<SimpleOption, 7> kArmorEffects = {{
     {"INCLEMENT WEATHER", "inclement_weather", "Localized electrical storm and lightning arcs crackle across the MJOLNIR shell."},
     {"LEGENDARY", "flames", "Legendary solar-plasma flames wreathe the operator's helmet."},
     {"ETERNAL", "blue_flames", "Bungie Eternal cobalt-plasma flames wreathe the operator's helmet."},
+    {"PRIMARY MATCH", "flames_primary_auto", "Flames take the colour of the primary armour palette."},
+    {"STEEL FLAME", "flame_pri_steel", "Flames coloured with the steel primary armour palette."},
+    {"SILVER FLAME", "flame_pri_silver", "Flames coloured with the silver primary armour palette."},
+    {"WHITE FLAME", "flame_pri_white", "Flames coloured with the white primary armour palette."},
+    {"BROWN FLAME", "flame_pri_brown", "Flames coloured with the brown primary armour palette."},
+    {"TAN FLAME", "flame_pri_tan", "Flames coloured with the tan primary armour palette."},
+    {"KHAKI FLAME", "flame_pri_khaki", "Flames coloured with the khaki primary armour palette."},
+    {"SAGE FLAME", "flame_pri_sage", "Flames coloured with the sage primary armour palette."},
+    {"OLIVE FLAME", "flame_pri_olive", "Flames coloured with the olive primary armour palette."},
+    {"DRAB FLAME", "flame_pri_drab", "Flames coloured with the drab primary armour palette."},
+    {"FOREST FLAME", "flame_pri_forest", "Flames coloured with the forest primary armour palette."},
+    {"GREEN FLAME", "flame_pri_green", "Flames coloured with the green primary armour palette."},
+    {"SEA FOAM FLAME", "flame_pri_sea_foam", "Flames coloured with the sea foam primary armour palette."},
+    {"TEAL FLAME", "flame_pri_teal", "Flames coloured with the teal primary armour palette."},
+    {"AQUA FLAME", "flame_pri_aqua", "Flames coloured with the aqua primary armour palette."},
+    {"CYAN FLAME", "flame_pri_cyan", "Flames coloured with the cyan primary armour palette."},
+    {"BLUE FLAME", "flame_pri_blue", "Flames coloured with the blue primary armour palette."},
+    {"COBALT FLAME", "flame_pri_cobalt", "Flames coloured with the cobalt primary armour palette."},
+    {"ICE FLAME", "flame_pri_ice", "Flames coloured with the ice primary armour palette."},
+    {"VIOLET FLAME", "flame_pri_violet", "Flames coloured with the violet primary armour palette."},
+    {"ORCHID FLAME", "flame_pri_orchid", "Flames coloured with the orchid primary armour palette."},
+    {"LAVENDER FLAME", "flame_pri_lavender", "Flames coloured with the lavender primary armour palette."},
+    {"MAROON FLAME", "flame_pri_maroon", "Flames coloured with the maroon primary armour palette."},
+    {"BRICK FLAME", "flame_pri_brick", "Flames coloured with the brick primary armour palette."},
+    {"ROSE FLAME", "flame_pri_rose", "Flames coloured with the rose primary armour palette."},
 }};
 
 

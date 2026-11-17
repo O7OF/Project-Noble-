@@ -1440,7 +1440,7 @@ static const std::vector<PmcgChange>* PmcgItem(const char* list, const std::stri
 
 // Armory effect ids (kArmorEffects) -> pmcg names.
 static int PrimaryFlameVariantForEffect(const std::string& id, int primaryColorIndex) {
-    if (id == "flames_primary_auto") return std::clamp(primaryColorIndex, 0, 29);
+    if (id == "flames_primary_auto") return std::clamp(primaryColorIndex, 0, kArmorEffectVariantCount - 1);
     const std::string prefix = "flame_pri_";
     if (id.rfind(prefix, 0) == 0) {
         const std::string suffix = id.substr(prefix.size());

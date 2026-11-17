@@ -54,24 +54,25 @@ inline constexpr std::array<PrimaryFlameEntry, 30> kPrimaryFlames = {{
 inline constexpr int kArmorEffectStockCount = 7;
 inline constexpr int kArmorEffectAutoIndex = 7;
 inline constexpr int kArmorEffectVariantBase = 8;
-inline constexpr int kArmorEffectCount = 38;
+inline constexpr int kArmorEffectVariantCount = 24;
+inline constexpr int kArmorEffectCount = kArmorEffectVariantBase + kArmorEffectVariantCount;
 inline constexpr uint32_t kArmorEffectCustomItemBase = 0xF0;
 
 // Custom MCC item id for a primary flame variant (translator hook maps 0xF0..0x10D to pmcg indices 7..36).
 inline constexpr uint32_t ArmorFlameCustomItemId(int variantIndex) {
-    return variantIndex >= 0 && variantIndex < 30 ? kArmorEffectCustomItemBase + static_cast<uint32_t>(variantIndex) : 0;
+    return variantIndex >= 0 && variantIndex < kArmorEffectVariantCount ? kArmorEffectCustomItemBase + static_cast<uint32_t>(variantIndex) : 0;
 }
 
 // Resolve an Armory effect list index to a custom item id. 0 = not a custom variant (stock effect path).
 inline uint32_t ArmorEffectCustomItemId(int effectIndex, int primaryColorIndex) {
-    if (effectIndex == kArmorEffectAutoIndex) return ArmorFlameCustomItemId(std::clamp(primaryColorIndex, 0, 29));
+    if (effectIndex == kArmorEffectAutoIndex) return ArmorFlameCustomItemId(std::clamp(primaryColorIndex, 0, kArmorEffectVariantCount - 1));
     const int variant = effectIndex - kArmorEffectVariantBase;
-    return (variant >= 0 && variant < 30) ? ArmorFlameCustomItemId(variant) : 0;
+    return (variant >= 0 && variant < kArmorEffectVariantCount) ? ArmorFlameCustomItemId(variant) : 0;
 }
 
 // pmcg list item name + region/permutation used by the Armory preview and by the primary flame variants.
 inline bool ArmorFlamePmcgTarget(int variantIndex, std::string& itemName, std::string& region, std::string& perm) {
-    if (variantIndex < 0 || variantIndex >= 30) return false;
+    if (variantIndex < 0 || variantIndex >= kArmorEffectVariantCount) return false;
     itemName = std::string("legendary_flame_pri_") + kPrimaryFlames[static_cast<size_t>(variantIndex)].id;
     if (variantIndex < 25) {
         region = "armor_fx";

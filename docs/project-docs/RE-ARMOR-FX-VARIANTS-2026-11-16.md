@@ -447,3 +447,28 @@ refreshed, and the Armory effect list trimmed back to the 7 stock effects (varia
 variant assets, palettes, render-model perms/markers and code remain in the repo for the redesign, but nothing variant
 related is selectable in the shipped UI build right now. Verified in the Armory: NONE shows no flame, LEGENDARY shows
 only the stock flames (no overlap).
+
+## 2026-11-19: working 24-colour variant set shipped (remaining 6 need runtime colour)
+
+Final root cause of the overlap: the engine only correctly marker-gates a maximum of **five armor-effect attachments**
+in total (one stock `armor_fx.effect` + four extra effect tags). With a fifth extra tag present the extra effects spawn
+regardless of the selected permutation (regular/gold flame mixed under every selection). Confirmed by bisection:
+9 attachments with 4 extras -> NONE/birthday clean, Steel/Brick correct; 9 attachments with 5 extras -> leaks return.
+
+Shipped layout:
+* Biped: 9 attachments - 5 stock (`shield_down.effect`, `body_damage_screen_distortion.effect`, `out_of_bounds.effect`,
+  `armor_fx.effect`, `flashlight_3p.light`) + `armor_fx_ext0..3.effect` (4 extra effect tags = 24 variant slots).
+  Dropped originals to make room: `night_vision.light`, `bungie_helmet.cheap_light`, `flashlight_1p.light`,
+  `shield_down.light`.
+* Armory list is 32 entries: 7 stock effects, PRIMARY MATCH (auto), 24 variants (Steel..Rose: steel, silver, white,
+  brown, tan, khaki, sage, olive, drab, forest, green, sea_foam, teal, aqua, cyan, blue, cobalt, ice, violet, orchid,
+  lavender, maroon, brick, rose). Rust/Coral/Peach/Gold/Yellow/Pale are hidden until the runtime-colour redesign; the
+  auto-match clamps a primary colour in that range to Rose for now.
+* `kArmorEffectVariantCount = 24`, custom item ids 0xF0..0x107, pmcg entries and armor_fx perms/markers for those 24.
+
+Verified: Armory NONE and Birthday show no regular flame; Steel shows a single grey flame; Brick a single red/pink flame;
+PRIMARY MATCH with a green primary shows green flames and green armour. In-match (Forge World override) Brick renders
+red/pink only and auto-match green renders green only. Evidence in `docs/evidence/armor-fx-primary-2026-11-17/`.
+
+The remaining 6 colours need a different mechanism (runtime particle palette/colour override per player, or a reworked
+hosting scheme) because every extra effect-tag attachment past the fifth leaks past permutation gating.
