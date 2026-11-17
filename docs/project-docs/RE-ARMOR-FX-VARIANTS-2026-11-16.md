@@ -418,3 +418,23 @@ Confirmed root causes of the overlapping/always-on regular flame:
 Verified after the fix: Armory NONE has no flames, Birthday/Pestilence no regular flame, BRICK FLAME shows only its
 own effect; stock flames and variants render in-match on the rebuilt Forge World map. All 30 variants share the same
 5-marker-tag/10-attachment layout. Thumbnails/photos left to Tyler.
+
+## 2026-11-18: current status - extra-attachment approach is NOT working
+
+Tyler's test on the 10-attachment build still shows: NONE/stock effects play the regular flame; variants overlap with the
+regular and/or gold flame; selecting the same variant on/off can swap which underlying flame appears; Pestilence shows
+several effects at once. Local captures reproduce this exactly, so it is a real engine/asset issue, not a stale install.
+
+Conclusion after bisection: the variant effect tags attached as extra biped attachments are **not permutation-gated**
+reliably. Their events spawn whenever their location markers resolve, regardless of the selected armor-effect
+permutation, so the stock flame/other variants stack underneath the selected one; removing/adding attachments changes
+which ones leak, which is why the symptom set looked inconsistent between builds. The 10-attachment cap workaround only
+reduced the number of leaks; it did not fix the gating.
+
+Therefore the current implementation (five `armor_fx_ext*.effect` attachments + 30 marker groups) is not shippable and
+the feature needs a redesign. Candidate directions: host variant events inside the stock `armor_fx.effect` tag with a
+small number of shared markers (if the location block limit can be worked around), or avoid effect tags entirely and
+drive the flame colour from runtime particle/palette state per player. Do not hand this build to Tyler as finished.
+
+Also fixed in the embedded Armory data during this pass: the Elite list (8c) `legendary_flame_pri_coral` still pointed at
+the old `armor_fx_31` permutation while the Spartan list correctly used `armor_fx_pri_00`; both lists now agree.

@@ -624,7 +624,7 @@ C armor_fx armor_fx_29 0
 S legendary_flame_pri_rust
 C armor_fx armor_fx_30 0
 S legendary_flame_pri_coral
-C armor_fx armor_fx_31 0
+C armor_fx_pri armor_fx_pri_00 0
 S legendary_flame_pri_peach
 C armor_fx_pri armor_fx_pri_00 0
 S legendary_flame_pri_gold
