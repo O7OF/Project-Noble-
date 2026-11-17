@@ -2850,7 +2850,11 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
             }
         }
 
-        if (block32 && (block32[8] & 0x80u) != 0) {
+        if (block32 && (block32[23] & 0x80u) != 0) {
+            out.flameActive = true;
+            out.flameVariant = std::clamp<int>(block32[23] & 0x1Fu, 0, 29);
+            noble::ParticleTint::RegisterBipedFlame(renderedObj, out.flameVariant);
+        } else if (block32 && (block32[8] & 0x80u) != 0) {
             out.flameActive = true;
             out.flameVariant = std::clamp<int>(block32[8] & 0x1Fu, 0, 29);
             noble::ParticleTint::RegisterBipedFlame(renderedObj, out.flameVariant);
@@ -3556,7 +3560,9 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                 const bool hasBlock32 = block32 && ((block32[14] & 0xF0u) == 0xA0u);
 
                 int remoteFlame = -1;
-                if (hasBlock32 && (block32[8] & 0x80u) != 0) {
+                if (hasBlock32 && (block32[23] & 0x80u) != 0) {
+                    remoteFlame = std::clamp<int>(block32[23] & 0x1Fu, 0, 29);
+                } else if (hasBlock32 && (block32[8] & 0x80u) != 0) {
                     remoteFlame = std::clamp<int>(block32[8] & 0x1Fu, 0, 29);
                 } else if ((rec[0x1A] & 0x80u) != 0) {
                     remoteFlame = std::clamp<int>(rec[0x1A] & 0x1Fu, 0, 29);
@@ -3579,6 +3585,24 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                         remoteSlots[1][0] = ArmorySrgbToLinear(static_cast<float>(block32[19]) / 255.0f);
                         remoteSlots[1][1] = ArmorySrgbToLinear(static_cast<float>(block32[20]) / 255.0f);
                         remoteSlots[1][2] = ArmorySrgbToLinear(static_cast<float>(block32[21]) / 255.0f);
+                        remoteWant[1] = remoteSlots[1];
+                    }
+                }
+                if (!remoteWant[0]) {
+                    const int pCol = hasBlock32 ? block32[10] : rec[1];
+                    if (pCol >= 0 && pCol < 30) {
+                        remoteSlots[0][0] = ArmorySrgbToLinear(kArmoryReachPaletteSrgb[pCol][0]);
+                        remoteSlots[0][1] = ArmorySrgbToLinear(kArmoryReachPaletteSrgb[pCol][1]);
+                        remoteSlots[0][2] = ArmorySrgbToLinear(kArmoryReachPaletteSrgb[pCol][2]);
+                        remoteWant[0] = remoteSlots[0];
+                    }
+                }
+                if (!remoteWant[1]) {
+                    const int sCol = hasBlock32 ? block32[11] : rec[2];
+                    if (sCol >= 0 && sCol < 30) {
+                        remoteSlots[1][0] = ArmorySrgbToLinear(kArmoryReachPaletteSrgb[sCol][0]);
+                        remoteSlots[1][1] = ArmorySrgbToLinear(kArmoryReachPaletteSrgb[sCol][1]);
+                        remoteSlots[1][2] = ArmorySrgbToLinear(kArmoryReachPaletteSrgb[sCol][2]);
                         remoteWant[1] = remoteSlots[1];
                     }
                 }
@@ -3720,8 +3744,8 @@ void ReachArmory::SyncMatchLiveBipeds() {
     // Elite slots 2/3 are the game's fixed Elite colours (EliteFixedChangeColorsSEH); for Spartans, both slots 2 and 3
     // are visor colors (haloreach+0x38DB0C).
     const float* const wantSlots[4] = {
-        sel.primaryCustom ? slot0 : nullptr,
-        sel.secondaryCustom ? slot1 : nullptr,
+        slot0,
+        slot1,
         (customVisor && !sel.isElite) ? slot2 : nullptr,
         (customVisor && !sel.isElite) ? slot3 : nullptr
     };

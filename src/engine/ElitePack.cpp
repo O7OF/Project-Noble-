@@ -1291,7 +1291,8 @@ int SetOfPiece(int slot, int index) {
 std::filesystem::path s_appearancePath;
 std::mutex s_picksMutex;
 uint8_t s_localPicks[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-uint8_t s_localEliteEffect = 0xFF;
+uint8_t s_localSpartanEffect = 0;
+uint8_t s_localEliteEffect = 0;
 int s_localSet = -1;
 uint8_t s_localColors[4] = {1, 10, 14, 14};
 uint8_t s_localCustomFlags = 0;
@@ -1315,6 +1316,38 @@ std::atomic<int> s_localSettingsIndex{-1};   // settings index the engine last a
 std::atomic<const uint8_t*> s_localUserSettingsPtr{nullptr};
 std::filesystem::file_time_type s_picksStamp{};
 std::atomic<int> s_picksLogged{0};
+
+static uint8_t ParsePmcgEffect(const nlohmann::json& obj, int primaryColor, int& outFlameVar) {
+    outFlameVar = -1;
+    if (!obj.is_object()) return 0;
+    int rawIdx = obj.value("armor_effect_index", 0);
+    const std::string id = obj.value("armor_effect_id", std::string());
+    if (rawIdx >= kArmorEffectVariantBase) {
+        outFlameVar = rawIdx - kArmorEffectVariantBase;
+        return 1;
+    }
+    if (rawIdx == kArmorEffectAutoIndex || id == "flames_primary_auto") {
+        outFlameVar = std::clamp(primaryColor, 0, 29);
+        return 1;
+    }
+    if (id.rfind("flame_pri_", 0) == 0) {
+        const std::string suffix = id.substr(10);
+        for (int i = 0; i < 30; ++i) {
+            if (suffix == kPrimaryFlames[static_cast<size_t>(i)].id) {
+                outFlameVar = i;
+                break;
+            }
+        }
+        return 1;
+    }
+    if (id == "flames" || rawIdx == 5) return 1;
+    if (id == "blue_flames" || rawIdx == 6) return 2;
+    if (id == "heart_attack" || rawIdx == 2) return 3;
+    if (id == "pestilence" || rawIdx == 3) return 4;
+    if (id == "inclement_weather" || rawIdx == 4) return 5;
+    if (id == "birthday_party" || rawIdx == 1) return 6;
+    return 0;
+}
 
 // Re-reads data\appearance.json when it changes (an Armory save mid-match reaches the next spawn).
 void RefreshLocalPicks() {
@@ -1342,17 +1375,6 @@ void RefreshLocalPicks() {
             std::fill(std::begin(s_localPicks), std::end(s_localPicks), uint8_t{0xFF});
         }
         s_localSet = set;
-
-        int fxIdx = el.value("armor_effect_index", 0);
-        const std::string fxId = el.value("armor_effect_id", std::string());
-        if (fxId == "flames" || fxIdx == 5) fxIdx = 1;
-        else if (fxId == "blue_flames" || fxIdx == 6) fxIdx = 2;
-        else if (fxId == "heart_attack" || fxIdx == 2) fxIdx = 3;
-        else if (fxId == "pestilence" || fxIdx == 3) fxIdx = 4;
-        else if (fxId == "inclement_weather" || fxIdx == 4) fxIdx = 5;
-        else if (fxId == "birthday_party" || fxIdx == 1) fxIdx = 6;
-        else fxIdx = 0;
-        s_localEliteEffect = (fxIdx >= 1 && fxIdx <= 6) ? static_cast<uint8_t>(fxIdx) : 0xFF;
 
         auto parseColorsFrom = [&](const nlohmann::json& src, uint8_t colors[4], uint8_t& cFlags, float customRgb[4][3], int& bIdx) {
             colors[0] = static_cast<uint8_t>(std::clamp(src.value("primary_color", j.value("primary_color", 1)), 0, 29));
@@ -1409,19 +1431,15 @@ void RefreshLocalPicks() {
             }
         }
 
-        int effIdx = 0;
-        int priCol = s_localColors[0];
-        if (s_localSpeciesElite) {
-            effIdx = el.value("armor_effect_index", 0);
-        } else if (j.contains("spartan") && j["spartan"].is_object()) {
-            effIdx = j["spartan"].value("armor_effect_index", 0);
-        }
-        int flameVar = -1;
-        if (effIdx >= kArmorEffectVariantBase) {
-            flameVar = effIdx - kArmorEffectVariantBase;
-        } else if (effIdx == kArmorEffectAutoIndex) {
-            flameVar = std::clamp(priCol, 0, 29);
-        }
+        // Parse Spartan & Elite effects and flame variants
+        int spFlameVar = -1;
+        const auto& sp = (j.contains("spartan") && j["spartan"].is_object()) ? j["spartan"] : emptyObj;
+        s_localSpartanEffect = ParsePmcgEffect(sp, s_localSpartanColors[0], spFlameVar);
+
+        int elFlameVar = -1;
+        s_localEliteEffect = ParsePmcgEffect(el, s_localEliteColors[0], elFlameVar);
+
+        const int flameVar = s_localSpeciesElite ? elFlameVar : spFlameVar;
         s_localFlameVariantIndex.store(flameVar);
         ParticleTint::SetVariantIndex(flameVar);
 
@@ -1508,7 +1526,6 @@ static void StampLocalAppearanceRecordLocked(uint8_t* rec, bool elite) {
     const uint8_t* cols = elite ? s_localEliteColors : s_localSpartanColors;
     const uint8_t cFlags = elite ? s_localEliteCustomFlags : s_localSpartanCustomFlags;
     const auto& cRgb = elite ? s_localEliteCustomRgb : s_localSpartanCustomRgb;
-    const int bIdx = elite ? s_localEliteLightsBrightnessIdx : s_localSpartanLightsBrightnessIdx;
 
     const bool lightsCust = (cFlags & (1 << 3)) != 0;
     rec[0x1B] = static_cast<uint8_t>((lightsCust ? 0x60 : 0x40) | (cols[3] & 0x1F));
@@ -1523,20 +1540,19 @@ static void StampLocalAppearanceRecordLocked(uint8_t* rec, bool elite) {
     rec[0x02] = cols[1];
     const int flameVar = s_localFlameVariantIndex.load();
     rec[0x1A] = (flameVar >= 0 && flameVar < 30) ? static_cast<uint8_t>(0x80 | (flameVar & 0x1F)) : 0;
+    rec[0x18] = s_localSpartanEffect;
+    rec[0x19] = s_localEliteEffect;
+
     if (elite) {
-        rec[0x18] = static_cast<uint8_t>(std::clamp(bIdx, 0, 127));
         if (NobleActive()) {
             const int set = (s_localSet >= 0 && s_localSet < kArmorySets) ? s_localSet : 0;
             for (int k = 0; k < 6; ++k)
                 rec[kRecordPieceBase + k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : SetPick(set, k);
             rec[kRecordPieceBase + 6] = kElitePiecesMarker;
             rec[kRecordEliteSet] = static_cast<uint8_t>(set);
-            if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) rec[kRecordEliteFx] = s_localEliteEffect;
         }
     } else {
         rec[0x03] = s_localSpartanVisorItemIndex;
-        rec[0x17] = static_cast<uint8_t>(std::clamp(bIdx, 0, 127));
-        rec[0x19] = static_cast<uint8_t>(0x40 | (s_localSpartanVisorItemIndex & 0x1F));
     }
 }
 
@@ -1594,10 +1610,12 @@ void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
             std::memcpy(block, picks, 6);
             block[6] = kElitePiecesMarker;
             block[7] = static_cast<uint8_t>(set);
-            if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) block[9] = s_localEliteEffect;
         }
+        block[8] = s_localSpartanEffect;
+        block[9] = s_localEliteEffect;
+
         const int flameVar = s_localFlameVariantIndex.load();
-        block[8] = (flameVar >= 0 && flameVar < 30) ? static_cast<uint8_t>(0x80 | (flameVar & 0x1F)) : 0;
+        block[23] = (flameVar >= 0 && flameVar < 30) ? static_cast<uint8_t>(0x80 | (flameVar & 0x1F)) : 0;
         block[10] = s_localColors[0];
         block[11] = s_localColors[1];
         block[12] = s_localColors[2];
@@ -1695,6 +1713,14 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
             if (!elite) {
                 spCopy[0x17] = 0;
                 spCopy[0x19] = 0;
+                if (localRecord && s_localSpartanEffect >= 1 && s_localSpartanEffect <= 6) {
+                    spCopy[0x18] = s_localSpartanEffect;
+                }
+            } else {
+                spCopy[0x18] = 0;
+                if (localRecord && s_localEliteEffect >= 1 && s_localEliteEffect <= 6) {
+                    spCopy[kRecordEliteFx] = s_localEliteEffect;
+                }
             }
             return s_builder(spCopy, mode, unit, player);
         }
@@ -1717,7 +1743,7 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
         for (int k = 0; k < 6; ++k)
             picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : SetPick(effectiveSet, k);
         eliteEffect = s_localEliteEffect;
-        if (eliteEffect == 0xFF && record[kRecordEliteFx] >= 1 && record[kRecordEliteFx] <= 6)
+        if ((eliteEffect < 1 || eliteEffect > 6) && record[kRecordEliteFx] >= 1 && record[kRecordEliteFx] <= 6)
             eliteEffect = record[kRecordEliteFx];
         StampLocalAppearanceRecordLocked(record, true);
     } else if (record[kRecordPieceBase + 6] == kElitePiecesMarker) {

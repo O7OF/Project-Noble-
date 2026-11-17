@@ -12,9 +12,9 @@ namespace noble {
 // from the version shown on the main menu (0.19.45 shipped with VERSION_PATCH = 44,
 // which made every 0.19.45 install offer v0.19.45 as an update forever).
 #ifdef NOBLE_DEV_BUILD
-constexpr std::string_view VERSION_STRING = "0.20.25-dev (Closed Source)";
+constexpr std::string_view VERSION_STRING = "0.20.26-dev (Closed Source)";
 #else
-constexpr std::string_view VERSION_STRING = "0.20.25 (Closed Source)";
+constexpr std::string_view VERSION_STRING = "0.20.26 (Closed Source)";
 #endif
 constexpr std::string_view APP_NAME = "Project Noble";
 
