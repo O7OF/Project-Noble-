@@ -4,6 +4,7 @@
 #include "ElitePack.hpp"
 #include "SharedTagCache.hpp"
 #include "common/Logger.hpp"
+#include "common/SaveCodec.hpp"
 #include "common/EngineModule.hpp"
 #include "common/ArmoryVisor.hpp"
 #include "network/NetworkTransport.hpp"
@@ -1111,10 +1112,12 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
         if (!objTable) return;
 
         using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
+        using UpdateRenderColorsFn = void(__fastcall*)(uint32_t);
         using BipedSetGenderFn = void(__fastcall*)(uint32_t, uint8_t);
         using SetRegionPermutationFn = uint8_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint8_t);
 
         auto SetChangeColor = reinterpret_cast<SetChangeColorFn>(base + 0x473858);
+        auto UpdateRenderColors = reinterpret_cast<UpdateRenderColorsFn>(base + 0x264A50);
         auto BipedSetGender = reinterpret_cast<BipedSetGenderFn>(base + 0x49BB84);
         auto SetRegionPermutation = reinterpret_cast<SetRegionPermutationFn>(base + 0x4729F4);
 
@@ -1223,6 +1226,7 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
                         SetChangeColor(objectDatum, s, w);
                     }
                 }
+                UpdateRenderColors(objectDatum);
             }
 
             // 2. Update Male vs Female body type on Spartan bipeds
@@ -2206,6 +2210,73 @@ void LoadSelectionFile(ReachArmorySelection& sel) {
         // A truncated or hand-edited file must never take the game down: keep the defaults.
     }
 }
+
+void LoadFromAppearanceFile(ReachArmorySelection& sel) {
+    if (s_dataDir.empty()) return;
+    std::error_code ec;
+    std::filesystem::path appPath = s_dataDir / "appearance.dat";
+    if (!std::filesystem::exists(appPath, ec)) {
+        const auto jsonPath = s_dataDir / "appearance.json";
+        if (std::filesystem::exists(jsonPath, ec)) appPath = jsonPath;
+    }
+    nlohmann::json j;
+    if (!SaveCodec::ReadJson(appPath, j)) return;
+    try {
+        sel.isElite = (j.value("species", 0) == 1);
+        const nlohmann::json emptyObj = nlohmann::json::object();
+        const auto& el = (j.contains("elite") && j["elite"].is_object()) ? j["elite"] : emptyObj;
+        const auto& colSrc = (sel.isElite && el.contains("primary_color")) ? el : j;
+
+        sel.primaryColorIndex = std::clamp(colSrc.value("primary_color", sel.primaryColorIndex), 0, 29);
+        sel.secondaryColorIndex = std::clamp(colSrc.value("secondary_color", sel.secondaryColorIndex), 0, 29);
+        sel.accentColorIndex = std::clamp(colSrc.value("accent_color", sel.accentColorIndex), 0, 29);
+        sel.lightsColorIndex = std::clamp(colSrc.value("lights_color", sel.lightsColorIndex), 0, 29);
+
+        sel.primaryCustom = colSrc.value("primary_custom", sel.primaryCustom);
+        sel.secondaryCustom = colSrc.value("secondary_custom", sel.secondaryCustom);
+        sel.accentCustom = colSrc.value("accent_custom", sel.accentCustom);
+        sel.lightsCustom = colSrc.value("lights_custom", sel.lightsCustom);
+
+        auto resolveLinearColor = [&](bool custom, const char* rgbKey, int palIdx, std::array<float, 3>& outLinear) {
+            float srgb[3] = {
+                kArmoryReachPaletteSrgb[palIdx][0],
+                kArmoryReachPaletteSrgb[palIdx][1],
+                kArmoryReachPaletteSrgb[palIdx][2]
+            };
+            if (custom && colSrc.contains(rgbKey) && colSrc[rgbKey].is_array() && colSrc[rgbKey].size() == 3) {
+                for (int i = 0; i < 3; ++i) srgb[i] = std::clamp(colSrc[rgbKey][i].get<float>(), 0.0f, 1.0f);
+            }
+            for (int i = 0; i < 3; ++i) outLinear[i] = ArmorySrgbToLinear(srgb[i]);
+        };
+        resolveLinearColor(sel.primaryCustom, "primary_custom_rgb", sel.primaryColorIndex, sel.primaryRgb);
+        resolveLinearColor(sel.secondaryCustom, "secondary_custom_rgb", sel.secondaryColorIndex, sel.secondaryRgb);
+        resolveLinearColor(sel.accentCustom, "accent_custom_rgb", sel.accentColorIndex, sel.accentRgb);
+        resolveLinearColor(sel.lightsCustom, "lights_custom_rgb", sel.lightsColorIndex, sel.lightsRgb);
+
+        const float rawB = std::clamp(colSrc.value("lights_brightness", j.value("lights_brightness", sel.lightsBrightness)), 0.5f, 65.5f);
+        sel.lightsBrightness = std::clamp(std::round(rawB * 2.0f) * 0.5f, 0.5f, 65.5f);
+
+        if (j.contains("spartan") && j["spartan"].is_object()) {
+            const auto& sp = j["spartan"];
+            const int uiVisor = std::clamp(sp.value("visor_color_index", sel.visorColorIndex), 0, 29);
+            const std::string visorId = sp.value("visor_id", sel.visor);
+            const int itemIdx = std::clamp(ArmoryVisorItemIndex(uiVisor, visorId), 0, 29);
+            sel.visorColorIndex = uiVisor;
+            if (!visorId.empty()) sel.visor = visorId;
+            else sel.visor = std::string(kArmoryVisorItemIds[itemIdx]);
+            for (int i = 0; i < 3; ++i) {
+                sel.visorRgb[i] = ArmorySrgbToLinear(kArmoryVisorRgb[itemIdx][i]);
+            }
+            if (sp.value("visor_custom", false) && sp.contains("visor_custom_rgb") &&
+                sp["visor_custom_rgb"].is_array() && sp["visor_custom_rgb"].size() == 3) {
+                for (int i = 0; i < 3; ++i) {
+                    sel.visorRgb[i] = ArmorySrgbToLinear(std::clamp(sp["visor_custom_rgb"][i].get<float>(), 0.0f, 1.0f));
+                }
+            }
+        }
+    } catch (...) {
+    }
+}
 } // namespace
 
 void ReachArmory::Initialize(const std::filesystem::path& dataDir) {
@@ -2214,6 +2285,7 @@ void ReachArmory::Initialize(const std::filesystem::path& dataDir) {
     {
         ArmoryLock lock(s_sceneMutex);
         LoadSelectionFile(s_selection);
+        LoadFromAppearanceFile(s_selection);
     }
 }
 
@@ -2509,8 +2581,12 @@ using EvalAnimParamsFn = void(__fastcall*)(int32_t a1,
                                            const uint16_t* stepWord,
                                            uint8_t* spPlus50,
                                            uint8_t* spPlus5C);
+using BindMeshPartMaterialFn = uint8_t(__fastcall*)(int32_t a1, uint8_t* rmsh, int32_t a3, int32_t a4, int32_t entryPoint);
+using PlayerColorBuilderFn = void(__fastcall*)(int32_t species, const uint8_t* colorBytes, float* outColors);
 static SetupPsConstantsFn s_origSetupPsConstants = nullptr;
 static EvalAnimParamsFn s_origEvalAnimParams = nullptr;
+static BindMeshPartMaterialFn s_origBindMeshPartMaterial = nullptr;
+static PlayerColorBuilderFn s_origPlayerColorBuilder = nullptr;
 static std::atomic<bool> s_psHookAttempted{false};
 static std::atomic<uint32_t> s_cachedLocalUnitDatum{0xFFFFFFFFu};
 static std::atomic<int> s_spartanLightsDiagCount{0};
@@ -2527,6 +2603,7 @@ struct BipedRenderColors {
     float lightsBrightness = 1.0f;
     bool visorActive = false;
     float visorSrgb[3] = { 0.85f, 0.53f, 0.14f };
+    float visorLinear[3] = { 0.69f, 0.24f, 0.017f };
     uint32_t renderedObj = 0xFFFFFFFFu;
 };
 
@@ -2571,9 +2648,12 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
             out.lightsSrgb[2] = LinearToSrgbChannel(s_cachedLightsB.load(std::memory_order_relaxed));
             out.lightsBrightness = std::clamp(s_cachedLightsBrightness.load(std::memory_order_relaxed), 0.5f, 65.5f);
             out.visorActive = s_cachedVisorActive.load(std::memory_order_relaxed);
-            out.visorSrgb[0] = LinearToSrgbChannel(s_cachedVisorR.load(std::memory_order_relaxed));
-            out.visorSrgb[1] = LinearToSrgbChannel(s_cachedVisorG.load(std::memory_order_relaxed));
-            out.visorSrgb[2] = LinearToSrgbChannel(s_cachedVisorB.load(std::memory_order_relaxed));
+            out.visorLinear[0] = s_cachedVisorR.load(std::memory_order_relaxed);
+            out.visorLinear[1] = s_cachedVisorG.load(std::memory_order_relaxed);
+            out.visorLinear[2] = s_cachedVisorB.load(std::memory_order_relaxed);
+            out.visorSrgb[0] = LinearToSrgbChannel(out.visorLinear[0]);
+            out.visorSrgb[1] = LinearToSrgbChannel(out.visorLinear[1]);
+            out.visorSrgb[2] = LinearToSrgbChannel(out.visorLinear[2]);
             return out.lightsActive || out.visorActive;
         };
 
@@ -2581,25 +2661,28 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
             return fillFromLocalCache();
         }
 
-        // In a match: resolve the player owning this biped from biped+0x1D0 (or player+0x28) in [TLS+0x18]
+        // In a match: resolve the player owning this biped from player+0x28 in [TLS+0x18] (falling back to biped+0x1D0)
         const uint8_t* players = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x18);
         if (!players) return false;
-        const int32_t maxPlayers = std::clamp(*reinterpret_cast<const int32_t*>(players + 0x44), 0, 16);
+        const int32_t maxPlayers = std::clamp(std::max(*reinterpret_cast<const int32_t*>(players + 0x44),
+                                                       *reinterpret_cast<const int32_t*>(players + 0x48)), 0, 16);
         const uint8_t* playerEntries = *reinterpret_cast<const uint8_t* const*>(players + 0x50);
         if (!playerEntries) return false;
 
         int32_t playerIdx = -1;
-        const uint32_t playerDatum = *reinterpret_cast<const uint32_t*>(bipedPtr + 0x1D0);
-        if (playerDatum != 0xFFFFFFFFu && static_cast<int32_t>(playerDatum & 0xFFFFu) < maxPlayers) {
-            playerIdx = static_cast<int32_t>(playerDatum & 0xFFFFu);
-        } else {
-            for (int32_t pi = 0; pi < maxPlayers; ++pi) {
-                const uint8_t* p = playerEntries + static_cast<size_t>(pi) * 0x490u;
-                if (*reinterpret_cast<const uint16_t*>(p) == 0) continue;
-                if (*reinterpret_cast<const uint32_t*>(p + 0x28) == bipedDatum) {
-                    playerIdx = pi;
-                    break;
-                }
+        for (int32_t pi = 0; pi < maxPlayers; ++pi) {
+            const uint8_t* p = playerEntries + static_cast<size_t>(pi) * 0x490u;
+            if (*reinterpret_cast<const uint16_t*>(p) == 0) continue;
+            if (*reinterpret_cast<const uint32_t*>(p + 0x28) == bipedDatum) {
+                playerIdx = pi;
+                break;
+            }
+        }
+        if (playerIdx < 0) {
+            const uint32_t playerDatum = *reinterpret_cast<const uint32_t*>(bipedPtr + 0x1D0);
+            if (playerDatum != 0xFFFFFFFFu && (playerDatum >> 16) != 0u &&
+                static_cast<int32_t>(playerDatum & 0xFFFFu) < maxPlayers) {
+                playerIdx = static_cast<int32_t>(playerDatum & 0xFFFFu);
             }
         }
         if (playerIdx < 0 || playerIdx >= maxPlayers) return false;
@@ -2679,6 +2762,11 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
                     out.visorSrgb[2] = kArmoryVisorRgb[vItem][2];
                 }
             }
+            if (out.visorActive) {
+                out.visorLinear[0] = ArmorySrgbToLinear(out.visorSrgb[0]);
+                out.visorLinear[1] = ArmorySrgbToLinear(out.visorSrgb[1]);
+                out.visorLinear[2] = ArmorySrgbToLinear(out.visorSrgb[2]);
+            }
         }
         return out.lightsActive || out.visorActive;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -2696,14 +2784,14 @@ static bool IsSpartanArmorLightsShader(int32_t f4Count, const float* f4) {
            std::abs(f4[3 * 4 + 2] - 0.737f) < 0.08f;
 }
 
-static bool IsSpartanVisorShader27(int32_t f4Count, const float* f4) {
-    // Primary Spartan helmet visor (sp=0x3C8CBDE4, 27 float4s):
-    //   f4[1] = (10,10,0,0), f4[5] = (0.660,0.660,0.660,0.660), f4[6] = (0.981,0.981,0.981,0.981)
-    //   f4[8], f4[9], f4[22] (animated), f4[23] = visor reflection & interior tint
-    return f4Count == 27 &&
-           std::abs(f4[1 * 4 + 0] - 10.0f) < 0.1f &&
-           std::abs(f4[5 * 4 + 0] - 0.660f) < 0.05f &&
-           std::abs(f4[6 * 4 + 0] - 0.981f) < 0.05f;
+static bool IsSpartanVisorShader21(int32_t f4Count, const float* f4) {
+    // Primary Spartan helmet interior visor (spartan_helmet_interior_visor, 21 float4s):
+    //   f4[1][0] == 3.0f, f4[8][0] == 1.0f
+    //   f4[6] (+0x60) & f4[7] (+0x70) = visor reflection tint, f4[17] (+0x110) = visor specular/env tint
+    // Evaluated strictly per-biped (never on map lights, because ResolveRenderedBipedColorsSEH requires objType == 0).
+    return f4Count == 21 &&
+           std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f &&
+           std::abs(f4[8 * 4 + 0] - 1.0f) < 0.1f;
 }
 
 static bool IsSpartanVisorShader24(int32_t f4Count, const float* f4) {
@@ -2772,13 +2860,13 @@ static void ApplyCharacterShadersToPsBufferSEH(uintptr_t base,
         if (!f4) return;
 
         const bool spLights = IsSpartanArmorLightsShader(f4Count, f4);
-        const bool spVisor27 = !spLights && IsSpartanVisorShader27(f4Count, f4);
-        const bool spVisor24 = !spLights && !spVisor27 && IsSpartanVisorShader24(f4Count, f4);
-        const bool elIllum8  = !spLights && !spVisor27 && !spVisor24 && IsEliteArmorSelfIllum8(f4Count, f4);
-        const bool elCards5  = !spLights && !spVisor27 && !spVisor24 && !elIllum8 && IsEliteIllumCards5(f4Count, f4);
-        const bool elEmiss8  = !spLights && !spVisor27 && !spVisor24 && !elIllum8 && !elCards5 && IsEliteEmissiveNodes8(f4Count, f4);
-        const bool elSuit12  = !spLights && !spVisor27 && !spVisor24 && !elIllum8 && !elCards5 && !elEmiss8 && IsEliteSuitSelfIllum12(f4Count, f4);
-        if (!spLights && !spVisor27 && !spVisor24 && !elIllum8 && !elCards5 && !elEmiss8 && !elSuit12) return;
+        const bool spVisor21 = !spLights && IsSpartanVisorShader21(f4Count, f4);
+        const bool spVisor24 = !spLights && !spVisor21 && IsSpartanVisorShader24(f4Count, f4);
+        const bool elIllum8  = !spLights && !spVisor21 && !spVisor24 && IsEliteArmorSelfIllum8(f4Count, f4);
+        const bool elCards5  = !spLights && !spVisor21 && !spVisor24 && !elIllum8 && IsEliteIllumCards5(f4Count, f4);
+        const bool elEmiss8  = !spLights && !spVisor21 && !spVisor24 && !elIllum8 && !elCards5 && IsEliteEmissiveNodes8(f4Count, f4);
+        const bool elSuit12  = !spLights && !spVisor21 && !spVisor24 && !elIllum8 && !elCards5 && !elEmiss8 && IsEliteSuitSelfIllum12(f4Count, f4);
+        if (!spLights && !spVisor21 && !spVisor24 && !elIllum8 && !elCards5 && !elEmiss8 && !elSuit12) return;
 
         BipedRenderColors colors{};
         if (!ResolveRenderedBipedColorsSEH(base, localUnit, menuMode, colors)) return;
@@ -2792,9 +2880,9 @@ static void ApplyCharacterShadersToPsBufferSEH(uintptr_t base,
         const float useG = colors.lightsSrgb[1];
         const float useB = colors.lightsSrgb[2];
         const float mult = std::clamp(colors.lightsBrightness, 0.5f, 65.5f);
-        const float visR = colors.visorSrgb[0];
-        const float visG = colors.visorSrgb[1];
-        const float visB = colors.visorSrgb[2];
+        const float visR = colors.visorLinear[0];
+        const float visG = colors.visorLinear[1];
+        const float visB = colors.visorLinear[2];
 
         const uint8_t* tp = static_cast<const uint8_t*>(templatePassRaw);
         const uint8_t* rt = static_cast<const uint8_t*>(routingInfoRaw);
@@ -2816,8 +2904,8 @@ static void ApplyCharacterShadersToPsBufferSEH(uintptr_t base,
                 } else if (srcF4Idx == 4u && psBuf[dstReg * 4 + 0] > 0.0f) {
                     psBuf[dstReg * 4 + 0] *= mult;
                 }
-            } else if (spVisor27 && colors.visorActive) {
-                if (srcF4Idx == 8u || srcF4Idx == 9u || srcF4Idx == 22u || srcF4Idx == 23u) {
+            } else if (spVisor21 && colors.visorActive) {
+                if (srcF4Idx == 6u || srcF4Idx == 7u || srcF4Idx == 17u) {
                     psBuf[dstReg * 4 + 0] = visR;
                     psBuf[dstReg * 4 + 1] = visG;
                     psBuf[dstReg * 4 + 2] = visB;
@@ -2890,13 +2978,13 @@ static void ApplyCharacterShadersToAnimParamsSEH(uintptr_t base,
         if (!f4) return;
 
         const bool spLights = IsSpartanArmorLightsShader(f4Count, f4);
-        const bool spVisor27 = !spLights && IsSpartanVisorShader27(f4Count, f4);
-        const bool spVisor24 = !spLights && !spVisor27 && IsSpartanVisorShader24(f4Count, f4);
-        const bool elIllum8  = !spLights && !spVisor27 && !spVisor24 && IsEliteArmorSelfIllum8(f4Count, f4);
-        const bool elCards5  = !spLights && !spVisor27 && !spVisor24 && !elIllum8 && IsEliteIllumCards5(f4Count, f4);
-        const bool elEmiss8  = !spLights && !spVisor27 && !spVisor24 && !elIllum8 && !elCards5 && IsEliteEmissiveNodes8(f4Count, f4);
-        const bool elSuit12  = !spLights && !spVisor27 && !spVisor24 && !elIllum8 && !elCards5 && !elEmiss8 && IsEliteSuitSelfIllum12(f4Count, f4);
-        if (!spLights && !spVisor27 && !spVisor24 && !elIllum8 && !elCards5 && !elEmiss8 && !elSuit12) return;
+        const bool spVisor21 = !spLights && IsSpartanVisorShader21(f4Count, f4);
+        const bool spVisor24 = !spLights && !spVisor21 && IsSpartanVisorShader24(f4Count, f4);
+        const bool elIllum8  = !spLights && !spVisor21 && !spVisor24 && IsEliteArmorSelfIllum8(f4Count, f4);
+        const bool elCards5  = !spLights && !spVisor21 && !spVisor24 && !elIllum8 && IsEliteIllumCards5(f4Count, f4);
+        const bool elEmiss8  = !spLights && !spVisor21 && !spVisor24 && !elIllum8 && !elCards5 && IsEliteEmissiveNodes8(f4Count, f4);
+        const bool elSuit12  = !spLights && !spVisor21 && !spVisor24 && !elIllum8 && !elCards5 && !elEmiss8 && IsEliteSuitSelfIllum12(f4Count, f4);
+        if (!spLights && !spVisor21 && !spVisor24 && !elIllum8 && !elCards5 && !elEmiss8 && !elSuit12) return;
 
         BipedRenderColors colors{};
         if (!ResolveRenderedBipedColorsSEH(base, localUnit, menuMode, colors)) return;
@@ -2905,9 +2993,9 @@ static void ApplyCharacterShadersToAnimParamsSEH(uintptr_t base,
         const float useG = colors.lightsSrgb[1];
         const float useB = colors.lightsSrgb[2];
         const float mult = std::clamp(colors.lightsBrightness, 0.5f, 65.5f);
-        const float visR = colors.visorSrgb[0];
-        const float visG = colors.visorSrgb[1];
-        const float visB = colors.visorSrgb[2];
+        const float visR = colors.visorLinear[0];
+        const float visG = colors.visorLinear[1];
+        const float visB = colors.visorLinear[2];
 
         if (spLights && colors.lightsActive) {
             f4Copy[3 * 4 + 0] = useR;
@@ -2922,16 +3010,10 @@ static void ApplyCharacterShadersToAnimParamsSEH(uintptr_t base,
                 NOBLE_INFO("ReachArmory: applied Spartan armor lights to obj=0x{:X} (menuMode={}, sRGB=({:.3f},{:.3f},{:.3f}), brightness=x{:.1f}, intensity={:.3f})",
                            colors.renderedObj, menuMode, useR, useG, useB, mult, f4Copy[4 * 4 + 0]);
             }
-        } else if (spVisor27 && colors.visorActive) {
-            f4Copy[8 * 4 + 0] = visR;  f4Copy[8 * 4 + 1] = visG;  f4Copy[8 * 4 + 2] = visB;
-            f4Copy[9 * 4 + 0] = visR;  f4Copy[9 * 4 + 1] = visG;  f4Copy[9 * 4 + 2] = visB;
-            f4Copy[22 * 4 + 0] = visR; f4Copy[22 * 4 + 1] = visG; f4Copy[22 * 4 + 2] = visB;
-            f4Copy[23 * 4 + 0] = visR; f4Copy[23 * 4 + 1] = visG; f4Copy[23 * 4 + 2] = visB;
-            static std::atomic<int> s_visorDiagCount{0};
-            if (s_visorDiagCount.fetch_add(1, std::memory_order_relaxed) < 5) {
-                NOBLE_INFO("ReachArmory: applied Spartan visor shader override to obj=0x{:X} (menuMode={}, sRGB=({:.3f},{:.3f},{:.3f}))",
-                           colors.renderedObj, menuMode, visR, visG, visB);
-            }
+        } else if (spVisor21 && colors.visorActive) {
+            f4Copy[6 * 4 + 0] = visR;  f4Copy[6 * 4 + 1] = visG;  f4Copy[6 * 4 + 2] = visB;
+            f4Copy[7 * 4 + 0] = visR;  f4Copy[7 * 4 + 1] = visG;  f4Copy[7 * 4 + 2] = visB;
+            f4Copy[17 * 4 + 0] = visR; f4Copy[17 * 4 + 1] = visG; f4Copy[17 * 4 + 2] = visB;
         } else if (spVisor24 && colors.visorActive) {
             f4Copy[9 * 4 + 0] = visR;  f4Copy[9 * 4 + 1] = visG;  f4Copy[9 * 4 + 2] = visB;
             f4Copy[10 * 4 + 0] = visR; f4Copy[10 * 4 + 1] = visG; f4Copy[10 * 4 + 2] = visB;
@@ -3002,6 +3084,83 @@ static void __fastcall Hook_EvalAnimParams(int32_t a1,
         s_menuMode.load(std::memory_order_relaxed));
 }
 
+static bool PrepareMeshPartMaterialSEH(uintptr_t base, uint8_t* rmsh) {
+    __try {
+        if (!rmsh) return false;
+        int32_t spCount = *reinterpret_cast<const int32_t*>(rmsh + 0x38);
+        uint32_t spPacked = *reinterpret_cast<const uint32_t*>(rmsh + 0x3C);
+        if (spCount <= 0 || spCount > 8 || !spPacked) {
+            spCount = *reinterpret_cast<const int32_t*>(rmsh + 0x1C);
+            spPacked = *reinterpret_cast<const uint32_t*>(rmsh + 0x20);
+        }
+        if (spCount <= 0 || spCount > 8 || !spPacked) return false;
+        const uint64_t* pointerBases = reinterpret_cast<const uint64_t*>(base + 0x4E39F20);
+        uint8_t* spBase = reinterpret_cast<uint8_t*>(pointerBases[spPacked >> 28] + static_cast<uint64_t>(spPacked) * 4u);
+        if (!spBase) return false;
+
+        bool matched = false;
+        for (int si = 0; si < spCount; ++si) {
+            uint8_t* sp = spBase + static_cast<size_t>(si) * 0xB0;
+            const int32_t f4Count = *reinterpret_cast<const int32_t*>(sp + 0x1C);
+            const uint32_t f4Packed = *reinterpret_cast<const uint32_t*>(sp + 0x20);
+            if (f4Count <= 0 || f4Count > 64 || !f4Packed) continue;
+            const float* f4 = reinterpret_cast<const float*>(pointerBases[f4Packed >> 28] + static_cast<uint64_t>(f4Packed) * 4u);
+            if (!f4) continue;
+            if (IsSpartanArmorLightsShader(f4Count, f4) ||
+                IsSpartanVisorShader21(f4Count, f4) ||
+                IsSpartanVisorShader24(f4Count, f4) ||
+                IsEliteArmorSelfIllum8(f4Count, f4) ||
+                IsEliteIllumCards5(f4Count, f4) ||
+                IsEliteEmissiveNodes8(f4Count, f4) ||
+                IsEliteSuitSelfIllum12(f4Count, f4)) {
+                // Force 0x2637F4 to call 0x262CE8 (Hook_SetupPsConstants) instead of binding a pre-baked static CB
+                *reinterpret_cast<int32_t*>(sp + 0xAC) = -1;
+                matched = true;
+            }
+        }
+        if (matched) {
+            // Clear the last-bound rmsh cache at [base + 0x29E2B60] so 0x263E68 never skips 0x2637F4
+            *reinterpret_cast<uint64_t*>(base + 0x29E2B60) = 0;
+        }
+        return matched;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static uint8_t __fastcall Hook_BindMeshPartMaterial(int32_t a1, uint8_t* rmsh, int32_t a3, int32_t a4, int32_t entryPoint) {
+    HMODULE hReach = noble::ReachModule();
+    const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+    const bool matched = base ? PrepareMeshPartMaterialSEH(base, rmsh) : false;
+    const uint8_t res = s_origBindMeshPartMaterial ? s_origBindMeshPartMaterial(a1, rmsh, a3, a4, entryPoint) : 0;
+    if (matched && base) {
+        __try {
+            *reinterpret_cast<uint64_t*>(base + 0x29E2B60) = 0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+    return res;
+}
+
+static void __fastcall Hook_PlayerColorBuilder(int32_t species, const uint8_t* colorBytes, float* outColors) {
+    if (s_origPlayerColorBuilder) {
+        s_origPlayerColorBuilder(species, colorBytes, outColors);
+    }
+    if (species == 0 && colorBytes && outColors) {
+        __try {
+            const uint8_t vIdx = colorBytes[2];
+            if (vIdx > 0 && vIdx < 30) {
+                const float r = ArmorySrgbToLinear(kArmoryVisorRgb[vIdx][0]);
+                const float g = ArmorySrgbToLinear(kArmoryVisorRgb[vIdx][1]);
+                const float b = ArmorySrgbToLinear(kArmoryVisorRgb[vIdx][2]);
+                outColors[6] = r; outColors[7] = g; outColors[8] = b;   // change_color[2] (tertiary_change_color)
+                outColors[9] = r; outColors[10] = g; outColors[11] = b; // change_color[3] (quaternary_change_color)
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+}
+
 static void EnsureSpartanLightsPsHook(uintptr_t base) {
     if (!base || s_psHookAttempted.exchange(true)) return;
     static const uint8_t kExpectedPsPrologue[11] = {
@@ -3040,6 +3199,43 @@ static void EnsureSpartanLightsPsHook(uintptr_t base) {
         }
     } else {
         NOBLE_WARN("ReachArmory: unexpected prologue at haloreach+0x262840; animated param hook skipped.");
+    }
+
+    static const uint8_t kExpectedBindPrologue[15] = {
+        0x48, 0x89, 0x5C, 0x24, 0x08, // mov [rsp+8], rbx
+        0x48, 0x89, 0x6C, 0x24, 0x10, // mov [rsp+10h], rbp
+        0x48, 0x89, 0x74, 0x24, 0x18  // mov [rsp+18h], rsi
+    };
+    uint8_t* bindTarget = reinterpret_cast<uint8_t*>(base + 0x263E68);
+    uint8_t bindActual[sizeof(kExpectedBindPrologue)] = {};
+    if (SafeCopyMem(bindActual, bindTarget, sizeof(bindActual)) &&
+        std::memcmp(bindActual, kExpectedBindPrologue, sizeof(kExpectedBindPrologue)) == 0) {
+        if (HookManager::InstallHook(bindTarget,
+                                     reinterpret_cast<void*>(&Hook_BindMeshPartMaterial),
+                                     reinterpret_cast<void**>(&s_origBindMeshPartMaterial),
+                                     "haloreach_bind_mesh_part_material")) {
+            NOBLE_INFO("ReachArmory: installed mesh part material binder hook at haloreach+0x263E68.");
+        }
+    } else {
+        NOBLE_WARN("ReachArmory: unexpected prologue at haloreach+0x263E68; material binder hook skipped.");
+    }
+
+    static const uint8_t kExpectedColorPrologue[10] = {
+        0x48, 0x89, 0x5C, 0x24, 0x08, // mov [rsp+8], rbx
+        0x48, 0x89, 0x7C, 0x24, 0x10  // mov [rsp+10h], rdi
+    };
+    uint8_t* colorTarget = reinterpret_cast<uint8_t*>(base + 0x38DB0C);
+    uint8_t colorActual[sizeof(kExpectedColorPrologue)] = {};
+    if (SafeCopyMem(colorActual, colorTarget, sizeof(colorActual)) &&
+        std::memcmp(colorActual, kExpectedColorPrologue, sizeof(kExpectedColorPrologue)) == 0) {
+        if (HookManager::InstallHook(colorTarget,
+                                     reinterpret_cast<void*>(&Hook_PlayerColorBuilder),
+                                     reinterpret_cast<void**>(&s_origPlayerColorBuilder),
+                                     "haloreach_player_color_builder")) {
+            NOBLE_INFO("ReachArmory: installed 30-finish Spartan visor color builder hook at haloreach+0x38DB0C.");
+        }
+    } else {
+        NOBLE_WARN("ReachArmory: unexpected prologue at haloreach+0x38DB0C; player color builder hook skipped.");
     }
 }
 
@@ -3123,14 +3319,19 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
         if (!objTable) return;
 
         using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
+        using UpdateRenderColorsFn = void(__fastcall*)(uint32_t);
         auto SetChangeColor = reinterpret_cast<SetChangeColorFn>(base + 0x473858);
+        auto UpdateRenderColors = reinterpret_cast<UpdateRenderColorsFn>(base + 0x264A50);
 
         const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
         uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
         if (!entries) return;
 
         const uint8_t* players = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x18);
-        const int32_t maxPlayers = players ? std::clamp(*reinterpret_cast<const int32_t*>(players + 0x44), 0, 16) : 0;
+        const int32_t maxPlayers = players
+            ? std::clamp(std::max(*reinterpret_cast<const int32_t*>(players + 0x44),
+                                  *reinterpret_cast<const int32_t*>(players + 0x48)), 0, 16)
+            : 0;
         const uint8_t* playerEntries = players ? *reinterpret_cast<const uint8_t* const*>(players + 0x50) : nullptr;
         const uint8_t* progTable = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x150);
 
@@ -3153,9 +3354,11 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
             const int32_t nSlots = std::min<int32_t>(slotCount, 4);
 
             if (localUnitDatum != 0xFFFFFFFFu && objectDatum == localUnitDatum) {
+                bool anySlot = false;
                 for (int32_t s = 0; s < nSlots; ++s) {
                     const float* w = wantSlots[s];
                     if (!w) continue;
+                    anySlot = true;
                     float* b = ccBase + s * 3;
                     float* a = ccActive + s * 3;
                     if (std::abs(b[0] - w[0]) > 1e-4f || std::abs(b[1] - w[1]) > 1e-4f || std::abs(b[2] - w[2]) > 1e-4f ||
@@ -3165,20 +3368,23 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                         SetChangeColor(objectDatum, s, w);
                     }
                 }
+                if (anySlot) UpdateRenderColors(objectDatum);
             } else if (playerEntries && maxPlayers > 0) {
                 // Remote player biped: apply that player's own replicated custom wheel colors or extended Spartan visor
                 int32_t playerIdx = -1;
-                const uint32_t playerDatum = *reinterpret_cast<const uint32_t*>(objPtr + 0x1D0);
-                if (playerDatum != 0xFFFFFFFFu && static_cast<int32_t>(playerDatum & 0xFFFFu) < maxPlayers) {
-                    playerIdx = static_cast<int32_t>(playerDatum & 0xFFFFu);
-                } else {
-                    for (int32_t pi = 0; pi < maxPlayers; ++pi) {
-                        const uint8_t* p = playerEntries + static_cast<size_t>(pi) * 0x490u;
-                        if (*reinterpret_cast<const uint16_t*>(p) == 0) continue;
-                        if (*reinterpret_cast<const uint32_t*>(p + 0x28) == objectDatum) {
-                            playerIdx = pi;
-                            break;
-                        }
+                for (int32_t pi = 0; pi < maxPlayers; ++pi) {
+                    const uint8_t* p = playerEntries + static_cast<size_t>(pi) * 0x490u;
+                    if (*reinterpret_cast<const uint16_t*>(p) == 0) continue;
+                    if (*reinterpret_cast<const uint32_t*>(p + 0x28) == objectDatum) {
+                        playerIdx = pi;
+                        break;
+                    }
+                }
+                if (playerIdx < 0) {
+                    const uint32_t playerDatum = *reinterpret_cast<const uint32_t*>(objPtr + 0x1D0);
+                    if (playerDatum != 0xFFFFFFFFu && (playerDatum >> 16) != 0u &&
+                        static_cast<int32_t>(playerDatum & 0xFFFFu) < maxPlayers) {
+                        playerIdx = static_cast<int32_t>(playerDatum & 0xFFFFu);
                     }
                 }
                 if (playerIdx < 0 || playerIdx >= maxPlayers) continue;
@@ -3237,9 +3443,11 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                         remoteWant[3] = remoteSlots[3];
                     }
                 }
+                bool anyRemoteSlot = false;
                 for (int32_t s = 0; s < nSlots; ++s) {
                     const float* w = remoteWant[s];
                     if (!w) continue;
+                    anyRemoteSlot = true;
                     float* b = ccBase + s * 3;
                     float* a = ccActive + s * 3;
                     if (std::abs(b[0] - w[0]) > 1e-4f || std::abs(b[1] - w[1]) > 1e-4f || std::abs(b[2] - w[2]) > 1e-4f ||
@@ -3249,6 +3457,7 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                         SetChangeColor(objectDatum, s, w);
                     }
                 }
+                if (anyRemoteSlot) UpdateRenderColors(objectDatum);
             }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -3281,6 +3490,24 @@ void ReachArmory::SyncMatchLiveBipeds() {
     HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+
+    // Keep match selection synchronized with appearance.dat if modified on disk
+    {
+        static std::filesystem::file_time_type s_lastAppWrite{};
+        static ULONGLONG s_lastAppCheck = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (now - s_lastAppCheck >= 500 && !s_dataDir.empty()) {
+            s_lastAppCheck = now;
+            std::error_code ec;
+            const auto appPath = s_dataDir / "appearance.dat";
+            const auto t = std::filesystem::last_write_time(appPath, ec);
+            if (!ec && t != s_lastAppWrite) {
+                s_lastAppWrite = t;
+                ArmoryLock lock(s_sceneMutex);
+                LoadFromAppearanceFile(s_selection);
+            }
+        }
+    }
 
     bool liveSynchronousSim = false;
     const bool hasLiveFlags = ReadEngineModeFlagsSEH(base, nullptr, &liveSynchronousSim);
@@ -3372,7 +3599,7 @@ void ReachArmory::NoteMapPath(const std::string& path) {
 // A string's id: namespace k (k>0) -> (k << 19) | (g - start of namespace k); the global block maps as in sidcsv.py.
 static size_t ReadMapStringIds(const std::string& path, const std::vector<std::string>& wanted,
                                std::unordered_map<std::string, uint32_t>& out) {
-    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
+    std::ifstream f(std::filesystem::path(reinterpret_cast<const char8_t*>(path.c_str())), std::ios::binary);
     if (!f) return 0;
     std::vector<char> h(0x48);
     if (!f.read(h.data(), h.size())) return 0;
@@ -3507,7 +3734,9 @@ void ReachArmory::SyncMarine() {
     ReachArmorySelection sel = GetSelection();
     // Dev test (2026-11-13): env NOBLE_MARINE_TEST="helmet=odst_light;flair_backpack=odst_jetpack;color=1,0,0;color2=0,0,1"
     // replaces the saved Marine picks.
-    if (const char* test = std::getenv("NOBLE_MARINE_TEST")) {
+    char testEnvBuf[512] = {};
+    if (GetEnvironmentVariableA("NOBLE_MARINE_TEST", testEnvBuf, sizeof(testEnvBuf)) > 0) {
+        const char* test = testEnvBuf;
         sel.marinePieces.clear();
         std::stringstream ss(test);
         std::string item;

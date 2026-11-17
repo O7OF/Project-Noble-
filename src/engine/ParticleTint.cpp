@@ -91,11 +91,11 @@ void ParseTintColour() {
     }
     if (spec.empty()) return;
     unsigned rr = 0, gg = 0, bb = 0;
-    if (std::sscanf(spec.c_str(), "%u,%u,%u", &rr, &gg, &bb) == 3) {
+    if (sscanf_s(spec.c_str(), "%u,%u,%u", &rr, &gg, &bb) == 3) {
         s_colour[0] = static_cast<float>(rr & 0xFF) / 255.0f;
         s_colour[1] = static_cast<float>(gg & 0xFF) / 255.0f;
         s_colour[2] = static_cast<float>(bb & 0xFF) / 255.0f;
-    } else if (spec.size() == 6 && std::sscanf(spec.c_str(), "%2x%2x%2x", &rr, &gg, &bb) == 3) {
+    } else if (spec.size() == 6 && sscanf_s(spec.c_str(), "%2x%2x%2x", &rr, &gg, &bb) == 3) {
         s_colour[0] = static_cast<float>(rr) / 255.0f;
         s_colour[1] = static_cast<float>(gg) / 255.0f;
         s_colour[2] = static_cast<float>(bb) / 255.0f;
@@ -163,7 +163,7 @@ bool IsFlamePalette(ID3D11ShaderResourceView* view, D3D11_TEXTURE2D_DESC* outDes
     view->GetResource(&resource);
     if (!resource) return false;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
-    if (FAILED(resource.As(&texture)) || !texture) return false;
+    if (FAILED(resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(texture.GetAddressOf()))) || !texture) return false;
     D3D11_TEXTURE2D_DESC desc{};
     texture->GetDesc(&desc);
     if (outDesc) *outDesc = desc;
@@ -190,7 +190,7 @@ void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceCon
             Microsoft::WRL::ComPtr<ID3D11Resource> res;
             views[d]->GetResource(&res);
             Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
-            if (!res || FAILED(res.As(&tex)) || !tex) continue;
+            if (!res || FAILED(res->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(tex.GetAddressOf()))) || !tex) continue;
             D3D11_TEXTURE2D_DESC td{};
             tex->GetDesc(&td);
             char key[96];

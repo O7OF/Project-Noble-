@@ -267,6 +267,7 @@ uint8_t __fastcall ExtraLoadHook(void* a1, const char* name) {
     const bool ours = s_loading && name && s_packEngineName == name;
     if (ours) {
         const uint8_t slot = At<HeaderSlotFn>(kHeaderSlot)(0xFFFF, name, 2);
+        (void)slot;
         NOBLE_INFO("ElitePack: header slot for {}: {}", name, slot ? "ready" : "failed");
     }
     const uint8_t ok = s_extraLoad(a1, name);
@@ -733,18 +734,22 @@ std::string Hex(const uint8_t* p, size_t n) {
 // Diagnostic (Elite toughness): logs the model's damage-related data so the pack Elite and the stock Elite
 // can be compared line by line. Raw dwords; " | " every 32 bytes.
 void DumpDamageData(const char* label, const TagTable& tt, uint32_t biped) {
+    (void)label;
     uint32_t model = 0xFFFFFFFFu;
     std::memcpy(&model, TagAt(tt.Address(biped & 0xFFFF)) + 0x70, 4);
     if (!tt.Is(model, kHlmt)) { NOBLE_WARN("ElitePack dump {}: no model", label); return; }
     const uint8_t* m = TagAt(tt.Address(model & 0xFFFF));
     NOBLE_INFO("ElitePack dump {}: biped 0x{:X} model 0x{:X} hlmt[0x00..0x1A0]:{}", label, biped, model, Hex(m, 0x1A0));
     auto block = [&](const uint8_t* base, size_t at, const char* name, size_t stride, int maxItems) {
+        (void)name;
+        (void)stride;
         int32_t count = 0;
         uint32_t packed = 0;
         std::memcpy(&count, base + at, 4);
         std::memcpy(&packed, base + at + 4, 4);
         if (count <= 0 || !packed) { NOBLE_INFO("ElitePack dump {}: {} (+0x{:X}) empty", label, name, at); return; }
         const uint8_t* e = TagAt(packed);
+        (void)e;
         for (int i = 0; i < std::min(count, maxItems); ++i)
             NOBLE_INFO("ElitePack dump {}: {} (+0x{:X}) {}/{}:{}", label, name, at, i, count, Hex(e + i * stride, stride));
     };
@@ -801,6 +806,7 @@ void MatchStockDamage(const TagTable& tt, uint32_t packElite, uint32_t stockElit
     float* packShield = reinterpret_cast<float*>(ModelOf(tt, packElite) + kModelShield);
     const float stockShield = *reinterpret_cast<const float*>(ModelOf(tt, stockElite) + kModelShield);
     const float oldShield = *packShield;
+    (void)oldShield;
     if (stockShield > 0.0f && stockShield < 10000.0f) *packShield = stockShield;
     NOBLE_INFO("ElitePack: pack Elite now uses the stock Elite's damage settings ({}; model shield {:g}, was {:g}; before: {})",
                VitalityText(pack), *packShield, oldShield, before);
@@ -1495,12 +1501,10 @@ void __fastcall BuildRecordHook(const uint8_t* userSettings, uint8_t* outRecord)
     if (s_buildRecordOriginal) s_buildRecordOriginal(userSettings, outRecord);
     if (!userSettings || !outRecord) return;
     const uintptr_t uAddr = reinterpret_cast<uintptr_t>(userSettings);
-    const int localIdx = s_localSettingsIndex.load();
-    const uintptr_t expectedLocalAddr = (s_base && localIdx >= 0 && localIdx < 16)
-        ? (s_base + 0x2A03C50 + static_cast<uintptr_t>(localIdx) * 0xAB8u)
-        : 0;
+    // 0x2C7A18 is only called for local controller settings slots (0x2A03C58 + i*0xAB8) and the local
+    // join-request override block (0x2A06910 used by 0x31EC34). Remote players arrive via 0x3A296C.
     const bool isLocalSettings = (userSettings == s_localUserSettingsPtr.load()) ||
-                                 (expectedLocalAddr != 0 && uAddr == expectedLocalAddr);
+                                 (s_base != 0 && uAddr >= s_base + 0x2A03C50u && uAddr < s_base + 0x2A07500u);
     if (!isLocalSettings) return;
     std::lock_guard<std::mutex> lock(s_picksMutex);
     RefreshLocalPicks();
@@ -1587,6 +1591,25 @@ void __fastcall ApplyProfileHook(int settingsIndex, uint8_t* player) {
     if (player) s_localUserSettingsPtr.store(player);
     if (s_applyProfileOriginal) s_applyProfileOriginal(settingsIndex, player);
     if (settingsIndex >= 0 && settingsIndex < 16) s_localSettingsIndex.store(settingsIndex);
+    if (!player) return;
+    std::lock_guard<std::mutex> lock(s_picksMutex);
+    RefreshLocalPicks();
+    const bool lightsCust = (s_localCustomFlags & (1 << 3)) != 0;
+    player[0xB1] = static_cast<uint8_t>((lightsCust ? 0x60 : 0x40) | (s_localColors[3] & 0x1F));
+    if (lightsCust) {
+        const int r6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][0] * 5.0f)), 0, 5);
+        const int g6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][1] * 5.0f)), 0, 5);
+        const int b6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][2] * 5.0f)), 0, 5);
+        const uint16_t w26 = static_cast<uint16_t>(0xF2 + (r6 * 36 + g6 * 6 + b6));
+        std::memcpy(player + 0xCA, &w26, sizeof(w26));
+    }
+    if (!s_localSpeciesElite) {
+        *reinterpret_cast<uint32_t*>(player + 0x98) = s_localSpartanVisorItemIndex;
+        player[0xAD] = static_cast<uint8_t>(std::clamp(s_localLightsBrightnessIdx, 0, 127));
+        player[0xAF] = static_cast<uint8_t>(0x40 | (s_localSpartanVisorItemIndex & 0x1F));
+    } else {
+        player[0xAE] = static_cast<uint8_t>(std::clamp(s_localLightsBrightnessIdx, 0, 127));
+    }
 }
 
 // Inspects the player datum associated with an appearance record to verify if it belongs
@@ -1760,13 +1783,21 @@ std::filesystem::path FindPackMap(const std::filesystem::path& dataDir) {
 
 void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::string& mode) {
     if (!engine || s_base) return;
-    if (mode != "multiplayer" && mode != "firefight" && mode != "forge" &&
-        mode != "mainmenu" && mode != "menu") return;
+    std::string lowerMode = mode;
+    std::transform(lowerMode.begin(), lowerMode.end(), lowerMode.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lowerMode == "campaign") {
+        s_base = reinterpret_cast<uintptr_t>(engine);
+        InstallPicks(dataDir);
+        return;
+    }
+    if (lowerMode != "multiplayer" && lowerMode != "firefight" && lowerMode != "forge" &&
+        lowerMode != "mainmenu" && lowerMode != "menu") return;
     if (HasArg(L"-no-elite-pack")) {
         NOBLE_INFO("ElitePack: off (-no-elite-pack)");
         return;
     }
-    const bool menuMode = (mode == "mainmenu" || mode == "menu");
+    const bool menuMode = (lowerMode == "mainmenu" || lowerMode == "menu");
     s_keepPackHealth = HasArg(L"-elite-pack-own-health");
     s_keepPackGlobals = HasArg(L"-elite-pack-keep-globals");
     s_keepDeathEffect = HasArg(L"-elite-pack-death-fx");

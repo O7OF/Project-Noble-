@@ -1653,6 +1653,21 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // the profile field exists (the engine: Steel) and the Armory's third colour word follows it.
         put(0xA0, kColor + accentColor);
 
+        // +0xA4 (Spartan) and +0xA8 (Elite) are read by 0x2EDA08 (0x2EDBEC..0x2EDC18) into record[0x26..0x27] (w26).
+        // Set 0xFFFFFFFF when palette lights are used, or 0xF2 + 6x6x6 custom lights RGB index when custom wheel lights are active.
+        auto encodeLightsW26 = [](const nlohmann::json& src) -> uint32_t {
+            if (!src.value("lights_custom", false) || !src.contains("lights_custom_rgb") ||
+                !src["lights_custom_rgb"].is_array() || src["lights_custom_rgb"].size() != 3) {
+                return 0xFFFFFFFFu;
+            }
+            const int r6 = std::clamp(static_cast<int>(std::lround(std::clamp(src["lights_custom_rgb"][0].get<float>(), 0.0f, 1.0f) * 5.0f)), 0, 5);
+            const int g6 = std::clamp(static_cast<int>(std::lround(std::clamp(src["lights_custom_rgb"][1].get<float>(), 0.0f, 1.0f) * 5.0f)), 0, 5);
+            const int b6 = std::clamp(static_cast<int>(std::lround(std::clamp(src["lights_custom_rgb"][2].get<float>(), 0.0f, 1.0f) * 5.0f)), 0, 5);
+            return static_cast<uint32_t>(0xF2 + (r6 * 36 + g6 * 6 + b6));
+        };
+        put(0xA4, encodeLightsW26(appearance));
+        put(0xA8, encodeLightsW26(el.contains("lights_custom") ? el : appearance));
+
         const std::string settingsTag = Settings::Get().Snapshot().serviceTag;
         const std::string armoryTag = str(appearance, "service_tag");
         const std::string effectiveTag =
