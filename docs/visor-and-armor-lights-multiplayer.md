@@ -1,0 +1,85 @@
+# Custom Visor & Armor Lights — Multiplayer & Shader Pipeline Documentation
+
+**Date:** 2026-11-17  
+**Modified Files:**
+- `src/engine/ReachArmory.cpp`
+- `src/engine/ElitePack.cpp`
+- `src/engine/ReachHost.cpp`
+- `src/common/ArmoryVisor.hpp`
+
+---
+
+## 1. Overview
+
+This document explains the root causes, `haloreach.dll` reverse-engineering findings, and runtime hooks/patches that make:
+1. **All 30 Spartan Visor Finishes (`0..29`)** (including *Blood Orange*, *Amethyst*, *Sapphire*, etc.) render on Spartan visors in both the Armory and in-game multiplayer without tinting map light fixtures or helmet attachment LEDs.
+2. **Custom Spartan & Elite Armor Lights** (30-color Reach palette + custom RGB wheel) and **Armor Light Brightness (`x0.5` to `x65.5`)** replicate across P2P multiplayer sessions and render per-biped for both local and remote players.
+
+---
+
+## 2. Root Causes Identified in `haloreach.dll`
+
+### A. Why Custom Visors Previously Modified Map Lights or Helmet Attachment LEDs
+1. **Global Tag Mutation (Map Lights Bug)**:
+   - Earlier code scanned all `rmsh` tags in the loaded map and mutated the static `float4` tag array (`f4[6]`, `f4[7]`, `f4[17]`) on every shader matching `f4Count == 21` (`f4[1][0] == 3.0f`, `f4[8][0] == 1.0f`). Because map fluorescent light fixtures share this 21-`float4` shader layout, mutating tag memory globally tinted the map's lights.
+2. **Helmet Attachment Shader Misidentification (Attachment Lights Bug)**:
+   - The 27-`float4` shader on the Spartan helmet (`sp=0x3C8CBDE4`, `f4Count == 27`, where `f4[22] = (1.0, 0.5, 0.0, 1.0)`) is the **Spartan helmet attachment shader** (e.g., the UA/HUL module LED light on Mark V \[B]), **not** the visor shader. Overriding `f4[22]` on `f4Count == 27` caused helmet attachment lights to change color when selecting a visor.
+3. **Pre-Baked Static Constant Buffer Skip on the Actual Visor Shaders**:
+   - The actual Spartan visor shaders are:
+     - `IsSpartanVisorShader21` (`f4Count == 21`, `f4[1][0] == 3.0f`, `f4[8][0] == 1.0f`; visor tint registers `f4[6]`, `f4[7]`, `f4[17]`)
+     - `IsSpartanVisorShader24` (`f4Count == 24`, `f4[1][0] == 10.0f`, `f4[4][0] == 5.0f`; visor tint registers `f4[9]`, `f4[10]`)
+   - Both shaders have **0 animated parameters** (`word[sp + 0x56] & 0xFC00 == 0`) and a pre-baked static D3D11 constant buffer handle (`*(int32_t*)(sp + 0xAC) != -1`).
+   - In `haloreach.dll+0x2637F4` (`BindMaterialPass`):
+     - At `0x180263938`: if `*(int32_t*)(sp + 0xAC) != -1`, the renderer binds the pre-baked static D3D11 constant buffer and at `0x180263CF9` **skips calling `0x180262CE8` (`SetupPsConstants`) completely**.
+     - Additionally, at `0x180263E94` (inside `0x180263E68` `BindMeshPartMaterial`), the renderer caches the last bound `rmsh` pointer in `[base + 0x29E2B60]` and skips `0x2637F4` if the same `rmsh` is drawn consecutively.
+
+### B. Why Extended Visors (`5..29`) Rendered White or Default In-Game
+- Inside `haloreach.dll+0x38DB0C` (`player_color_builder`):
+  ```cpp
+  void __fastcall player_color_builder(int32_t species, const uint8_t* colorBytes, float outColors[4][3]);
+  ```
+  This function is called on biped spawn (`0x4ACB2`), player color update (`0x4454C` / `0x7EF6C`), network player replication (`0x3B1805`), and inside the renderer every frame (`0x256893`).
+- At `0x18038DBEA..0x18038DBF9`, the engine reads `colorBytes[2]` (which is `record[3]`, the Spartan visor index `0..29`) and compares it against `dword ptr [mulg + 0x4B0]` (`5`, the count of stock visors `0..4`).
+- When `colorBytes[2] >= 5` (any custom visor `5..29` such as *Blood Orange* = `23`, *Amethyst* = `15`, *Sapphire* = `14`), `0x18038DBF9` jumps to `0x18038DC24` and writes `(1.0f, 1.0f, 1.0f)` (**white**) into `outColors[2]` (`change_color[2]`, `tertiary_change_color`) and `outColors[3]` (`change_color[3]`, `quaternary_change_color`).
+- Furthermore, when `SetChangeColor` (`0x180473858` -> `0x180264A50`) ran on the first tick a biped spawned, the `render_object` index in `[TLS + 0x678][objectIdx]` was still `0xFFFFFFFF`, causing `0x180264A50` to return early without writing the packed `0xFFRRGGBB` change colors into `render_object + 0x228`.
+
+### C. Why Armor Lights Failed to Replicate to Other Players in P2P Multiplayer
+1. **Wrong `userSettings` Offset & Missing Join-Request Override Block in `BuildRecordHook` (`0x2C7A18`)**:
+   - In `ElitePack.cpp`, `BuildRecordHook` checked if `userSettings` equaled `s_base + 0x2A03C50 + localIdx * 0xAB8`.
+   - Disassembly of `0x18031EC09` showed that the `userSettings` array starts at **`s_base + 0x2A03C58`** (8 bytes after `0x2A03C50`), and when a client encodes its join-request packet at `0x18031EC30`, it passes **`s_base + 0x2A06910`**. Because `BuildRecordHook` rejected those pointers, client join-request packets (`0x31EC34`) and session membership updates (`0x339B84`) never stamped the local player's armor lights color, brightness, custom RGB, or visor into `outRecord`.
+2. **`0x1802EDA08` (`ApplyProfile`) Overwriting `w26` After Calling `0x2C7A18`**:
+   - Inside `0x1802EDA08`, the engine calls `0x2C7A18` at `0x2EDBBA` and then at `0x2EDBEC..0x2EDC18` overwrites `tempRecord[0x26..0x27]` (`w26`, stored into `userSettings + 0xCA`) with `[profile + 0xA4]` (Spartan) or `[profile + 0xA8]` (Elite). Because `ReachHost.cpp` left `profile + 0xA4` and `0xA8` at `0`, `w26` was overwritten with `0`.
+3. **Biped-to-Player Lookup Order in `ReachArmory.cpp`**:
+   - In `ResolveRenderedBipedColorsSEH` and `SyncMatchLiveBipedsSEH`, checking `bipedPtr + 0x1D0` before scanning the player table (`[TLS + 0x18]`) for `playerPtr + 0x28 == bipedDatum` could misattribute a remote biped to player index `0` if the low 16 bits of `bipedPtr + 0x1D0` were `0`.
+
+---
+
+## 3. Solutions & Architecture Implemented
+
+### 1. Per-Biped Material Pass & Pixel Shader Constant Buffer Hooks (`src/engine/ReachArmory.cpp`)
+- **Removed `IsSpartanVisorShader27` (`f4Count == 27`)** so helmet attachment lights (`f4[22]`) are never modified by visor colors.
+- **Added `IsSpartanVisorShader21` (`f4Count == 21`) and retained `IsSpartanVisorShader24` (`f4Count == 24`)** in `ApplyCharacterShadersToPsBufferSEH` (`0x262CE8`) and `ApplyCharacterShadersToAnimParamsSEH` (`0x262840`), writing linear visor RGB (`colors.visorLinear[0..2]`) into `f4[6]`, `f4[7]`, `f4[17]` (for `f4Count == 21`) and `f4[9]`, `f4[10]` (for `f4Count == 24`).
+- **Installed `Hook_BindMeshPartMaterial` at `haloreach.dll+0x263E68`**:
+  - Before `s_origBindMeshPartMaterial` executes, `PrepareMeshPartMaterialSEH` checks if the mesh part's shader postprocess block matches any custom character shader (`IsSpartanArmorLightsShader`, `IsSpartanVisorShader21`, `IsSpartanVisorShader24`, `IsEliteArmorSelfIllum8`, `IsEliteIllumCards5`, `IsEliteEmissiveNodes8`, `IsEliteSuitSelfIllum12`).
+  - When matched, it sets `*(int32_t*)(sp + 0xAC) = -1` (forcing `0x2637F4` to call `0x262CE8` `Hook_SetupPsConstants` instead of binding a pre-baked static constant buffer) and clears `*(uint64_t*)(base + 0x29E2B60) = 0` before and after the call so consecutive draws never reuse a previous object's constant buffer.
+- **Strict Biped Gating**:
+  - `ResolveRenderedBipedColorsSEH` verifies `[base + 0xB43B38] != 0xFFFFFFFF` and `entry[0x04] == 0` (`object_type == biped`) in `[TLS + 0x10]`. Map geometry and map light fixtures return `false` and receive unmodified stock shader constants.
+
+### 2. 30-Finish Spartan Visor Color Builder Hook (`src/engine/ReachArmory.cpp`)
+- **Installed `Hook_PlayerColorBuilder` at `haloreach.dll+0x38DB0C`**:
+  - After `s_origPlayerColorBuilder(species, colorBytes, outColors)` runs, if `species == 0` (Spartan) and `colorBytes[2]` (visor index) is in `1..29`, converts `kArmoryVisorRgb[vIdx]` from sRGB to linear via `ArmorySrgbToLinear` and writes the linear RGB into both `outColors[2]` (`change_color[2]`) and `outColors[3]` (`change_color[3]`).
+- **Render Object Color Sync**:
+  - Added `UpdateRenderColors` (`haloreach.dll+0x264A50`) calls in `SyncArmoryLiveBipedEngineTickSEH` and `SyncMatchLiveBipedsSEH` so `render_object + 0x228` is updated as soon as the renderer allocates the biped's `render_object`.
+  - Added `LoadFromAppearanceFile` in `ReachArmory.cpp` so match sessions stay synchronized with `appearance.dat`.
+
+### 3. P2P Appearance Record Packing & Bitstream Replication (`src/engine/ElitePack.cpp`, `src/engine/ReachHost.cpp`)
+- The `0x28`-byte player appearance record (`player + 0xD8`, encoded over the network by `0x1803A2500`, decoded by `0x1803A296C`, and validated by `0x180146114`) carries all extended fields within stock bitstream limits:
+  - `record[0x03]`: Spartan visor index (`0..29`, passes `<= 0x1F` check in `0x146114`).
+  - `record[0x17]`: Spartan armor lights brightness index (`0..127` -> `x0.5..x64.0`) when `record[4] == 0` (zeroed in the temporary `spCopy` passed to `0x1055EC`).
+  - `record[0x18]`: Elite armor lights brightness index (`0..127`) when `record[4] == 1` (zeroed in the temporary `copy` passed to `0x1055EC`).
+  - `record[0x19]`: `0x40 | (visorItemIndex & 0x1F)` for Spartans.
+  - `record[0x1B]`: `(lightsCustom ? 0x60 : 0x40) | (lightsColorIndex & 0x1F)`.
+  - `record[0x26..0x27]` (`uint16_t w26`): `0xF2 + (r6 * 36 + g6 * 6 + b6)` ($6 \times 6 \times 6$ custom RGB cube, `0..215 <= 0xFD` check in `0x146114`) when `lightsCustom` is enabled.
+- Updated `BuildRecordHook` (`0x2C7A18`) in `ElitePack.cpp` to accept any local `userSettings` pointer in `[s_base + 0x2A03C50, s_base + 0x2A07500)`, covering all 4 local controller slots (`0x2A03C58 + i * 0xAB8`) and the client join-request override block (`0x2A06910`).
+- Updated `ApplyProfileHook` (`0x2EDA08`) in `ElitePack.cpp` and `ApplyArmoryAppearance` in `ReachHost.cpp` (`+0xA4` / `+0xA8`) so `userSettings` (`+0x98`, `+0xAD..0xB1`, `+0xCA`) retains the encoded lights and visor fields after profile application.
+- Updated `ResolveRenderedBipedColorsSEH` and `SyncMatchLiveBipedsSEH` in `ReachArmory.cpp` to match `playerPtr + 0x28 == bipedDatum` across all active player slots before falling back to `bipedPtr + 0x1D0`.
