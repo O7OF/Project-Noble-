@@ -271,3 +271,10 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
   patch, effect-tag location block extension, or dropping stock attachments (rejected).
 - Clean state restored (biped 9 attachments, change color none, map rebuilt); blue variant still verified. Next: RE the
   attachment runtime limit, then generate primary-palette variants + auto/selectable armory UI.
+
+### 2026-11-16 19:15 - #15-B marker/region activation is the real blocker (attachment cap disproved)
+- Extra attachments at slots 9-11 with distinct particles all rendered (hearts from slot 10), so attachments beyond 10 are
+  not the limit; a new permutation + new marker group on the stock armor_fx region with a stock particle did NOT activate
+  when selected, so added render-model markers/perms are ignored by the engine (runtime tables likely built from source).
+- Diagnostics cleaned up, map rebuilt, blue variant unaffected. Next options: proper HREK/Blender marker export, engine
+  runtime-table RE, or 6-colour fallback; primary-palette variant direction remains for when the markers work.
