@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <string>
 #include <functional>
+#include <atomic>
 
 namespace noble {
 
@@ -114,6 +115,14 @@ private:
     bool m_borderless = false;
     bool m_exclusiveFullscreen = false;
     MessageCallback m_customWndProc;
+    // Window geometry changes can be requested from the engine/render thread (the Settings UI is drawn
+    // there). SetWindowPos/SetForegroundWindow must run on the window's own thread, so cross-thread
+    // requests are coalesced here and posted to the window thread.
+    std::atomic<bool> m_pendingApply{ false };
+    std::atomic<uint32_t> m_pendingWidth{ 0 };
+    std::atomic<uint32_t> m_pendingHeight{ 0 };
+    std::atomic<bool> m_pendingBorderless{ false };
+    std::atomic<bool> m_pendingExclusive{ false };
 };
 
 } // namespace noble

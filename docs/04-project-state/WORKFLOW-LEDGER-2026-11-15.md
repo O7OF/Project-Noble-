@@ -395,3 +395,6 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
   mask preserves helmet; aura recoloured to kPrimaryFlames); build/dist/assets updated.
 - Commits: 686503e (steps 1-3), 958fb70 (six colours), 8830412 (thumbnails + menu preview).
 - Remaining: per-player M2, peer M3, optional photo pass, release decision.
+
+### 2026-11-17 05:45 - display-change freeze fixed
+- Reproduced: monitor change/ApplyWindowSettings on engine thread deadlocked with window-thread frame pump (stall\r\n  dump: engine thread in SetWindowPos/USER32, window thread in HoldFrame).\r\n- Fix: Window::ApplyWindowSettings detects cross-thread caller, coalesces pending geometry and posts\r\n  kMsgApplyWindowSettings; window proc applies on the owning thread. Added -display-change-test-at regression flag.\r\n- Verified cross-thread monitor move exits cleanly (was hang). Files src/host/Window.hpp/.cpp, src/main.cpp.\r\n

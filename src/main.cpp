@@ -1257,6 +1257,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int localPortOverride = 11774;   // test-only: lets two instances run on one PC (-local-port)
     int engineModeOverride = 0;
     int liveWindowTestAt = -1;   // test-only: switch to borderless after N seconds
+    int displayChangeTestAt = -1; // test-only: move the window to the next monitor after N seconds
     bool guestPostStart = false;
     bool thirdPerson = false;
     bool voiceProbe = false;
@@ -1356,6 +1357,8 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
                 voiceProbe = true;
             } else if (arg == L"-live-window-test" && i + 1 < numArgs) {
                 liveWindowTestAt = _wtoi(argvW[++i]);
+            } else if (arg == L"-display-change-test-at" && i + 1 < numArgs) {
+                displayChangeTestAt = _wtoi(argvW[++i]);
             } else if (arg == L"-third-person-distance" && i + 1 < numArgs) {
                 thirdPersonDistance = _wtoi(argvW[++i]);
                 thirdPerson = true;
@@ -2325,6 +2328,7 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     // 11. Native Win32 message pump: Drive frame rendering, wireframe dots, UI overlays, and swap chain Present
     const ULONGLONG liveWindowStart = GetTickCount64();
     bool liveWindowSwitched = false;
+    bool displayChangeSwitched = false;
     // NOBLE_STALL_DUMP=1: if the engine stops pumping frames for 15 s, dump every thread's stack once.
     {
         wchar_t stallEnv[8] = {};
@@ -2344,6 +2348,22 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     }
 
     while (window->ProcessMessages()) {
+        if (!displayChangeSwitched && displayChangeTestAt >= 0 &&
+            GetTickCount64() - liveWindowStart >= static_cast<ULONGLONG>(displayChangeTestAt) * 1000ull) {
+            displayChangeSwitched = true;
+            const noble::SettingsData st = noble::Settings::Get().Snapshot();
+            const int monitorCount = noble::Window::MonitorCount();
+            const int nextMonitor = monitorCount > 0 ? (st.monitor % monitorCount) + 1 : 0;
+            NOBLE_INFO("main: -display-change-test-at moving window from monitor {} to {} ({} displays)",
+                       st.monitor, nextMonitor, monitorCount);
+            // Call from a non-window thread, the way the Settings UI does (it renders on the engine thread).
+            noble::Window* winPtr = window.get();
+            std::thread([winPtr, st, nextMonitor] {
+                noble::Window::SetMonitorSetting(nextMonitor);
+                winPtr->ApplyWindowSettings(st.width, st.height, st.borderless, st.exclusiveFullscreen);
+                NOBLE_INFO("main: -display-change-test-at cross-thread ApplyWindowSettings returned (monitor {})", nextMonitor);
+            }).detach();
+        }
         if (!liveWindowSwitched && liveWindowTestAt >= 0 &&
             GetTickCount64() - liveWindowStart >= static_cast<ULONGLONG>(liveWindowTestAt) * 1000ull) {
             liveWindowSwitched = true;

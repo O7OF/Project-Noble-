@@ -71,6 +71,7 @@ bool ChosenMonitor(MONITORINFO& out) {
 // Posted by RequestFocus(): the window's own thread takes the keyboard focus back from the container
 // window it is hosted in (see EnsureContainerFocus).
 constexpr UINT kMsgEnsureFocus = WM_APP + 0x4F;
+constexpr UINT kMsgApplyWindowSettings = WM_APP + 0x50;
 
 // Container window mode: this process's window is a WS_CHILD of the launcher's top-level window instead
 // of a top-level window of its own. Set once, in Create().
@@ -231,6 +232,20 @@ Window::~Window() {
 
 void Window::ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless, bool exclusiveFullscreen) {
     if (!m_hwnd) return;
+    // The Settings panel is rendered on the engine/render thread. Calling SetWindowPos/SetForegroundWindow
+    // from there deadlocks against the window thread's frame pump (monitor/display changes froze the game).
+    // Marshal every cross-thread geometry change to the window's own thread.
+    if (GetCurrentThreadId() != GetWindowThreadProcessId(m_hwnd, nullptr)) {
+        m_pendingWidth.store(width);
+        m_pendingHeight.store(height);
+        m_pendingBorderless.store(borderless || exclusiveFullscreen);
+        m_pendingExclusive.store(exclusiveFullscreen);
+        m_pendingApply.store(true);
+        PostMessageW(m_hwnd, kMsgApplyWindowSettings, 0, 0);
+        NOBLE_INFO("Window: queued display/window change on the window thread ({}x{}, monitor {})",
+                   width, height, s_monitorSetting.load());
+        return;
+    }
     m_exclusiveFullscreen = exclusiveFullscreen;
     m_borderless = borderless || exclusiveFullscreen;
     m_width = width;
@@ -584,6 +599,12 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
         case WM_CLOSE:
             m_shouldClose = true;
             DestroyWindow(hwnd);
+            return 0;
+        case kMsgApplyWindowSettings:
+            if (m_pendingApply.exchange(false)) {
+                ApplyWindowSettings(m_pendingWidth.load(), m_pendingHeight.load(), m_pendingBorderless.load(),
+                                    m_pendingExclusive.load());
+            }
             return 0;
         case kMsgRefreshGeometry:
             if (!IsExclusiveFullscreenActive()) {

@@ -307,3 +307,18 @@ docs/test-tools/make_armor_fx_helmet_thumbs.py.
 - The Armory grid uses generated icons (not Tyler's own photos). If Tyler wants bespoke photos later, replace the same `flame_pri_*.png` files; no code change needed.
 - No version bump/release was made. Runtime hook is inert without a variant selection or dev flag; if a clean build wipes `build\...\data\ui`, rerun the thumbnail generator (or restore from `assets/ui/reach/armory/armor_effects`).
 - Matching is palette-based (256x16 fmt91 slot2). If another particle system ever binds that exact palette at slot 2 it would also tint; restrict to the particle PS hash if that becomes visible.
+
+
+## 11. Display-change freeze fixed (2026-11-17 05:45)
+
+**Symptom:** changing SETTINGS > GRAPHICS > MONITOR (or display mode/window geometry) froze the game.
+
+**Cause:** the Settings panel is rendered on the engine/render thread (`HostSlot1_FrameTick` -> `FrontEndMenu::RenderOverlay` -> `SettingsPanel::Apply`). `SettingsPanel::Apply` called `Window::ApplyWindowSettings` directly, which calls `SetWindowPos` / `SetForegroundWindow`. Those functions send window messages synchronously to the **window thread**, which is the thread running the frame pump / `HoldFrame`; the two threads deadlocked. The captured stall dump showed the engine thread in
+`ApplyWindowSettings -> SettingsPanel::Apply -> ... -> USER32.dll`, while the window thread was in the frame pump.
+
+**Fix:** `Window::ApplyWindowSettings` now checks whether the caller is the window's owning thread. Cross-thread requests are coalesced into pending width/height/borderless/exclusive fields and posted as `kMsgApplyWindowSettings` to the window; the window proc applies them on the window thread. Existing same-thread calls (startup/refresh) are unchanged.
+
+**Files:** `src/host/Window.hpp`, `src/host/Window.cpp`.
+**Diagnostic flag:** `-display-change-test-at <seconds>` moves the window to the next monitor from a non-window thread after N seconds (test only).
+**Verified:** before the fix the run froze and `NOBLE_STALL_DUMP=1` dumped threads after 15 s; after the fix the cross-thread monitor move returns immediately, the window-thread message applies it, and `-quit-after 35` exits cleanly.
+**Log markers:** `Window: queued display/window change on the window thread (...)`.

@@ -400,3 +400,5 @@ Full index: `project-docs\REFERENCE-LIBRARY-2026-11-15.md`. Key points:
 2. M3 peer replication of the selected effect/variant.
 3. Optional: Tyler photo pass to replace generated icons; release/version decision (Tyler only).
 4. Do not ship map pack for colors - runtime route supersedes it.
+
+- **FIXED 2026-11-17 05:45:** display/monitor change freeze. Settings panel runs on the engine thread; window geometry calls are now marshalled to the window thread via `kMsgApplyWindowSettings`. Test with `-display-change-test-at N`; before fix it hung, after fix clean exit.

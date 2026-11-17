@@ -593,3 +593,5 @@ These flags are inert without a primary-flame variant selected (or the flag itse
 
 Effect index map: 32=RUST, 33=CORAL, 34=PEACH, 35=GOLD, 36=YELLOW, 37=PALE. On stock maps the profile writes the stock
 LEGENDARY item and the runtime palette supplies the colour; no map rebuild or mod is needed.
+
+- `-display-change-test-at <seconds>`: dev regression flag; moves the window to the next monitor from a non-window thread after N seconds. Used to reproduce/verify the display-change deadlock fix.
