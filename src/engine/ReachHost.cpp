@@ -2286,6 +2286,80 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     rx = InputTuning::ApplyLookGain(rx, InputTuning::LookStickGain(s_pad.padLookSpeedX));
     ry = InputTuning::ApplyLookGain(ry, InputTuning::LookStickGain(s_pad.padLookSpeedY));
 
+    // Check custom pad bindings for Noble / engine extended actions:
+    if (!UiCursorActive() && s_padMode) {
+        const auto* overrides = &s_pad.padBindings;
+        auto padActionActive = [&](int act) -> bool {
+            return PadLayouts::IsActionActive(s_pad.padLayout, act, overrides, g.wButtons, g.bLeftTrigger, g.bRightTrigger, g.sThumbLX, g.sThumbLY, g.sThumbRX, g.sThumbRY, s_paddlesHeld);
+        };
+
+        // Lower weapon
+        static bool s_padLowerWas = false;
+        const bool padLowerNow = padActionActive(PadLayouts::LowerWeapon);
+        if (padLowerNow && !s_padLowerWas) {
+            EnginePatches::RequestLowerWeaponToggle();
+        }
+        s_padLowerWas = padLowerNow;
+
+        // 3rd-person camera
+        const bool padTpNow = padActionActive(PadLayouts::ThirdPerson);
+        CameraThirdPerson::PollHotkey(padTpNow);
+
+        // Vehicle 1st-person camera
+        const bool padVehFpNow = padActionActive(PadLayouts::VehicleFirstPerson);
+        CameraThirdPerson::PollVehicleFirstPersonHotkey(padVehFpNow);
+
+        // Forward mapped game keys directly to the raw engine keyboard buffer st:
+        auto forwardKey = [&](int padAct, int keySlot) {
+            if (padActionActive(padAct)) {
+                const int vk = KeyBindings::EffectiveKey(keySlot);
+                if (vk > 0 && vk < 256) {
+                    st[0x004 + vk] = 0x80;
+                }
+            }
+        };
+
+        forwardKey(PadLayouts::NightVision, 6);
+        forwardKey(PadLayouts::SelectNextGrenades, 65);
+        forwardKey(PadLayouts::SelectPrevGrenades, 56);
+        forwardKey(PadLayouts::OpenLoadouts, 58);
+        forwardKey(PadLayouts::VehicleFunction1, 24);
+        forwardKey(PadLayouts::VehicleFunction2, 21);
+        forwardKey(PadLayouts::VehicleFunction3, 22);
+        forwardKey(PadLayouts::FalconAscend, 62);
+        forwardKey(PadLayouts::FalconDescend, 63);
+        forwardKey(PadLayouts::ZoomIn, 11);
+        forwardKey(PadLayouts::ZoomOut, 12);
+
+        // Forge keys
+        forwardKey(PadLayouts::ForgeAscend, 25);
+        forwardKey(PadLayouts::ForgeDescend, 26);
+        forwardKey(PadLayouts::ForgeGrabRelease, 27);
+        forwardKey(PadLayouts::ForgeBoost, 28);
+        forwardKey(PadLayouts::ForgePrecisionEdit, 29);
+        forwardKey(PadLayouts::ForgeDelete, 30);
+        forwardKey(PadLayouts::ForgeProperties, 31);
+        forwardKey(PadLayouts::ForgeTools, 32);
+        forwardKey(PadLayouts::ForgeDuplicate, 52);
+        forwardKey(PadLayouts::ForgeReset, 54);
+        forwardKey(PadLayouts::ForgeSwitchMode, 33);
+        forwardKey(PadLayouts::ForgeZoom, 34);
+        forwardKey(PadLayouts::ForgeRotationMode, 35);
+        forwardKey(PadLayouts::ForgeToggleAxes, 51);
+        forwardKey(PadLayouts::ForgeLock, 53);
+
+        // Theater keys
+        forwardKey(PadLayouts::TheaterTogglePanel, 36);
+        forwardKey(PadLayouts::TheaterToggleInterface, 37);
+        forwardKey(PadLayouts::TheaterTogglePerspective, 38);
+        forwardKey(PadLayouts::TheaterCameraReset, 39);
+        forwardKey(PadLayouts::TheaterJumpForward, 40);
+        forwardKey(PadLayouts::TheaterJumpBackward, 41);
+        forwardKey(PadLayouts::TheaterToggleFlycam, 42);
+        forwardKey(PadLayouts::TheaterSpeedUp, 44);
+        forwardKey(PadLayouts::TheaterSlowDown, 45);
+    }
+
     *reinterpret_cast<uint32_t*>(st + 0x000) = 0;
     // Pad Back belongs to the Noble overlay: the engine would open Reach's own scoreboard over our panel. The overlay
     // reads the physical pad directly (GamepadUi), so drop Back from the state haloreach.dll sees.

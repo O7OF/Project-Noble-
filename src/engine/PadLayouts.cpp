@@ -35,18 +35,150 @@ constexpr uint16_t kOwned = kA | kB | kX | kY | kLB | kRB | kLS | kRS | kUp | kD
 } // namespace
 
 const char* ActionKey(int action) {
-    static const char* const keys[ActionCount] = { "jump", "grenades", "action", "swap", "melee", "armor", "fire", "zoom",
-                                                   "throw", "crouch", "scoreboard", "pause", "dpadup", "dpaddown", "dpadleft", "dpadright",
-                                                   "teamchat", "pushtotalk", "voiceparty", "voiceteam", "voiceglobal" };
+    static const char* const keys[ActionCount] = {
+        "jump", "grenades", "action", "swap", "melee", "armor", "fire", "zoom",
+        "throw", "crouch", "scoreboard", "pause", "dpadup", "dpaddown", "dpadleft", "dpadright",
+        "teamchat", "pushtotalk", "voiceparty", "voiceteam", "voiceglobal",
+        "moveforward", "movebackward", "moveleft", "moveright",
+        "zoomin", "zoomout", "lowerweapon", "nightvision",
+        "nextgrenades", "prevgrenades",
+        "thirdperson", "vehiclefirstperson",
+        "chatall", "chatteam", "chatparty", "chatopen",
+        "vehfunc1", "vehfunc2", "vehfunc3",
+        "falconascend", "falcondescend",
+        "openloadouts",
+        "forgeascend", "forgedescend", "forgegrab", "forgeboost", "forgeprecision",
+        "forgedelete", "forgeproperties", "forgetools", "forgeduplicate", "forgereset",
+        "forgeswitchmode", "forgezoom", "forgerotate", "forgeaxes", "forgelock",
+        "theatertogglepanel", "theatertoggleui", "theatertogglecam",
+        "theaterreset", "theaterjumpforward", "theaterjumpbackward",
+        "theatertoggleflycam", "theaterspeedup", "theaterslowdown"
+    };
     return (action >= 0 && action < ActionCount) ? keys[action] : "";
 }
 
 const char* ActionName(int action) {
-    static const char* const names[ActionCount] = { "Jump", "Switch grenades", "Action / reload", "Swap weapons",
-                                                    "Melee", "Armor ability", "Fire", "Zoom", "Throw grenade", "Crouch", "Scoreboard",
-                                                    "Pause menu", "D-pad up action", "D-pad down action", "D-pad left action", "D-pad right action",
-                                                    "Team chat", "Push to talk", "Voice to party", "Voice to team", "Voice to everyone" };
+    static const char* const names[ActionCount] = {
+        "Jump", "Switch grenades", "Action / reload", "Swap weapons",
+        "Melee", "Armor ability", "Fire", "Zoom", "Throw grenade", "Crouch", "Scoreboard",
+        "Pause menu", "D-pad up action", "D-pad down action", "D-pad left action", "D-pad right action",
+        "Team chat", "Push to talk", "Voice to party", "Voice to team", "Voice to everyone",
+        "Move forward", "Move backward", "Move left", "Move right",
+        "Zoom in", "Zoom out", "Lower weapon", "Toggle night vision",
+        "Select next grenades", "Select previous grenades",
+        "3rd-person camera", "Vehicle 1st person",
+        "Chat to everyone", "Chat to team", "Chat to party", "Open chat",
+        "Vehicle function 1", "Vehicle function 2", "Vehicle function 3",
+        "Ascend (Falcon)", "Descend (Falcon)",
+        "Open loadouts menu",
+        "Ascend", "Descend", "Grab / release object", "Boost", "Precision edit",
+        "Delete object", "Create object / object properties", "Tools", "Duplicate", "Reset",
+        "Switch player mode", "Zoom", "Rotation mode", "Toggle rotation axes", "Lock object",
+        "Toggle panel", "Toggle interface", "Toggle first / third person",
+        "Camera reset", "Jump forward", "Jump backward",
+        "Toggle flycam", "Speed up", "Slow down"
+    };
     return (action >= 0 && action < ActionCount) ? names[action] : "";
+}
+
+ActionGroup GroupOf(int action) {
+    switch (action) {
+    case MoveForward:
+    case MoveBackward:
+    case MoveLeft:
+    case MoveRight:
+    case Jump:
+    case Crouch:
+        return ActionGroup::Movement;
+    case Fire:
+    case Zoom:
+    case ZoomIn:
+    case ZoomOut:
+    case Melee:
+    case ActionReload:
+    case ThrowGrenade:
+    case SwapWeapons:
+    case Grenades:
+    case SelectNextGrenades:
+    case SelectPrevGrenades:
+    case ArmorAbility:
+    case NightVision:
+    case LowerWeapon:
+    case PushToTalk:
+    case VoiceParty:
+    case VoiceTeam:
+    case VoiceGlobal:
+    case TeamChat:
+    case ChatAll:
+    case ChatTeam:
+    case ChatParty:
+    case ChatOpen:
+    case ThirdPerson:
+        return ActionGroup::Actions;
+    case VehicleFirstPerson:
+    case VehicleFunction1:
+    case VehicleFunction2:
+    case VehicleFunction3:
+    case FalconAscend:
+    case FalconDescend:
+        return ActionGroup::Vehicle;
+    case Scoreboard:
+    case OpenLoadouts:
+    case Pause:
+    case DpadUp:
+    case DpadDown:
+    case DpadLeft:
+    case DpadRight:
+        return ActionGroup::Interface;
+    case ForgeAscend:
+    case ForgeDescend:
+    case ForgeGrabRelease:
+    case ForgeBoost:
+    case ForgePrecisionEdit:
+    case ForgeDelete:
+    case ForgeProperties:
+    case ForgeTools:
+    case ForgeDuplicate:
+    case ForgeReset:
+    case ForgeSwitchMode:
+    case ForgeZoom:
+    case ForgeRotationMode:
+    case ForgeToggleAxes:
+    case ForgeLock:
+        return ActionGroup::Forge;
+    case TheaterTogglePanel:
+    case TheaterToggleInterface:
+    case TheaterTogglePerspective:
+    case TheaterCameraReset:
+    case TheaterJumpForward:
+    case TheaterJumpBackward:
+    case TheaterToggleFlycam:
+    case TheaterSpeedUp:
+    case TheaterSlowDown:
+        return ActionGroup::Theater;
+    default:
+        return ActionGroup::Actions;
+    }
+}
+
+std::vector<int> ActionsIn(ActionGroup group) {
+    std::vector<int> out;
+    for (int a = 0; a < ActionCount; ++a) {
+        if (GroupOf(a) == group) out.push_back(a);
+    }
+    return out;
+}
+
+const char* GroupName(ActionGroup group) {
+    switch (group) {
+    case ActionGroup::Movement: return "Movement";
+    case ActionGroup::Actions: return "Actions";
+    case ActionGroup::Vehicle: return "Vehicle";
+    case ActionGroup::Interface: return "Interface";
+    case ActionGroup::Forge: return "Forge";
+    case ActionGroup::Theater: return "Theater";
+    }
+    return "";
 }
 
 int ActionFromKey(const std::string& key) {
@@ -68,7 +200,11 @@ int LayoutInput(int layout, int action) {
     case DpadLeft: return kLeft;
     case DpadRight: return kRight;
     case PushToTalk: return kLeft;   // shared with the engine's D-pad left, which Apply leaves alone
-    default: return InputNone;   // team chat: nothing assigned until it exists
+    case MoveForward: return InputLStickUp;
+    case MoveBackward: return InputLStickDown;
+    case MoveLeft: return InputLStickLeft;
+    case MoveRight: return InputLStickRight;
+    default: return InputNone;
     }
 }
 
@@ -134,6 +270,30 @@ void Assign(int layout, int action, int input, std::map<std::string, int>& overr
     }
     if (input == LayoutInput(layout, action)) overrides.erase(ActionKey(action));
     else overrides[ActionKey(action)] = input;
+}
+
+bool IsActionActive(int layout, int action, const std::map<std::string, int>* overrides,
+                    uint16_t buttons, uint8_t leftTrigger, uint8_t rightTrigger,
+                    int16_t leftX, int16_t leftY, int16_t rightX, int16_t rightY, uint8_t paddles) {
+    const int input = EffectiveInput(layout, action, overrides);
+    if (input == InputNone) return false;
+    constexpr int kStickOn = 16000;
+    if (input >= InputPaddle1 && input < InputPaddle1 + kPaddleCount) {
+        return (paddles & (1u << (input - InputPaddle1))) != 0;
+    }
+    switch (input) {
+    case InputLT: return leftTrigger > 40;
+    case InputRT: return rightTrigger > 40;
+    case InputLStickUp: return leftY > kStickOn;
+    case InputLStickDown: return leftY < -kStickOn;
+    case InputLStickLeft: return leftX < -kStickOn;
+    case InputLStickRight: return leftX > kStickOn;
+    case InputRStickUp: return rightY > kStickOn;
+    case InputRStickDown: return rightY < -kStickOn;
+    case InputRStickLeft: return rightX < -kStickOn;
+    case InputRStickRight: return rightX > kStickOn;
+    default: return input > 0 && (buttons & input) != 0;
+    }
 }
 
 const char* Name(int layout) {
