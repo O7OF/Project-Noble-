@@ -54,7 +54,7 @@ inline constexpr std::array<PrimaryFlameEntry, 30> kPrimaryFlames = {{
 inline constexpr int kArmorEffectStockCount = 7;
 inline constexpr int kArmorEffectAutoIndex = 7;
 inline constexpr int kArmorEffectVariantBase = 8;
-inline constexpr int kArmorEffectVariantCount = 24;
+inline constexpr int kArmorEffectVariantCount = 30;
 inline constexpr int kArmorEffectCount = kArmorEffectVariantBase + kArmorEffectVariantCount;
 inline constexpr uint32_t kArmorEffectCustomItemBase = 0xF0;
 

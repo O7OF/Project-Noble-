@@ -15,6 +15,9 @@ void Install(ID3D11Device* device, ID3D11DeviceContext* context);
 // Called from the DXGI Present hook: obtains the device/immediate context that owns the presenting
 // swapchain (the engine may have its own context, separate from the launcher's) and hooks it.
 void HookFromSwapChain(struct IDXGISwapChain* swapChain);
+// Selects one of kPrimaryFlames (0..29) for the local player's runtime flame palette; -1 disables
+// the override (stock effect colours). Called when the profile appearance is built.
+void SetVariantIndex(int variantIndex);
 void Shutdown();
 
 } // namespace noble::ParticleTint

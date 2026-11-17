@@ -1,4 +1,5 @@
 #include "ReachArmory.hpp"
+#include "ParticleTint.hpp"
 #include "common/ArmorEffects.hpp"
 #include "ElitePack.hpp"
 #include "SharedTagCache.hpp"
@@ -1864,6 +1865,10 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             // too small (gap under the D), so the male body gets the plain "default" knee guard instead.
             // 2026-11-12 (Tyler): "default" IS the FJ/PARA knee guard (pmcg knees_1), so DEFAULT and FJ/PARA looked
             // the same. Stock Reach uses "kat" for knees_default on both bodies; keep that (override removed).
+            {
+                const int runtimeVariant = PrimaryFlameVariantForEffect(sel.armorEffect, sel.primaryColorIndex);
+                noble::ParticleTint::SetVariantIndex(runtimeVariant);
+            }
             apply("80", PmcgEffectName(sel.armorEffect, sel.primaryColorIndex));
             // TEMPORARY bisect switch: data\userdata\noble-test-head.txt holds ONE head permutation name to force
             // (and drops the flair_head_* attachments), e.g. "default", "bungie", "player_sam".

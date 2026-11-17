@@ -6,6 +6,8 @@ Captures from the working 24-colour build and earlier 30-variant experiments. Se
 | File | Shows |
 |---|---|
 | runtime-tint-proof.png | Stock Forge World + stock LEGENDARY flames recoloured magenta by the runtime palette hook (no map rebuild/mod). |
+| runtime-variants-contact.png | Automatic profile-driven runtime colours on stock Forge World: gold, rust, pale, brick (stock effects + runtime palette only). |
+| runtime-armory-gold.png | Armory with 30 primary-flame entries restored; GOLD FLAME selected. |
 |---|---|
 | armor-fx-pri-contact-sheet.png | 6x5 contact sheet of the original 30 variant captures (pre-solid-palette; older formula). |
 | armory-auto-green-24.png | Armory PRIMARY MATCH with green primary - green flames + green armour. |

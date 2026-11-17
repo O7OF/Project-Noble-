@@ -1,6 +1,7 @@
 #include "ParticleTint.hpp"
 
 #include "common/Logger.hpp"
+#include "common/ArmorEffects.hpp"
 #include "hooks/HookManager.hpp"
 
 #include <windows.h>
@@ -61,17 +62,33 @@ void ParseTintColour() {
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) return;
     std::string spec;
+    int variant = -1;
+    int primary = -1;
     for (int i = 1; i + 1 < argc; ++i) {
-        if (_wcsicmp(argv[i], L"-armor-fx-runtime-tint") == 0) {
+        if (_wcsicmp(argv[i], L"-armor-fx-runtime-variant") == 0) {
+            variant = _wtoi(argv[i + 1]);
+        } else if (_wcsicmp(argv[i], L"-armor-fx-runtime-primary") == 0) {
+            primary = _wtoi(argv[i + 1]);
+        } else if (_wcsicmp(argv[i], L"-armor-fx-runtime-tint") == 0) {
             const int len = WideCharToMultiByte(CP_UTF8, 0, argv[i + 1], -1, nullptr, 0, nullptr, nullptr);
             if (len > 1) {
                 spec.resize(static_cast<size_t>(len - 1));
                 WideCharToMultiByte(CP_UTF8, 0, argv[i + 1], -1, spec.data(), len, nullptr, nullptr);
             }
-            break;
         }
     }
     LocalFree(argv);
+    if (variant >= 0 || primary >= 0) {
+        const int index = variant >= 0 ? variant : primary;
+        if (index < 0 || index >= static_cast<int>(kPrimaryFlames.size())) return;
+        s_colour[0] = kPrimaryFlames[static_cast<size_t>(index)].r;
+        s_colour[1] = kPrimaryFlames[static_cast<size_t>(index)].g;
+        s_colour[2] = kPrimaryFlames[static_cast<size_t>(index)].b;
+        s_active = true;
+        NOBLE_INFO("ParticleTint: armed for {} {} (RGB {:.2f},{:.2f},{:.2f})", variant >= 0 ? "variant" : "primary",
+                   kPrimaryFlames[static_cast<size_t>(index)].id, s_colour[0], s_colour[1], s_colour[2]);
+        return;
+    }
     if (spec.empty()) return;
     unsigned rr = 0, gg = 0, bb = 0;
     if (std::sscanf(spec.c_str(), "%u,%u,%u", &rr, &gg, &bb) == 3) {
@@ -199,8 +216,8 @@ void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceCon
         if (IsFlamePalette(views[i], &matchedDesc)) {
             static std::atomic<bool> s_loggedMatch{true};
             if (s_loggedMatch.exchange(false)) {
-                NOBLE_INFO("ParticleTint: matched palette {}x{} fmt={}", matchedDesc.Width, matchedDesc.Height,
-                           static_cast<int>(matchedDesc.Format));
+                NOBLE_INFO("ParticleTint: matched palette {}x{} fmt={} slot={}", matchedDesc.Width, matchedDesc.Height,
+                           static_cast<int>(matchedDesc.Format), startSlot + i);
             }
             if (!tint) {
                 ID3D11Device* device = nullptr;
@@ -370,6 +387,26 @@ void Install(ID3D11Device* device, ID3D11DeviceContext* context) {
         if (s_active) InstallExportHooks();
     }
     if (s_active) HookContext(device, context);
+}
+
+void SetVariantIndex(int variantIndex) {
+    if (variantIndex < 0 || variantIndex >= static_cast<int>(kPrimaryFlames.size())) {
+        s_active = false;
+        return;
+    }
+    // Cache is keyed by device only; drop old tint SRVs so the next draw recreates them with the
+    // newly selected colour. Selection changes happen in menus/lobby, not mid-particle-frame.
+    std::lock_guard<std::mutex> lock(s_deviceMutex);
+    for (auto& pair : s_tintSrvs) {
+        if (pair.second) pair.second->Release();
+    }
+    s_tintSrvs.clear();
+    const auto& entry = kPrimaryFlames[static_cast<size_t>(variantIndex)];
+    s_colour[0] = entry.r;
+    s_colour[1] = entry.g;
+    s_colour[2] = entry.b;
+    s_active = true;
+    NOBLE_INFO("ParticleTint: runtime variant {} ({}) selected", variantIndex, entry.id);
 }
 
 void Shutdown() {

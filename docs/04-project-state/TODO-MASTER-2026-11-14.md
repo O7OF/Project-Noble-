@@ -380,3 +380,5 @@ Full index: `project-docs\REFERENCE-LIBRARY-2026-11-15.md`. Key points:
 - **M1 DONE 2026-11-17 04:03:** runtime palette override changes stock-map flames with no rebuild. Engine context captured from DXGI Present swapchain; PSSetShaderResources vtable index 8; palette 256x16 B8G8R8A8_UNORM_SRGB. M2 per-player selection still TODO; M3 peer sync TODO.
 
 - M2 per-player palette: **blocked by missing owner/colour data in ParticleRenderVS CB**; VS uses vs_particle_state_buffer (stride 80) and PS palette*v1+v2. Options: patch particle state buffer + PS palette-atlas index, expose owner per draw, or interim local-player-only tint. Restrict M1 matching to particle shader hash (currently any 256x16 BGRA palette).
+
+- Steps 1-3 done: slot-2 palette restriction, profile-driven runtime variant selection (stock LEGENDARY + palette), 30 variants restored in Armory, six missing colours selectable, gold/rust/pale/brick verified stock map. Remaining: Armory preview tint for six (menu path), thumbnails/photos, per-player M2, peer replication M3.

@@ -609,7 +609,7 @@ struct SimpleOption {
     const char* description;
 };
 
-constexpr std::array<SimpleOption, 32> kArmorEffects = {{
+constexpr std::array<SimpleOption, 38> kArmorEffects = {{
     {"NONE", "default", "Standard combat configuration without external armor particle effects."},
     {"BIRTHDAY PARTY", "birthday_party", "Celebratory confetti and cheering crowd audio headshot effect."},
     {"HEART ATTACK", "heart_attack", "Cupid arrows and floating hearts trail the operator in combat."},
@@ -642,6 +642,12 @@ constexpr std::array<SimpleOption, 32> kArmorEffects = {{
     {"MAROON FLAME", "flame_pri_maroon", "Flames coloured with the maroon primary armour palette."},
     {"BRICK FLAME", "flame_pri_brick", "Flames coloured with the brick primary armour palette."},
     {"ROSE FLAME", "flame_pri_rose", "Flames coloured with the rose primary armour palette."},
+    {"RUST FLAME", "flame_pri_rust", "Flames coloured with the rust primary armour palette."},
+    {"CORAL FLAME", "flame_pri_coral", "Flames coloured with the coral primary armour palette."},
+    {"PEACH FLAME", "flame_pri_peach", "Flames coloured with the peach primary armour palette."},
+    {"GOLD FLAME", "flame_pri_gold", "Flames coloured with the gold primary armour palette."},
+    {"YELLOW FLAME", "flame_pri_yellow", "Flames coloured with the yellow primary armour palette."},
+    {"PALE FLAME", "flame_pri_pale", "Flames coloured with the pale primary armour palette."},
 }};
 
 

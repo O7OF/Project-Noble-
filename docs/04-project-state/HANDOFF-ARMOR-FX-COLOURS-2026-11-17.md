@@ -249,3 +249,8 @@ matrices/state/sprite data); VS uses `vs_particle_state_buffer` (stride 80) and 
 patch the particle state buffer/shader for a palette index, expose owner per draw, or ship local-player-only tint first.
 Details in the runtime plan doc. The current M1 hook still matches any 256x16 BGRA palette, so other particle effects may
 tint as well; restrict matching to the particle shader hash before release.
+
+**Steps 1-3 (2026-11-17 04:47):** palette matching restricted to particle slot 2; runtime selection wired to the profile
+(Stock LEGENDARY item + `ParticleTint::SetVariantIndex`); Armory restored to 38 entries / 30 primary variants, six missing
+colours selectable again via runtime palette; verified automatic gold/rust/pale/brick on stock Forge World. Armory preview
+for the six currently shows stock flame colour, thumbnails pending Tyler. Per-player remains pending.

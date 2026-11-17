@@ -193,3 +193,34 @@ RenderDoc/qrenderdoc inspection of the five flame draws (frame 863, events 10055
 - Known side effect: matching any 256x16 BGRA(SRGB) palette also catches other particle systems using the same
   palette; the magenta proof also tinted a little haze/cloud in the window. Restrict to the particle PS/shader hash
   (or a dedicated palette pointer) before shipping.
+
+
+## 2026-11-17 04:47 - Steps 1-3 implemented (runtime colours now usable)
+
+1. **Restricted matching to the particle palette bind:** PSSetShaderResources slot **2** only, 256x16
+   DXGI_FORMAT_B8G8R8A8_UNORM_SRGB (fmt 91). This stops the hook tinting other particle systems that happen to use a
+   same-sized palette; the earlier cloud/haze cast is gone in the slot-restricted captures.
+2. **Runtime palette selection from the 30 primary colours:**
+   - `ParticleTint` now accepts `-armor-fx-runtime-variant N` / `-armor-fx-runtime-primary N` (0..29) in addition to
+     the manual RGB flag.
+   - The real path is profile-driven: when the selected `armorEffect` is a primary-flame variant, ReachHost writes the
+     **stock LEGENDARY effect item** to the profile (so the flame particle exists on every stock map) and calls
+     `ParticleTint::SetVariantIndex(variant)`. `PRIMARY MATCH` uses the primary colour index. Non-variant effects turn
+     the override off.
+   - Armory list expanded back to **38 entries** (7 stock + auto + 30 variants); the six previously-hidden colours
+     (rust/coral/peach/gold/yellow/pale) are selectable again and are rendered by the runtime palette (their Armory
+     preview currently falls back to the stock flame effect - see caveat).
+   - Catalog rows added for the six; a crash from expanding the array without the six entries (null `stringId`) was
+     fixed by inserting them with CRLF-correct lines.
+3. **Verified automatic path on stock Forge World (no runtime CLI flags):** `-armor-effect-test 35` = GOLD FLAME
+   produced gold flames; 32 = rust, 37 = pale, 30 = brick also captured. Contact sheet:
+   `docs/evidence/armor-fx-primary-2026-11-17/runtime-variants-contact.png`. Armory screenshot with 30 entries:
+   `runtime-armory-gold.png`.
+
+**Caveats / next:**
+- Armory **preview** for the six restored variants shows the stock flame colour (the menu preview path does not yet run
+  through the runtime palette; tiles are labelled correctly but thumbnails are Tyler's photo pass).
+- Per-player selection is still M2 step 4: no owner/colour in `ParticleRenderVS`; VS uses
+  `vs_particle_state_buffer` (stride 80) and PS does `palette*v1+v2`. Current runtime colour is local/global.
+- All 30 colours should be tested by Tyler in match/Forge; the palette generation is one shared code path, and
+  gold/rust/pale/brick plus the original magenta proof are confirmed.

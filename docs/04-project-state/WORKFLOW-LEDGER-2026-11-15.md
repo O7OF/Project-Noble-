@@ -364,3 +364,10 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
 - VS 8693 (hash f54376d4...) ParticleRenderVS CB has matrices/state/sprite/custom_vertex only, no colour/owner; reads
   vs_particle_state_buffer stride 80; PS does palette*v1+v2. Per-player needs state-buffer/shader patch, per-draw owner,
   or local-player-only tint. M1 palette matching currently catches any 256x16 BGRA palette (side-effect haze tint).
+
+### 2026-11-17 04:47 - runtime colour steps 1-3: profile-driven 30-variant selection
+- Palette matching restricted to slot 2 / 256x16 fmt91; no more cloud/haze tint.
+- ReachHost writes stock LEGENDARY item + ParticleTint::SetVariantIndex for variant/auto selections; Armory restored to
+  38 entries (30 variants), six hidden colours selectable again; catalog rows + null-init crash fixed.
+- Verified automatic gold (35), rust (32), pale (37), brick (30) on stock Forge World; contact sheet in evidence.
+- Caveats: Armory previews for six show stock flame colour; thumbnails pending; per-player M2 still pending.

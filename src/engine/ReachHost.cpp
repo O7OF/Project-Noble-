@@ -1555,7 +1555,18 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // (Elite, pmcg list 8C) - mixing species into +0x68 is what used to make an armor effect pick
         // the Elite variant. (Verified in haloreach.dll 0x2EDA08 / 0x1055EC.)
         const uint32_t devFxItem = DevArmorFxItemOverride();
-        put(0x68, devFxItem ? devFxItem : (spCustomFx ? spCustomFx : kEffect + spEffectOff));
+        // Primary-colour flame variants are rendered by the runtime palette override: the profile carries the
+        // stock LEGENDARY effect (so the flame particle exists on every stock map) and ParticleTint selects the
+        // variant's palette from the Armory selection. Non-variant effects keep the normal item ids.
+        int runtimeFlameVariant = -1;
+        if (spEffectIdx >= kArmorEffectVariantBase) {
+            runtimeFlameVariant = spEffectIdx - kArmorEffectVariantBase;
+        } else if (spEffectIdx == kArmorEffectAutoIndex) {
+            runtimeFlameVariant = std::clamp(spPrimaryColor, 0, 29);
+        }
+        noble::ParticleTint::SetVariantIndex(runtimeFlameVariant);
+        const uint32_t flameItem = runtimeFlameVariant >= 0 ? (kEffect + 5) : 0;
+        put(0x68, devFxItem ? devFxItem : (flameItem ? flameItem : (spCustomFx ? spCustomFx : kEffect + spEffectOff)));
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + visorOff);
         // Armory set indices: 0..7 = MCC's eight Elite sets (194..201), 8 = Honor Guard, 9 = Counselor,
