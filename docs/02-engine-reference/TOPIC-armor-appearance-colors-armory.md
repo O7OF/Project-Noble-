@@ -168,3 +168,46 @@ Many of these are developer tunables or debug switches (booleans/floats); changi
 | `c_player_trait_shield_vitality::set_damage_resistance_percentage_setting` | 0x82506300 |
 | `c_player_trait_weapons::set_damage_modifier_percentage_setting` | 0x82506300 |
 | `c_player_trait_shield_vitality::set_body_recharge_rate_percentage_setting` | 0x82506348 |
+
+
+---
+
+# Noble armor-effect colour/variant findings (2026-11-17)
+
+This section is derived from the primary-colour flame variant work; it is MCC x64 (haloreach.dll 1.3528.0.0) engine
+behaviour, not Omaha names. Full handoff: `../../04-project-state/HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`.
+
+## Profile / item mapping
+- Spartan effect field +0x68, Elite +0x90; MCC translator RVA `0x3B2F4`, profile application `0x2EDA08`,
+  appearance builder `0x1055EC` (image base 0x180000000).
+- Stock items `kEffect + 0..6` = default, birthday, heart, pestilence, inclement, legendary, eternal. Noble custom effect
+  ids `0xF0..0x10D` are detoured through `0x3B2F4` to pmcg list indices 7..36 (`src/common/ArmorEffects.hpp`).
+- pmcg lists `80` (Spartan) and `8C` (Elite) hold item name + "customised bits" changes {region, permutation, flags}.
+  Armory also uses the embedded copy `src/res/spartan_armor_parts.txt` - keep both in sync.
+
+## Effect attachment / marker gating limits
+- Correct permutation gating empirically stops after **5 armor-effect attachments total** (stock `armor_fx.effect` + 4
+  extra `armor_fx_ext*.effect`). A 5th extra tag makes all extra effects spawn regardless of selection ("two effects at
+  once"/regular+gold mixing), even at equal total attachment counts. 4 extras = 24 variant slots is the safe maximum.
+- An effect tag has a hard **6-location** cap; ManagedBlam `TagFile.Save()` silently drops locations added past 6 (events
+  can still grow). Use more effect tags, not more locations.
+- Marker groups are filtered by marker `region index` + `permutation index`. Marker transform fields can be copied from
+  the stock `armor_fx_00` marker (node 42, stock translation/rotation/scale) to keep flames centred.
+- Region permutation 0 is active by default. Stock `armor_fx_00` at perm 0 made the legendary flame stack under every
+  selection; fixed by a markerless `armor_fx_default` at index 0, stock `armor_fx_00..05` at perms 1..6 and variant
+  perms after that (markers shifted to match).
+- Render-model region cap: 16 regions (a 17th crashes ManagedBlam). `armor_fx` has 32 permutation slots; a 16th region
+  `armor_fx_pri` holds variants that do not fit.
+
+## Menu / Armory
+- Armory reads the rebuilt mainmenu map (`data\menumaps\noble_menu.map`) and its matching `noble_menu.string_ids.csv`.
+  Rerun `tools/menu_sidcsv.ps1` after **every** mainmenu cache build; stale ids make effects vanish or resolve to the
+  wrong permutation.
+- Armory effect list is `kArmorEffects` in `src/ui/ArmorCustomizer.cpp`; the menu map's render model must contain the
+  variant markers/permutations and pmcg must contain the items (engine tag + embedded data).
+
+## VFS mod maps
+- Noble VFS serves an active mod's `<mod>\maps\<name>.map` ahead of MCC stock maps; activate with `-mod <folder>`.
+  One mod folder can carry many rebuilt maps, giving variants on every included map without per-map overrides.
+- Matchmaking does not use map mods; custom games only, and all peers need the same mod.
+- Measured rebuild size: 70_boneyard stock 199 MB -> rebuilt 566 MB (~2.8x). A full 44-map pack is ~25-30 GB built.

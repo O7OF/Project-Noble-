@@ -331,3 +331,15 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
   (5 stock + 4 ext), Armory 32 entries (7 stock + auto + 24 variants), auto clamps to Rose for the 6 unsupported
   colours. Verified Armory and in-match Brick/Steel/auto-green with no regular-flame overlap. Rust/Coral/Peach/Gold/
   Yellow/Pale remain pending runtime-colour redesign.
+
+### 2026-11-18/19 - Armor FX primary-colour flames: full session summary
+- Shipped working 24-colour set (commit 789c950): 7 stock effects + PRIMARY MATCH + 24 variants in Armory (32 entries),
+  custom item ids 0xF0..0x107, pmcg lists 80/8c, embedded Armory data, biped 9 attachments (5 stock + ext0..3).
+- Root causes fixed/documented: stock flame stacking from default perm0 (markerless armor_fx_default); engine gates at
+  most 5 armor-effect attachments (4 extras = 24 slots; 5th leaks); effect locations cap 6 (Save drops extras); stale
+  menu CSV; placeholder ext location names; UTF-16 source corruption via PowerShell redirection.
+- Map route proven: VFS serves mod\maps\<name>.map with -mod; rebuilt Forge World + 70_boneyard render variants with no
+  override; batch for all maps paused after 2 maps. Size estimate ~25-30GB all maps (~11-12GB MP-only) at ~2.8x stock.
+- Chosen next path: runtime particle colour override (stock maps, no downloads, all 30). Plan in
+  docs/05-research-and-prompts/RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md; full handoff in
+  docs/04-project-state/HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md.

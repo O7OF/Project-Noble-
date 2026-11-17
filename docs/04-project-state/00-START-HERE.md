@@ -10,6 +10,14 @@ relay netcode, mods (Steam Workshop folders served through a VFS), extended engi
 is the reference for behaviour only; no RR code/data is shipped. Partners: Tyler (GitHub WeabooTyler117: builds, tests,
 reverse engineering; not a C++ developer), O7OF (repo owner, most upstream code), Dominus (joined 2026-10-28).
 
+## 2026-11-17 armor FX update (read before armor-effect work)
+
+The primary-colour flame variants are **24/30 working** on the current build (committed `789c950`); six colours and the
+final no-download solution are still open. Start with `HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`; the chosen next path is
+the runtime particle-colour override in `../05-research-and-prompts/RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md`.
+Key engine limits (5 effect attachments, 6 locations/tag, menu CSV order) are in
+`../02-engine-reference/TOPIC-armor-appearance-colors-armory.md`.
+
 ## Read in this order
 1. **This file** (current state below).
 2. **This session's packet** (section below) - DeepSeek briefing handoff, starter prompt + phase plan, master upgrade

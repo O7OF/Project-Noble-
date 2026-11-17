@@ -1,5 +1,32 @@
 # Project Noble - master to-do (updated 2026-11-15 12:40 ET)
 
+## ARMOR FX PRIMARY-COLOUR FLAMES - 2026-11-17 (24/30 working; runtime path chosen)
+
+**Read first:** `HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md` in this folder, plus
+`../05-research-and-prompts/RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md` and
+`../project-docs/RE-ARMOR-FX-VARIANTS-2026-11-16.md`.
+
+State: **24 of 30 colours working and selectable** (steel..rose); 6 hidden (rust/coral/peach/gold/yellow/pale).
+Working build committed as `789c950`; build clean. Armory verified clean for NONE/Birthday, correct for Steel/Brick and
+PRIMARY MATCH auto-green; in-match verified via Forge World override and Boneyard VFS mod. Stock flame stacking fixed by
+markerless `armor_fx_default` perm0 + shifting stock perms/markers.
+
+Next tasks (priority):
+- [ ] **T1 runtime particle colour override** - chosen path; no map rebuilds, all 30 colours. See runtime plan doc.
+      Ghidra MCP is declared but not callable through run_code's `tools` object right now - fix/verify MCP first.
+- [ ] T2 prove runtime tint (magenta local flame on stock map, no rebuild/override) then per-effect/per-player.
+- [ ] T3 restore the four cosmetic attachments dropped for the 24-colour build (night_vision.light,
+      bungie_helmet.cheap_light, flashlight_1p.light, shield_down.light) once runtime retires extra attachments.
+- [ ] T4 re-add the 6 hidden colours (catalog rows, thumbnails, Armory list -> 38 entries) once runtime works.
+- [ ] T5 decide map-mod route disposition: batch paused after Forge World + Boneyard (1.3 GB mod folder);
+      script `test-tools/build_all_mod_maps.ps1` can resume. Full set estimate ~25-30 GB.
+- [ ] T6 thumbnails/photos: Tyler handles the effect photo set; update `data/ui/reach/armory/armor_effects/flame_pri_*.png`.
+
+Gotchas: 5 effect attachment total gating limit; effect locations cap 6 and Save drops extras; menu CSV must be
+regenerated after every mainmenu build; ext tag location names must be real `flame_pri_*` markers; stale game processes
+fake captures; PowerShell `>` writes UTF-16 and can corrupt sources.
+
+
 Live list. Newest state at the top. **Read `project-docs\REFERENCE-LIBRARY-2026-11-15.md` before researching anything**
 (Ghidra MCP, decompile exports, repo `docs\` multiplayer work, external tag/asset folders, test hooks). Detail:
 `project-docs\HANDOFF-DEEPSEEK-ENGINE-UPGRADE-2026-11-15.md` + `project-docs\PROMPT-DEEPSEEK-ENGINE-PHASES-2026-11-15.md`

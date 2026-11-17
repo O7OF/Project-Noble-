@@ -119,3 +119,11 @@ and other loader paths. So this cannot find the armor-effect spawn/event path. H
 Next options: find the effect spawn via the HaloScript function table (`effect_new_on_object_marker`), hook the biped
 effect-attachment update (the spartans.biped attachment block), or use the compiled tag/globals to find where the effect
 event StringId is selected. Alternatively accept a map-level variant (the recolour proof already works via palette tags).
+
+
+## 2026-11-17 status
+
+The palette-reference proof became the 30 primary-colour variants. 24 are working via four extra effect tags; six are
+blocked by the engine's 5-effect-attachment gating limit. The chosen follow-up is a runtime particle colour override so
+stock maps work without map rebuilds/downloads. See `../04-project-state/HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md` and
+`RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md`.

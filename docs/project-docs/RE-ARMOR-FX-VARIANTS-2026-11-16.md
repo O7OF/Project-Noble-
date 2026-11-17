@@ -472,3 +472,13 @@ red/pink only and auto-match green renders green only. Evidence in `docs/evidenc
 
 The remaining 6 colours need a different mechanism (runtime particle palette/colour override per player, or a reworked
 hosting scheme) because every extra effect-tag attachment past the fifth leaks past permutation gating.
+
+
+## 2026-11-17 end-of-session status (authoritative)
+
+Current shipped state: **24 of 30 variants working/selectable**, commit `789c950`; six colours (rust, coral, peach, gold,
+yellow, pale) hidden pending the runtime solution. Full handoff (architecture, assets, exact engine limits, map-mod
+route/size estimates, gotchas, next steps): `../04-project-state/HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`. Runtime plan:
+`../05-research-and-prompts/RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md`. Script index:
+`../test-tools/ARMOR-FX-PIPELINE-INDEX.md`. Do not resume the extra-attachment route expecting more than 24 slots -
+the engine only gates five armor-effect attachments total.

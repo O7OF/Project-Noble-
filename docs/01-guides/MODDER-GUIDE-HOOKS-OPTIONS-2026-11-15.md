@@ -553,3 +553,28 @@ describes it as a supported modder hook.
 | -wheel-after | src\engine\ReachHost.cpp:2525 |
 
 Total: 216 flag literals in the source tree (some are sent/parsed internally, not all are user flags).
+
+
+---
+
+## Addendum 2026-11-17 - armor-effect colour variants and VFS map serving
+
+**Armor FX variant state:** 24 primary-colour flames are selectable in the Armory (32 effect entries total: 7 stock +
+PRIMARY MATCH + 24 variants); 6 colours are hidden pending a runtime approach. Custom effect item ids are `0xF0..0x107`
+(Spartan profile +0x68, Elite +0x90); the translator detour on `haloreach.dll+0x3B2F4` maps them to pmcg indices 7..30.
+Full details: `../04-project-state/HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`.
+
+**Engine limits worth knowing as a modder:** the engine correctly permutation-gates at most **5 armor-effect attachments
+total** (stock + 4 extras); more than 4 extra effect tags makes effects spawn regardless of selection ("two effects at
+once"). Effect tag `locations` blocks cap at **6**; `Save()` silently drops locations added past 6. Render-model regions
+cap at 16. Region permutation 0 is active by default, so any marker bound to perm 0 always plays. Detailed topic:
+`../02-engine-reference/TOPIC-armor-appearance-colors-armory.md`.
+
+**Serving rebuilt maps to every map without per-map overrides:** put rebuilt cache files in a mod folder as
+`<mod>\\maps\\<scenario>.map` and launch with `-mod <folder>` (absolute path works). Noble's VFS resolves the active
+mod's file before MCC's stock map, so one mod folder can carry many rebuilt maps and every match on those maps gets the
+mod. Matchmaking does not use map mods; peers need the same mod for multiplayer. Measured rebuild ratio ~2.8x stock size
+(70_boneyard 199 MB -> 566 MB); full 44-map pack ~25-30 GB. Batch script: `../test-tools/build_all_mod_maps.ps1`.
+
+**Menu map gotcha:** after every mainmenu cache rebuild, copy it to `build\\bin\\Release\\data\\menumaps\\noble_menu.map`
+**and** rerun `test-tools/menu_sidcsv.ps1`; stale string ids break Armory effect mapping.
