@@ -12,6 +12,9 @@ namespace noble::ParticleTint {
 // Per-player colour is not implemented yet - every particle system using the
 // palette in this process sees the tint.
 void Install(ID3D11Device* device, ID3D11DeviceContext* context);
+// Called from the DXGI Present hook: obtains the device/immediate context that owns the presenting
+// swapchain (the engine may have its own context, separate from the launcher's) and hooks it.
+void HookFromSwapChain(struct IDXGISwapChain* swapChain);
 void Shutdown();
 
 } // namespace noble::ParticleTint

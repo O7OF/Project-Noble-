@@ -132,3 +132,36 @@ Related: `HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`, `RE-ARMOR-FX-COLORS-2026-11-1
   created in `SC_DLL.dll`/D3D11On12 or a context interface version whose method address differs), or hook the
   engine's particle submit path directly; then the existing palette substitution can be reused.
 - No crash; flag/hook are inert when the flag is absent. Current build retains the dev code; it is not a user feature.
+
+
+## 2026-11-17 04:03 - M1 PROOF: runtime palette override on a STOCK map
+
+**Result:** stock Forge World (no map override, no mod), stock LEGENDARY flames, launched with
+`-armor-fx-runtime-tint 255,0,255` -> the flames render **magenta**. Captured in
+`docs/evidence/armor-fx-primary-2026-11-17/runtime-tint-proof.png`. No map/tag rebuild involved.
+
+**What made it work (after four failed hook placements):**
+- The engine renders with its own D3D11 context, not the launcher's immediate context. The reliable way to get
+  the engine's real device/context is the **DXGI Present hook**: Noble's existing `HookSwapChainPresent` receives
+  every swapchain; `swapChain->GetDevice(ID3D11Device)` + `device->GetImmediateContext()` returns the engine's
+  immediate context. `ParticleTint::HookFromSwapChain()` is called at the top of the Present hook and installs the
+  palette hook on that context.
+- PSSetShaderResources vtable index correction: **8**, not 4 (ID3D11DeviceChild starts at index 3 with
+  GetDevice/GetPrivateData/SetPrivateData/SetPrivateDataInterface; VSSetConstantBuffers is 7).
+- Hooking `D3D11CreateDevice*` exports and `ID3D11Device::CreateDeferredContext` did not capture the engine context;
+  the swapchain route did. Hook all context interface versions (base + ID3D11DeviceContext1..4) because the engine may
+  call through a higher-version interface.
+- Matched texture: **256x16, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB (fmt 91)**. Palette detection uses those dims/format and
+  swaps in a runtime-generated 256x16 SRGB ramp (colour parsed from the flag). It creates one tint SRV per device.
+- The palette is shared by the particle systems in the frame, so this M1 proof tints all flame particles in the
+  process (single-player capture). M2 (per-player) still needs the owning player's variant/colour to choose a
+  per-system or per-particle palette.
+
+**Current dev flag:** `-armor-fx-runtime-tint r,g,b` (or 6-digit hex). Inert without the flag; no crash observed.
+**Known side effect to check:** other particle systems that use the same 256x16 palette may also tint (the capture
+showed a slight magenta cast in a cloud/haze behind the window); restrict detection to the particle PS / armour
+effect path if it matters.
+
+**Next (M2):** identify the owning player/system for each particle draw (likely via VS constant buffers
+`ParticleRenderVS` / particle state buffer, or by splitting palette binds per system) and select one of 30 palettes;
+then M3 peer replication.

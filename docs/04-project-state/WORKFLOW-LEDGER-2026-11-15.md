@@ -352,3 +352,10 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
 - Implemented ParticleTint dev module + -armor-fx-runtime-tint flag; PSSetShaderResources vtable index 8, palette
   detection/substitution works on launcher context but engine draws are not captured (engine uses its own
   context/device path). Next: capture engine device/context or hook particle submit.
+
+### 2026-11-17 04:03 - runtime tint M1 PROOF (stock map, magenta flames)
+- Engine context obtained via DXGI Present swapchain -> GetDevice/GetImmediateContext (not D3D11CreateDevice hooks).
+- PSSetShaderResources hook at vtable index 8 (ID3D11DeviceChild shifts it); palette matched 256x16 fmt91 SRGB,
+  runtime tint SRV substituted; stock-map flames render magenta without map rebuild/mod. Evidence runtime-tint-proof.png.
+- Next M2: per-player/per-system palette selection (no owner data in PS CB; investigate VS ParticleRenderVS CB /
+  particle state buffer or per-draw binding); then M3 peer replication.

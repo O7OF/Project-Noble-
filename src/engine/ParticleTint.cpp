@@ -6,17 +6,19 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <d3d11.h>
+#include <d3d11_1.h>
+#include <d3d11_2.h>
+#include <d3d11_3.h>
+#include <d3d11_4.h>
 #include <dxgi.h>
 #include <wrl/client.h>
 #include <array>
 #include <atomic>
 #include <cstdio>
-#include <cstring>
 #include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 namespace noble::ParticleTint {
 
@@ -32,23 +34,24 @@ using CreateDeviceAndSwapChainFn = HRESULT(WINAPI*)(IDXGIAdapter*, D3D_DRIVER_TY
                                                     IDXGISwapChain**, ID3D11Device**, D3D_FEATURE_LEVEL*,
                                                     ID3D11DeviceContext**);
 
+constexpr int kMaxHooks = 8;
 std::atomic<bool> s_active{false};
-std::atomic<bool> s_hookInstalled{false};
+std::atomic<bool> s_armed{false};
 float s_colour[3] = {1.0f, 0.0f, 1.0f};
 
-PSSetShaderResourcesFn s_originalImmediate = nullptr;
-PSSetShaderResourcesFn s_originalDeferred = nullptr;
-void* s_targetImmediate = nullptr;
-void* s_targetDeferred = nullptr;
+PSSetShaderResourcesFn s_originals[kMaxHooks] = {};
+void* s_targets[kMaxHooks] = {};
+int s_hookCount = 0;
+std::set<void*> s_targetSet;
 
+CreateDeferredContextFn s_originalDeferredContext = nullptr;
 CreateDeviceFn s_originalCreateDevice = nullptr;
 CreateDeviceAndSwapChainFn s_originalCreateDeviceSwapChain = nullptr;
-CreateDeferredContextFn s_originalDeferredContext = nullptr;
 bool s_exportsHooked = false;
 
 std::mutex s_deviceMutex;
 std::unordered_map<ID3D11Device*, ID3D11ShaderResourceView*> s_tintSrvs;
-std::set<void*> s_hookedContextTargets;
+std::set<void*> s_deferredHookTargets;
 
 constexpr UINT kPaletteWidth = 256;
 constexpr UINT kPaletteHeight = 16;
@@ -70,7 +73,6 @@ void ParseTintColour() {
     }
     LocalFree(argv);
     if (spec.empty()) return;
-
     unsigned rr = 0, gg = 0, bb = 0;
     if (std::sscanf(spec.c_str(), "%u,%u,%u", &rr, &gg, &bb) == 3) {
         s_colour[0] = static_cast<float>(rr & 0xFF) / 255.0f;
@@ -103,7 +105,6 @@ ID3D11ShaderResourceView* GetTintSrv(ID3D11Device* device) {
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_IMMUTABLE;
     desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
     std::array<unsigned char, kPaletteWidth * kPaletteHeight * 4> pixels{};
     for (UINT y = 0; y < kPaletteHeight; ++y) {
         for (UINT x = 0; x < kPaletteWidth; ++x) {
@@ -139,7 +140,7 @@ ID3D11ShaderResourceView* GetTintSrv(ID3D11Device* device) {
     return srv;
 }
 
-bool IsFlamePalette(ID3D11ShaderResourceView* view) {
+bool IsFlamePalette(ID3D11ShaderResourceView* view, D3D11_TEXTURE2D_DESC* outDesc = nullptr) {
     if (!view) return false;
     Microsoft::WRL::ComPtr<ID3D11Resource> resource;
     view->GetResource(&resource);
@@ -148,15 +149,42 @@ bool IsFlamePalette(ID3D11ShaderResourceView* view) {
     if (FAILED(resource.As(&texture)) || !texture) return false;
     D3D11_TEXTURE2D_DESC desc{};
     texture->GetDesc(&desc);
+    if (outDesc) *outDesc = desc;
     return desc.Width == kPaletteWidth && desc.Height == kPaletteHeight &&
            (desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM);
 }
 
 void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceContext* context, UINT startSlot,
                                 UINT numViews, ID3D11ShaderResourceView* const* views) {
+    static std::atomic<int> s_calls{0};
+    const int callNo = ++s_calls;
+    if (callNo == 1 || callNo == 100 || callNo == 1000 || callNo == 5000)
+        NOBLE_INFO("ParticleTint: PSSet hook call #{} (startSlot={} numViews={})", callNo, startSlot, numViews);
     if (!s_active || numViews == 0 || !views) {
         original(context, startSlot, numViews, views);
         return;
+    }
+    {
+        static std::mutex s_descMutex;
+        static std::set<std::string> s_seen;
+        std::lock_guard<std::mutex> lock(s_descMutex);
+        for (UINT d = 0; d < numViews; ++d) {
+            if (!views[d]) continue;
+            Microsoft::WRL::ComPtr<ID3D11Resource> res;
+            views[d]->GetResource(&res);
+            Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+            if (!res || FAILED(res.As(&tex)) || !tex) continue;
+            D3D11_TEXTURE2D_DESC td{};
+            tex->GetDesc(&td);
+            char key[96];
+            std::snprintf(key, sizeof(key), "%ux%u fmt=%d slot=%u", td.Width, td.Height, static_cast<int>(td.Format), startSlot + d);
+            if (td.Height <= 64 || td.Width <= 64) {
+                char key2[96];
+                std::snprintf(key2, sizeof(key2), "SMALL %ux%u fmt=%d slot=%u", td.Width, td.Height,
+                              static_cast<int>(td.Format), startSlot + d);
+                if (s_seen.insert(key2).second && s_seen.size() < 200) NOBLE_INFO("ParticleTint: bound texture {}", key2);
+            } else if (s_seen.insert(key).second && s_seen.size() < 40) NOBLE_INFO("ParticleTint: bound texture {}", key);
+        }
     }
     std::array<ID3D11ShaderResourceView*, 16> replaced{};
     if (numViews > replaced.size()) {
@@ -167,7 +195,13 @@ void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceCon
     bool changed = false;
     for (UINT i = 0; i < numViews; ++i) {
         replaced[i] = views[i];
-        if (IsFlamePalette(views[i])) {
+        D3D11_TEXTURE2D_DESC matchedDesc{};
+        if (IsFlamePalette(views[i], &matchedDesc)) {
+            static std::atomic<bool> s_loggedMatch{true};
+            if (s_loggedMatch.exchange(false)) {
+                NOBLE_INFO("ParticleTint: matched palette {}x{} fmt={}", matchedDesc.Width, matchedDesc.Height,
+                           static_cast<int>(matchedDesc.Format));
+            }
             if (!tint) {
                 ID3D11Device* device = nullptr;
                 context->GetDevice(&device);
@@ -177,23 +211,54 @@ void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceCon
             if (tint) {
                 replaced[i] = tint;
                 changed = true;
+                static std::atomic<bool> s_firstMatch{true};
+                if (s_firstMatch.exchange(false)) NOBLE_INFO("ParticleTint: palette substituted");
             }
         }
     }
     original(context, startSlot, numViews, changed ? replaced.data() : views);
 }
 
-void STDMETHODCALLTYPE HookPSImmediate(ID3D11DeviceContext* context, UINT startSlot, UINT numViews,
-                                        ID3D11ShaderResourceView* const* views) {
-    HandlePSSetShaderResources(s_originalImmediate, context, startSlot, numViews, views);
+#define DEFINE_PS_HOOK(N)                                                                                 \
+    void STDMETHODCALLTYPE HookPS##N(ID3D11DeviceContext* c, UINT s, UINT n, ID3D11ShaderResourceView* const* v) { \
+        HandlePSSetShaderResources(s_originals[N], c, s, n, v);                                           \
+    }
+DEFINE_PS_HOOK(0)
+DEFINE_PS_HOOK(1)
+DEFINE_PS_HOOK(2)
+DEFINE_PS_HOOK(3)
+DEFINE_PS_HOOK(4)
+DEFINE_PS_HOOK(5)
+DEFINE_PS_HOOK(6)
+DEFINE_PS_HOOK(7)
+
+void* const kDetours[kMaxHooks] = {
+    reinterpret_cast<void*>(&HookPS0), reinterpret_cast<void*>(&HookPS1), reinterpret_cast<void*>(&HookPS2),
+    reinterpret_cast<void*>(&HookPS3), reinterpret_cast<void*>(&HookPS4), reinterpret_cast<void*>(&HookPS5),
+    reinterpret_cast<void*>(&HookPS6), reinterpret_cast<void*>(&HookPS7),
+};
+
+void HookContextTarget(void* target, const char* label) {
+    if (!target) return;
+    std::lock_guard<std::mutex> lock(s_deviceMutex);
+    if (s_targetSet.count(target)) return;
+    if (s_hookCount >= kMaxHooks) {
+        NOBLE_WARN("ParticleTint: no hook slot left for {} at 0x{:X}", label, reinterpret_cast<uintptr_t>(target));
+        return;
+    }
+    const int slot = s_hookCount;
+    char name[64];
+    std::snprintf(name, sizeof(name), "d3d11_ps_srv_%d", slot);
+    if (!HookManager::InstallHook(target, kDetours[slot], reinterpret_cast<void**>(&s_originals[slot]), name)) return;
+    s_targets[slot] = target;
+    s_targetSet.insert(target);
+    ++s_hookCount;
+    NOBLE_INFO("ParticleTint: hooked {} PSSetShaderResources at 0x{:X} (slot {})", label,
+               reinterpret_cast<uintptr_t>(target), slot);
 }
 
-void STDMETHODCALLTYPE HookPSDeferred(ID3D11DeviceContext* context, UINT startSlot, UINT numViews,
-                                       ID3D11ShaderResourceView* const* views) {
-    HandlePSSetShaderResources(s_originalDeferred, context, startSlot, numViews, views);
-}
-
-void HookContext(ID3D11Device* device, ID3D11DeviceContext* context);
+void InstallDeferredContextHook(ID3D11Device* device);
+void HookContext(ID3D11Device*, ID3D11DeviceContext* context);
 
 HRESULT STDMETHODCALLTYPE HookCreateDeferredContext(ID3D11Device* device, UINT flags,
                                                      ID3D11DeviceContext** context) {
@@ -202,12 +267,28 @@ HRESULT STDMETHODCALLTYPE HookCreateDeferredContext(ID3D11Device* device, UINT f
     return hr;
 }
 
-std::set<void*> s_deferredHookTargets;
+template <typename T>
+void HookContextInterface(ID3D11DeviceContext* context, const char* label) {
+    Microsoft::WRL::ComPtr<T> iface;
+    if (FAILED(context->QueryInterface(__uuidof(T), reinterpret_cast<void**>(iface.GetAddressOf()))) || !iface) return;
+    void** vtable = *reinterpret_cast<void***>(iface.Get());
+    if (vtable && vtable[8]) HookContextTarget(vtable[8], label);
+}
+
+void HookContext(ID3D11Device* device, ID3D11DeviceContext* context) {
+    if (device) InstallDeferredContextHook(device);
+    if (!context) return;
+    HookContextInterface<ID3D11DeviceContext>(context, "base");
+    HookContextInterface<ID3D11DeviceContext1>(context, "context1");
+    HookContextInterface<ID3D11DeviceContext2>(context, "context2");
+    HookContextInterface<ID3D11DeviceContext3>(context, "context3");
+    HookContextInterface<ID3D11DeviceContext4>(context, "context4");
+}
 
 void InstallDeferredContextHook(ID3D11Device* device) {
     if (!device) return;
     void** vtable = *reinterpret_cast<void***>(device);
-    if (!vtable || !vtable[31]) return;  // ID3D11Device::CreateDeferredContext
+    if (!vtable || !vtable[31]) return;
     void* target = vtable[31];
     {
         std::lock_guard<std::mutex> lock(s_deviceMutex);
@@ -218,37 +299,6 @@ void InstallDeferredContextHook(ID3D11Device* device) {
                                   reinterpret_cast<void**>(&s_originalDeferredContext),
                                   "d3d11_create_deferred_context")) {
         NOBLE_INFO("ParticleTint: hooked ID3D11Device::CreateDeferredContext at 0x{:X}", reinterpret_cast<uintptr_t>(target));
-    }
-}
-
-void HookContext(ID3D11Device* device, ID3D11DeviceContext* context) {
-    if (device) InstallDeferredContextHook(device);
-    if (!context) return;
-    void** vtable = *reinterpret_cast<void***>(context);
-    if (!vtable || !vtable[8]) return;
-    void* target = vtable[8];
-    {
-        std::lock_guard<std::mutex> lock(s_deviceMutex);
-        if (s_hookedContextTargets.count(target)) return;
-    }
-    const char* name = nullptr;
-    if (!s_targetImmediate) {
-        if (HookManager::InstallHook(target, reinterpret_cast<void*>(&HookPSImmediate),
-                                      reinterpret_cast<void**>(&s_originalImmediate), "d3d11_ps_srv")) {
-            s_targetImmediate = target;
-            name = "immediate";
-        }
-    } else if (target != s_targetImmediate && !s_targetDeferred) {
-        if (HookManager::InstallHook(target, reinterpret_cast<void*>(&HookPSDeferred),
-                                      reinterpret_cast<void**>(&s_originalDeferred), "d3d11_ps_srv_deferred")) {
-            s_targetDeferred = target;
-            name = "deferred";
-        }
-    }
-    if (name) {
-        std::lock_guard<std::mutex> lock(s_deviceMutex);
-        s_hookedContextTargets.insert(target);
-        NOBLE_INFO("ParticleTint: hooked {} PSSetShaderResources at 0x{:X}", name, reinterpret_cast<uintptr_t>(target));
     }
 }
 
@@ -276,8 +326,9 @@ HRESULT WINAPI HookCreateDeviceAndSwapChain(IDXGIAdapter* adapter, D3D_DRIVER_TY
 void InstallExportHooks() {
     if (s_exportsHooked) return;
     HMODULE d3d11 = GetModuleHandleW(L"d3d11.dll");
+    if (!d3d11) d3d11 = LoadLibraryW(L"d3d11.dll");
     if (!d3d11) {
-        NOBLE_WARN("ParticleTint: d3d11.dll not loaded yet; engine device creation will not be captured");
+        NOBLE_WARN("ParticleTint: could not load d3d11.dll for export hooks");
         return;
     }
     void* createDevice = reinterpret_cast<void*>(GetProcAddress(d3d11, "D3D11CreateDevice"));
@@ -296,13 +347,29 @@ void InstallExportHooks() {
 
 } // namespace
 
+void HookFromSwapChain(IDXGISwapChain* swapChain) {
+    if (!swapChain) return;
+    Microsoft::WRL::ComPtr<ID3D11Device> device;
+    if (FAILED(swapChain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(device.GetAddressOf()))) || !device) return;
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+    device->GetImmediateContext(context.GetAddressOf());
+    if (context) {
+        std::lock_guard<std::mutex> lock(s_deviceMutex);
+        static std::set<ID3D11DeviceContext*> s_seenContexts;
+        if (s_seenContexts.insert(context.Get()).second) {
+            NOBLE_INFO("ParticleTint: hooking context 0x{:X} from swapchain 0x{:X}",
+                       reinterpret_cast<uintptr_t>(context.Get()), reinterpret_cast<uintptr_t>(swapChain));
+        }
+    }
+    HookContext(device.Get(), context.Get());
+}
+
 void Install(ID3D11Device* device, ID3D11DeviceContext* context) {
-    if (s_hookInstalled) return;
-    s_hookInstalled = true;
-    ParseTintColour();
-    if (!s_active) return;
-    InstallExportHooks();
-    HookContext(device, context);
+    if (!s_armed.exchange(true)) {
+        ParseTintColour();
+        if (s_active) InstallExportHooks();
+    }
+    if (s_active) HookContext(device, context);
 }
 
 void Shutdown() {

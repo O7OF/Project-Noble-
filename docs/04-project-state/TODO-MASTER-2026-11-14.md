@@ -376,3 +376,5 @@ Full index: `project-docs\REFERENCE-LIBRARY-2026-11-15.md`. Key points:
 - ParticleTint module + -armor-fx-runtime-tint flag implemented: PSSetShaderResources hook (index 8), detects palette
   and substitutes tint SRV. Works on launcher context; engine rendering context not captured yet -> stock flames
   still orange. Next: find/hook engine device/context or particle submit, then per-player palette index.
+
+- **M1 DONE 2026-11-17 04:03:** runtime palette override changes stock-map flames with no rebuild. Engine context captured from DXGI Present swapchain; PSSetShaderResources vtable index 8; palette 256x16 B8G8R8A8_UNORM_SRGB. M2 per-player selection still TODO; M3 peer sync TODO.

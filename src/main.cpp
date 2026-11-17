@@ -942,6 +942,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         noble::Logger::Init(logName);
     }
     NOBLE_INFO("Starting {} - {}", noble::APP_NAME, noble::VERSION_STRING);
+    noble::ParticleTint::Install(nullptr, nullptr);
     // Provenance for support: which source tree/exe this log came from. Log-only, dev builds only.
     NOBLE_INFO("Build: {}", noble::BuildStamp());
 

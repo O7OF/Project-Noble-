@@ -232,3 +232,14 @@ Helper scripts used tonight are indexed in `docs/test-tools/ARMOR-FX-PIPELINE-IN
 7. Runtime-colour RE started only to the point of document/plan; Ghidra MCP tools were not callable from the run_code tools object, so static-analysis work is blocked until that wiring is fixed/verified. No runtime code was written.
 
 Other failures worth remembering: Foundry full-geometry round-trip crashes Tool (markers-only export is the workaround); ManagedBlam Save drops effect locations >6; cross-tag clipboard copy fails after one paste; PowerShell > emits UTF-16 and corrupted a source file (restore with git); stale game processes can capture the previous build.
+
+
+## 9. Runtime-colour milestone M1 (2026-11-17 04:03)
+
+**PROVEN:** on a stock map with no rebuild/mod/override, the runtime palette hook recolours the stock legendary flames
+(magenta proof: `docs/evidence/armor-fx-primary-2026-11-17/runtime-tint-proof.png`). Implementation is in
+`src/engine/ParticleTint.{hpp,cpp}`, wired through `ReachHost::HookSwapChainPresent`; dev flag
+`-armor-fx-runtime-tint r,g,b`. Key details: engine context is obtained from the presenting swapchain
+(GetDevice/GetImmediateContext); PSSetShaderResources vtable index is 8; matched palette is 256x16
+B8G8R8A8_UNORM_SRGB; per-device runtime tint SRV. This is global (all flame particles in the process) until M2 adds
+per-player selection. Ghidra MCP headless bridge + RenderDoc capture/replay instructions are in the runtime plan doc.

@@ -5,6 +5,8 @@ Captures from the working 24-colour build and earlier 30-variant experiments. Se
 
 | File | Shows |
 |---|---|
+| runtime-tint-proof.png | Stock Forge World + stock LEGENDARY flames recoloured magenta by the runtime palette hook (no map rebuild/mod). |
+|---|---|
 | armor-fx-pri-contact-sheet.png | 6x5 contact sheet of the original 30 variant captures (pre-solid-palette; older formula). |
 | armory-auto-green-24.png | Armory PRIMARY MATCH with green primary - green flames + green armour. |
 | armory-birthday-clean-24.png | Armory Birthday Party - no regular flame. |

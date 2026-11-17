@@ -26,6 +26,7 @@
 #include "engine/BlamEngine.hpp"
 #include "engine/DevCheats.hpp"
 #include "engine/ReachArmory.hpp"
+#include "engine/ParticleTint.hpp"
 #include "engine/ElitePack.hpp"
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
@@ -336,6 +337,7 @@ static std::atomic<bool> s_presentHookInstalled{false};
 static std::atomic<bool> s_presentHookAttempted{false};
 
 static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags) {
+    noble::ParticleTint::HookFromSwapChain(swapChain);
     if (noble::FrontEndMenu::IsMatchRunning()) {
         Sleep(25);
         return S_OK; // Match is running in child container window; discard parent presentation completely
