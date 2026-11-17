@@ -104,6 +104,7 @@ private:
     int m_rowCount = 0;           // rows laid out this frame
     int m_lastRowCount = 0;
     int m_focus = 0;              // focused row (keys / pad); -1 = the tab list, above the first row
+    bool m_focusInCategories = true; // controller focus is on left category column (true) or setting rows (false)
     bool m_valueTookLeftRight = false;  // a focused value row used left/right this frame, so the tabs must not
     bool m_enterAppliesHere = false;    // the focused row has no use for Enter
     bool m_scrollToFocus = false;

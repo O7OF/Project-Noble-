@@ -2239,6 +2239,42 @@ void DrawDevMenuModal(const Ui &ui) {
   if (ImGui::BeginPopupModal("NOBLE DEVELOPER CONSOLE", &g_showDevMenu,
                              ImGuiWindowFlags_NoResize |
                                  ImGuiWindowFlags_AlwaysAutoResize)) {
+    static int s_devFocus = 0;
+    const int kDevCount = 6;
+    if (UiPad::Down() || ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+      s_devFocus = (s_devFocus + 1) % kDevCount;
+      MenuSounds::Scroll();
+    }
+    if (UiPad::Up() || ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+      s_devFocus = (s_devFocus + kDevCount - 1) % kDevCount;
+      MenuSounds::Scroll();
+    }
+    const bool padAccept = UiPad::AcceptPressed();
+    if (padAccept)
+      UiPad::ConsumeAccept();
+    if (UiPad::BackPressed()) {
+      UiPad::ConsumeBack();
+      g_showDevMenu = false;
+      ImGui::CloseCurrentPopup();
+      MenuSounds::Back();
+    }
+
+    auto devButton = [&](int idx, const char *label, const ImVec2 &size) -> bool {
+      const bool focused = (s_devFocus == idx);
+      if (focused) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.45f, 0.65f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border, NobleStyle::Accent());
+      }
+      const bool clicked = ImGui::Button(label, size) || (focused && padAccept);
+      if (focused) {
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        NobleUi::DrawFocusHighlight(dl, ImGui::GetItemRectMin(),
+                                    ImGui::GetItemRectMax(), ui.s, true);
+        ImGui::PopStyleColor(2);
+      }
+      return clicked;
+    };
+
     ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f),
                        "[DEV] NOBLE DEVELOPER MENU");
     ImGui::TextDisabled("Logged in as Developer: %s (User ID: %d)",
@@ -2248,7 +2284,7 @@ void DrawDevMenuModal(const Ui &ui) {
     ImGui::Dummy(ImVec2(0, 4));
 
     // 1. UNLOCK ALL ARMORS
-    if (ImGui::Button("UNLOCK ALL ARMORS", ImVec2(220, 32))) {
+    if (devButton(0, "UNLOCK ALL ARMORS", ImVec2(220, 32))) {
       Career::DevSetArmoryUnlockAll(true);
       s_devStatusMsg = "SUCCESS: All Spartan and Elite armors unlocked!";
       MenuSounds::Click();
@@ -2257,7 +2293,7 @@ void DrawDevMenuModal(const Ui &ui) {
     ImGui::TextDisabled("Unlocks all armors & permutations");
 
     // 2. GIVE MAX CREDITS
-    if (ImGui::Button("GIVE MAX CREDITS", ImVec2(220, 32))) {
+    if (devButton(1, "GIVE MAX CREDITS", ImVec2(220, 32))) {
       Career::DevGrantMaxCredits();
       s_devStatusMsg = "SUCCESS: Max credits granted (+999,999,999 cR)!";
       MenuSounds::Click();
@@ -2266,7 +2302,7 @@ void DrawDevMenuModal(const Ui &ui) {
     ImGui::TextDisabled("Grants 999,999,999 cR spendable balance");
 
     // 3. GIVE MAX RANK
-    if (ImGui::Button("GIVE MAX RANK", ImVec2(220, 32))) {
+    if (devButton(2, "GIVE MAX RANK", ImVec2(220, 32))) {
       Career::DevSetMaxRank();
       s_devStatusMsg = "SUCCESS: Promoted to highest rank (Inheritor)!";
       MenuSounds::Click();
@@ -2279,7 +2315,7 @@ void DrawDevMenuModal(const Ui &ui) {
     ImGui::Dummy(ImVec2(0, 4));
 
     // Convenience: UNLOCK ALL & MAX EVERYTHING
-    if (ImGui::Button("MAX EVERYTHING", ImVec2(220, 32))) {
+    if (devButton(3, "MAX EVERYTHING", ImVec2(220, 32))) {
       Career::DevSetArmoryUnlockAll(true);
       Career::DevGrantMaxCredits();
       Career::DevSetMaxRank();
@@ -2291,7 +2327,7 @@ void DrawDevMenuModal(const Ui &ui) {
     ImGui::TextDisabled("Unlock all armors, max rank & credits");
 
     // Reset progress option
-    if (ImGui::Button("RESET CAREER", ImVec2(220, 28))) {
+    if (devButton(4, "RESET CAREER", ImVec2(220, 28))) {
       Career::DevResetProgress();
       s_devStatusMsg = "Career reset: 0 cR, Recruit rank, armors locked.";
       MenuSounds::Click();
@@ -2308,9 +2344,10 @@ void DrawDevMenuModal(const Ui &ui) {
     ImGui::Dummy(ImVec2(0, 8));
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, 4));
-    if (ImGui::Button("CLOSE", ImVec2(100, 30))) {
+    if (devButton(5, "CLOSE", ImVec2(100, 30))) {
       g_showDevMenu = false;
       ImGui::CloseCurrentPopup();
+      MenuSounds::Back();
     }
 
     ImGui::EndPopup();
@@ -2334,6 +2371,16 @@ void DrawAccountModal(const Ui &ui) {
   if (ImGui::BeginPopupModal("ACCOUNT LOGIN / REGISTER", &g_showAccountModal,
                              ImGuiWindowFlags_NoResize |
                                  ImGuiWindowFlags_AlwaysAutoResize)) {
+    const bool padAccept = UiPad::AcceptPressed();
+    if (padAccept)
+      UiPad::ConsumeAccept();
+    if (UiPad::BackPressed()) {
+      UiPad::ConsumeBack();
+      g_showAccountModal = false;
+      ImGui::CloseCurrentPopup();
+      MenuSounds::Back();
+    }
+
     bool isLoggedIn = AuthClient::Get().IsLoggedIn();
     if (isLoggedIn) {
       static uint64_t s_lastDevCheck = 0;
@@ -2423,6 +2470,10 @@ void DrawAccountModal(const Ui &ui) {
         ImGui::CloseCurrentPopup();
       }
     } else {
+      if (UiPad::TabPrev() || UiPad::TabNext()) {
+        s_accountTab = 1 - s_accountTab;
+        MenuSounds::Tab(s_accountTab ? 1 : -1);
+      }
       // Login / Register: two equal tabs over full-width fields, and the same
       // button pairing as above.
       const float tabW =

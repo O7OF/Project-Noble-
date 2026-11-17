@@ -1682,6 +1682,19 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     st.lobbyMenuRow = (st.lobbyMenuRow + d + totalRows) % totalRows;
     MenuSounds::Scroll();
   };
+  if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen) {
+    if (UiPad::TabPrev()) {
+      if (st.lobbyFocusZone != 0) {
+        st.lobbyFocusZone = 0;
+        MenuSounds::Tab(-1);
+      }
+    } else if (UiPad::TabNext()) {
+      if (st.lobbyFocusZone != 1 && !st.lobbyRoster.empty()) {
+        st.lobbyFocusZone = 1;
+        MenuSounds::Tab(1);
+      }
+    }
+  }
   if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen &&
       st.lobbyFocusZone == 0) {
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down())
@@ -2865,6 +2878,11 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) || UiPad::Left()) {
         st.lobbyFocusZone = 0;
         MenuSounds::Scroll();
+      }
+      if (UiPad::BackPressed()) {
+        UiPad::ConsumeBack();
+        st.lobbyFocusZone = 0;
+        MenuSounds::Back();
       }
       if (AcceptPressed()) {
         UiPad::ConsumeAccept();

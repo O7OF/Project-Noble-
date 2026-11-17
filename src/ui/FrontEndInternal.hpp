@@ -576,6 +576,8 @@ struct MenuState {
   bool lobbyMapPickerOpen = false; // Pre-Game Lobby modal tile map picker
   int optionsCategoryIdx =
       0; // Active category tab index in tiled Game Options editor
+  int optionsFocusZone =
+      0; // 0 = category list on left, 1 = option rows / action buttons
   int optionsRuleFocus =
       0; // Focused rule index within active Game Options category
   bool optionsRuleDropdownOpen =

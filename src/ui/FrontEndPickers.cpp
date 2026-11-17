@@ -2025,9 +2025,12 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
         active ? IM_COL32(42, 86, 126, 225)
                : (hov ? IM_COL32(28, 46, 68, 195) : IM_COL32(14, 22, 32, 165)),
         2.0f * ui.s);
-    if (active)
+    if (active) {
       ui.dl->AddRectFilled(b0, ImVec2(b0.x + 3.0f * ui.s, b1.y),
                            IM_COL32(255, 172, 66, 255));
+      if (st.optionsFocusZone == 0)
+        NobleUi::DrawFocusHighlight(ui.dl, b0, b1, ui.s, true);
+    }
     const std::string cName =
         Ellipsize(NobleStyle::TitleFont(), 15.5f * ui.s,
                   Upper(categories[ci].name), (b1.x - b0.x) - 52.0f * ui.s);
@@ -2045,6 +2048,7 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
          categories[ci].changedCount > 0 ? NobleUi::kAmber : kDim, cnt);
     if (clk) {
       st.optionsCategoryIdx = ci;
+      st.optionsFocusZone = 0;
       st.optionsRuleFocus = 0;
       st.optionsFirst = 0;
       MenuSounds::Change();
@@ -2070,13 +2074,49 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
       std::clamp(st.optionsRuleFocus, 0, std::max(0, maxRowCount - 1));
 
   if (!typing && maxRowCount > 0) {
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
-      st.optionsRuleFocus = (st.optionsRuleFocus + 1) % maxRowCount;
-      MenuSounds::Scroll();
-    } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
-      st.optionsRuleFocus =
-          (st.optionsRuleFocus + maxRowCount - 1) % maxRowCount;
-      MenuSounds::Scroll();
+    if (st.optionsFocusZone == 0) {
+      if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
+        st.optionsCategoryIdx =
+            (st.optionsCategoryIdx + 1) % static_cast<int>(categories.size());
+        st.optionsRuleFocus = 0;
+        st.optionsFirst = 0;
+        MenuSounds::Scroll();
+      } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
+        st.optionsCategoryIdx =
+            (st.optionsCategoryIdx + static_cast<int>(categories.size()) - 1) %
+            static_cast<int>(categories.size());
+        st.optionsRuleFocus = 0;
+        st.optionsFirst = 0;
+        MenuSounds::Scroll();
+      }
+      if (UiPad::Right() || AcceptPressed() ||
+          ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
+          ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+        if (AcceptPressed())
+          UiPad::ConsumeAccept();
+        st.optionsFocusZone = 1;
+        st.optionsRuleFocus = 0;
+        MenuSounds::Click();
+      }
+    } else {
+      if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
+        st.optionsRuleFocus = (st.optionsRuleFocus + 1) % maxRowCount;
+        MenuSounds::Scroll();
+      } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) {
+        st.optionsRuleFocus =
+            (st.optionsRuleFocus + maxRowCount - 1) % maxRowCount;
+        MenuSounds::Scroll();
+      }
+      if (back) {
+        back = false;
+        st.optionsFocusZone = 0;
+        MenuSounds::Back();
+      }
+      if (st.optionsRuleFocus >= ruleCount &&
+          (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left())) {
+        st.optionsFocusZone = 0;
+        MenuSounds::Scroll();
+      }
     }
   }
 
@@ -2137,7 +2177,8 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
     const int idxInCat = st.optionsFirst + vis;
     const int rIdx = activeRules[idxInCat];
     const VariantRules::Rule &rule = rules[rIdx];
-    const bool rowFocused = (!typing && st.optionsRuleFocus == idxInCat);
+    const bool rowFocused =
+        (!typing && st.optionsFocusZone == 1 && st.optionsRuleFocus == idxInCat);
     if (rowFocused)
       focusedRule = &rule;
     const float ry = listTop + vis * rowStep;
@@ -2207,6 +2248,7 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
             break;
         }
       }
+      st.optionsFocusZone = 1;
       st.optionsRuleFocus = idxInCat;
       focusedRule = &rule;
       if (next == baseVal)
@@ -2311,18 +2353,19 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
   float by = rBox1.y - btnAreaH;
   bool save = BigAction(ui, "mode_save", ImVec2(rBox0.x + rPad, by), rInnerW,
                         "SAVE MODE", "Save & select in mode list", true, true,
-                        st.optionsRuleFocus == saveRow);
+                        st.optionsFocusZone == 1 && st.optionsRuleFocus == saveRow);
   by += 56.0f * ui.s;
   bool reset = BigAction(ui, "mode_reset", ImVec2(rBox0.x + rPad, by), rInnerW,
                          "RESET ALL", "Restore base rules", false, true,
-                         st.optionsRuleFocus == resetRow);
+                         st.optionsFocusZone == 1 && st.optionsRuleFocus == resetRow);
   by += 56.0f * ui.s;
   bool erase =
       canDelete && BigAction(ui, "mode_delete", ImVec2(rBox0.x + rPad, by),
                              rInnerW, "DELETE MODE", "Remove saved custom mode",
-                             false, true, st.optionsRuleFocus == deleteRow);
+                             false, true,
+                             st.optionsFocusZone == 1 && st.optionsRuleFocus == deleteRow);
 
-  if (!typing && AcceptPressed()) {
+  if (!typing && st.optionsFocusZone == 1 && AcceptPressed()) {
     if (st.optionsRuleFocus == saveRow)
       save = true;
     if (st.optionsRuleFocus == resetRow)

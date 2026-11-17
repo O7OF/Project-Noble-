@@ -349,6 +349,7 @@ void SettingsPanel::SetTab(int tab) {
   const int n = static_cast<int>(Cat::Count);
   m_cat = static_cast<Cat>(((tab % n) + n) % n);
   m_focus = 0;
+  m_focusInCategories = true;
 }
 
 void SettingsPanel::SyncBuffers() {
@@ -410,6 +411,8 @@ void SettingsPanel::Render() {
     std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s",
                   m_edit.masterServerUrl.c_str());
     m_loaded = true;
+    m_focusInCategories = true;
+    m_focus = 0;
     // Test-only "-settings-search <text>": pre-fills the search box so a capture can show filtered rows (e.g. "toggle"
     // for the TOGGLE CROUCH / TOGGLE ZOOM options) without typing into an unfocused window.
     {
@@ -505,24 +508,63 @@ void SettingsPanel::Render() {
     UiPad::ConsumeAccept();
   if (m_navAllowed) {
     const int rows = std::max(1, m_lastRowCount);
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) {
-      m_focus = m_focus + 1 >= rows ? -1 : m_focus + 1;
-      m_scrollToFocus = true;
-      MenuSounds::Scroll();
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) {
-      m_focus = m_focus < 0 ? rows - 1 : m_focus - 1;
-      m_scrollToFocus = true;
-      MenuSounds::Scroll();
-    }
-    if (UiPad::PageDown() ||
-        UiPad::PageUp()) { // the triggers jump a screenful of rows
-      const int jump = UiPad::PageDown() ? 8 : -8;
-      m_focus = std::clamp(m_focus + jump, 0, rows - 1);
-      m_scrollToFocus = true;
-      MenuSounds::Scroll();
-    }
     const int n = static_cast<int>(Cat::Count);
+
+    if (m_focusInCategories) {
+      // Zone 0: Left Column (Categories)
+      if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) {
+        m_cat = static_cast<Cat>((static_cast<int>(m_cat) + 1) % n);
+        m_focus = 0;
+        m_search[0] = 0;
+        m_scrollToFocus = true;
+        m_resetRowsScroll = true;
+        MenuSounds::Scroll();
+      }
+      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) {
+        m_cat = static_cast<Cat>((static_cast<int>(m_cat) + n - 1) % n);
+        m_focus = 0;
+        m_search[0] = 0;
+        m_scrollToFocus = true;
+        m_resetRowsScroll = true;
+        MenuSounds::Scroll();
+      }
+      // Enter rows via D-Pad Right, Accept (A), or Enter
+      if (UiPad::Right() || m_keyAccept ||
+          ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) ||
+          ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+        m_focusInCategories = false;
+        m_focus = 0;
+        m_scrollToFocus = true;
+        MenuSounds::Click();
+      }
+    } else {
+      // Zone 1: Middle Column (Settings Rows)
+      if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down()) {
+        m_focus = (m_focus + 1) % rows;
+        m_scrollToFocus = true;
+        MenuSounds::Scroll();
+      }
+      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up()) {
+        m_focus = (m_focus + rows - 1) % rows;
+        m_scrollToFocus = true;
+        MenuSounds::Scroll();
+      }
+      if (UiPad::PageDown() ||
+          UiPad::PageUp()) { // the triggers jump a screenful of rows
+        const int jump = UiPad::PageDown() ? 8 : -8;
+        m_focus = std::clamp(m_focus + jump, 0, rows - 1);
+        m_scrollToFocus = true;
+        MenuSounds::Scroll();
+      }
+      // Controller B backs out to category column
+      if (UiPad::BackPressed()) {
+        UiPad::ConsumeBack();
+        m_focusInCategories = true;
+        MenuSounds::Back();
+      }
+    }
+
+    // Bumpers switch category smoothly from anywhere
     if (UiPad::TabPrev()) {
       m_cat = static_cast<Cat>((static_cast<int>(m_cat) + n - 1) % n);
       m_focus = 0;
@@ -562,27 +604,14 @@ void SettingsPanel::Render() {
   ImGui::SameLine(0, gap);
   RenderDetails(rightW, avail.y);
 
-  // Left/right moves between tabs only when nothing on the page wanted it: on
-  // the tab list (above the first row) or on a row without a value. A value row
-  // adjusts its value instead. This runs after the rows, which is how it can
-  // tell.
-  if (m_navAllowed && !m_valueTookLeftRight && m_search[0] == 0) {
+  // When focused in rows, D-pad Left on a row that did not take Left/Right returns to categories
+  if (m_navAllowed && !m_focusInCategories && !m_valueTookLeftRight && m_search[0] == 0) {
     const bool left = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false) ||
                       ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft, false) ||
                       ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false);
-    const bool right =
-        ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight, false) ||
-        ImGui::IsKeyPressed(ImGuiKey_RightArrow, false);
-    if (left || right) {
-      const int n = static_cast<int>(Cat::Count);
-      m_cat =
-          static_cast<Cat>((static_cast<int>(m_cat) + (right ? 1 : n - 1)) % n);
-      if (m_focus > 0)
-        m_focus = 0;
-      m_scrollToFocus = true;
-      m_resetRowsScroll = true;
-      MenuSounds::Tab(right ? 1 : -1);
+    if (left) {
+      m_focusInCategories = true;
+      MenuSounds::Scroll();
     }
   }
   // Enter applies when the focus is off the rows (the APPLY/DISCARD box at the bottom). Read the
@@ -638,18 +667,25 @@ void SettingsPanel::RenderCategories(float width, float height) {
     const bool clicked = ImGui::InvisibleButton("##cat", ImVec2(w, h));
     const bool hovered = ImGui::IsItemHovered();
     ImGui::PopID();
+    if (clicked) {
+      m_cat = static_cast<Cat>(i);
+      m_focus = 0;
+      m_focusInCategories = true;
+      m_search[0] = 0;
+      m_scrollToFocus = true;
+      m_resetRowsScroll = true;
+      MenuSounds::Tab(1);
+    }
     const bool sel = static_cast<int>(m_cat) == i && m_search[0] == 0;
     if (sel && m_scrollToFocus)
       ImGui::SetScrollHereY(0.5f); // the unsaved box can hide the last tabs
     RowBackground(dl, p, ImVec2(p.x + w, p.y + h), sel, hovered);
     ImDrawList *wdl = ImGui::GetWindowDrawList();
-    if (sel &&
-        m_focus <
-            0) { // keys and pad are on the tab list: left/right switches tabs
-      wdl->AddRect(p, ImVec2(p.x + w, p.y + h), kAccent, 0.0f, 0, 2.0f * s);
+    if (sel && m_focusInCategories) {
+      wdl->AddRect(p, ImVec2(p.x + w, p.y + h), kAccent, 2.0f * s, 0, 2.0f * s);
       wdl->AddText(NobleStyle::SmallFont(), 14.0f * s,
-                   ImVec2(p.x + w - 34.0f * s, p.y + 18.0f * s), kAccent,
-                   "< >");
+                   ImVec2(p.x + w - 46.0f * s, p.y + 18.0f * s), kAccent,
+                   "[A / >]");
     }
     Text(wdl, NobleStyle::TitleFont(), 19.0f * s,
          ImVec2(p.x + 14.0f * s, p.y + 5.0f * s), sel ? kText : kTextDim,
@@ -894,11 +930,12 @@ bool SettingsPanel::Row(const char *label, const char *description, When when,
   const bool hovered =
       ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
       ImGui::IsMouseHoveringRect(p, q);
-  if (hovered && ImGui::IsMouseClicked(0) && m_focus != index) {
+  if (hovered && ImGui::IsMouseClicked(0) && (m_focus != index || m_focusInCategories)) {
     m_focus = index;
+    m_focusInCategories = false;
     MenuSounds::Scroll();
   }
-  const bool focused = index == m_focus;
+  const bool focused = (index == m_focus) && !m_focusInCategories;
   if (focused && m_scrollToFocus)
     ImGui::SetScrollFromPosY(p.y - ImGui::GetWindowPos().y, 0.4f);
 

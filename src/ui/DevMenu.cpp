@@ -4,6 +4,8 @@
 #include "host/SpawnTest.hpp"
 #include "common/Logger.hpp"
 #include "network/AuthClient.hpp"
+#include "ui/UiPad.hpp"
+#include "ui/MenuSounds.hpp"
 
 #include <imgui.h>
 #include <algorithm>
@@ -89,6 +91,13 @@ void DevMenu::Draw() {
         ImGui::PopStyleColor(2);
         return;
     }
+
+    if (UiPad::BackPressed()) {
+        UiPad::ConsumeBack();
+        s_open = false;
+        MenuSounds::Back();
+    }
+    UiPad::ScrollWindow(true, true);
 
     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
 
