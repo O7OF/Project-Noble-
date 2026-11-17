@@ -84,12 +84,12 @@ const char* s_extraList[1] = {nullptr};
 
 template <typename T> T At(uintptr_t rva) { return reinterpret_cast<T>(s_base + rva); }
 
-// Noble relocation sidecar: magic "NBRL", version 1, the pack's packed-pointer offsets and bases.
+// Noble relocation sidecar: magic "NBRL" or "RRRL", version 1, the pack's packed-pointer offsets and bases.
 bool ReadReloc(const std::filesystem::path& file, Reloc& out) {
     std::ifstream in(file, std::ios::binary);
     if (!in) return false;
     std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (d.size() < 0x20 || std::memcmp(d.data(), "NBRL", 4) != 0) {
+    if (d.size() < 0x20 || (std::memcmp(d.data(), "NBRL", 4) != 0 && std::memcmp(d.data(), "RRRL", 4) != 0)) {
         NOBLE_WARN("ElitePack: {} is not a Noble relocation sidecar", file.string());
         return false;
     }
@@ -1285,14 +1285,17 @@ std::mutex s_picksMutex;
 uint8_t s_localPicks[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 uint8_t s_localEliteEffect = 0xFF;
 int s_localSet = -1;
-uint8_t s_localColors[4] = {1, 10, 14, 10};
+uint8_t s_localColors[4] = {1, 10, 14, 14};
 uint8_t s_localCustomFlags = 0;
 float s_localCustomRgb[4][3] = {};
+int s_localLightsBrightnessIdx = 1; // 0..130 -> 0.5f + idx * 0.5f (default 1 = x1.0)
 uint8_t s_localSpartanVisorIndex = 0;
+uint8_t s_localSpartanVisorItemIndex = 0; // 0..29 in kArmoryVisorItemIds / kArmoryVisorRgb order
 bool s_localSpartanVisorCustom = false;
-float s_localSpartanVisorRgb[3] = {};
+float s_localSpartanVisorRgb[3] = {0.85f, 0.53f, 0.14f};
 bool s_localSpeciesElite = false;   // appearance.json "species" == 1 (the local player's preferred species)
 std::atomic<int> s_localSettingsIndex{-1};   // settings index the engine last applied the local profile to
+std::atomic<const uint8_t*> s_localUserSettingsPtr{nullptr};
 std::filesystem::file_time_type s_picksStamp{};
 std::atomic<int> s_picksLogged{0};
 
@@ -1307,8 +1310,9 @@ void RefreshLocalPicks() {
     nlohmann::json j;
     if (!SaveCodec::ReadJson(s_appearancePath, j)) return;
     try {
-        const auto& el = j.at("elite");
         s_localSpeciesElite = j.value("species", 0) == 1;
+        const nlohmann::json emptyObj = nlohmann::json::object();
+        const auto& el = (j.contains("elite") && j["elite"].is_object()) ? j["elite"] : emptyObj;
         const int rawSet = el.value("armor_set", 0);
         const int set = (rawSet >= 0 && rawSet < kArmorySets) ? rawSet : 0;
         static const char* kKeys[6] = {"helmet_id", "left_shoulder_id", "right_shoulder_id", "chest_id", "arms_id", "legs_id"};
@@ -1333,13 +1337,16 @@ void RefreshLocalPicks() {
         else fxIdx = 0;
         s_localEliteEffect = (fxIdx >= 1 && fxIdx <= 6) ? static_cast<uint8_t>(fxIdx) : 0xFF;
 
-        const bool useElColors = el.contains("primary_color");
+        const bool useElColors = s_localSpeciesElite && el.contains("primary_color");
         const auto& colSrc = useElColors ? el : j;
 
         s_localColors[0] = static_cast<uint8_t>(std::clamp(colSrc.value("primary_color", 1), 0, 29));
         s_localColors[1] = static_cast<uint8_t>(std::clamp(colSrc.value("secondary_color", 10), 0, 29));
         s_localColors[2] = static_cast<uint8_t>(std::clamp(colSrc.value("accent_color", 14), 0, 29));
-        s_localColors[3] = static_cast<uint8_t>(std::clamp(colSrc.value("lights_color", 10), 0, 29));
+        s_localColors[3] = static_cast<uint8_t>(std::clamp(colSrc.value("lights_color", 14), 0, 29));
+
+        const float rawBrightness = std::clamp(colSrc.value("lights_brightness", j.value("lights_brightness", 1.0f)), 0.5f, 65.5f);
+        s_localLightsBrightnessIdx = std::clamp(static_cast<int>(std::lround((rawBrightness - 0.5f) * 2.0f)), 0, 130);
 
         s_localCustomFlags = 0;
         if (colSrc.value("primary_custom", false))   s_localCustomFlags |= (1 << 0);
@@ -1365,18 +1372,23 @@ void RefreshLocalPicks() {
             else if (visorId == "gold") uiVisorIdx = 4;
             // Same resolution as ReachHost's profile path: resolve by string id (the Armory UI catalog order differs
             // from MCC's item order for ice/crimson/onyx/violet) and apply the engine's stock 3/4 Gold/Black swap.
+            s_localSpartanVisorItemIndex = static_cast<uint8_t>(std::clamp(ArmoryVisorItemIndex(uiVisorIdx, visorId), 0, 29));
             s_localSpartanVisorIndex = static_cast<uint8_t>(ArmoryVisorEngineIndex(uiVisorIdx, visorId));
-            s_localSpartanVisorCustom = sp.value("visor_custom", false);
+            s_localSpartanVisorCustom = (s_localSpartanVisorItemIndex >= 5) || sp.value("visor_custom", false);
+            s_localSpartanVisorRgb[0] = kArmoryVisorRgb[s_localSpartanVisorItemIndex][0];
+            s_localSpartanVisorRgb[1] = kArmoryVisorRgb[s_localSpartanVisorItemIndex][1];
+            s_localSpartanVisorRgb[2] = kArmoryVisorRgb[s_localSpartanVisorItemIndex][2];
             if (sp.contains("visor_custom_rgb") && sp["visor_custom_rgb"].is_array() && sp["visor_custom_rgb"].size() == 3) {
                 for (int i = 0; i < 3; ++i) s_localSpartanVisorRgb[i] = std::clamp(sp["visor_custom_rgb"][i].get<float>(), 0.0f, 1.0f);
             }
         }
 
-        NOBLE_INFO("ElitePack: Armory Elite pieces {} {} {} {} {} {} (set {}), colors {}/{}/{}/{}, visor {}",
+        NOBLE_INFO("ElitePack: Armory Elite pieces {} {} {} {} {} {} (set {}), colors {}/{}/{}/{}, lightsB x{:.1f}, visor {} (item {})",
                    s_localPicks[0], s_localPicks[1], s_localPicks[2], s_localPicks[3],
                    s_localPicks[4], s_localPicks[5], set,
                    s_localColors[0], s_localColors[1], s_localColors[2], s_localColors[3],
-                   s_localSpartanVisorIndex);
+                   0.5f + static_cast<float>(s_localLightsBrightnessIdx) * 0.5f,
+                   s_localSpartanVisorIndex, s_localSpartanVisorItemIndex);
     } catch (...) {
     }
 }
@@ -1406,10 +1418,13 @@ constexpr uintptr_t kBuilderReturnSpawn = 0x04AC3B;
 constexpr uintptr_t kBuilderReturnLive  = 0x0447B5;
 
 constexpr uintptr_t kApplyProfile = 0x2EDA08;   // void(int settingsIndex, uint8_t* player)
+constexpr uintptr_t kBuildRecord  = 0x2C7A18;   // void(const uint8_t* userSettings, uint8_t* outRecord)
 using ApplyProfileFn = void(__fastcall*)(int, uint8_t*);
 using RecordSetFn = void(__fastcall*)(uint8_t*, uint8_t*);
+using BuildRecordFn = void(__fastcall*)(const uint8_t*, uint8_t*);
 static ApplyProfileFn s_applyProfileOriginal = nullptr;
 static RecordSetFn s_recordSetOriginal = nullptr;
+static BuildRecordFn s_buildRecordOriginal = nullptr;
 constexpr uintptr_t kRecordSet = 0x2C837C;   // void(playerSettings*, uint8_t block[0x20])
 
 BuilderFn s_builder = nullptr;
@@ -1425,13 +1440,59 @@ static bool IsLocalPlayerDatum(const uint8_t* player) {
     }
 }
 
+// Stamps the local player's extended Noble customization (Lights color, Lights brightness, Custom wheel RGB,
+// Spartan visor finish 0..29, and Elite piece picks) into a 0x28-byte appearance record so 0x3A2500/0x3A296C
+// replicates it across all peers into player+0xD8.
+static void StampLocalAppearanceRecordLocked(uint8_t* rec, bool elite) {
+    if (!rec) return;
+    const bool lightsCust = (s_localCustomFlags & (1 << 3)) != 0;
+    rec[0x1B] = static_cast<uint8_t>((lightsCust ? 0x60 : 0x40) | (s_localColors[3] & 0x1F));
+    if (lightsCust) {
+        const int r6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][0] * 5.0f)), 0, 5);
+        const int g6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][1] * 5.0f)), 0, 5);
+        const int b6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][2] * 5.0f)), 0, 5);
+        const uint16_t w26 = static_cast<uint16_t>(0xF2 + (r6 * 36 + g6 * 6 + b6));
+        std::memcpy(rec + 0x26, &w26, sizeof(w26));
+    }
+    if (elite) {
+        rec[0x01] = s_localColors[0];
+        rec[0x02] = s_localColors[1];
+        rec[0x18] = static_cast<uint8_t>(std::clamp(s_localLightsBrightnessIdx, 0, 127));
+        if (NobleActive()) {
+            const int set = (s_localSet >= 0 && s_localSet < kArmorySets) ? s_localSet : 0;
+            for (int k = 0; k < 6; ++k)
+                rec[kRecordPieceBase + k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : SetPick(set, k);
+            rec[kRecordPieceBase + 6] = kElitePiecesMarker;
+            rec[kRecordEliteSet] = static_cast<uint8_t>(set);
+            if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) rec[kRecordEliteFx] = s_localEliteEffect;
+        }
+    } else {
+        rec[0x17] = static_cast<uint8_t>(std::clamp(s_localLightsBrightnessIdx, 0, 127));
+        rec[0x19] = static_cast<uint8_t>(0x40 | (s_localSpartanVisorItemIndex & 0x1F));
+    }
+}
+
+void __fastcall BuildRecordHook(const uint8_t* userSettings, uint8_t* outRecord) {
+    if (s_buildRecordOriginal) s_buildRecordOriginal(userSettings, outRecord);
+    if (!userSettings || !outRecord) return;
+    const uintptr_t uAddr = reinterpret_cast<uintptr_t>(userSettings);
+    const bool isLocalSettings = (userSettings == s_localUserSettingsPtr.load()) ||
+                                 (s_base && uAddr >= s_base + 0x2A03C00 && uAddr < s_base + 0x2A08000) ||
+                                 IsLocalPlayerDatum(userSettings);
+    if (!isLocalSettings) return;
+    std::lock_guard<std::mutex> lock(s_picksMutex);
+    RefreshLocalPicks();
+    const bool elite = (outRecord[4] == 1) || s_localSpeciesElite;
+    StampLocalAppearanceRecordLocked(outRecord, elite);
+}
+
 // Second chance for the settings sync: 0x2C837C(player, block) is the call the engine makes when it
 // pushes a player's appearance block to the profile manager. ApplyProfileHook runs while the map is
 // still loading (before the pack is in), so its push is usually too early; this hook catches the sync
 // afterwards. The settings index recorded by ApplyProfileHook tells the local player's block apart from
 // the other players' blocks, so a remote player's appearance is never overwritten with local picks.
 void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
-    bool isLocal = IsLocalPlayerDatum(player);
+    bool isLocal = IsLocalPlayerDatum(player) || (player && player == s_localUserSettingsPtr.load());
     int32_t index = -1;
     if (player) std::memcpy(&index, player + 0x10, sizeof(index));
     const int storedLocal = s_localSettingsIndex.load();
@@ -1442,47 +1503,47 @@ void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
         isLocal = true;
     }
 
-    if (player && block && s_loaded && s_haveActive && isLocal) {
+    if (player && block && isLocal) {
         std::lock_guard<std::mutex> lock(s_picksMutex);
         RefreshLocalPicks();
-        if (s_localSpeciesElite) {
-            if (NobleActive()) {
-                const int set = (s_localSet >= 0 && s_localSet < kArmorySets)
-                                    ? s_localSet : 0;
-                uint8_t picks[6];
-                for (int k = 0; k < 6; ++k)
-                    picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : SetPick(set, k);
-                std::memcpy(block, picks, 6);
-                block[6] = kElitePiecesMarker;
-                block[7] = static_cast<uint8_t>(set);
-                if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) block[9] = s_localEliteEffect;
-                block[10] = s_localColors[0];
-                block[11] = s_localColors[1];
-                block[12] = s_localColors[2];
-                block[13] = s_localColors[3];
-                block[14] = s_localCustomFlags;
-                for (int c = 0; c < 4; ++c) {
-                    block[16 + c * 3 + 0] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][0] * 255.0f), 0L, 255L));
-                    block[16 + c * 3 + 1] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][1] * 255.0f), 0L, 255L));
-                    block[16 + c * 3 + 2] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][2] * 255.0f), 0L, 255L));
-                }
-                static std::atomic<int> s_synced{0};
-                if (s_synced.fetch_add(1) < 6)
-                    NOBLE_INFO("ElitePack: Elite pieces & colors written to settings sync block (player index {}):{}", index,
-                               Hex(block, 0x20));
-            }
-        } else {
-            // Replicate Spartan visor index (0..29) and custom RGB in settings sync block
-            block[15] = s_localSpartanVisorIndex;
-            block[28] = static_cast<uint8_t>(std::clamp(std::lround(s_localSpartanVisorRgb[0] * 255.0f), 0L, 255L));
-            block[29] = static_cast<uint8_t>(std::clamp(std::lround(s_localSpartanVisorRgb[1] * 255.0f), 0L, 255L));
-            block[30] = static_cast<uint8_t>(std::clamp(std::lround(s_localSpartanVisorRgb[2] * 255.0f), 0L, 255L));
-            block[31] = s_localSpartanVisorCustom ? 0xFE : 0xFD;
-            static std::atomic<int> s_spSynced{0};
-            if (s_spSynced.fetch_add(1) < 6)
-                NOBLE_INFO("ElitePack: Spartan visor {} written to settings sync block (player index {}):{}",
-                           s_localSpartanVisorIndex, index, Hex(block, 0x20));
+        if (s_localSpeciesElite && NobleActive()) {
+            const int set = (s_localSet >= 0 && s_localSet < kArmorySets)
+                                ? s_localSet : 0;
+            uint8_t picks[6];
+            for (int k = 0; k < 6; ++k)
+                picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : SetPick(set, k);
+            std::memcpy(block, picks, 6);
+            block[6] = kElitePiecesMarker;
+            block[7] = static_cast<uint8_t>(set);
+            if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) block[9] = s_localEliteEffect;
         }
+        block[10] = s_localColors[0];
+        block[11] = s_localColors[1];
+        block[12] = s_localColors[2];
+        block[13] = s_localColors[3];
+        block[14] = static_cast<uint8_t>(0xA0 | (s_localCustomFlags & 0x0F));
+        block[15] = s_localSpartanVisorItemIndex;
+        for (int c = 0; c < 4; ++c) {
+            block[16 + c * 3 + 0] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][0] * 255.0f), 0L, 255L));
+            block[16 + c * 3 + 1] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][1] * 255.0f), 0L, 255L));
+            block[16 + c * 3 + 2] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][2] * 255.0f), 0L, 255L));
+        }
+        block[22] = static_cast<uint8_t>(std::clamp(s_localLightsBrightnessIdx, 0, 130));
+        const float* lgtSrgb = (s_localCustomFlags & (1 << 3))
+            ? s_localCustomRgb[3]
+            : kArmoryReachPaletteSrgb[std::clamp<int>(s_localColors[3], 0, 29)];
+        block[25] = static_cast<uint8_t>(std::clamp(std::lround(lgtSrgb[0] * 255.0f), 0L, 255L));
+        block[26] = static_cast<uint8_t>(std::clamp(std::lround(lgtSrgb[1] * 255.0f), 0L, 255L));
+        block[27] = static_cast<uint8_t>(std::clamp(std::lround(lgtSrgb[2] * 255.0f), 0L, 255L));
+        block[28] = static_cast<uint8_t>(std::clamp(std::lround(s_localSpartanVisorRgb[0] * 255.0f), 0L, 255L));
+        block[29] = static_cast<uint8_t>(std::clamp(std::lround(s_localSpartanVisorRgb[1] * 255.0f), 0L, 255L));
+        block[30] = static_cast<uint8_t>(std::clamp(std::lround(s_localSpartanVisorRgb[2] * 255.0f), 0L, 255L));
+        block[31] = s_localSpartanVisorCustom ? 0xFE : 0xFD;
+        static std::atomic<int> s_synced{0};
+        if (s_synced.fetch_add(1) < 6)
+            NOBLE_INFO("ElitePack: synced appearance block (player index {}, elite {}, visor {}, lightsB x{:.1f}):{}",
+                       index, s_localSpeciesElite, s_localSpartanVisorItemIndex,
+                       0.5f + static_cast<float>(s_localLightsBrightnessIdx) * 0.5f, Hex(block, 0x20));
     }
     if (s_recordSetOriginal) s_recordSetOriginal(player, block);
 }
@@ -1491,6 +1552,7 @@ void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
 // The index is what tells the local player's appearance block apart from the other players' blocks in
 // RecordSetHook; the block itself is rewritten there, after the pack has loaded.
 void __fastcall ApplyProfileHook(int settingsIndex, uint8_t* player) {
+    if (player) s_localUserSettingsPtr.store(player);
     if (s_applyProfileOriginal) s_applyProfileOriginal(settingsIndex, player);
     if (settingsIndex >= 0 && settingsIndex < 16) s_localSettingsIndex.store(settingsIndex);
 }
@@ -1520,19 +1582,24 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
     const bool localRecord = IsLocalPlayerRecord(record, caller);
     // Mirrors the builder: mode 0 forces Spartan, mode 1 forces Elite, 2 returns, otherwise record[4].
     const bool elite = record && mode != 2 && (mode == 1 || (mode != 0 && record[4] == 1));
+    if (record && localRecord) {
+        std::lock_guard<std::mutex> lock(s_picksMutex);
+        RefreshLocalPicks();
+        StampLocalAppearanceRecordLocked(record, elite);
+    }
     static std::atomic<int> s_recordsLogged{0};
     if (record && s_recordsLogged.fetch_add(1) < 12)
         NOBLE_INFO("ElitePack: appearance record (caller 0x{:X}, mode {}, elite {}, local {}):{}",
                    caller, mode, elite, localRecord, Hex(record, 0x28));
     if (!elite || !s_loaded || !s_haveActive || !NobleActive()) {
-        if (!elite && player && record) {
-            if (localRecord) {
-                record[15] = s_localSpartanVisorIndex;
+        if (record) {
+            alignas(8) uint8_t spCopy[0x28];
+            std::memcpy(spCopy, record, sizeof(spCopy));
+            if (!elite) {
+                spCopy[0x17] = 0;
+                spCopy[0x19] = 0;
             }
-            // For Spartan bipeds, ensure player+0x98 (visor) is updated from record[15] if present
-            if (record[15] < 30) {
-                *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(player) + 0x98) = record[15];
-            }
+            return s_builder(spCopy, mode, unit, player);
         }
         return s_builder(record, mode, unit, player);
     }
@@ -1555,15 +1622,7 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
         eliteEffect = s_localEliteEffect;
         if (eliteEffect == 0xFF && record[kRecordEliteFx] >= 1 && record[kRecordEliteFx] <= 6)
             eliteEffect = record[kRecordEliteFx];
-        // Store the sender's picks in the real record: the engine syncs this block to every machine.
-        std::memcpy(record + kRecordPieceBase, picks, 6);
-        record[kRecordPieceBase + 6] = kElitePiecesMarker;
-        record[kRecordEliteSet] = static_cast<uint8_t>(effectiveSet);
-        if (eliteEffect != 0xFF) record[kRecordEliteFx] = eliteEffect;
-        record[0x1A] = s_localColors[0];
-        record[0x1B] = s_localColors[1];
-        record[0x1C] = s_localColors[2];
-        record[0x1D] = s_localColors[3];
+        StampLocalAppearanceRecordLocked(record, true);
     } else if (record[kRecordPieceBase + 6] == kElitePiecesMarker) {
         // The record came from its owner (another machine or a unit copy): use their pieces.
         std::memcpy(picks, record + kRecordPieceBase, 6);
@@ -1581,6 +1640,7 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
     std::memcpy(copy + kRecordPieceBase, picks, 6);
     copy[kRecordPieceBase + 6] = kElitePiecesMarker;
     copy[kRecordEliteSet] = static_cast<uint8_t>(effectiveSet);
+    copy[0x18] = 0;
     if (eliteEffect != 0xFF) copy[kRecordEliteFx] = eliteEffect;
     if (localRecord) {
         // first-person arms follow the forearms, the first-person body the shoulders (else the Armor Set)
@@ -1610,6 +1670,9 @@ bool InstallPicks(const std::filesystem::path& dataDir) {
     if (!HookManager::InstallHook(At<void*>(kApplyProfile), reinterpret_cast<void*>(&ApplyProfileHook),
                                   reinterpret_cast<void**>(&s_applyProfileOriginal), "elitepack_apply_profile"))
         NOBLE_WARN("ElitePack: profile hook (0x{:X}) not installed; other players keep the set only", kApplyProfile);
+    if (!HookManager::InstallHook(At<void*>(kBuildRecord), reinterpret_cast<void*>(&BuildRecordHook),
+                                  reinterpret_cast<void**>(&s_buildRecordOriginal), "elitepack_build_record"))
+        NOBLE_WARN("ElitePack: build-record hook (0x{:X}) not installed", kBuildRecord);
     if (!HookManager::InstallHook(At<void*>(kRecordSet), reinterpret_cast<void*>(&RecordSetHook),
                                   reinterpret_cast<void**>(&s_recordSetOriginal), "elitepack_settings_sync"))
         NOBLE_WARN("ElitePack: settings-sync hook (0x{:X}) not installed; other players keep the set only", kRecordSet);
@@ -1639,6 +1702,17 @@ std::optional<std::filesystem::path> ResolveFile(const std::wstring& requested) 
 
 bool Loaded() { return s_loaded; }
 
+static std::filesystem::path FindRelocSidecar(const std::filesystem::path& mapPath) {
+    std::error_code ec;
+    auto s1 = mapPath;
+    s1 += ".noblereloc";
+    if (std::filesystem::is_regular_file(s1, ec)) return s1;
+    auto s2 = mapPath;
+    s2 += ".rrreloc";
+    if (std::filesystem::is_regular_file(s2, ec)) return s2;
+    return {};
+}
+
 std::filesystem::path FindPackMap(const std::filesystem::path& dataDir) {
     std::error_code ec;
     const auto folder = dataDir / "armor";
@@ -1646,12 +1720,10 @@ std::filesystem::path FindPackMap(const std::filesystem::path& dataDir) {
     std::filesystem::path named;
     for (const auto& e : std::filesystem::directory_iterator(folder, ec)) {
         if (!e.is_regular_file(ec) || e.path().extension() != ".map") continue;
-        auto sidecar = e.path();
-        sidecar += ".noblereloc";
-        if (!std::filesystem::is_regular_file(sidecar, ec)) continue;
+        if (FindRelocSidecar(e.path()).empty()) continue;
         std::string name = e.path().filename().string();
         std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (name == "noble_elite_pack.map") return e.path();
+        if (name == "noble_elite_pack.map" || name == "rr_elite_pack.map") return e.path();
         if (name == "elite_armor.map" && named.empty()) named = e.path();
         else if (named.empty() && (name.find("elite_pack") != std::string::npos || name.find("armory") != std::string::npos)) named = e.path();
         if (first.empty()) first = e.path();
@@ -1669,18 +1741,25 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
         NOBLE_INFO("ElitePack: off (-no-elite-pack)");
         return;
     }
+    const bool menuMode = (mode == "mainmenu" || mode == "menu");
     s_keepPackHealth = HasArg(L"-elite-pack-own-health");
     s_keepPackGlobals = HasArg(L"-elite-pack-keep-globals");
     s_keepDeathEffect = HasArg(L"-elite-pack-death-fx");
     s_fpOverride = !HasArg(L"-no-fp-override");
     s_packPath = FindPackMap(dataDir);
     if (s_packPath.empty()) {
-        NOBLE_INFO("ElitePack: no pack in {} (players use the map's Elite)", (dataDir / "armor").string());
+        s_base = reinterpret_cast<uintptr_t>(engine);
+        if (!menuMode) InstallPicks(dataDir);
+        NOBLE_INFO("ElitePack: no pack in {} (players use the map's Elite; appearance sync active)", (dataDir / "armor").string());
         return;
     }
-    auto sidecar = s_packPath;
-    sidecar += ".noblereloc";
-    if (!ReadReloc(sidecar, s_reloc)) { s_packPath.clear(); return; }
+    auto sidecar = FindRelocSidecar(s_packPath);
+    if (sidecar.empty() || !ReadReloc(sidecar, s_reloc)) {
+        s_packPath.clear();
+        s_base = reinterpret_cast<uintptr_t>(engine);
+        if (!menuMode) InstallPicks(dataDir);
+        return;
+    }
     s_packStem = s_packPath.stem().string();
     s_base = reinterpret_cast<uintptr_t>(engine);
 
@@ -1702,6 +1781,7 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
         NOBLE_WARN("ElitePack: haloreach.dll doesn't look as expected (patch {}, step {}, slots {}); pack not used",
                    patched, stepOk, slots);
         s_packPath.clear();
+        if (!menuMode) InstallPicks(dataDir);
         return;
     }
     // Order matters: the map-load detour only adds the pack once every other hook is in place (s_ready).
@@ -1719,11 +1799,11 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
         NOBLE_ERROR("ElitePack: hooks failed (adapters {}, step {}, extra {}, load {}); the pack is not used",
                     adapters, stepHooked, s_extraLoad != nullptr, s_mapLoad != nullptr);
         s_packPath.clear();
+        if (!menuMode) InstallPicks(dataDir);
         return;
     }
     // The menu/Armory uses ReachArmory's GLOBALS pairs; the appearance-builder hooks are for matches
     // only (they apply the local profile's indices and would fight the Armory's own selection).
-    const bool menuMode = (mode == "mainmenu" || mode == "menu");
     if (!menuMode && !InstallPicks(dataDir)) NOBLE_WARN("ElitePack: Armory Elite pieces won't reach the game (calls not redirected)");
     s_ready = true;
     NOBLE_INFO("ElitePack: {} ({} packed pointers to relocate) will load with {} matches",

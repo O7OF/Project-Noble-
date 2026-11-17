@@ -598,6 +598,9 @@ float s_dynCachedScreenX = 0.0f;
 float s_dynCachedScreenY = 0.0f;
 float s_dynSmoothedDist = 25.0f;
 bool s_dynHasSmoothedDist = false;
+float s_dynSmoothedScreenX = 0.0f;
+float s_dynSmoothedScreenY = 0.0f;
+bool s_dynHasSmoothedScreen = false;
 LARGE_INTEGER s_dynLastQpc{};
 LARGE_INTEGER s_dynQpcFreq{};
 bool s_dynQpcInit = false;
@@ -607,6 +610,7 @@ void ResetDynamicCrosshairState() {
     std::lock_guard<std::mutex> lock(s_dynCrosshairMutex);
     s_dynCachedValid = false;
     s_dynHasSmoothedDist = false;
+    s_dynHasSmoothedScreen = false;
     s_dynQpcInit = false;
 }
 
@@ -788,8 +792,33 @@ bool EvaluateDynamicThirdPersonCrosshair(float& outScreenX, float& outScreenY) {
         return false;
     }
 
-    outScreenX = std::clamp(screenW * normX, screenW * 0.10f, screenW * 0.90f);
-    outScreenY = std::clamp(screenH * (1.0f - normY), screenH * 0.10f, screenH * 0.90f);
+    const float targetScreenX = std::clamp(screenW * normX, screenW * 0.10f, screenW * 0.90f);
+    const float targetScreenY = std::clamp(screenH * (1.0f - normY), screenH * 0.10f, screenH * 0.90f);
+
+    // Apply silky-smooth screen-space interpolation to eliminate character walking/aiming micro-jitter.
+    if (!s_dynHasSmoothedScreen || !std::isfinite(s_dynSmoothedScreenX) || !std::isfinite(s_dynSmoothedScreenY)) {
+        s_dynSmoothedScreenX = targetScreenX;
+        s_dynSmoothedScreenY = targetScreenY;
+        s_dynHasSmoothedScreen = true;
+    } else {
+        const float dx = targetScreenX - s_dynSmoothedScreenX;
+        const float dy = targetScreenY - s_dynSmoothedScreenY;
+        const float distDelta = std::sqrt(dx * dx + dy * dy);
+        // Fast snap if teleported or huge jump (e.g. over 150px) to prevent lagging behind fast flick-shots
+        if (distDelta > 150.0f * (screenW / 1920.0f)) {
+            s_dynSmoothedScreenX = targetScreenX;
+            s_dynSmoothedScreenY = targetScreenY;
+        } else {
+            // Adaptive speed: 45.0 for medium/fast camera pans, 24.0 for subtle walk-cycle / micro-jitter damping
+            const float speed = (distDelta > 40.0f * (screenW / 1920.0f)) ? 45.0f : 24.0f;
+            const float alpha = std::clamp(1.0f - std::exp(-dt * speed), 0.05f, 1.0f);
+            s_dynSmoothedScreenX += dx * alpha;
+            s_dynSmoothedScreenY += dy * alpha;
+        }
+    }
+
+    outScreenX = s_dynSmoothedScreenX;
+    outScreenY = s_dynSmoothedScreenY;
 
     s_dynCachedScreenX = outScreenX;
     s_dynCachedScreenY = outScreenY;
