@@ -384,3 +384,19 @@ Full index: `project-docs\REFERENCE-LIBRARY-2026-11-15.md`. Key points:
 - Steps 1-3 done: slot-2 palette restriction, profile-driven runtime variant selection (stock LEGENDARY + palette), 30 variants restored in Armory, six missing colours selectable, gold/rust/pale/brick verified stock map. Remaining: Armory preview tint for six (menu path), thumbnails/photos, per-player M2, peer replication M3.
 
 - **DONE 2026-11-17 05:10:** rust/coral/peach/gold/yellow/pale runtime colours work in-match and in the equipped Armory preview. Remaining: six Armory grid thumbnails (photo pass), per-player M2, peer replication M3.
+
+
+## Armor FX primary flames - FINAL STATUS (2026-11-17 05:20)
+
+**DONE / shipped in dev build (commit 8830412):**
+- All 30 primary flame variants selectable in the Armory (38 effect entries).
+- Runtime palette override works on **stock maps with no rebuild/mod/override**: profile writes stock LEGENDARY + `ParticleTint::SetVariantIndex`; D3D11 palette hook replaces the 256x16 flame palette at slot 2.
+- Six previously missing colours (rust/coral/peach/gold/yellow/pale) verified in-match and in the equipped Armory preview.
+- All 30 Armory thumbnails replaced with generated helmet/flame icons; grid verified.
+- Docs/evidence refreshed; generator `docs/test-tools/make_armor_fx_helmet_thumbs.py`.
+
+**REMAINING (do not release yet):**
+1. M2 per-player palette selection: no owner/team data in `ParticleRenderVS`; VS reads `vs_particle_state_buffer` (stride 80), PS does `palette*v1+v2`. Requires state-buffer/shader-index work, per-draw ownership, or accepting local/global tint.
+2. M3 peer replication of the selected effect/variant.
+3. Optional: Tyler photo pass to replace generated icons; release/version decision (Tyler only).
+4. Do not ship map pack for colors - runtime route supersedes it.

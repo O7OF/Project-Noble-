@@ -381,3 +381,17 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
 - Generated 30 helmet-flame icons from legendary/eternal templates (diff mask preserves helmet, recolours aura to each
   kPrimaryFlames colour); replaced old in-match screenshot thumbnails in build/dist/assets; Armory grid verified.
 - Generator docs/test-tools/make_armor_fx_helmet_thumbs.py; contact sheet in evidence helmet-thumbs.
+
+
+### 2026-11-17 05:20 - FINAL: all 30 primary flame colours + thumbnails
+
+- Runtime colour path completed: engine context captured from DXGI Present -> GetImmediateContext; PSSetShaderResources
+  vtable index 8; palette 256x16 B8G8R8A8_UNORM_SRGB at slot 2; per-device runtime tint SRV.
+- Profile drives all 30 variants by writing stock LEGENDARY + `ParticleTint::SetVariantIndex`; PRIMARY MATCH uses the
+  primary colour. Armory preview for variants 24..29 proxies through the steel custom effect; menu context hooked from
+  the Armory depth-clear hook.
+- Six missing colours verified in-match on stock Forge World: rust 32, coral 33, peach 34, gold 35, yellow 36, pale 37.
+- All 30 grid thumbnails replaced with helmet-style icons generated from the Legendary template (Legendary/Eternal diff
+  mask preserves helmet; aura recoloured to kPrimaryFlames); build/dist/assets updated.
+- Commits: 686503e (steps 1-3), 958fb70 (six colours), 8830412 (thumbnails + menu preview).
+- Remaining: per-player M2, peer M3, optional photo pass, release decision.

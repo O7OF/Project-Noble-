@@ -2251,3 +2251,11 @@ Implemented in v0.19.22 to allow spawning Campaign AI bipeds and vehicles (from 
    - Wired `ForgeMenu::SetPlaceHandler` in `main.cpp` to `ForgePatches::PlaceObject`.
    - Connected `ForgePatches::PlaceObject` to the engine's native Forge spawn call (`0x692C59`) alongside the 6-byte NOP patch at RVA `0x692CB5`.
 
+
+
+## 2026-11-17 - Armor FX runtime colours
+
+All 30 primary flame variants now work on stock maps via a runtime D3D11 palette override (no map pack/mod); six missing
+colours fixed, Armory preview + 30 generated helmet thumbnails done. Full details:
+`../04-project-state/HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md` and
+`../05-research-and-prompts/RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md`.

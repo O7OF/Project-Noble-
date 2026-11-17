@@ -43,3 +43,20 @@ Full handoff: `../04-project-state/HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`.
 6. `build_9att_4ext.py` (biped)
 7. Rebuild forge/mainmenu; copy `noble_menu.map`; run `menu_sidcsv.ps1`
 8. Build exe; test with clean processes.
+
+
+## Runtime colour path (2026-11-17) - what to run
+
+1. Build: `cmake --build build --config Release --target noble-dev noble-client`.
+2. Match test (stock map, automatic): `noble-dev.exe -map forge_halo -mode multiplayer -armor-effect-test 35 -third-person
+   -capture-at 38 -quit-after 48 -NoFocus -log rt.log` (35 = GOLD; 32 rust, 33 coral, 34 peach, 36 yellow, 37 pale).
+3. Armory test: `noble-dev.exe -menu-screen armory -menu-ignore-input -armory-focus "Armor Effect"
+   -armor-effect-test 35 -capture-at 26 -quit-after 36 -NoFocus -log armory.log`.
+4. Dev override: `-armor-fx-runtime-tint r,g,b`, `-armor-fx-runtime-variant N`, `-armor-fx-runtime-primary N`.
+5. Thumbnail generation: run `docs/test-tools/make_armor_fx_helmet_thumbs.py` with the bundled Python; it writes
+   `flame_pri_*.png` into `build\bin\Release\data\ui\reach\armory\armor_effects`,
+   `dist\Project-Noble\data\ui\reach\armory\armor_effects`, `assets\ui\reach\armory\armor_effects` and
+   `docs/evidence/armor-fx-primary-2026-11-17/helmet-thumbs`.
+
+The old 24-variant map/extra-effect pipeline is no longer required for colours; the runtime path handles all 30 on stock
+maps. Keep the map assets for now but do not ship the 25-30 GB map pack.

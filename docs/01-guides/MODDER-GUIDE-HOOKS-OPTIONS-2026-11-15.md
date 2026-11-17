@@ -578,3 +578,18 @@ mod. Matchmaking does not use map mods; peers need the same mod for multiplayer.
 
 **Menu map gotcha:** after every mainmenu cache rebuild, copy it to `build\\bin\\Release\\data\\menumaps\\noble_menu.map`
 **and** rerun `test-tools/menu_sidcsv.ps1`; stale string ids break Armory effect mapping.
+
+
+## Armor FX runtime colour flags (dev only, 2026-11-17)
+
+These flags are inert without a primary-flame variant selected (or the flag itself):
+
+| Flag | Meaning |
+|---|---|
+| `-armor-fx-runtime-tint r,g,b` | Force a manual flame palette RGB (also accepts 6-digit hex). |
+| `-armor-fx-runtime-variant N` | Force one of `kPrimaryFlames` 0..29 (steel..pale). |
+| `-armor-fx-runtime-primary N` | Force the PRIMARY MATCH palette to primary colour N (0..29). |
+| `-armor-effect-test N` | Set the profile Armory effect index (8..37 = variants steel..pale); use this for automatic tests. |
+
+Effect index map: 32=RUST, 33=CORAL, 34=PEACH, 35=GOLD, 36=YELLOW, 37=PALE. On stock maps the profile writes the stock
+LEGENDARY item and the runtime palette supplies the colour; no map rebuild or mod is needed.

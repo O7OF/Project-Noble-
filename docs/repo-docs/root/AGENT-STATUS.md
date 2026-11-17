@@ -1,5 +1,15 @@
 # AGENT STATUS
 
+## 2026-11-17 05:20 ET - Armor FX primary-flame colours (current)
+
+All 30 primary flame variants now work at runtime on stock maps (no map rebuild/mod/override), the six previously missing
+colours are fixed, the equipped Armory preview is colour-correct, and all 30 Armory thumbnails are generated helmet icons.
+Commits: 686503e (runtime selection), 958fb70 (six colours), 8830412 (thumbnails + menu preview). Key docs:
+`docs/04-project-state/HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`,
+`docs/05-research-and-prompts/RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md`,
+`docs/02-engine-reference/TOPIC-armor-appearance-colors-armory.md`.
+Open: per-player palette selection (M2), peer replication (M3), optional Tyler photo pass. No release/version change.
+
 Updated: 2026-11-08 05:05 ET (DeepSeek)
 
 Coordination file for the two agents working in this checkout. Claim a task here

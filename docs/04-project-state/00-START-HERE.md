@@ -1,5 +1,5 @@
 # Project Noble - knowledge folder: START HERE
-Built 2026-11-14 by Claude for Tyler and any agent picking up the work. Current state refreshed 2026-11-15 12:40 ET (v0.19.103 + b2065bd; Stage 1, stabilization and documentation passes done).
+Built 2026-11-14 by Claude for Tyler and any agent picking up the work. Current state refreshed 2026-11-17 05:20 ET (runtime primary-flame colours + generated thumbnails; v0.19.103 + b2065bd; Stage 1, stabilization and documentation passes done).
 Location on Tyler's PC: `D:\Project-Noble-Closed-Source\knowledge\` (inside the repo folder but **git-excluded** via
 `.git\info\exclude` -> `/knowledge/`, so it is never committed or pushed). Contains no game assets.
 
@@ -12,10 +12,12 @@ reverse engineering; not a C++ developer), O7OF (repo owner, most upstream code)
 
 ## 2026-11-17 armor FX update (read before armor-effect work)
 
-The primary-colour flame variants are **24/30 working** on the current build (committed `789c950`); six colours and the
-final no-download solution are still open. Start with `HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`; the chosen next path is
-the runtime particle-colour override in `../05-research-and-prompts/RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md`.
-Key engine limits (5 effect attachments, 6 locations/tag, menu CSV order) are in
+**2026-11-17 final:** all **30/30** primary-colour flame variants work at runtime on stock maps with **no map
+rebuild, mod or map override** (profile writes stock LEGENDARY + runtime palette). The six previously missing colours
+(rust/coral/peach/gold/yellow/pale) are fixed and verified, the equipped Armory preview is colour-correct, and all 30
+Armory thumbnails are generated helmet/flame icons. Per-player and peer replication remain open. Start with
+`HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`; runtime path/runbook in
+`../05-research-and-prompts/RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md`; engine facts in
 `../02-engine-reference/TOPIC-armor-appearance-colors-armory.md`.
 
 ## Read in this order

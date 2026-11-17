@@ -264,3 +264,46 @@ until the photo pass. Evidence: runtime-six-colours.png, runtime-armory-gold.png
 from the Legendary template (helmet preserved via Legendary/Eternal diff mask; aura recoloured per primary palette).
 Runtime/build and dist paths updated, plus assets/ui/reach/armory/armor_effects and evidence helmet-thumbs. Generator is
 docs/test-tools/make_armor_fx_helmet_thumbs.py.
+
+
+## 10. FINAL STATE - runtime colours + helmet thumbnails (2026-11-17)
+
+### What works
+- **All 30 primary flame variants are selectable** in the Armory (7 stock effects + PRIMARY MATCH + 30 variants = 38 entries).
+- **In-match, on stock maps with no rebuild, no mod and no map override**, a selected variant renders its primary colour. The profile carries the stock **LEGENDARY** effect item so the flame particle always exists; a D3D11 palette hook replaces the flame palette at draw time.
+- The six previously hidden colours (**rust, coral, peach, gold, yellow, pale**) are fixed and verified in-match on stock Forge World (variants 24..29 / effect indices 32..37). The other 24 use the same runtime code path; sample captures for brick/steel etc. are in the evidence folder.
+- **Equipped Armory preview is colour-correct.** The menu preview for the six is proxied through the steel custom effect (which uses the 256x16 menu palette); the menu render context is hooked via the Armory depth-clear hook, so the selected colour is applied there too.
+- **Armory grid thumbnails for all 30 effects are replaced** with helmet-style icons in the Legendary/Eternal visual language (helmet preserved, flame aura recoloured to the primary palette). Old in-match screenshot thumbnails are gone.
+
+### How it works (technical)
+1. `ParticleTint::Install` installs D3D11 hooks early. `HookFromSwapChain` obtains the engine's actual device/immediate context from the presenting swapchain (the engine does **not** use the launcher's context; `D3D11CreateDevice*` and `CreateDeferredContext` hooks were not sufficient).
+2. `ID3D11DeviceContext::PSSetShaderResources` is hooked at vtable index **8** (ID3D11DeviceChild shifts it). The detour matches the flame palette: **256x16, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB (fmt 91), slot 2**, and substitutes a per-device runtime SRV built from `kPrimaryFlames`. Matching only slot 2 avoids tinting other particle systems.
+3. `ReachHost` resolves the selected `armorEffect` when building the appearance: for a variant or PRIMARY MATCH it writes the **stock LEGENDARY item** and calls `ParticleTint::SetVariantIndex(variant)`; for stock effects it clears the override. PRIMARY MATCH chooses the primary colour index.
+4. `ReachArmory` calls `SetVariantIndex` from `ApplyGlobalsAndPermutations` so the Armory scene updates immediately. For variants 24..29 it previews through the steel custom effect and the runtime palette recolours it. `FrontEndMenu`'s Armory depth-clear hook calls `ParticleTint::HookFromContext` so the menu context is hooked.
+5. Thumbnails: `docs/test-tools/make_armor_fx_helmet_thumbs.py` takes `legendary.png` (orange regular-flame helmet), builds a flame mask from the Legendary/Eternal difference (the helmet is identical in both), recolours the aura to each `kPrimaryFlames` entry preserving shading and a white-hot core, and writes `flame_pri_<id>.png` into the runtime/package/asset paths.
+
+### Key files
+- `src/engine/ParticleTint.hpp/.cpp` - D3D11 context/palette hook, variant selection.
+- `src/engine/ReachHost.cpp` - profile writes stock LEGENDARY + `SetVariantIndex` for variants/auto.
+- `src/engine/ReachArmory.cpp` - Armory runtime selection and menu-preview proxy.
+- `src/ui/FrontEndMenu.cpp` - menu context hook via Armory depth clear.
+- `src/ui/ArmorCustomizer.cpp` - 38-entry effect list (30 variants).
+- `src/ui/SpartanArmoryCatalog.inc` - catalogue rows for all 30.
+- `src/common/ArmorEffects.hpp` - `kPrimaryFlames` (30), counts, custom-item helpers.
+- `docs/test-tools/make_armor_fx_helmet_thumbs.py` - thumbnail generator.
+- `assets/ui/reach/armory/armor_effects/flame_pri_*.png` - generated source icons.
+- Runtime copies: `build\bin\Release\data\ui\reach\armory\armor_effects\` and `dist\Project-Noble\data\ui\reach\armory\armor_effects\`.
+
+### Verification / reproduce
+- Build: `cmake --build build --config Release --target noble-dev noble-client`.
+- Match (stock map, automatic profile selection): `noble-dev.exe -map forge_halo -mode multiplayer -armor-effect-test 35 -third-person -capture-at 38 -quit-after 48 -NoFocus -log rt.log` (35 = GOLD; 32=RUST, 33=CORAL, 34=PEACH, 36=YELLOW, 37=PALE).
+- Armory: `noble-dev.exe -menu-screen armory -menu-ignore-input -armory-focus "Armor Effect" -armor-effect-test 35 -capture-at 26 -quit-after 36 -NoFocus -log armory.log`.
+- Dev override flags: `-armor-fx-runtime-tint r,g,b` (manual RGB), `-armor-fx-runtime-variant N` / `-armor-fx-runtime-primary N` (0..29).
+- Evidence: `docs/evidence/armor-fx-primary-2026-11-17/` - `runtime-six-colours.png`, `runtime-variants-contact.png`, `runtime-tint-proof.png`, `armory-helmet-thumbnails.png`, `helmet-thumbs/`.
+
+### Caveats / remaining
+- **Per-player colour is not implemented.** The current palette choice is local/global: every flame particle in the client gets the selected colour. `ParticleRenderVS` has no owner/team field; per-player needs the particle state-buffer/shader-index work or per-draw ownership (M2). Peer replication is M3.
+- The runtime path currently supersedes the old map-based 24-variant route for in-match colours; the rebuilt map assets are left in place but no longer needed for colour. Do not ship the 25-30 GB map pack.
+- The Armory grid uses generated icons (not Tyler's own photos). If Tyler wants bespoke photos later, replace the same `flame_pri_*.png` files; no code change needed.
+- No version bump/release was made. Runtime hook is inert without a variant selection or dev flag; if a clean build wipes `build\...\data\ui`, rerun the thumbnail generator (or restore from `assets/ui/reach/armory/armor_effects`).
+- Matching is palette-based (256x16 fmt91 slot2). If another particle system ever binds that exact palette at slot 2 it would also tint; restrict to the particle PS hash if that becomes visible.

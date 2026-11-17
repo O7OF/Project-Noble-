@@ -10,6 +10,7 @@ Captures from the working 24-colour build and earlier 30-variant experiments. Se
 | runtime-armory-gold.png | Armory with 30 primary-flame entries restored; GOLD FLAME selected (equipped preview is gold). |
 | runtime-six-colours.png | The six previously-hidden runtime colours on stock Forge World: rust, coral, peach, gold, yellow, pale. |
 | helmet-thumbs/ | Generated helmet-style effect thumbnails for all 30 primary flame colours (recoloured from the Legendary template; replaces the old screenshot thumbnails). |
+| armory-helmet-thumbnails.png | Final Armory grid: all flame effects use the generated helmet/flame thumbnail, equipped preview tinted to the selected colour. |
 | helmet-thumbs/helmet-thumbs-contact.png | Contact sheet of all 30 generated thumbnails. |
 |---|---|
 | armor-fx-pri-contact-sheet.png | 6x5 contact sheet of the original 30 variant captures (pre-solid-palette; older formula). |

@@ -211,3 +211,12 @@ behaviour, not Omaha names. Full handoff: `../../04-project-state/HANDOFF-ARMOR-
   One mod folder can carry many rebuilt maps, giving variants on every included map without per-map overrides.
 - Matchmaking does not use map mods; custom games only, and all peers need the same mod.
 - Measured rebuild size: 70_boneyard stock 199 MB -> rebuilt 566 MB (~2.8x). A full 44-map pack is ~25-30 GB built.
+
+
+## Runtime particle-colour facts (2026-11-17)
+
+- The engine renders with its **own D3D11 device/context**, not the launcher's. Reliable capture: hook `IDXGISwapChain::Present`, then `swapChain->GetDevice(ID3D11Device)` + `device->GetImmediateContext()`; hook that context (and higher `ID3D11DeviceContext1..4` QI entries).
+- `ID3D11DeviceContext::PSSetShaderResources` is vtable index **8** (IUnknown 0-2, DeviceChild GetDevice/GetPrivateData/SetPrivateData/SetPrivateDataInterface 3-6, VSSetConstantBuffers 7, PSSetShaderResources 8). Index 4 is GetPrivateData and fails silently.
+- Flame palette: **256x16, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB (91), bound at PS slot 2**. The PS samples it at `(base_map.r, v3.z)`; final colour is `o0.xyz = palette * v1.xyz + v2.xyz`. PS carries only `ExposurePS`; there is no per-draw colour constant.
+- Flame draw: PS ResourceId 8701, VS 8693; VS hash `f54376d4-5c51d3b9-77511f98-85bba44f`; five 4-index billboard draws per system. VS constant blocks: ParametersVS, ViewVS, ExposureVS, LightingVS, FogVS, MeshVS, ParticleIndex (16 B), ParticleRenderVS (592 B), AtmosphereFogVS. `ParticleRenderVS` has no owner/team/colour field; VS reads `vs_particle_state_buffer` (structured, stride 80).
+- Runtime override: replace the palette SRV per device with a generated 256x16 SRV. Per-player selection still needs the particle state buffer/shader palette index or per-draw owner (M2).
