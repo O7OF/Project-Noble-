@@ -2607,8 +2607,11 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
         const uint8_t* playerPtr = playerEntries + static_cast<size_t>(playerIdx) * 0x490u;
         if (*reinterpret_cast<const uint16_t*>(playerPtr) == 0) return false;
 
-        const uint32_t pFlags = *reinterpret_cast<const uint32_t*>(playerPtr + 4);
-        const bool isLocalPlayer = ((pFlags & 0x08u) != 0) || (playerPtr[0x2DE] == 1u);
+        const uint8_t* pmg = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x158);
+        const int32_t localUser = (pmg && playerIdx >= 0 && playerIdx < 16)
+            ? *reinterpret_cast<const int32_t*>(pmg + 0x74 + playerIdx * 4)
+            : -1;
+        const bool isLocalPlayer = (localUser >= 0 && localUser < 4);
         if (isLocalPlayer) {
             return fillFromLocalCache();
         }
@@ -3164,9 +3167,20 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                 }
             } else if (playerEntries && maxPlayers > 0) {
                 // Remote player biped: apply that player's own replicated custom wheel colors or extended Spartan visor
+                int32_t playerIdx = -1;
                 const uint32_t playerDatum = *reinterpret_cast<const uint32_t*>(objPtr + 0x1D0);
-                if (playerDatum == 0xFFFFFFFFu) continue;
-                const int32_t playerIdx = static_cast<int32_t>(playerDatum & 0xFFFFu);
+                if (playerDatum != 0xFFFFFFFFu && static_cast<int32_t>(playerDatum & 0xFFFFu) < maxPlayers) {
+                    playerIdx = static_cast<int32_t>(playerDatum & 0xFFFFu);
+                } else {
+                    for (int32_t pi = 0; pi < maxPlayers; ++pi) {
+                        const uint8_t* p = playerEntries + static_cast<size_t>(pi) * 0x490u;
+                        if (*reinterpret_cast<const uint16_t*>(p) == 0) continue;
+                        if (*reinterpret_cast<const uint32_t*>(p + 0x28) == objectDatum) {
+                            playerIdx = pi;
+                            break;
+                        }
+                    }
+                }
                 if (playerIdx < 0 || playerIdx >= maxPlayers) continue;
                 const uint8_t* playerPtr = playerEntries + static_cast<size_t>(playerIdx) * 0x490u;
                 if (*reinterpret_cast<const uint16_t*>(playerPtr) == 0) continue;

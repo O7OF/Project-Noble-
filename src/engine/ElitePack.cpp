@@ -1430,11 +1430,29 @@ constexpr uintptr_t kRecordSet = 0x2C837C;   // void(playerSettings*, uint8_t bl
 BuilderFn s_builder = nullptr;
 
 static bool IsLocalPlayerDatum(const uint8_t* player) {
-    if (!player) return false;
+    if (!player || !s_base) return false;
     __try {
-        const uint32_t flags = *reinterpret_cast<const uint32_t*>(player + 4);
-        const uint8_t isLocalByte = player[0x2DE];
-        return ((flags & 0x08) != 0) || (isLocalByte == 1);
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(s_base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(
+            __readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return false;
+        const uint8_t* pmg = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x158);
+        if (!pmg) return false;
+        const uint8_t* players = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x18);
+        if (!players) return false;
+        const uint8_t* playerEntries = *reinterpret_cast<const uint8_t* const*>(players + 0x50);
+        if (!playerEntries) return false;
+        const int32_t maxPlayers = std::clamp(*reinterpret_cast<const int32_t*>(players + 0x44), 0, 16);
+
+        if (player >= playerEntries && player < playerEntries + static_cast<size_t>(maxPlayers) * 0x490u) {
+            const size_t diff = player - playerEntries;
+            if ((diff % 0x490u) == 0) {
+                const int32_t playerIdx = static_cast<int32_t>(diff / 0x490u);
+                const int32_t localUser = *reinterpret_cast<const int32_t*>(pmg + 0x74 + playerIdx * 4);
+                return (localUser >= 0 && localUser < 4);
+            }
+        }
+        return false;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -1477,9 +1495,12 @@ void __fastcall BuildRecordHook(const uint8_t* userSettings, uint8_t* outRecord)
     if (s_buildRecordOriginal) s_buildRecordOriginal(userSettings, outRecord);
     if (!userSettings || !outRecord) return;
     const uintptr_t uAddr = reinterpret_cast<uintptr_t>(userSettings);
+    const int localIdx = s_localSettingsIndex.load();
+    const uintptr_t expectedLocalAddr = (s_base && localIdx >= 0 && localIdx < 16)
+        ? (s_base + 0x2A03C50 + static_cast<uintptr_t>(localIdx) * 0xAB8u)
+        : 0;
     const bool isLocalSettings = (userSettings == s_localUserSettingsPtr.load()) ||
-                                 (s_base && uAddr >= s_base + 0x2A03C00 && uAddr < s_base + 0x2A08000) ||
-                                 IsLocalPlayerDatum(userSettings);
+                                 (expectedLocalAddr != 0 && uAddr == expectedLocalAddr);
     if (!isLocalSettings) return;
     std::lock_guard<std::mutex> lock(s_picksMutex);
     RefreshLocalPicks();
@@ -1493,18 +1514,24 @@ void __fastcall BuildRecordHook(const uint8_t* userSettings, uint8_t* outRecord)
 // afterwards. The settings index recorded by ApplyProfileHook tells the local player's block apart from
 // the other players' blocks, so a remote player's appearance is never overwritten with local picks.
 void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
-    bool isLocal = IsLocalPlayerDatum(player) || (player && player == s_localUserSettingsPtr.load());
+    if (!player || !block) {
+        if (s_recordSetOriginal) s_recordSetOriginal(player, block);
+        return;
+    }
     int32_t index = -1;
-    if (player) std::memcpy(&index, player + 0x10, sizeof(index));
+    std::memcpy(&index, player + 0x10, sizeof(index));
     const int storedLocal = s_localSettingsIndex.load();
-    if (!isLocal && storedLocal >= 0 && index == storedLocal) {
-        isLocal = true;
+    bool isLocal = false;
+    if (storedLocal >= 0) {
+        isLocal = (index == storedLocal);
+    } else {
+        isLocal = (player == s_localUserSettingsPtr.load());
     }
     if (!isLocal && storedLocal < 0 && index == 0 && (wcsstr(GetCommandLineW(), L"-connect") == nullptr)) {
         isLocal = true;
     }
 
-    if (player && block && isLocal) {
+    if (isLocal) {
         std::lock_guard<std::mutex> lock(s_picksMutex);
         RefreshLocalPicks();
         if (!s_localSpeciesElite) {
@@ -1568,18 +1595,8 @@ void __fastcall ApplyProfileHook(int settingsIndex, uint8_t* player) {
 static bool IsLocalPlayerRecord(const uint8_t* record, uintptr_t caller) {
     if (!record) return false;
     if (caller != kBuilderReturnLive && caller != kBuilderReturnSpawn) return false;
-
-    __try {
-        const uint8_t* p = record - kPlayerRecordOffset;
-        const uint32_t flags = *reinterpret_cast<const uint32_t*>(p + 4);
-        const uint8_t isLocalByte = p[0x2DE];
-        // In Blam! Reach, bit 3 of flags (0x08: _player_is_local_machine_bit) and p[0x2DE] == 1
-        // indicate that this player datum belongs to the local machine.
-        // Remote peers have flags & 0x08 == 0 and p[0x2DE] == 0.
-        return ((flags & 0x08) != 0) || (isLocalByte == 1);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    const uint8_t* p = record - kPlayerRecordOffset;
+    return IsLocalPlayerDatum(p);
 }
 
 uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void* player) {

@@ -30,6 +30,15 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02019Items = {
+        {"MULTIPLAYER", "Match Appearance Isolation & Anti-Host-Swap",
+         "Eliminated host customization pollution on remote players in multiplayer matches; appearance record generation and profile synchronization now strictly distinguish between local machine and remote peer datums."},
+        {"CUSTOMIZATION", "Strict Per-Client Color & Permutation Parity",
+         "Host and guest players in multiplayer sessions wear strictly their own Spartan/Elite colors, armor pieces, custom visor finishes, lights, and effects without cross-client overwrites."},
+        {"NETCODE", "Direct Local User Mapping Verification",
+         "Replaced fragile struct offset heuristics with the engine's canonical local user mapping table (player_mapping_globals), ensuring robust local player identification on both host and client machines."},
+    };
+
     const std::vector<ChangeItem> v02018Items = {
         {"GAMEPLAY", "3rd-Person Dynamic Reticle Polish",
          "Refined 3rd-person crosshair tracking with multi-tier adaptive smoothing, eliminating camera drag when spinning or looking up and down while maintaining silky walk-cycle stabilization."},
@@ -277,9 +286,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 18) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 19) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "MULTIPLAYER CUSTOMIZATION ISOLATION & PARITY",
+                    "Zero Host-to-Client Color Pollution, Dedicated Peer Appearance Records & Canonical Local Mapping",
+                    v02019Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 18) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.18",
                     "IN-MATCH VISOR & LIGHTS REPLICATION, 3P RETICLE POLISH",
                     "30-Finish Visor Replication, Armor Lights Sync, Elite Customization Netcode & Snappy 3P Aiming",
                     v02018Items,
