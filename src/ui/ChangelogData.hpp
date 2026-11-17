@@ -30,6 +30,15 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02021Items = {
+        {"AUDIO", "Instant Match Start Audio Across All Game Modes",
+         "Synchronized live audio mixer volumes and audio thread queues directly upon engine load and match start, ensuring game, music, and sound effects play immediately in Campaign, Firefight, Forge, and Multiplayer without requiring a respawn."},
+        {"CAMPAIGN JIP", "Campaign Join-In-Progress Black Screen Resolution",
+         "Eliminated stuck rasterizer black screen fades and loading locks for clients joining Campaign and Firefight sessions in progress, immediately transitioning joining players into the live gameplay simulation."},
+        {"NETCODE", "Seamless Cutscene Auto-Skip for Mid-Match Joiners",
+         "Connected joining guests directly to live world state, auto-skipping obsolete scenario opening scripts so late-joining players spawn with full camera and player control."},
+    };
+
     const std::vector<ChangeItem> v02019Items = {
         {"MULTIPLAYER", "Match Appearance Isolation & Anti-Host-Swap",
          "Eliminated host customization pollution on remote players in multiplayer matches; appearance record generation and profile synchronization now strictly distinguish between local machine and remote peer datums."},
@@ -286,9 +295,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 19) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 21) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "MATCH-START AUDIO SYNC & CAMPAIGN JOIN-IN-PROGRESS BLACK SCREEN FIX",
+                    "Immediate Game Audio on Launch, JIP Black Screen Elimination & Seamless Mid-Match Spawning",
+                    v02021Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 19) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.19",
                     "MULTIPLAYER CUSTOMIZATION ISOLATION & PARITY",
                     "Zero Host-to-Client Color Pollution, Dedicated Peer Appearance Records & Canonical Local Mapping",
                     v02019Items,

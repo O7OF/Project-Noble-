@@ -1937,6 +1937,12 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         return 1;
     }
 
+    // Initialize audio mixer levels and live volumes in engine memory as soon as haloreach.dll is mapped
+    {
+        const auto& s = noble::Settings::Get().Snapshot();
+        noble::ProcessAudio::ApplyAll(s.volumeGame, s.volumeMusic, s.volumeOther, s.masterMute);
+    }
+
     // Watch the engine's own main loop: if it returns, the frame pump stops and the client sits idle.
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xC390),
                                     reinterpret_cast<void*>(&EngineMainLoopHook),

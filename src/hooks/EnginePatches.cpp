@@ -7,6 +7,7 @@
 #include "engine/BlamEngine.hpp"
 #include "engine/ReachHost.hpp"
 #include "network/NetworkTransport.hpp"
+#include "common/Settings.hpp"
 #include "ui/PauseMenu.hpp"
 #include <atomic>
 #include <cstring>
@@ -422,6 +423,10 @@ void EnginePatches::RecoverFromCutsceneSkip() {
   //    after-action report. A settled match means the match really ended, so the panel is real.
   if (!noble::Career::IsMatchSettled())
     PauseMenu::CancelGameOver();
+
+  // 3. Immediately restore active game audio volumes after cutscene skip
+  const auto& s = Settings::Get().Snapshot();
+  ReachHost::SetRuntimeVolumes(s.volumeGame, s.volumeMusic, s.volumeOther);
 }
 
 // The 0.19.82 merge added a "cutscene recovery" detour on cinematic_skip_stop_internal. It also fires while a
@@ -437,11 +442,6 @@ bool EnginePatches::CutsceneRecoveryEnabled() {
 }
 
 void EnginePatches::OnFrameTick() {
-  // Only the short post-skip pump runs by default. The continuous fade wipe below stays behind
-  // NOBLE_CUTSCENE_RECOVERY=1: wiping every frame while the renderer holds a fade makes the picture
-  // flash (visible on campaign transitions), and it is not needed once campaign launches on Stock.
-  if (!CutsceneRecoveryEnabled() && s_cutsceneRecoveryFrames.load() <= 0)
-    return;
   uintptr_t reachBase =
       s_baseAddress
           ? s_baseAddress
@@ -455,12 +455,31 @@ void EnginePatches::OnFrameTick() {
     ClearRasterizerScreenFade(reachBase);
   }
 
-  if (!CutsceneRecoveryEnabled())
+  // Determine if this instance is a network client (guest in Campaign, Firefight, etc.)
+  const bool isGuest = NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
+  const bool inCinematic = CinematicInProgress();
+
+  // If a cinematic is running, let it play naturally unless forced by recovery
+  if (inCinematic && !CutsceneRecoveryEnabled())
     return;
 
-  // Continuous safety: if cinematic is not in progress, never allow the
-  // rasterizer screen fade to stay black
-  if (!CinematicInProgress()) {
+  // On guests or during active gameplay, ensure we never get stuck on a black screen.
+  // When a guest joins in progress, the scenario's intro script (fade_in) never runs on the client.
+  // If the guest is spawned into the world or session is active, clear stuck fade overlays.
+  bool shouldClearFade = CutsceneRecoveryEnabled();
+  if (!shouldClearFade && isGuest) {
+    using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
+    uint32_t localUnit = 0xFFFFFFFFu;
+    __try {
+      localUnit = static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(reachBase + 0x53EF8)(0));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+    if (localUnit != 0xFFFFFFFFu || ReachHost::IsSessionStarted()) {
+      shouldClearFade = true;
+    }
+  }
+
+  if (shouldClearFade) {
     __try {
       const uintptr_t rasterizerGlobals =
           *reinterpret_cast<const uintptr_t *>(reachBase + 0xC1A3E8);
@@ -470,6 +489,7 @@ void EnginePatches::OnFrameTick() {
         if (*pFade1 > 0.01f || *pFade2 > 0.01f) {
           *pFade1 = 0.0f;
           *pFade2 = 0.0f;
+          ClearRasterizerScreenFade(reachBase);
         }
       }
     } __except (EXCEPTION_EXECUTE_HANDLER) {

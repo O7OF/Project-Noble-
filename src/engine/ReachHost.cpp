@@ -678,6 +678,17 @@ void TeamProbeTick(uint64_t frame) {
 
 } // namespace
 
+static bool IsLocalBipedSpawned(uintptr_t reachBase) {
+    if (!reachBase) return false;
+    __try {
+        using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
+        const uint32_t unit = static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(reachBase + 0x53EF8)(0));
+        return (unit != 0xFFFFFFFFu);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
     if (noble::FrontEndMenu::IsMatchRunning()) {
@@ -716,6 +727,19 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     CameraThirdPerson::TickFrame();   // one camera-tuning application per render frame
     CameraFov::Tick();
 
+    // Keep live audio mixer and audio thread synchronized on match start and throughout gameplay
+    {
+        static uint64_t s_lastAudioFrame = 0;
+        if (frames == 1 || frames == 5 || frames == 15 || frames == 30 || frames == 60 || (frames - s_lastAudioFrame >= 120)) {
+            s_lastAudioFrame = frames;
+            const auto& audioSettings = Settings::Get().Snapshot();
+            const bool bgMuted = audioSettings.muteInBackground && (GetForegroundWindow() != FindWindowW(noble::ReachWindowClass().c_str(), nullptr));
+            ReachHost::SetRuntimeVolumes(bgMuted ? 0.0f : audioSettings.volumeGame,
+                                         bgMuted ? 0.0f : audioSettings.volumeMusic,
+                                         bgMuted ? 0.0f : audioSettings.volumeOther);
+        }
+    }
+
     // Synchronize live biped change colors and visor shaders in all match modes (Campaign, Firefight, Forge, Custom Games)
     ReachArmory::SyncMatchLiveBipeds();
     ReachArmory::SyncMarine();   // Marine / ODST pieces when a mod makes the player a Marine
@@ -732,14 +756,21 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         bool loading = false;
         if (!s_loadingDone) {
             int curLaunchState = -1;
-            if (HMODULE reach = noble::ReachModule()) {
-                SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &curLaunchState);
+            int curMapState = -1;
+            const uintptr_t reachBase = reinterpret_cast<uintptr_t>(noble::ReachModule());
+            if (reachBase) {
+                SafeReadInt32(reachBase + 0xC1A114, &curLaunchState);
+                SafeReadInt32(reachBase + 0xC1A118, &curMapState);
             }
+            const bool bipedSpawned = IsLocalBipedSpawned(reachBase);
             const bool waitingForRemoteJoin = (curLaunchState >= 0 && curLaunchState < 10 &&
                                                NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost());
-            if (s_sessionStarted.load() || (!waitingForRemoteJoin && GetTickCount64() - s_firstTick > 60000)) {
+            if (s_sessionStarted.load() || curMapState == 2 || bipedSpawned || (curLaunchState >= 10 && !waitingForRemoteJoin) ||
+                (!waitingForRemoteJoin && GetTickCount64() - s_firstTick > 60000)) {
                 s_loadingDone = true;
-                NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: game session started at frame {}, loading screen off", frames);
+                s_sessionStarted.store(true);
+                NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: game session started at frame {} (mapState={}, launchState={}, biped={}), loading screen off",
+                           frames, curMapState, curLaunchState, bipedSpawned);
             } else {
                 loading = true;
             }
@@ -927,6 +958,14 @@ static uint64_t __fastcall HostSlot9_CinematicSkipCheck(void* thisPtr, uint64_t 
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
     if (s_cinematicSkipRequested.exchange(false, std::memory_order_acq_rel)) {
         NOBLE_INFO("ReachHost [Slot 9 - CinematicSkipCheck]: Reporting cinematic skip request to engine");
+        return 1;
+    }
+    // Remote guests joining in progress: skip intro cinematics automatically so the player directly connects to live game
+    if (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost()) {
+        static std::atomic<int> s_guestSkipLog{0};
+        if (s_guestSkipLog.fetch_add(1) < 5) {
+            NOBLE_INFO("ReachHost [Slot 9 - CinematicSkipCheck]: Auto-skipping intro cinematic for JIP guest");
+        }
         return 1;
     }
     return 0;
@@ -1226,6 +1265,7 @@ static void WriteDefaultVolumes(uint8_t* profile) {
     memcpy(profile + kVolumeGameOffset, &settings.volumeGame, sizeof(float));
     memcpy(profile + kVolumeMusicOffset, &settings.volumeMusic, sizeof(float));
     memcpy(profile + kVolumeOtherOffset, &settings.volumeOther, sizeof(float));
+    ReachHost::SetRuntimeVolumes(settings.volumeGame, settings.volumeMusic, settings.volumeOther);
 }
 
 void ReachHost::SetRuntimeVolumes(float game, float music, float other) {
@@ -1253,14 +1293,35 @@ void ReachHost::SetRuntimeVolumes(float game, float music, float other) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     DWORD oldProtect = 0;
-    if (!VirtualProtect(address, sizeof(live), PAGE_READWRITE, &oldProtect))
-        return;
+    if (VirtualProtect(address, sizeof(live), PAGE_READWRITE, &oldProtect)) {
+        __try {
+            std::memcpy(address, &live, sizeof(live));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        DWORD ignored = 0;
+        VirtualProtect(address, sizeof(live), oldProtect, &ignored);
+    }
+
+    // Engine Audio Thread Queue (SList).
+    // The engine's audio thread consumes volume change requests from an SList queue.
+    // haloreach+0x27A3D40 is the queue active flag.
+    // haloreach+0x27A3D30 is the free list SLIST_HEADER.
+    // haloreach+0x27A3D20 is the pending work queue SLIST_HEADER.
+    // InterlockedPopEntrySList pops an entry, offset +0x10 stores the game/master volume float,
+    // and InterlockedPushEntrySList dispatches it to the live audio thread.
     __try {
-        std::memcpy(address, &live, sizeof(live));
+        const uint8_t* activeFlag = reinterpret_cast<const uint8_t*>(base + 0x27A3D40);
+        if (activeFlag && *activeFlag != 0) {
+            PSLIST_HEADER freeList = reinterpret_cast<PSLIST_HEADER>(base + 0x27A3D30);
+            PSLIST_HEADER workList = reinterpret_cast<PSLIST_HEADER>(base + 0x27A3D20);
+            PSLIST_ENTRY entry = InterlockedPopEntrySList(freeList);
+            if (entry) {
+                *reinterpret_cast<float*>(reinterpret_cast<uintptr_t>(entry) + 0x10) = g;
+                InterlockedPushEntrySList(workList, entry);
+            }
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
-    DWORD ignored = 0;
-    VirtualProtect(address, sizeof(live), oldProtect, &ignored);
     static bool s_loggedLiveMix = false;
     if (!s_loggedLiveMix) {
         s_loggedLiveMix = true;
