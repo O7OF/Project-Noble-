@@ -23,6 +23,7 @@
 #include "hooks/SigScanner.hpp"
 #include "vfs/VFS.hpp"
 #include "engine/BlamEngine.hpp"
+#include "engine/ParticleTint.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachArmory.hpp"
@@ -1200,6 +1201,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Initialize ImGui UI Manager
     noble::UIManager::Initialize(window->GetHwnd(), renderer->GetDevice(), renderer->GetContext());
+    noble::ParticleTint::Install(renderer->GetDevice(), renderer->GetContext());
     window->SetCustomWndProc([](HWND h, UINT m, WPARAM w, LPARAM l) {
         return noble::UIManager::HandleWndProc(h, m, w, l);
     });
@@ -2051,6 +2053,7 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         NOBLE_ERROR("Failed to initialize Blam! engine host interfaces.");
         return 1;
     }
+    noble::ParticleTint::Install(hostContext.pDevice, hostContext.pContext);
 
     // Dev tool: decode a game variant with the engine and exit.
     if (!variantDumpPath.empty()) {

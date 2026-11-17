@@ -369,3 +369,10 @@ Full index: `project-docs\REFERENCE-LIBRARY-2026-11-15.md`. Key points:
   capture (all eight camera tracks x=664..968 in the crop, values share one right edge).
 - Visor mismatch fixed in `8f467e1` (Armory catalog order vs MCC visor-item order: violet/ice/crimson/onyx now resolve
   by visor id; stock Black/Gold 3/4 swap kept; legacy saves remapped).
+## Runtime-colour prototype - 2026-11-17 03:05
+
+- Ghidra MCP headless bridge restored (127.0.0.1:8081); use direct Python MCP client if Harness client stays disconnected.
+- Flame draw/palette identified via RenderDoc: PS 8701, VS 8693, palette 256x16 B8G8R8A8_SRGB, five billboard draws.
+- ParticleTint module + -armor-fx-runtime-tint flag implemented: PSSetShaderResources hook (index 8), detects palette
+  and substitutes tint SRV. Works on launcher context; engine rendering context not captured yet -> stock flames
+  still orange. Next: find/hook engine device/context or particle submit, then per-player palette index.

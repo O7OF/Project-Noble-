@@ -81,3 +81,54 @@ Related: `HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md`, `RE-ARMOR-FX-COLORS-2026-11-1
   replicated and may be the safe default.
 - Anti-cheat/matchmaking policy for client-side cosmetic runtime patches (custom games/Noble peers only).
 - Ghidra MCP availability; time to locate particle render path.
+
+
+## 2026-11-17 03:05 - concrete runtime findings (Ghidra MCP restored + RenderDoc)
+
+### Tooling now working
+- GhidraMCP headless bridge was started manually and is reachable at http://127.0.0.1:8081/mcp:
+  `GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC` and
+  `python -m ghidra_mcp --headless --binary C:\Users\tyler\Documents\deepseek-harness\default-workspace\haloreach-copy.dll
+   --project C:\Tools\GhidraMCP-headless --project-name haloreach-copy_ghidra_mcp --transport streamable-http
+   --mcp-host 127.0.0.1 --mcp-port 8081`
+  (pyghidra + ghidra_mcp installed into the DSH Python; extension jar already in the Ghidra install).
+- The Harness MCP client stayed "server is disconnected" even after the bridge came up, so use the direct client
+  `tools/ghidra_mcp_call.py` / `tools/ghidra_batch.py` (Python MCP client over streamable HTTP). Program:
+  haloreach-copy.dll, image base 0x180000000, 27,709 functions.
+- RenderDoc 1.46 is installed. Capture method that works: launch `renderdoccmd capture ... noble-dev.exe ...`,
+  focus the **engine window** (`HaloReachCE_WindowClass`, not the launcher wrapper) and send F12; captures written to
+  the `-c` template directory (**only when the engine window really has foreground focus**).
+  Replay with `qrenderdoc --python script.py` (script runs before UI; write results to a file).
+  Useful replay APIs: `pyrenderdoc.LoadCapture`, `pyrenderdoc.Replay().BlockInvoke(fn)`,
+  `controller.GetRootActions()`, `controller.SetFrameEvent(eid, True)`, `controller.GetPipelineState()`,
+  `pipe.GetShader(stage)`, `pipe.GetShaderReflection(stage)`, `controller.DisassembleShader(pipe.GetGraphicsPipelineObject(), refl, target)`.
+  Note: child window captures can be black if F12 fires before the match frame; frame numbers from a capture with the
+  third-person Spartan visible worked (frame 863 in `rdoc2`).
+
+### Armor-flame draw identified (RenderDoc, capture frame 863)
+- Five draws (events 10055, 10058, 10061, 10064, 10067), each 4 indices (billboard quad), same pipeline:
+  - Pixel shader resource 8701; reflection: `UserParameterTexture_base_map`, `UserParameterTexture_base_map2`,
+    `UserParameterTexture_palette`, `UserParameterTexture_alpha_map`, `depth_buffer`.
+  - Vertex shader 8693; VS resources include `vs_particle_state_buffer`; VS constant blocks include
+    `ParticleIndex`, `ParticleRenderVS`; so this is the particle renderer (not contrail).
+  - Palette texture: **256x16 B8G8R8A8_SRGB**, RenderDoc ResourceId 34208; base_map 128x128 / 256x256 /
+    alpha_map 512x512.
+- PS disassembly (`ps_5_0`): samples alpha map, then base_map, then palette at UV `(base_map.r, v3.z)`;
+  final colour `o0.xyz = palette * v1.xyz + v2.xyz` (per-vertex v1/v2 carried through the VS). There is **no
+  per-draw colour constant block** in PS (only `ExposurePS`), so per-player colour cannot be selected from the PS CB;
+  the palette is a shared texture and all five draws bind the same palette. Per-player implementation needs either:
+  (a) per-particle/per-system palette index encoded in a vertex attribute / structured buffer, or
+  (b) split/bind a different palette per owning player's draw, which needs the renderer to expose the owner.
+
+### Runtime prototype written (partially working)
+- `src/engine/ParticleTint.hpp/.cpp` + CMake source entry; dev flag `-armor-fx-runtime-tint r,g,b` (or rrggbb).
+- It hooks `ID3D11DeviceContext::PSSetShaderResources` (vtable index **8** — ID3D11DeviceChild adds
+  GetDevice/GetPrivateData/SetPrivateData/SetPrivateDataInterface before the context methods; index 4 is wrong),
+  detects SRVs whose texture is 256x16 BGRA(SRGB), and substitutes a runtime-generated palette SRV (per-device cache).
+- Hook install currently happens early in `main.cpp` (before engine Initialize). It successfully installs on the
+  launcher's immediate context and detects palette candidates there, **but it never sees the game's particle
+  draws**: the engine does not call the launcher's `D3D11CreateDevice*`/deferred-context paths we hooked. The game
+  keeps rendering stock flames (verified capture). Next step: capture the engine's actual device/context (likely
+  created in `SC_DLL.dll`/D3D11On12 or a context interface version whose method address differs), or hook the
+  engine's particle submit path directly; then the existing palette substitution can be reused.
+- No crash; flag/hook are inert when the flag is absent. Current build retains the dev code; it is not a user feature.

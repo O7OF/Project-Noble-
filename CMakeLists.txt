@@ -165,6 +165,7 @@ set(SOURCES
     src/engine/ElitePack.cpp
     src/engine/MvarDump.cpp
     src/engine/MemoryDiff.cpp
+    src/engine/ParticleTint.cpp
     src/engine/ForgePlacement.cpp
     src/mvar/BitReader.cpp
     src/mvar/MapVariant.cpp

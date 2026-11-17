@@ -343,3 +343,12 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
 - Chosen next path: runtime particle colour override (stock maps, no downloads, all 30). Plan in
   docs/05-research-and-prompts/RE-ARMOR-FX-RUNTIME-COLOR-PLAN-2026-11-17.md; full handoff in
   docs/04-project-state/HANDOFF-ARMOR-FX-COLOURS-2026-11-17.md.
+
+### 2026-11-17 03:05 - runtime tint prototype: palette found, engine context still uncaptured
+- Ghidra MCP headless bridge restored on 127.0.0.1:8081 (Harness MCP client still disconnected; direct Python MCP
+  client tools/ghidra_mcp_call.py works). RenderDoc 1.46 capture of the third-person brick frame succeeded.
+- Flame draw identified: PS 8701/VS 8693, five 4-index billboard draws (events 10055..10067), palette texture 256x16
+  B8G8R8A8_SRGB; PS disasm palette*v1+v2, no per-draw colour CB. Per-player tint needs vertex/system palette index.
+- Implemented ParticleTint dev module + -armor-fx-runtime-tint flag; PSSetShaderResources vtable index 8, palette
+  detection/substitution works on launcher context but engine draws are not captured (engine uses its own
+  context/device path). Next: capture engine device/context or hook particle submit.
