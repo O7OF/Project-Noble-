@@ -2937,24 +2937,14 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             MenuSounds::Scroll();
         }
         SlotRow& fr = rows[m_focusedRow];
-        if (fr.index && !fr.options.empty()) {
-            const int n = static_cast<int>(fr.options.size());
-            auto step = [&](int dir) {
-                int v = optionPos(fr, *fr.index);
-                for (int k = 0; k < n; ++k) {
-                    v = (v + dir + n) % n;
-                    if (!fr.options[v].locked && !fr.options[v].forSale) {
-                        choose(m_focusedRow, v);
-                        MenuSounds::Click();
-                        break;
-                    }
-                }
-                m_pickerScrollToEquipped = true;
-            };
-            if (UiPad::Left()) step(-1);
-            if (UiPad::Right()) step(1);
-        }
-        if (UiPad::AcceptPressed()) {
+        // Right or Accept moves focus into the options grid on the right side
+        if (UiPad::Right() && !fr.options.empty()) {
+            m_pane = 1;
+            m_gridCursor = optionPos(fr, *fr.index);
+            m_lastGridRow = m_focusedRow;
+            m_gridScrollToCursor = true;
+            MenuSounds::Click();
+        } else if (UiPad::AcceptPressed()) {
             UiPad::ConsumeAccept();
             if (fr.kind == RowKind::Tag) {
                 s_focusServiceTag = true;
@@ -3571,32 +3561,43 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 return false;
             };
             if (UiPad::Left()) {
-                for (int sl = curSlot - 1; sl >= 0; --sl) {
-                    if (moveToSlot(sl)) break;
+                // Leftmost column: return seamlessly to the slot list on the left
+                if (curSlot % cols == 0) {
+                    m_pane = 0;
+                    s_scrollSlotToFocus = true;
+                    MenuSounds::Scroll();
+                } else {
+                    for (int sl = curSlot - 1; sl >= (curSlot / cols) * cols; --sl) {
+                        if (moveToSlot(sl)) break;
+                    }
                 }
             } else if (UiPad::Right()) {
-                for (int sl = curSlot + 1; sl < gridCells; ++sl) {
+                const int rowEnd = std::min(gridCells - 1, ((curSlot / cols) + 1) * cols - 1);
+                for (int sl = curSlot + 1; sl <= rowEnd; ++sl) {
                     if (moveToSlot(sl)) break;
                 }
             } else if (UiPad::Up()) {
                 const int upSlot = curSlot - cols;
                 if (!moveToSlot(upSlot) && upSlot >= 0) {
-                    for (int sl = upSlot - 1; sl >= 0; --sl) {
+                    for (int sl = upSlot; sl >= (upSlot / cols) * cols; --sl) {
                         if (moveToSlot(sl)) break;
                     }
                 }
             } else if (UiPad::Down()) {
                 const int dnSlot = curSlot + cols;
-                if (!moveToSlot(dnSlot)) {
-                    const int curR = curSlot / cols, lastR = (gridCells - 1) / cols;
-                    if (curR < lastR) {
-                        for (int sl = gridCells - 1; sl >= (curR + 1) * cols; --sl) {
-                            if (moveToSlot(sl)) break;
-                        }
+                if (!moveToSlot(dnSlot) && dnSlot < gridCells) {
+                    const int endOfNextRow = std::min(gridCells - 1, ((dnSlot / cols) + 1) * cols - 1);
+                    for (int sl = dnSlot; sl <= endOfNextRow; ++sl) {
+                        if (moveToSlot(sl)) break;
                     }
                 }
             }
-            if (UiPad::AcceptPressed()) {
+            if (UiPad::BackPressed()) {
+                UiPad::ConsumeBack();
+                m_pane = 0;
+                s_scrollSlotToFocus = true;
+                MenuSounds::Back();
+            } else if (UiPad::AcceptPressed()) {
                 UiPad::ConsumeAccept();
                 const PickOption& opt = row.options[m_gridCursor];
                 if (!opt.locked && !opt.forSale) {
@@ -3829,7 +3830,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             const PickOption& o = row.options[s_buyValue];
             const int64_t balance = Career::Balance();
             const bool afford = balance >= o.price;
-            const std::string label = afford ? (showingPad ? "BUY  " + WithCommas(o.price) + " cR  [A]" : "BUY  " + WithCommas(o.price) + " cR")
+            const std::string label = afford ? (showingPad ? "BUY  " + WithCommas(o.price) + " cR  [A / X]" : "BUY  " + WithCommas(o.price) + " cR")
                                              : "NEED " + WithCommas(o.price) + " cR";
             const float bw = std::max(180.0f * s, TextW(smallFont, 15.0f * s, label.c_str()) + 28.0f * s), bh = 30.0f * s;
             const ImVec2 b0(k1.x - pad - bw, k1.y - 36.0f * s), b1(b0.x + bw, b0.y + bh);
@@ -3842,7 +3843,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                    afford ? kWhiteCol : IM_COL32(150, 150, 150, 255), label.c_str());
             const std::string bal = "Balance: " + WithCommas(balance) + " cR";
             TextAt(dl, smallFont, 13.0f * s, ImVec2(b0.x, b0.y - 18.0f * s), IM_COL32(200, 214, 228, 225), bal.c_str());
-            if (clicked && afford && Career::BuyArmoryItem(o.buyKey, o.price)) {
+            const bool xBuy = (m_pane == 1 && afford && UiPad::ActionX());
+            if ((clicked || xBuy) && afford && Career::BuyArmoryItem(o.buyKey, o.price)) {
                 choose(m_focusedRow, s_buyValue, true);
                 MenuSounds::Click();
             }

@@ -30,6 +30,15 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02017Items = {
+        {"GAMEPLAY", "3rd-Person Dynamic Reticle Smoothing",
+         "Added screen-space dynamic interpolation to the third-person reticle, eliminating character animation jitter and geometry snapping so the crosshair glides smoothly across the screen while moving."},
+        {"ARMORY", "Intuitive Armory Controller Navigation",
+         "Enhanced controller flow across customization menus: pressing Right or A seamlessly enters the options grid, Left on the edge returns to the slot list, and X provides an instant purchase shortcut with zero trap states."},
+        {"CONTROLS", "Seamless Navigation Parity",
+         "Refined D-pad and analog stick navigation boundaries across armor customization grids and slot categories with silky smooth cursor transitions."},
+    };
+
     const std::vector<ChangeItem> v02016Items = {
         {"GAMEPLAY", "In-Match Multi-Team Tactical Selector",
          "Replaced the binary team toggle in the Pause Menu with a full tactical team selector modal supporting all 8 multiplayer teams with live color accents and squad badges."},
@@ -259,9 +268,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 16) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 17) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "3RD-PERSON RETICLE SMOOTHING & INTUITIVE ARMORY CONTROLS",
+                    "Smooth Reticle Tracking, Zero Walk-Cycle Jitter, Armory Grid Flow & Controller Purchase Shortcuts",
+                    v02017Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 16) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.16",
                     "IN-MATCH MULTI-TEAM SELECTION & SEAMLESS TEAM SWITCHING",
                     "8-Team Tactical Selector Modal, Native Team Datum Sync, Instant Respawn & Forge Parity",
                     v02016Items,
