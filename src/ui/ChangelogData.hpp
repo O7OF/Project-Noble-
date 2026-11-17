@@ -30,6 +30,20 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02028Items = {
+        {"NETCODE & MASTER SERVER", "Master Server 0.20.x Registration & Match Visibility",
+         "Updated backend server protocol validation and client handshake to natively support 0.20.x releases, resolving the 403 client_outdated rejection that prevented hosted sessions from publishing to the Server Browser."},
+        {"SERVER BROWSER", "Reliable Session Discovery & Version Synchronization",
+         "Ensured all active community matches appear reliably in the live server browser across both release and dev clients with accurate telemetry and ping estimation."}
+    };
+
+    notes.push_back({
+        "v0.20.28",
+        "Server Browser Master Server Visibility & 0.20.x Registration",
+        "Backend Master Server Compatibility, Match Discovery & Version Bump",
+        v02028Items
+    });
+
     const std::vector<ChangeItem> v02027Items = {
         {"CRASH FIXES", "Engine Crash Mitigation from Crash Dumps",
          "Patched null pointer dereferences at haloreach.dll+0x41E3EB, 0x92850 (tag resolve guard), and 0x1650A1 (unit iteration bounds). Modernized near-trampoline memory allocation via 64KB VirtualQuery scanner to guarantee 64-bit hook placement."},
