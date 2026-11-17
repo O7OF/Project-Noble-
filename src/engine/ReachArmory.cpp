@@ -2644,12 +2644,22 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
                 out.visorSrgb[0] = static_cast<float>(block32[28]) / 255.0f;
                 out.visorSrgb[1] = static_cast<float>(block32[29]) / 255.0f;
                 out.visorSrgb[2] = static_cast<float>(block32[30]) / 255.0f;
-            } else if ((rec[0x19] & 0x40u) != 0) {
-                const int vItem = std::clamp<int>(rec[0x19] & 0x1Fu, 0, 29);
-                out.visorActive = (vItem != 0);
-                out.visorSrgb[0] = kArmoryVisorRgb[vItem][0];
-                out.visorSrgb[1] = kArmoryVisorRgb[vItem][1];
-                out.visorSrgb[2] = kArmoryVisorRgb[vItem][2];
+            } else {
+                int vItem = 0;
+                if ((rec[0x19] & 0x40u) != 0) {
+                    vItem = std::clamp<int>(rec[0x19] & 0x1Fu, 0, 29);
+                } else if (rec[3] > 0 && rec[3] < 30) {
+                    vItem = rec[3];
+                } else {
+                    const uint32_t pVisor = *reinterpret_cast<const uint32_t*>(playerPtr + 0x98);
+                    if (pVisor > 0 && pVisor < 30) vItem = static_cast<int>(pVisor);
+                }
+                if (vItem > 0 && vItem < 30) {
+                    out.visorActive = true;
+                    out.visorSrgb[0] = kArmoryVisorRgb[vItem][0];
+                    out.visorSrgb[1] = kArmoryVisorRgb[vItem][1];
+                    out.visorSrgb[2] = kArmoryVisorRgb[vItem][2];
+                }
             }
         }
         return out.lightsActive || out.visorActive;
@@ -3168,13 +3178,23 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                 }
                 if (rec[4] == 0u) {
                     bool haveRemoteVisor = false;
+                    int vItem = -1;
                     if (hasBlock32 && block32[31] == 0xFEu) {
                         remoteSlots[2][0] = ArmorySrgbToLinear(static_cast<float>(block32[28]) / 255.0f);
                         remoteSlots[2][1] = ArmorySrgbToLinear(static_cast<float>(block32[29]) / 255.0f);
                         remoteSlots[2][2] = ArmorySrgbToLinear(static_cast<float>(block32[30]) / 255.0f);
                         haveRemoteVisor = true;
-                    } else if ((rec[0x19] & 0x40u) != 0 && (rec[0x19] & 0x1Fu) >= 5u) {
-                        const int vItem = std::clamp<int>(rec[0x19] & 0x1Fu, 0, 29);
+                    } else if (hasBlock32 && block32[15] > 0u && block32[15] < 30u) {
+                        vItem = static_cast<int>(block32[15]);
+                    } else if ((rec[0x19] & 0x40u) != 0) {
+                        vItem = std::clamp<int>(rec[0x19] & 0x1Fu, 0, 29);
+                    } else if (rec[3] > 0 && rec[3] < 30) {
+                        vItem = rec[3];
+                    } else {
+                        const uint32_t pVisor = *reinterpret_cast<const uint32_t*>(playerPtr + 0x98);
+                        if (pVisor > 0 && pVisor < 30) vItem = static_cast<int>(pVisor);
+                    }
+                    if (!haveRemoteVisor && vItem > 0 && vItem < 30) {
                         remoteSlots[2][0] = ArmorySrgbToLinear(kArmoryVisorRgb[vItem][0]);
                         remoteSlots[2][1] = ArmorySrgbToLinear(kArmoryVisorRgb[vItem][1]);
                         remoteSlots[2][2] = ArmorySrgbToLinear(kArmoryVisorRgb[vItem][2]);
@@ -3254,7 +3274,7 @@ void ReachArmory::SyncMatchLiveBipeds() {
     s_cachedVisorActive.store(!sel.isElite && sel.visorColorIndex != 0 && sel.visor != "default", std::memory_order_relaxed);
     s_cachedPreviewMarine.store(false, std::memory_order_relaxed);
 
-    const bool customVisor = (sel.visorColorIndex >= 5);
+    const bool customVisor = (sel.visorColorIndex > 0 && sel.visor != "default");
     const float visFloats[3] = {
         (sel.visor == "default" || sel.visor.empty()) ? 0.78f : sel.visorRgb[0],
         (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],

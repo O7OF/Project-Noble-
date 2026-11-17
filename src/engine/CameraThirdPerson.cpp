@@ -711,7 +711,9 @@ bool EvaluateDynamicThirdPersonCrosshair(float& outScreenX, float& outScreenY) {
         s_dynSmoothedDist = clampedDist;
         s_dynHasSmoothedDist = true;
     } else {
-        const float alpha = std::clamp(1.0f - std::exp(-dt * 18.0f), 0.05f, 1.0f);
+        const float distDiff = std::abs(clampedDist - s_dynSmoothedDist);
+        const float distSpeed = (distDiff > 2.0f) ? 36.0f : 18.0f;
+        const float alpha = std::clamp(1.0f - std::exp(-dt * distSpeed), 0.05f, 1.0f);
         s_dynSmoothedDist += (clampedDist - s_dynSmoothedDist) * alpha;
         s_dynSmoothedDist = std::clamp(s_dynSmoothedDist, kMinTraceDist, kMaxTraceDist);
     }
@@ -804,14 +806,23 @@ bool EvaluateDynamicThirdPersonCrosshair(float& outScreenX, float& outScreenY) {
         const float dx = targetScreenX - s_dynSmoothedScreenX;
         const float dy = targetScreenY - s_dynSmoothedScreenY;
         const float distDelta = std::sqrt(dx * dx + dy * dy);
-        // Fast snap if teleported or huge jump (e.g. over 150px) to prevent lagging behind fast flick-shots
-        if (distDelta > 150.0f * (screenW / 1920.0f)) {
+        const float screenRef = screenW / 1920.0f;
+        // Fast snap if teleported or massive shift (e.g. over 130px) to prevent lagging behind fast flick-shots
+        if (distDelta > 130.0f * screenRef) {
             s_dynSmoothedScreenX = targetScreenX;
             s_dynSmoothedScreenY = targetScreenY;
         } else {
-            // Adaptive speed: 45.0 for medium/fast camera pans, 24.0 for subtle walk-cycle / micro-jitter damping
-            const float speed = (distDelta > 40.0f * (screenW / 1920.0f)) ? 45.0f : 24.0f;
-            const float alpha = std::clamp(1.0f - std::exp(-dt * speed), 0.05f, 1.0f);
+            // Multi-tier dynamic speed:
+            // - Micro walk-cycle jitter (small pixel offsets <= 6px): 42.0f for silky character footstep bob damping
+            // - Normal turning / Pitching up & down / Spinning (6px..60px): 85.0f for snappy tracking with minimal drag
+            // - Fast camera sweeping (> 60px): 135.0f for rapid catchup
+            float speed = 85.0f;
+            if (distDelta <= 6.0f * screenRef) {
+                speed = 42.0f;
+            } else if (distDelta > 60.0f * screenRef) {
+                speed = 135.0f;
+            }
+            const float alpha = std::clamp(1.0f - std::exp(-dt * speed), 0.08f, 1.0f);
             s_dynSmoothedScreenX += dx * alpha;
             s_dynSmoothedScreenY += dy * alpha;
         }

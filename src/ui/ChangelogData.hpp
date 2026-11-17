@@ -30,6 +30,15 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02018Items = {
+        {"GAMEPLAY", "3rd-Person Dynamic Reticle Polish",
+         "Refined 3rd-person crosshair tracking with multi-tier adaptive smoothing, eliminating camera drag when spinning or looking up and down while maintaining silky walk-cycle stabilization."},
+        {"VISORS", "In-Match Custom Visor Color Replication",
+         "Connected all 30 custom Spartan visor finishes to profile items and network appearance records, eliminating default visor fallbacks and replicating colors across host and non-host clients in matches."},
+        {"MULTIPLAYER", "Armor Lights & Customization Network Replication",
+         "Replicated Spartan and Elite armor lights color and brightness, piece picks, and armor effects across multiplayer peers using network appearance stamping and live shader constant synchronization."},
+    };
+
     const std::vector<ChangeItem> v02017Items = {
         {"GAMEPLAY", "3rd-Person Dynamic Reticle Smoothing",
          "Added screen-space dynamic interpolation to the third-person reticle, eliminating character animation jitter and geometry snapping so the crosshair glides smoothly across the screen while moving."},
@@ -268,9 +277,17 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
 
     if (currentVer != "v0.19.93" && currentVer != "v0.19.94") {
         if (currentVer != "v0.19.99") {
-            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 17) {
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 18) {
                 notes.push_back(ReleaseNotes{
                     currentVer,
+                    "IN-MATCH VISOR & LIGHTS REPLICATION, 3P RETICLE POLISH",
+                    "30-Finish Visor Replication, Armor Lights Sync, Elite Customization Netcode & Snappy 3P Aiming",
+                    v02018Items,
+                });
+            }
+            if (noble::VERSION_MAJOR == 0 && noble::VERSION_MINOR == 20 && noble::VERSION_PATCH >= 17) {
+                notes.push_back(ReleaseNotes{
+                    "v0.20.17",
                     "3RD-PERSON RETICLE SMOOTHING & INTUITIVE ARMORY CONTROLS",
                     "Smooth Reticle Tracking, Zero Walk-Cycle Jitter, Armory Grid Flow & Controller Purchase Shortcuts",
                     v02017Items,
