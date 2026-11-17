@@ -2403,24 +2403,35 @@ void SettingsPanel::RenderController() {
     const int layout = std::clamp(m_edit.padLayout, 0,
                                   static_cast<int>(PadLayouts::Count) - 1);
 
-    for (int action = 0; action < PadLayouts::ActionCount; ++action) {
-      const std::string key = PadLayouts::ActionKey(action);
-      const bool custom = m_edit.padBindings.count(key) != 0;
-      const char *layoutName =
-          PadLayouts::InputName(PadLayouts::LayoutInput(layout, action));
-      const std::string text =
-          action == PadLayouts::TeamChat
-              ? "Can be assigned, but does nothing yet: a controller can read "
-                "chat but can't type in it."
-              : "Press A or click, then press the input this action should "
-                "use. The action on that input takes this one's old input. "
-                "Wait 5 seconds to cancel; on a keyboard, Esc cancels and "
-                "Delete puts the preset's input back.";
+    const PadLayouts::ActionGroup groups[] = {
+        PadLayouts::ActionGroup::Movement,  PadLayouts::ActionGroup::Actions,
+        PadLayouts::ActionGroup::Vehicle,   PadLayouts::ActionGroup::Interface,
+        PadLayouts::ActionGroup::Forge,     PadLayouts::ActionGroup::Theater};
 
-      if (!Row(PadLayouts::ActionName(action), text.c_str(), When::Apply,
-               layoutName, custom))
+    for (PadLayouts::ActionGroup g : groups) {
+      const std::vector<int> actions = PadLayouts::ActionsIn(g);
+      if (actions.empty())
         continue;
-      PadBindValue(action);
+      Section(Upper(PadLayouts::GroupName(g)).c_str());
+      for (int action : actions) {
+        const std::string key = PadLayouts::ActionKey(action);
+        const bool custom = m_edit.padBindings.count(key) != 0;
+        const char *layoutName =
+            PadLayouts::InputName(PadLayouts::LayoutInput(layout, action));
+        const std::string text =
+            action == PadLayouts::TeamChat
+                ? "Can be assigned, but does nothing yet: a controller can read "
+                  "chat but can't type in it."
+                : "Press A or click, then press the input this action should "
+                  "use. The action on that input takes this one's old input. "
+                  "Wait 5 seconds to cancel; on a keyboard, Esc cancels and "
+                  "Delete puts the preset's input back.";
+
+        if (!Row(PadLayouts::ActionName(action), text.c_str(), When::Apply,
+                 layoutName, custom))
+          continue;
+        PadBindValue(action);
+      }
     }
     if (!m_edit.padBindings.empty()) {
       if (Row("RESET BUTTON BINDINGS",

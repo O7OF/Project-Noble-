@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace noble {
 
@@ -32,8 +33,34 @@ enum Action {
     Jump = 0, Grenades, ActionReload, SwapWeapons, Melee, ArmorAbility, Fire, Zoom,
     ThrowGrenade, Crouch, Scoreboard, Pause, DpadUp, DpadDown, DpadLeft, DpadRight, TeamChat, PushToTalk,
     VoiceParty, VoiceTeam, VoiceGlobal,
+    // Movement
+    MoveForward, MoveBackward, MoveLeft, MoveRight,
+    // Actions
+    ZoomIn, ZoomOut, LowerWeapon, NightVision,
+    SelectNextGrenades, SelectPrevGrenades,
+    ThirdPerson, VehicleFirstPerson,
+    ChatAll, ChatTeam, ChatParty, ChatOpen,
+    // Vehicle
+    VehicleFunction1, VehicleFunction2, VehicleFunction3,
+    FalconAscend, FalconDescend,
+    // Interface
+    OpenLoadouts,
+    // Forge
+    ForgeAscend, ForgeDescend, ForgeGrabRelease, ForgeBoost, ForgePrecisionEdit,
+    ForgeDelete, ForgeProperties, ForgeTools, ForgeDuplicate, ForgeReset,
+    ForgeSwitchMode, ForgeZoom, ForgeRotationMode, ForgeToggleAxes, ForgeLock,
+    // Theater
+    TheaterTogglePanel, TheaterToggleInterface, TheaterTogglePerspective,
+    TheaterCameraReset, TheaterJumpForward, TheaterJumpBackward,
+    TheaterToggleFlycam, TheaterSpeedUp, TheaterSlowDown,
     ActionCount
 };
+
+// Groups matching Keyboard & Mouse categories
+enum class ActionGroup { Movement, Actions, Vehicle, Interface, Forge, Theater };
+ActionGroup GroupOf(int action);
+std::vector<int> ActionsIn(ActionGroup group);
+const char* GroupName(ActionGroup group);
 
 // A physical input, as a bit mask: the low 16 bits are XInput button bits, the rest are the inputs XInput reports as
 // analogue values. Saved in settings.json, so the values must not change.
@@ -61,6 +88,11 @@ int ActionFromKey(const std::string& key);   // -1 when unknown
 // Assigns `input` to `action`. An action already on that input is given `action`'s old input in exchange, so nothing
 // ends up with two jobs on one button or with no button.
 void Assign(int layout, int action, int input, std::map<std::string, int>& overrides);
+
+// Checks if the given action is currently active based on layout and overrides
+bool IsActionActive(int layout, int action, const std::map<std::string, int>* overrides,
+                    uint16_t buttons, uint8_t leftTrigger, uint8_t rightTrigger,
+                    int16_t leftX = 0, int16_t leftY = 0, int16_t rightX = 0, int16_t rightY = 0, uint8_t paddles = 0);
 
 // Rewrites a raw XInput pad state into the engine's default mapping for this layout and these overrides. `layout` out of
 // range (or Default) without overrides leaves everything untouched. `paddles` has bit n set while paddle n is held. The stick values are only read for overrides bound to a

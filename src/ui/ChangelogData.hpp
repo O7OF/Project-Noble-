@@ -30,6 +30,20 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02022Items = {
+        {"AUDIO", "Campaign Cutscene Skip Audio Unmute & Listener Recovery",
+         "Resolved the engine audio bug where skipping campaign cinematics left weapon firing, footsteps, and gameplay audio muted until dying. Automatically restores audio listeners from cinematic camera mode to first-person, un-ducks all 71 sound classes back to 0 dB, and unhides player units on skip and frame ticks."},
+        {"CONTROLLER", "Full Keyboard & Mouse Parity for Controller Keybinds",
+         "Expanded the controller binding schema to include all Keyboard & Mouse actions across categorized sections (Movement, Actions, Vehicle, Interface, Forge, Theater). Players can now map Lower Weapon, 3rd-Person Camera, Vehicle 1st Person, Night Vision, Falcon Ascend/Descend, Loadouts, Forge tools, and Theater controls to any controller button, paddle, or stick click."},
+    };
+
+    notes.push_back({
+        "v0.20.22",
+        "Cutscene Audio Recovery & Full Controller Keybind Parity",
+        "Gameplay Audio Restored on Cutscene Skip + Extended Controller Schema",
+        v02022Items
+    });
+
     const std::vector<ChangeItem> v02021Items = {
         {"AUDIO", "Instant Match Start Audio Across All Game Modes",
          "Synchronized live audio mixer volumes and audio thread queues directly upon engine load and match start, ensuring game, music, and sound effects play immediately in Campaign, Firefight, Forge, and Multiplayer without requiring a respawn."},

@@ -398,6 +398,67 @@ void EnginePatches::ClearRasterizerScreenFade(uintptr_t base) {
   }
 }
 
+static void RestoreCutsceneAudioSEH(uintptr_t reachBase) {
+  __try {
+    // Force audio listener back to first-person mode (RVA 0x10975C with cl=0)
+    using SetListenerCinematicFn = void(__fastcall *)(uint8_t);
+    reinterpret_cast<SetListenerCinematicFn>(reachBase + 0x10975C)(0);
+
+    // Stop cinematic and un-duck sound classes in engine state (RVA 0xD3444)
+    using CinematicStopFn = void(__fastcall *)();
+    reinterpret_cast<CinematicStopFn>(reachBase + 0xD3444)();
+
+    // Unmute / reset all 71 sound class gains to 0 dB (full 1.0f volume) (RVA 0xB27D0)
+    using SoundClassSetGainFn = void(__fastcall *)(int32_t, int32_t, float, int32_t);
+    reinterpret_cast<SoundClassSetGainFn>(reachBase + 0xB27D0)(-1, 0, 0.0f, 0);
+
+    // Unhide local player unit if hidden during cinematic enter (RVA 0x4716DC)
+    using GetLocalUnitFn = int32_t(__fastcall *)(int32_t);
+    using ObjectSetHiddenFn = void(__fastcall *)(uint32_t, uint8_t);
+    auto getLocalUnit = reinterpret_cast<GetLocalUnitFn>(reachBase + 0x53EF8);
+    auto objectSetHidden = reinterpret_cast<ObjectSetHiddenFn>(reachBase + 0x4716DC);
+    uint32_t localUnit = static_cast<uint32_t>(getLocalUnit(0));
+    if (localUnit != 0xFFFFFFFFu) {
+      objectSetHidden(localUnit, 0);
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+}
+
+static bool CheckAndClearStuckCinematicListenerSEH(uintptr_t reachBase) {
+  __try {
+    const uint32_t tlsIdx = *reinterpret_cast<const uint32_t *>(reachBase + 0xC17B18);
+    const uintptr_t tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+    if (tlsArray) {
+      const uintptr_t root = *reinterpret_cast<const uintptr_t *>(tlsArray + tlsIdx * 8);
+      if (root) {
+        uint8_t *pListenerFlag = *reinterpret_cast<uint8_t *const *>(root + 0x98);
+        if (pListenerFlag && *pListenerFlag != 0) {
+          using GetLocalUnitFn = int32_t(__fastcall *)(int32_t);
+          auto getLocalUnit = reinterpret_cast<GetLocalUnitFn>(reachBase + 0x53EF8);
+          if (getLocalUnit(0) != -1) {
+            *pListenerFlag = 0;
+            using SetListenerCinematicFn = void(__fastcall *)(uint8_t);
+            reinterpret_cast<SetListenerCinematicFn>(reachBase + 0x10975C)(0);
+            using CinematicStopFn = void(__fastcall *)();
+            reinterpret_cast<CinematicStopFn>(reachBase + 0xD3444)();
+            using SoundClassSetGainFn = void(__fastcall *)(int32_t, int32_t, float, int32_t);
+            reinterpret_cast<SoundClassSetGainFn>(reachBase + 0xB27D0)(-1, 0, 0.0f, 0);
+            return true;
+          }
+        }
+      }
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+  return false;
+}
+
+static void DispatchSettingsVolumes() {
+  const auto &s = Settings::Get().Snapshot();
+  ReachHost::SetRuntimeVolumes(s.volumeGame, s.volumeMusic, s.volumeOther);
+}
+
 void EnginePatches::RecoverFromCutsceneSkip() {
   uintptr_t reachBase =
       s_baseAddress
@@ -411,7 +472,7 @@ void EnginePatches::RecoverFromCutsceneSkip() {
       90); // Pump clear fade for next 90 frames (1.5 seconds)
 
   NOBLE_INFO("EnginePatches: RecoverFromCutsceneSkip - clearing black screen "
-             "fade and dismissing premature game over");
+             "fade, dismissing premature game over, and restoring gameplay audio");
 
   // 1. Immediately reset rasterizer screen fade overlay so screen is not left
   // black
@@ -424,9 +485,11 @@ void EnginePatches::RecoverFromCutsceneSkip() {
   if (!noble::Career::IsMatchSettled())
     PauseMenu::CancelGameOver();
 
-  // 3. Immediately restore active game audio volumes after cutscene skip
-  const auto& s = Settings::Get().Snapshot();
-  ReachHost::SetRuntimeVolumes(s.volumeGame, s.volumeMusic, s.volumeOther);
+  // 3. Immediately restore active gameplay audio state after cutscene skip:
+  RestoreCutsceneAudioSEH(reachBase);
+
+  // 4. Immediately restore active game audio volumes and SList dispatch after cutscene skip
+  DispatchSettingsVolumes();
 }
 
 // The 0.19.82 merge added a "cutscene recovery" detour on cinematic_skip_stop_internal. It also fires while a
@@ -494,6 +557,14 @@ void EnginePatches::OnFrameTick() {
       }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
+  }
+
+  // Auto-recovery for stuck audio listener after cutscene skip:
+  // When in active gameplay (!inCinematic and local player unit exists),
+  // verify TLS root + 0x98 (cinematic audio listener flag) is not stuck.
+  if (!inCinematic && CheckAndClearStuckCinematicListenerSEH(reachBase)) {
+    DispatchSettingsVolumes();
+    NOBLE_INFO("EnginePatches: OnFrameTick - cleared stuck cinematic listener and restored all sound classes");
   }
 }
 
