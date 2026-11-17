@@ -243,3 +243,9 @@ Other failures worth remembering: Foundry full-geometry round-trip crashes Tool 
 (GetDevice/GetImmediateContext); PSSetShaderResources vtable index is 8; matched palette is 256x16
 B8G8R8A8_UNORM_SRGB; per-device runtime tint SRV. This is global (all flame particles in the process) until M2 adds
 per-player selection. Ghidra MCP headless bridge + RenderDoc capture/replay instructions are in the runtime plan doc.
+
+**M2 status 2026-11-17 04:12:** per-player colour is not available in `ParticleRenderVS` constant buffers (only
+matrices/state/sprite data); VS uses `vs_particle_state_buffer` (stride 80) and PS does `palette*v1+v2`. Next options:
+patch the particle state buffer/shader for a palette index, expose owner per draw, or ship local-player-only tint first.
+Details in the runtime plan doc. The current M1 hook still matches any 256x16 BGRA palette, so other particle effects may
+tint as well; restrict matching to the particle shader hash before release.

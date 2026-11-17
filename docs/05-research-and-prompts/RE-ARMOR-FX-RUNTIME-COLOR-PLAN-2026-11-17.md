@@ -165,3 +165,31 @@ effect path if it matters.
 **Next (M2):** identify the owning player/system for each particle draw (likely via VS constant buffers
 `ParticleRenderVS` / particle state buffer, or by splitting palette binds per system) and select one of 30 palettes;
 then M3 peer replication.
+
+
+## 2026-11-17 04:12 - M2 investigation: no per-player colour in particle CB
+
+RenderDoc/qrenderdoc inspection of the five flame draws (frame 863, events 10055/58/61/64/67):
+- VS shader **8693**, shader hash `f54376d4-5c51d3b9-77511f98-85bba44f`, `vs_5_0`.
+  Constant blocks: ParametersVS, ViewVS, ExposureVS, LightingVS, FogVS, MeshVS, **ParticleIndex** (16 B),
+  **ParticleRenderVS** (592 B), AtmosphereFogVS.
+  `ParticleRenderVS` contains: `hidden_from_compiler`, `local_to_world` (3 rows), `local_to_world_pad`,
+  `g_motion_blur_state`, `g_sprite` (`m_corner`), `g_render_state` (main/appearance/animation flags, first_person,
+  curvature, uv_scroll_rate, game_time, billboard_type, vertex_count, fade, **custom_vertex_0/1**), and sprite frames.
+  There is **no colour/team/player field**.
+- VS reads `vs_particle_state_buffer` (structured, stride 80) at offsets 52/72 to produce the per-vertex values; PS
+  then does `o0.xyz = palette * v1.xyz + v2.xyz`.
+- Conclusion: per-player colour cannot be selected from the constant buffers. Options for M2:
+  1. Find where the particle **state buffer** is filled and encode the owning player's palette index in an unused
+     per-particle field, then patch the PS to use it (palette atlas UV offset). Requires a shader patch/DXBC replace
+     plus buffer access.
+  2. Split per-player particle systems and bind a different palette texture per draw; needs owner visibility in the
+     draw path (not exposed in CB; would need engine particle-system struct/owner).
+  3. Local-player-only tint first: use the local profile's selected effect/primary colour for the global palette (all
+     flames in this client show that colour); a useful interim if full per-player is deferred.
+- `tsh`: RenderDoc API note for future work: `GetCBufferVariableContents(pipeline, shader, stage, entryPoint,
+  cbufslot, buffer, offset, length)`; `ShaderVariable.value` fields did not print through the Python wrapper in this
+  version (values need reading raw via `GetBufferData` or a newer wrapper).
+- Known side effect: matching any 256x16 BGRA(SRGB) palette also catches other particle systems using the same
+  palette; the magenta proof also tinted a little haze/cloud in the window. Restrict to the particle PS/shader hash
+  (or a dedicated palette pointer) before shipping.

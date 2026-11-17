@@ -359,3 +359,8 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
   runtime tint SRV substituted; stock-map flames render magenta without map rebuild/mod. Evidence runtime-tint-proof.png.
 - Next M2: per-player/per-system palette selection (no owner data in PS CB; investigate VS ParticleRenderVS CB /
   particle state buffer or per-draw binding); then M3 peer replication.
+
+### 2026-11-17 04:12 - M2 investigation: no per-player colour in particle CB
+- VS 8693 (hash f54376d4...) ParticleRenderVS CB has matrices/state/sprite/custom_vertex only, no colour/owner; reads
+  vs_particle_state_buffer stride 80; PS does palette*v1+v2. Per-player needs state-buffer/shader patch, per-draw owner,
+  or local-player-only tint. M1 palette matching currently catches any 256x16 BGRA palette (side-effect haze tint).
