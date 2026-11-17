@@ -1,4 +1,5 @@
 #include "ReachArmory.hpp"
+#include "common/ArmorEffects.hpp"
 #include "ElitePack.hpp"
 #include "SharedTagCache.hpp"
 #include "common/Logger.hpp"
@@ -1438,7 +1439,23 @@ static const std::vector<PmcgChange>* PmcgItem(const char* list, const std::stri
 }
 
 // Armory effect ids (kArmorEffects) -> pmcg names.
-static std::string PmcgEffectName(const std::string& id) {
+static int PrimaryFlameVariantForEffect(const std::string& id, int primaryColorIndex) {
+    if (id == "flames_primary_auto") return std::clamp(primaryColorIndex, 0, 29);
+    const std::string prefix = "flame_pri_";
+    if (id.rfind(prefix, 0) == 0) {
+        const std::string suffix = id.substr(prefix.size());
+        for (int i = 0; i < 30; ++i)
+            if (suffix == kPrimaryFlames[static_cast<size_t>(i)].id) return i;
+    }
+    return -1;
+}
+
+static std::string PmcgEffectName(const std::string& id, int primaryColorIndex) {
+    const int variant = PrimaryFlameVariantForEffect(id, primaryColorIndex);
+    if (variant >= 0) {
+        std::string item, region, perm;
+        if (ArmorFlamePmcgTarget(variant, item, region, perm)) return item;
+    }
     if (id == "default" || id.empty()) return "default_armor";
     if (id == "flames") return "legendary_flame";
     if (id == "blue_flames") return "eternal_flame";
@@ -1447,14 +1464,19 @@ static std::string PmcgEffectName(const std::string& id) {
     return id;   // heart_attack, pestilence
 }
 
-static const char* PermutationForArmorEffect(const std::string& id) {
+static std::string PermutationForArmorEffect(const std::string& id, int primaryColorIndex) {
+    const int variant = PrimaryFlameVariantForEffect(id, primaryColorIndex);
+    if (variant >= 0) {
+        std::string item, region, perm;
+        if (ArmorFlamePmcgTarget(variant, item, region, perm)) return perm;
+    }
     if (id == "flames") return "armor_fx_00";
     if (id == "blue_flames") return "armor_fx_01";
     if (id == "heart_attack") return "armor_fx_02";
     if (id == "pestilence") return "armor_fx_03";
     if (id == "inclement_weather") return "armor_fx_04";
     if (id == "birthday_party") return "armor_fx_05";
-    return nullptr;
+    return {};
 }
 
 static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::string& targetSceneName) {
@@ -1778,7 +1800,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             pushPair("legs",           sel.eliteLegs,          "minor");
             // Elite armor effects (pmcg list 80 / 8c, region armor_fx, permutations armor_fx_00..05)
             if (sel.eliteArmorEffect != "default" && !sel.eliteArmorEffect.empty()) {
-                const std::string fxName = PmcgEffectName(sel.eliteArmorEffect);
+                const std::string fxName = PmcgEffectName(sel.eliteArmorEffect, sel.primaryColorIndex);
                 const std::vector<PmcgChange>* fxChanges = PmcgItem("80", fxName);
                 if (!fxChanges || fxChanges->empty()) {
                     fxChanges = PmcgItem("8c", fxName);
@@ -1786,8 +1808,8 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                 if (fxChanges && !fxChanges->empty()) {
                     for (const auto& c : *fxChanges) pushPair(c.region, c.permutation, nullptr);
                 } else {
-                    const char* perm = PermutationForArmorEffect(sel.eliteArmorEffect);
-                    if (perm) pushPair("armor_fx", perm, nullptr);
+                    const std::string perm = PermutationForArmorEffect(sel.eliteArmorEffect, sel.primaryColorIndex);
+                    if (!perm.empty()) pushPair("armor_fx", perm.c_str(), nullptr);
                 }
             }
         } else if (PmcgItem("20", "default") != nullptr) {
@@ -1842,7 +1864,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             // too small (gap under the D), so the male body gets the plain "default" knee guard instead.
             // 2026-11-12 (Tyler): "default" IS the FJ/PARA knee guard (pmcg knees_1), so DEFAULT and FJ/PARA looked
             // the same. Stock Reach uses "kat" for knees_default on both bodies; keep that (override removed).
-            apply("80", PmcgEffectName(sel.armorEffect));
+            apply("80", PmcgEffectName(sel.armorEffect, sel.primaryColorIndex));
             // TEMPORARY bisect switch: data\userdata\noble-test-head.txt holds ONE head permutation name to force
             // (and drops the flair_head_* attachments), e.g. "default", "bungie", "player_sam".
             {

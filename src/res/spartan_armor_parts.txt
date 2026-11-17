@@ -499,6 +499,66 @@ S storm
 C armor_fx armor_fx_04 0
 S halo_bday
 C armor_fx armor_fx_05 0
+S legendary_flame_pri_steel
+C armor_fx armor_fx_06 0
+S legendary_flame_pri_silver
+C armor_fx armor_fx_07 0
+S legendary_flame_pri_white
+C armor_fx armor_fx_08 0
+S legendary_flame_pri_brown
+C armor_fx armor_fx_09 0
+S legendary_flame_pri_tan
+C armor_fx armor_fx_10 0
+S legendary_flame_pri_khaki
+C armor_fx armor_fx_11 0
+S legendary_flame_pri_sage
+C armor_fx armor_fx_12 0
+S legendary_flame_pri_olive
+C armor_fx armor_fx_13 0
+S legendary_flame_pri_drab
+C armor_fx armor_fx_14 0
+S legendary_flame_pri_forest
+C armor_fx armor_fx_15 0
+S legendary_flame_pri_green
+C armor_fx armor_fx_16 0
+S legendary_flame_pri_sea_foam
+C armor_fx armor_fx_17 0
+S legendary_flame_pri_teal
+C armor_fx armor_fx_18 0
+S legendary_flame_pri_aqua
+C armor_fx armor_fx_19 0
+S legendary_flame_pri_cyan
+C armor_fx armor_fx_20 0
+S legendary_flame_pri_blue
+C armor_fx armor_fx_21 0
+S legendary_flame_pri_cobalt
+C armor_fx armor_fx_22 0
+S legendary_flame_pri_ice
+C armor_fx armor_fx_23 0
+S legendary_flame_pri_violet
+C armor_fx armor_fx_24 0
+S legendary_flame_pri_orchid
+C armor_fx armor_fx_25 0
+S legendary_flame_pri_lavender
+C armor_fx armor_fx_26 0
+S legendary_flame_pri_maroon
+C armor_fx armor_fx_27 0
+S legendary_flame_pri_brick
+C armor_fx armor_fx_28 0
+S legendary_flame_pri_rose
+C armor_fx armor_fx_29 0
+S legendary_flame_pri_rust
+C armor_fx armor_fx_30 0
+S legendary_flame_pri_coral
+C armor_fx armor_fx_31 0
+S legendary_flame_pri_peach
+C armor_fx_pri armor_fx_pri_00 0
+S legendary_flame_pri_gold
+C armor_fx_pri armor_fx_pri_01 0
+S legendary_flame_pri_yellow
+C armor_fx_pri armor_fx_pri_02 0
+S legendary_flame_pri_pale
+C armor_fx_pri armor_fx_pri_03 0
 L 8c 7
 S default_armor
 S legendary_flame
@@ -513,4 +573,64 @@ S storm
 C armor_fx armor_fx_04 0
 S halo_bday
 C armor_fx armor_fx_05 0
+S legendary_flame_pri_steel
+C armor_fx armor_fx_06 0
+S legendary_flame_pri_silver
+C armor_fx armor_fx_07 0
+S legendary_flame_pri_white
+C armor_fx armor_fx_08 0
+S legendary_flame_pri_brown
+C armor_fx armor_fx_09 0
+S legendary_flame_pri_tan
+C armor_fx armor_fx_10 0
+S legendary_flame_pri_khaki
+C armor_fx armor_fx_11 0
+S legendary_flame_pri_sage
+C armor_fx armor_fx_12 0
+S legendary_flame_pri_olive
+C armor_fx armor_fx_13 0
+S legendary_flame_pri_drab
+C armor_fx armor_fx_14 0
+S legendary_flame_pri_forest
+C armor_fx armor_fx_15 0
+S legendary_flame_pri_green
+C armor_fx armor_fx_16 0
+S legendary_flame_pri_sea_foam
+C armor_fx armor_fx_17 0
+S legendary_flame_pri_teal
+C armor_fx armor_fx_18 0
+S legendary_flame_pri_aqua
+C armor_fx armor_fx_19 0
+S legendary_flame_pri_cyan
+C armor_fx armor_fx_20 0
+S legendary_flame_pri_blue
+C armor_fx armor_fx_21 0
+S legendary_flame_pri_cobalt
+C armor_fx armor_fx_22 0
+S legendary_flame_pri_ice
+C armor_fx armor_fx_23 0
+S legendary_flame_pri_violet
+C armor_fx armor_fx_24 0
+S legendary_flame_pri_orchid
+C armor_fx armor_fx_25 0
+S legendary_flame_pri_lavender
+C armor_fx armor_fx_26 0
+S legendary_flame_pri_maroon
+C armor_fx armor_fx_27 0
+S legendary_flame_pri_brick
+C armor_fx armor_fx_28 0
+S legendary_flame_pri_rose
+C armor_fx armor_fx_29 0
+S legendary_flame_pri_rust
+C armor_fx armor_fx_30 0
+S legendary_flame_pri_coral
+C armor_fx armor_fx_31 0
+S legendary_flame_pri_peach
+C armor_fx_pri armor_fx_pri_00 0
+S legendary_flame_pri_gold
+C armor_fx_pri armor_fx_pri_01 0
+S legendary_flame_pri_yellow
+C armor_fx_pri armor_fx_pri_02 0
+S legendary_flame_pri_pale
+C armor_fx_pri armor_fx_pri_03 0
 L 98 0

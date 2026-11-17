@@ -29,19 +29,21 @@ static uintptr_t s_baseAddress = 0;
 typedef int(__fastcall *MccItemTranslatorFn)(int itemId);
 static MccItemTranslatorFn s_originalMccItemTranslator = nullptr;
 static std::atomic<int> s_itemTranslatorLogs{0};
+static std::atomic<bool> s_armorFxLogEnabled{false};
 static constexpr int kArmorFxCustomItemBase = 0xF0;
 static constexpr int kArmorFxVariantBaseIndex = 7;
 static int __fastcall Hook_MccItemTranslator(int itemId) {
-  const int n = s_itemTranslatorLogs.fetch_add(1);
+  const bool log = s_armorFxLogEnabled.load();
+  const int n = log ? s_itemTranslatorLogs.fetch_add(1) : 9999;
   if (itemId >= 0xA6 && itemId <= 0xB4) {
     const int out = s_originalMccItemTranslator(itemId);
-    if (n < 60) NOBLE_INFO("EnginePatches[fx-translator]: effect item id 0x{:X} -> internal index {}",
+    if (log && n < 60) NOBLE_INFO("EnginePatches[fx-translator]: effect item id 0x{:X} -> internal index {}",
                           static_cast<unsigned>(itemId), out);
     return out;
   }
   if (itemId >= kArmorFxCustomItemBase && itemId < kArmorFxCustomItemBase + 30) {
     const int idx = kArmorFxVariantBaseIndex + (itemId - kArmorFxCustomItemBase);
-    if (n < 60) NOBLE_INFO("EnginePatches[fx-translator]: CUSTOM armor-fx item 0x{:X} -> internal index {}",
+    if (log && n < 60) NOBLE_INFO("EnginePatches[fx-translator]: CUSTOM armor-fx item 0x{:X} -> internal index {}",
                           static_cast<unsigned>(itemId), idx);
     return idx;
   }
@@ -1281,7 +1283,8 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
   }
 
 
-  // Dev-only armor-effect variant probe: -armor-fx-probe instruments the MCC item translator.
+  // Armor-effect colour variants: intercept the MCC item translator so the custom primary-palette item ids
+  // (0xF0..0x10D) resolve to the extended pmcg effect indices 7..36. -armor-fx-probe only enables the diagnostic log.
   {
     bool probe = false;
     int argc = 0;
@@ -1289,16 +1292,15 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
     for (int i = 1; argv && i < argc; ++i)
       if (_wcsicmp(argv[i], L"-armor-fx-probe") == 0) probe = true;
     if (argv) LocalFree(argv);
-    if (probe) {
-      void *target = reinterpret_cast<void *>(baseAddress + 0x3B2F4);
-      if (HookManager::InstallHook(target, reinterpret_cast<void *>(&Hook_MccItemTranslator),
-                                   reinterpret_cast<void **>(&s_originalMccItemTranslator),
-                                   "mcc_item_translator"))
-        NOBLE_INFO("EnginePatches: armor-fx probe installed (translator RVA 0x3B2F4, custom item base 0x{:X} -> index {})",
-                   static_cast<unsigned>(kArmorFxCustomItemBase), kArmorFxVariantBaseIndex);
-      else
-        NOBLE_WARN("EnginePatches: armor-fx probe hook failed at RVA 0x3B2F4");
-    }
+    s_armorFxLogEnabled.store(probe);
+    void *target = reinterpret_cast<void *>(baseAddress + 0x3B2F4);
+    if (HookManager::InstallHook(target, reinterpret_cast<void *>(&Hook_MccItemTranslator),
+                                 reinterpret_cast<void **>(&s_originalMccItemTranslator),
+                                 "mcc_item_translator"))
+      NOBLE_INFO("EnginePatches: armor-effect variant translator installed (RVA 0x3B2F4, custom item base 0x{:X} -> index {})",
+                 static_cast<unsigned>(kArmorFxCustomItemBase), kArmorFxVariantBaseIndex);
+    else
+      NOBLE_WARN("EnginePatches: armor-effect variant translator hook failed at RVA 0x3B2F4");
   }
   s_isApplied = true;
   return true;

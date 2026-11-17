@@ -291,3 +291,16 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
 - Foundry round trip had broken stock spartans.model -> black screen after loadout. Restored original tags from HREK.7z
   (model/render_model/effect/pmcg) and biped backup; rebuilt Forge World and verified rendering + stock flames again.
 - Next: fix Foundry geometry weight ordering, or markers-only merge into render_model while leaving spartans.model stock.
+
+### 2026-11-17 20:35 - #15-B primary flame variants implemented (30 + auto match)
+- Assets: 30 primary palette bitmaps/particles, 5 ext effect tags (6 events each, cloned legendary_flame), Foundry 30
+  markers merged into stock render model (26 armor_fx perms + new armor_fx_pri region), 30 pmcg entries, 5 biped extras.
+- Translator hook permanent (custom item ids 0xF0..0x10D); profile/armory mapping via ArmorEffects.hpp; kArmorEffects 38
+  entries; catalog rows + generated thumbnails; mainmenu map rebuilt + string ids regenerated for Armory preview.
+- Verified Steel (effect 8) and auto match (primary green -> item 0xFA/pmcg 17) render centered in-game. Screenshot batch
+  and Armory preview verification in progress.
+
+### 2026-11-17 21:20 - #15-B solid-tint palette fix applied to all 30 variants
+- Removed the white-hot core from the primary flame palette formula; regenerated all 30 fire_pri bitmaps; rebuilt Forge
+  World + mainmenu and installed noble_menu.map. Armory 3D preview now shows solid brick-red flames (centred). Match
+  testing still needs the rebuilt map loaded (map override); thumbnails/photos left to Tyler.

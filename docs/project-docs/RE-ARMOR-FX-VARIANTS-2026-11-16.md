@@ -318,3 +318,49 @@ blend remain in HREK but are unreferenced.
 Next for route 1: fix the Foundry geometry export weight ordering (Tool assert at connected_geometry.cpp:7012) so a full
 render-model round trip works, or do a markers-only merge while keeping the original `spartans.model` untouched (only
 `spartans.render_model` marker blocks), then rebuild/test.
+
+## 2026-11-16/17: primary-palette variant implementation (working pipeline)
+
+Implemented the full **30 Reach primary-colour flame variants** plus an auto-match option, using the Foundry markers-only
+pipeline that was proven with the single test marker:
+
+* Palette/particle assets: `fx\particles\fire\gradients\fire_pri_<id>.bitmap` (fire palette recoloured from the 30
+  `kReachColors` RGBs) and `...\particles\head_fire_pri_<id>.particle` (palette refs redirected).
+* Five effect tags `armor_fx_ext0..4.effect`, six events each, every event cloned from the stock `legendary_flame`
+  event (correct third-person particle-system fields), with the 30 primary particles at locations 0..5.
+* Foundry markers-only export generated 30 marker groups `flame_pri_<id>` positioned from the stock centred
+  `armor_fx_00` marker (Blender empties are copies of it), then the render model was merged via ManagedBlam
+  `SerializeElement`/`DeserializeElement` (clipboard copy was unreliable for multiple markers).
+  The markers use 26 new permutations on the existing `armor_fx` region (`armor_fx_06..31`) and 4 on the new 16th
+  region `armor_fx_pri` (`armor_fx_pri_00..03`), staying inside the 16-region / 32-permutation caps.
+* 30 pmcg entries in both effect lists (indices 7..36) + five extra biped effect attachments (slots 9..13).
+* Engine translator hook now installed unconditionally (not just `-armor-fx-probe`); custom item ids 0xF0..0x10D map to
+  pmcg indices 7..36. `-armor-fx-probe` only enables the diagnostic log.
+* Armory/profile: `kArmorEffects` expanded to 38 entries - stock 0..6, `PRIMARY MATCH` (index 7, resolves from the
+  player's primary colour), and 30 `flame_pri_<id>` variants (8..37). `ArmorEffects.hpp` holds the shared list/mapping.
+  `ReachHost` writes the custom item id to profile +0x68/+0x90 from the appearance JSON (auto resolves via
+  `primary_color`). `ReachArmory` maps the new ids to pmcg list item names/permutations for the Armory preview, and
+  `spartan_armor_parts.txt` (embedded pmcg data) gained the 30 item entries in lists 80/8c.
+* Armory UI: catalog rows for the auto + 30 variants added to `SpartanArmoryCatalog.inc`; thumbnails are generated from
+  the in-game captures into `data/ui/reach/armory/armor_effects/flame_pri_<id>.png`.
+* Menu map: `levels\ui\mainmenu\mainmenu` rebuilt with the new tags, installed as `data\menumaps\noble_menu.map`, and
+  `noble_menu.string_ids.csv` regenerated so the Armory preview resolves the new region/permutation string ids.
+
+Verified in-game: Steel flames (profile effect 8) and auto-match with Green primary (item 0xFA -> pmcg 17) render
+centred on the helmet; both selectable and auto paths work through the normal profile/appearance route (no dev item
+override). Screenshot batch for all 30 variants is running; Armory preview/thumbnail verification follows.
+
+## 2026-11-17: solid-tint palette fix applied to all 30 variants
+
+The first saturated palette pass still baked a white/yellow hot core into every flame, which made the colours look mixed
+(the flame appeared to contain the regular orange/white flame plus the chosen colour). Fixed by removing the white-hot
+term entirely: each palette pixel is now `target RGB * ((0.10 + 0.90*m^0.95) * 1.45)` with the original alpha, where m is
+the source fire luminance. All 30 `fire_pri_<id>.bitmap` tags were regenerated this way; the particles/effect tags are
+unchanged. Forge World and the mainmenu map were rebuilt, and the rebuilt `mainmenu.map` installed as
+`data/menumaps/noble_menu.map`, so the Armory 3D preview uses the corrected palettes too.
+
+Verified: Armory preview with BRICK FLAME now shows solid brick-red flames centred on the helmet
+(`docs/evidence/armor-fx-primary-2026-11-17/armory-preview-brick-solid.png`); the earlier Steel/auto-green/selectable
+match captures remain valid for behaviour (they used the previous, lighter palette formula). Thumbnails/photo set are
+left to Tyler; the Armory 3D preview itself is updated. In-match variants still require loading the rebuilt map (e.g.
+Forge World with `-map-override`), since normal MCC maps do not carry the new tags/assets.

@@ -9,6 +9,7 @@
 #include "common/EngineModule.hpp"
 #include "common/SaveCodec.hpp"
 #include "common/ArmoryVisor.hpp"
+#include "common/ArmorEffects.hpp"
 #include "common/DeviceIdentity.hpp"
 #include "hooks/EnginePatches.hpp"
 #include "hooks/HookManager.hpp"
@@ -1528,8 +1529,14 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
             return static_cast<uint32_t>(ArmoryVisorEngineIndex(idx, id));
         };
 
-        const uint32_t spEffectOff = armoryEffectOffset(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));
-        const uint32_t elEffectOff = armoryEffectOffset(num(el, "armor_effect_index", 0, 6, 0), str(el, "armor_effect_id"));
+        const int spEffectIdx = num(sp, "armor_effect_index", 0, kArmorEffectCount - 1, 0);
+        const int elEffectIdx = num(el, "armor_effect_index", 0, kArmorEffectCount - 1, 0);
+        const int spPrimaryColor = num(appearance, "primary_color", 0, 29, 1);
+        const int elPrimaryColor = el.contains("primary_color") ? num(el, "primary_color", 0, 29, spPrimaryColor) : spPrimaryColor;
+        const uint32_t spCustomFx = ArmorEffectCustomItemId(spEffectIdx, spPrimaryColor);
+        const uint32_t elCustomFx = ArmorEffectCustomItemId(elEffectIdx, elPrimaryColor);
+        const uint32_t spEffectOff = armoryEffectOffset(std::clamp(spEffectIdx, 0, 6), str(sp, "armor_effect_id"));
+        const uint32_t elEffectOff = armoryEffectOffset(std::clamp(elEffectIdx, 0, 6), str(el, "armor_effect_id"));
         const uint32_t visorOff = visorOffset(num(sp, "visor_color_index", 0, 29, 0), str(sp, "visor_id"));
         const int utility = num(sp, "utility_index", 0, 6, 0);
 
@@ -1546,7 +1553,7 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // (Elite, pmcg list 8C) - mixing species into +0x68 is what used to make an armor effect pick
         // the Elite variant. (Verified in haloreach.dll 0x2EDA08 / 0x1055EC.)
         const uint32_t devFxItem = DevArmorFxItemOverride();
-        put(0x68, devFxItem ? devFxItem : kEffect + spEffectOff);
+        put(0x68, devFxItem ? devFxItem : (spCustomFx ? spCustomFx : kEffect + spEffectOff));
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + visorOff);
         // Armory set indices: 0..7 = MCC's eight Elite sets (194..201), 8 = Honor Guard, 9 = Counselor,
@@ -1554,7 +1561,7 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // entries in the appearance record (ElitePack) - so the profile set item stays at Minor (194).
         const int eliteSet = num(el, "armor_set", 0, 10, 0);
         put(0x8C, kEliteSet + (eliteSet < 8 ? eliteSet : 0));
-        put(0x90, devFxItem ? devFxItem : kEliteEffect + elEffectOff);
+        put(0x90, devFxItem ? devFxItem : (elCustomFx ? elCustomFx : kEliteEffect + elEffectOff));
         put(0x94, VoiceItem(str(sp, "voice_id")));
         const int primaryColor = (species == 1 && el.contains("primary_color"))
             ? num(el, "primary_color", 0, 29, 1)
