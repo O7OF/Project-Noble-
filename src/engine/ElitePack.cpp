@@ -1295,6 +1295,14 @@ uint8_t s_localColors[4] = {1, 10, 14, 14};
 uint8_t s_localCustomFlags = 0;
 float s_localCustomRgb[4][3] = {};
 int s_localLightsBrightnessIdx = 1; // 0..130 -> 0.5f + idx * 0.5f (default 1 = x1.0)
+uint8_t s_localSpartanColors[4] = {1, 10, 14, 14};
+uint8_t s_localSpartanCustomFlags = 0;
+float s_localSpartanCustomRgb[4][3] = {};
+int s_localSpartanLightsBrightnessIdx = 1;
+uint8_t s_localEliteColors[4] = {1, 10, 14, 14};
+uint8_t s_localEliteCustomFlags = 0;
+float s_localEliteCustomRgb[4][3] = {};
+int s_localEliteLightsBrightnessIdx = 1;
 uint8_t s_localSpartanVisorIndex = 0;
 uint8_t s_localSpartanVisorItemIndex = 0; // 0..29 in kArmoryVisorItemIds / kArmoryVisorRgb order
 bool s_localSpartanVisorCustom = false;
@@ -1343,32 +1351,41 @@ void RefreshLocalPicks() {
         else fxIdx = 0;
         s_localEliteEffect = (fxIdx >= 1 && fxIdx <= 6) ? static_cast<uint8_t>(fxIdx) : 0xFF;
 
-        const bool useElColors = s_localSpeciesElite && el.contains("primary_color");
-        const auto& colSrc = useElColors ? el : j;
+        auto parseColorsFrom = [&](const nlohmann::json& src, uint8_t colors[4], uint8_t& cFlags, float customRgb[4][3], int& bIdx) {
+            colors[0] = static_cast<uint8_t>(std::clamp(src.value("primary_color", j.value("primary_color", 1)), 0, 29));
+            colors[1] = static_cast<uint8_t>(std::clamp(src.value("secondary_color", j.value("secondary_color", 10)), 0, 29));
+            colors[2] = static_cast<uint8_t>(std::clamp(src.value("accent_color", j.value("accent_color", 14)), 0, 29));
+            colors[3] = static_cast<uint8_t>(std::clamp(src.value("lights_color", j.value("lights_color", 14)), 0, 29));
 
-        s_localColors[0] = static_cast<uint8_t>(std::clamp(colSrc.value("primary_color", 1), 0, 29));
-        s_localColors[1] = static_cast<uint8_t>(std::clamp(colSrc.value("secondary_color", 10), 0, 29));
-        s_localColors[2] = static_cast<uint8_t>(std::clamp(colSrc.value("accent_color", 14), 0, 29));
-        s_localColors[3] = static_cast<uint8_t>(std::clamp(colSrc.value("lights_color", 14), 0, 29));
+            const float rawB = std::clamp(src.value("lights_brightness", j.value("lights_brightness", 1.0f)), 0.5f, 65.5f);
+            bIdx = std::clamp(static_cast<int>(std::lround((rawB - 0.5f) * 2.0f)), 0, 130);
 
-        const float rawBrightness = std::clamp(colSrc.value("lights_brightness", j.value("lights_brightness", 1.0f)), 0.5f, 65.5f);
-        s_localLightsBrightnessIdx = std::clamp(static_cast<int>(std::lround((rawBrightness - 0.5f) * 2.0f)), 0, 130);
+            cFlags = 0;
+            if (src.value("primary_custom", false))   cFlags |= (1 << 0);
+            if (src.value("secondary_custom", false)) cFlags |= (1 << 1);
+            if (src.value("accent_custom", false))    cFlags |= (1 << 2);
+            if (src.value("lights_custom", false))    cFlags |= (1 << 3);
 
-        s_localCustomFlags = 0;
-        if (colSrc.value("primary_custom", false))   s_localCustomFlags |= (1 << 0);
-        if (colSrc.value("secondary_custom", false)) s_localCustomFlags |= (1 << 1);
-        if (colSrc.value("accent_custom", false))    s_localCustomFlags |= (1 << 2);
-        if (colSrc.value("lights_custom", false))    s_localCustomFlags |= (1 << 3);
-
-        auto readRgb = [&](const char* key, float out[3]) {
-            if (colSrc.contains(key) && colSrc[key].is_array() && colSrc[key].size() == 3) {
-                for (int i = 0; i < 3; ++i) out[i] = std::clamp(colSrc[key][i].get<float>(), 0.0f, 1.0f);
-            }
+            auto readRgb = [&](const char* key, float out[3]) {
+                if (src.contains(key) && src[key].is_array() && src[key].size() == 3) {
+                    for (int i = 0; i < 3; ++i) out[i] = std::clamp(src[key][i].get<float>(), 0.0f, 1.0f);
+                }
+            };
+            readRgb("primary_custom_rgb", customRgb[0]);
+            readRgb("secondary_custom_rgb", customRgb[1]);
+            readRgb("accent_custom_rgb", customRgb[2]);
+            readRgb("lights_custom_rgb", customRgb[3]);
         };
-        readRgb("primary_custom_rgb", s_localCustomRgb[0]);
-        readRgb("secondary_custom_rgb", s_localCustomRgb[1]);
-        readRgb("accent_custom_rgb", s_localCustomRgb[2]);
-        readRgb("lights_custom_rgb", s_localCustomRgb[3]);
+
+        parseColorsFrom(j, s_localSpartanColors, s_localSpartanCustomFlags, s_localSpartanCustomRgb, s_localSpartanLightsBrightnessIdx);
+        const auto& elColSrc = el.contains("primary_color") ? el : j;
+        parseColorsFrom(elColSrc, s_localEliteColors, s_localEliteCustomFlags, s_localEliteCustomRgb, s_localEliteLightsBrightnessIdx);
+
+        const bool useElColors = s_localSpeciesElite;
+        std::memcpy(s_localColors, useElColors ? s_localEliteColors : s_localSpartanColors, sizeof(s_localColors));
+        s_localCustomFlags = useElColors ? s_localEliteCustomFlags : s_localSpartanCustomFlags;
+        std::memcpy(s_localCustomRgb, useElColors ? s_localEliteCustomRgb : s_localSpartanCustomRgb, sizeof(s_localCustomRgb));
+        s_localLightsBrightnessIdx = useElColors ? s_localEliteLightsBrightnessIdx : s_localSpartanLightsBrightnessIdx;
 
         if (j.contains("spartan") && j["spartan"].is_object()) {
             const auto& sp = j["spartan"];
@@ -1469,19 +1486,24 @@ static bool IsLocalPlayerDatum(const uint8_t* player) {
 // replicates it across all peers into player+0xD8.
 static void StampLocalAppearanceRecordLocked(uint8_t* rec, bool elite) {
     if (!rec) return;
-    const bool lightsCust = (s_localCustomFlags & (1 << 3)) != 0;
-    rec[0x1B] = static_cast<uint8_t>((lightsCust ? 0x60 : 0x40) | (s_localColors[3] & 0x1F));
+    const uint8_t* cols = elite ? s_localEliteColors : s_localSpartanColors;
+    const uint8_t cFlags = elite ? s_localEliteCustomFlags : s_localSpartanCustomFlags;
+    const auto& cRgb = elite ? s_localEliteCustomRgb : s_localSpartanCustomRgb;
+    const int bIdx = elite ? s_localEliteLightsBrightnessIdx : s_localSpartanLightsBrightnessIdx;
+
+    const bool lightsCust = (cFlags & (1 << 3)) != 0;
+    rec[0x1B] = static_cast<uint8_t>((lightsCust ? 0x60 : 0x40) | (cols[3] & 0x1F));
     if (lightsCust) {
-        const int r6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][0] * 5.0f)), 0, 5);
-        const int g6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][1] * 5.0f)), 0, 5);
-        const int b6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][2] * 5.0f)), 0, 5);
+        const int r6 = std::clamp(static_cast<int>(std::lround(cRgb[3][0] * 5.0f)), 0, 5);
+        const int g6 = std::clamp(static_cast<int>(std::lround(cRgb[3][1] * 5.0f)), 0, 5);
+        const int b6 = std::clamp(static_cast<int>(std::lround(cRgb[3][2] * 5.0f)), 0, 5);
         const uint16_t w26 = static_cast<uint16_t>(0xF2 + (r6 * 36 + g6 * 6 + b6));
         std::memcpy(rec + 0x26, &w26, sizeof(w26));
     }
-    rec[0x01] = s_localColors[0];
-    rec[0x02] = s_localColors[1];
+    rec[0x01] = cols[0];
+    rec[0x02] = cols[1];
     if (elite) {
-        rec[0x18] = static_cast<uint8_t>(std::clamp(s_localLightsBrightnessIdx, 0, 127));
+        rec[0x18] = static_cast<uint8_t>(std::clamp(bIdx, 0, 127));
         if (NobleActive()) {
             const int set = (s_localSet >= 0 && s_localSet < kArmorySets) ? s_localSet : 0;
             for (int k = 0; k < 6; ++k)
@@ -1492,7 +1514,7 @@ static void StampLocalAppearanceRecordLocked(uint8_t* rec, bool elite) {
         }
     } else {
         rec[0x03] = s_localSpartanVisorItemIndex;
-        rec[0x17] = static_cast<uint8_t>(std::clamp(s_localLightsBrightnessIdx, 0, 127));
+        rec[0x17] = static_cast<uint8_t>(std::clamp(bIdx, 0, 127));
         rec[0x19] = static_cast<uint8_t>(0x40 | (s_localSpartanVisorItemIndex & 0x1F));
     }
 }

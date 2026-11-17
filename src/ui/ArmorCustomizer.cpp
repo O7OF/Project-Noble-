@@ -1311,7 +1311,6 @@ void ArmorCustomizer::SyncToReachArmory() const {
     const auto& pCol = kReachColors[priIdx];
     const auto& sCol = kReachColors[secIdx];
     const auto& aCol = kReachColors[accIdx];
-    const auto& lCol = kReachColors[lgtIdx];
     const auto& vCol = kVisorColors[vcIdx];
     auto colorRgb = [](bool custom, const std::array<float, 3>& rgb, const ReachColorEntry& pal) {
         const std::array<float, 3> s = custom ? rgb : std::array<float, 3>{pal.r, pal.g, pal.b};
@@ -1366,14 +1365,19 @@ void ArmorCustomizer::SyncToReachArmory() const {
     const auto& priRgbArr = previewingElite ? m_profile.elitePrimaryCustomRgb : m_profile.primaryCustomRgb;
     const auto& secRgbArr = previewingElite ? m_profile.eliteSecondaryCustomRgb : m_profile.secondaryCustomRgb;
     const auto& accRgbArr = previewingElite ? m_profile.eliteAccentCustomRgb : m_profile.accentCustomRgb;
-    const auto& lgtRgbArr = previewingElite ? m_profile.eliteLightsCustomRgb : m_profile.lightsCustomRgb;
+
+    const auto& spLCol = kReachColors[std::clamp(m_profile.lightsColor, 0, 29)];
+    const auto& elLCol = kReachColors[std::clamp(m_profile.eliteLightsColor, 0, 29)];
+    sel.spartanLightsRgb = colorRgb(m_profile.lightsCustom, m_profile.lightsCustomRgb, spLCol);
+    sel.spartanLightsBrightness = std::clamp(std::round(m_profile.lightsBrightness * 2.0f) * 0.5f, 0.5f, 65.5f);
+    sel.eliteLightsRgb = colorRgb(m_profile.eliteLightsCustom, m_profile.eliteLightsCustomRgb, elLCol);
+    sel.eliteLightsBrightness = std::clamp(std::round(m_profile.eliteLightsBrightness * 2.0f) * 0.5f, 0.5f, 65.5f);
 
     sel.primaryRgb = colorRgb(priCust, priRgbArr, pCol);
     sel.secondaryRgb = colorRgb(secCust, secRgbArr, sCol);
     sel.accentRgb = colorRgb(accCust, accRgbArr, aCol);
-    sel.lightsRgb = colorRgb(lgtCust, lgtRgbArr, lCol);
-    const float rawLightsB = previewingElite ? m_profile.eliteLightsBrightness : m_profile.lightsBrightness;
-    sel.lightsBrightness = std::clamp(std::round(rawLightsB * 2.0f) * 0.5f, 0.5f, 65.5f);
+    sel.lightsRgb = previewingElite ? sel.eliteLightsRgb : sel.spartanLightsRgb;
+    sel.lightsBrightness = previewingElite ? sel.eliteLightsBrightness : sel.spartanLightsBrightness;
     sel.primaryCustom = priCust;
     sel.secondaryCustom = secCust;
     sel.accentCustom = accCust;
@@ -1423,7 +1427,10 @@ void ArmorCustomizer::SyncToReachArmory() const {
                a.eliteArmorEffectIndex == b.eliteArmorEffectIndex &&
                a.primaryRgb == b.primaryRgb && a.secondaryRgb == b.secondaryRgb &&
                a.accentRgb == b.accentRgb && a.lightsRgb == b.lightsRgb && a.visorRgb == b.visorRgb &&
+               a.spartanLightsRgb == b.spartanLightsRgb && a.eliteLightsRgb == b.eliteLightsRgb &&
                std::abs(a.lightsBrightness - b.lightsBrightness) < 1e-3f &&
+               std::abs(a.spartanLightsBrightness - b.spartanLightsBrightness) < 1e-3f &&
+               std::abs(a.eliteLightsBrightness - b.eliteLightsBrightness) < 1e-3f &&
                a.lightsCustom == b.lightsCustom &&
                a.marinePieces == b.marinePieces && a.marineColors == b.marineColors && a.previewMarine == b.previewMarine &&
                a.femalePieces == b.femalePieces && a.marineFemale == b.marineFemale &&
