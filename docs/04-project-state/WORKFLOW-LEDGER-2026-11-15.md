@@ -278,3 +278,10 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
   when selected, so added render-model markers/perms are ignored by the engine (runtime tables likely built from source).
 - Diagnostics cleaned up, map rebuilt, blue variant unaffected. Next options: proper HREK/Blender marker export, engine
   runtime-table RE, or 6-colour fallback; primary-palette variant direction remains for when the markers work.
+
+### 2026-11-16 19:35 - #15-B route 1 (Foundry): import works, geometry round-trip crashes on weights, markers-only export works
+- Foundry imported spartans.render_model into Blender; full export silently copies the template render model because Tool
+  crashes on unsorted vertex node weights (connected_geometry.cpp:7012). Markers-only export produces a render_model tag
+  with the new region/marker data (spartans_rt5), so the next step is merging its marker/region blocks into the stock
+  render model (or fixing weight order) and rebuilding/testing. Scripts/docs added; stock render model unchanged, map not
+  rebuilt since the Foundry tests.
