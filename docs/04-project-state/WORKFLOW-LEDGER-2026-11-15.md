@@ -371,3 +371,8 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
   38 entries (30 variants), six hidden colours selectable again; catalog rows + null-init crash fixed.
 - Verified automatic gold (35), rust (32), pale (37), brick (30) on stock Forge World; contact sheet in evidence.
 - Caveats: Armory previews for six show stock flame colour; thumbnails pending; per-player M2 still pending.
+
+### 2026-11-17 05:10 - last six runtime colours fixed
+- Six previously-hidden variants now work: profile writes stock LEGENDARY + ParticleTint variant; Armory preview proxies
+  through steel custom effect (256x16 menu palette) so runtime recolours the equipped preview; menu context hooked via
+  Armory depth-clear hook. Verified all six on stock Forge World. Grid thumbnails still generic stock pictures.

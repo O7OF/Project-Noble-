@@ -381,6 +381,13 @@ void HookFromSwapChain(IDXGISwapChain* swapChain) {
     HookContext(device.Get(), context.Get());
 }
 
+void HookFromContext(ID3D11DeviceContext* context) {
+    if (!context) return;
+    Microsoft::WRL::ComPtr<ID3D11Device> device;
+    context->GetDevice(device.GetAddressOf());
+    HookContext(device.Get(), context);
+}
+
 void Install(ID3D11Device* device, ID3D11DeviceContext* context) {
     if (!s_armed.exchange(true)) {
         ParseTintColour();

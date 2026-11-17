@@ -1,4 +1,5 @@
 #include "FrontEndInternal.hpp"
+#include "engine/ParticleTint.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "host/SlotPatch.hpp"
 
@@ -1037,6 +1038,7 @@ bool s_depthValid = false;
 void STDMETHODCALLTYPE HookClearDsv(ID3D11DeviceContext *ctx,
                                     ID3D11DepthStencilView *dsv, UINT flags,
                                     FLOAT depth, UINT8 stencil) {
+  noble::ParticleTint::HookFromContext(ctx);
   if (dsv && (flags & D3D11_CLEAR_DEPTH)) {
     ID3D11Resource *res = nullptr;
     dsv->GetResource(&res);

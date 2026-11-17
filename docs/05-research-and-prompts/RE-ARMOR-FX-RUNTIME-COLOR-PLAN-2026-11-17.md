@@ -224,3 +224,22 @@ RenderDoc/qrenderdoc inspection of the five flame draws (frame 863, events 10055
   `vs_particle_state_buffer` (stride 80) and PS does `palette*v1+v2`. Current runtime colour is local/global.
 - All 30 colours should be tested by Tyler in match/Forge; the palette generation is one shared code path, and
   gold/rust/pale/brick plus the original magenta proof are confirmed.
+
+
+## 2026-11-17 05:10 - Last six colours FIXED (rust / coral / peach / gold / yellow / pale)
+
+**Symptom:** the other 24 flame variants worked; the six restored entries showed the stock orange flame and their Armory
+tiles looked stock. Two separate causes:
+
+1. **Match/profile:** custom effect selections for these six have no extra effect tag slot, so the old path wrote a pmcg
+   item with no attachment. ReachHost now writes the **stock LEGENDARY effect item** for every runtime variant and lets
+   `ParticleTint::SetVariantIndex` supply the palette. Verified on stock Forge World: rust (32), coral (33), peach (34),
+   gold (35), yellow (36), pale (37) all produce the correct flame colour. Proof:
+   `docs/evidence/armor-fx-primary-2026-11-17/runtime-six-colours.png`.
+2. **Armory equipped preview:** the six were previewed through `legendary_flame`, whose menu-map palette is not the
+   256x16 particle palette the runtime hook matches. They are now previewed through the **steel custom effect** (an
+   existing custom effect with the 256x16 palette) and the runtime palette recolours it to the selected colour. The
+   Armory context is hooked through the existing Armory depth-clear hook (`ParticleTint::HookFromContext`), so the
+   equipped character preview shows the correct colour (gold screenshot: `runtime-armory-gold.png`).
+   - The six **grid thumbnails** are still generic stock pictures until Tyler's photo pass; the equipped 3D preview and
+     in-match flames are correct.

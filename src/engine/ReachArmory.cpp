@@ -1453,6 +1453,12 @@ static int PrimaryFlameVariantForEffect(const std::string& id, int primaryColorI
 
 static std::string PmcgEffectName(const std::string& id, int primaryColorIndex) {
     const int variant = PrimaryFlameVariantForEffect(id, primaryColorIndex);
+    // Variants 24..29 have no extra effect slot in the menu map. Preview them through the first custom
+    // effect (steel variant) and let the runtime palette recolour its 256x16 palette to the requested colour.
+    if (variant >= 24) {
+        std::string item, region, perm;
+        if (ArmorFlamePmcgTarget(0, item, region, perm)) return item;
+    }
     if (variant >= 0) {
         std::string item, region, perm;
         if (ArmorFlamePmcgTarget(variant, item, region, perm)) return item;
@@ -1467,6 +1473,10 @@ static std::string PmcgEffectName(const std::string& id, int primaryColorIndex) 
 
 static std::string PermutationForArmorEffect(const std::string& id, int primaryColorIndex) {
     const int variant = PrimaryFlameVariantForEffect(id, primaryColorIndex);
+    if (variant >= 24) {
+        std::string item, region, perm;
+        if (ArmorFlamePmcgTarget(0, item, region, perm)) return perm;
+    }
     if (variant >= 0) {
         std::string item, region, perm;
         if (ArmorFlamePmcgTarget(variant, item, region, perm)) return perm;

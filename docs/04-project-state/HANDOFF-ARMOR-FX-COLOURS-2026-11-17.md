@@ -254,3 +254,8 @@ tint as well; restrict matching to the particle shader hash before release.
 (Stock LEGENDARY item + `ParticleTint::SetVariantIndex`); Armory restored to 38 entries / 30 primary variants, six missing
 colours selectable again via runtime palette; verified automatic gold/rust/pale/brick on stock Forge World. Armory preview
 for the six currently shows stock flame colour, thumbnails pending Tyler. Per-player remains pending.
+
+**Last six colours fixed (2026-11-17 05:10):** rust/coral/peach/gold/yellow/pale now work on stock maps and in the
+equipped Armory preview. Match path uses stock LEGENDARY + runtime palette; Armory preview proxies through the steel
+custom effect so the menu palette is the runtime-matched 256x16 texture. Grid thumbnails for the six are still generic
+until the photo pass. Evidence: runtime-six-colours.png, runtime-armory-gold.png.
