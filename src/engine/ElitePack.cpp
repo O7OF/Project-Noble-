@@ -1374,7 +1374,7 @@ void RefreshLocalPicks() {
             // from MCC's item order for ice/crimson/onyx/violet) and apply the engine's stock 3/4 Gold/Black swap.
             s_localSpartanVisorItemIndex = static_cast<uint8_t>(std::clamp(ArmoryVisorItemIndex(uiVisorIdx, visorId), 0, 29));
             s_localSpartanVisorIndex = static_cast<uint8_t>(ArmoryVisorEngineIndex(uiVisorIdx, visorId));
-            s_localSpartanVisorCustom = (s_localSpartanVisorItemIndex >= 5) || sp.value("visor_custom", false);
+            s_localSpartanVisorCustom = (s_localSpartanVisorItemIndex > 0 && visorId != "default") || sp.value("visor_custom", false);
             s_localSpartanVisorRgb[0] = kArmoryVisorRgb[s_localSpartanVisorItemIndex][0];
             s_localSpartanVisorRgb[1] = kArmoryVisorRgb[s_localSpartanVisorItemIndex][1];
             s_localSpartanVisorRgb[2] = kArmoryVisorRgb[s_localSpartanVisorItemIndex][2];
@@ -1454,9 +1454,9 @@ static void StampLocalAppearanceRecordLocked(uint8_t* rec, bool elite) {
         const uint16_t w26 = static_cast<uint16_t>(0xF2 + (r6 * 36 + g6 * 6 + b6));
         std::memcpy(rec + 0x26, &w26, sizeof(w26));
     }
+    rec[0x01] = s_localColors[0];
+    rec[0x02] = s_localColors[1];
     if (elite) {
-        rec[0x01] = s_localColors[0];
-        rec[0x02] = s_localColors[1];
         rec[0x18] = static_cast<uint8_t>(std::clamp(s_localLightsBrightnessIdx, 0, 127));
         if (NobleActive()) {
             const int set = (s_localSet >= 0 && s_localSet < kArmorySets) ? s_localSet : 0;
@@ -1467,6 +1467,7 @@ static void StampLocalAppearanceRecordLocked(uint8_t* rec, bool elite) {
             if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) rec[kRecordEliteFx] = s_localEliteEffect;
         }
     } else {
+        rec[0x03] = s_localSpartanVisorItemIndex;
         rec[0x17] = static_cast<uint8_t>(std::clamp(s_localLightsBrightnessIdx, 0, 127));
         rec[0x19] = static_cast<uint8_t>(0x40 | (s_localSpartanVisorItemIndex & 0x1F));
     }
@@ -1506,6 +1507,10 @@ void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
     if (player && block && isLocal) {
         std::lock_guard<std::mutex> lock(s_picksMutex);
         RefreshLocalPicks();
+        if (!s_localSpeciesElite) {
+            *reinterpret_cast<uint32_t*>(player + 0x98) = s_localSpartanVisorItemIndex;
+            player[0xD8 + 3] = s_localSpartanVisorItemIndex;
+        }
         if (s_localSpeciesElite && NobleActive()) {
             const int set = (s_localSet >= 0 && s_localSet < kArmorySets)
                                 ? s_localSet : 0;
@@ -1586,6 +1591,9 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
         std::lock_guard<std::mutex> lock(s_picksMutex);
         RefreshLocalPicks();
         StampLocalAppearanceRecordLocked(record, elite);
+        if (player && !elite) {
+            *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(player) + 0x98) = s_localSpartanVisorItemIndex;
+        }
     }
     static std::atomic<int> s_recordsLogged{0};
     if (record && s_recordsLogged.fetch_add(1) < 12)

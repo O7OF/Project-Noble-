@@ -109,9 +109,10 @@ inline int ArmoryVisorStockIndex(int uiIndex, std::string_view id) {
     return best;
 }
 
-// Kept for callers that only need the engine slot used for the profile item (same as ArmoryVisorStockIndex).
+// Resolves the engine finish index (0..29) for the profile item and appearance records.
+// haloreach.dll+0x2EDC5E is patched to accept 157 + 0..29 directly without stock clamping.
 inline int ArmoryVisorEngineIndex(int uiIndex, std::string_view id) {
-    return ArmoryVisorStockIndex(uiIndex, id);
+    return ArmoryVisorItemIndex(uiIndex, id);
 }
 
 } // namespace noble
