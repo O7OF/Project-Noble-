@@ -259,3 +259,8 @@ for the six currently shows stock flame colour, thumbnails pending Tyler. Per-pl
 equipped Armory preview. Match path uses stock LEGENDARY + runtime palette; Armory preview proxies through the steel
 custom effect so the menu palette is the runtime-matched 256x16 texture. Grid thumbnails for the six are still generic
 until the photo pass. Evidence: runtime-six-colours.png, runtime-armory-gold.png.
+
+**Thumbnail pass (2026-11-17 05:20):** all 30 `flame_pri_*` Armory thumbnails replaced with helmet+flame icons generated
+from the Legendary template (helmet preserved via Legendary/Eternal diff mask; aura recoloured per primary palette).
+Runtime/build and dist paths updated, plus assets/ui/reach/armory/armor_effects and evidence helmet-thumbs. Generator is
+docs/test-tools/make_armor_fx_helmet_thumbs.py.

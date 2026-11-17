@@ -243,3 +243,20 @@ tiles looked stock. Two separate causes:
    equipped character preview shows the correct colour (gold screenshot: `runtime-armory-gold.png`).
    - The six **grid thumbnails** are still generic stock pictures until Tyler's photo pass; the equipped 3D preview and
      in-match flames are correct.
+
+
+## 2026-11-17 05:20 - Helmet-style effect thumbnails for all 30 colours
+
+The old `flame_pri_*.png` Armory thumbnails were in-match screenshots (green Spartan on Forge World). Replaced all 30
+with helmet icons in the Legendary/Eternal style:
+- Template: `data/ui/reach/armory/armor_effects/legendary.png` (helmet + regular flame aura).
+- Flame mask: pixels that differ between the Legendary (orange) and Eternal (blue) templates, eroded 2 px; the helmet is
+  identical in both so it is preserved exactly. Recolour keeps the base luminance/shading, swaps hue/saturation to each
+  `kPrimaryFlames` colour, and keeps a white-hot core.
+- Written to `build\bin\Release\data\ui\reach\armory\armor_effects\flame_pri_<id>.png` (runtime) and
+  `dist\Project-Noble\data\ui\reach\armory\armor_effects\flame_pri_<id>.png` (package), plus
+  `assets\ui\reach\armory\armor_effects\` and `docs/evidence/.../helmet-thumbs` for review.
+- Generator: `docs/test-tools/make_armor_fx_helmet_thumbs.py`. Contact sheet:
+  `docs/evidence/armor-fx-primary-2026-11-17/helmet-thumbs/helmet-thumbs-contact.png`.
+- Armory grid verified: PEACH/GOLD/YELLOW/PALE tiles now show the matching helmet/flame icon instead of the old
+  screenshot; all 30 slots use the new style.

@@ -376,3 +376,8 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
 - Six previously-hidden variants now work: profile writes stock LEGENDARY + ParticleTint variant; Armory preview proxies
   through steel custom effect (256x16 menu palette) so runtime recolours the equipped preview; menu context hooked via
   Armory depth-clear hook. Verified all six on stock Forge World. Grid thumbnails still generic stock pictures.
+
+### 2026-11-17 05:20 - helmet-style thumbnails for all 30 flame colours
+- Generated 30 helmet-flame icons from legendary/eternal templates (diff mask preserves helmet, recolours aura to each
+  kPrimaryFlames colour); replaced old in-match screenshot thumbnails in build/dist/assets; Armory grid verified.
+- Generator docs/test-tools/make_armor_fx_helmet_thumbs.py; contact sheet in evidence helmet-thumbs.
