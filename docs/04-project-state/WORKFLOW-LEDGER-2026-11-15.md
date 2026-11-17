@@ -285,3 +285,9 @@ Hourly continuation scheduled: 09:30-22:30 ET (schedule-32e1f9b8), target this s
   with the new region/marker data (spartans_rt5), so the next step is merging its marker/region blocks into the stock
   render model (or fixing weight order) and rebuilding/testing. Scripts/docs added; stock render model unchanged, map not
   rebuilt since the Foundry tests.
+
+### 2026-11-16 19:50 - #15-B Foundry merge black-screen; stock tags restored and rendering verified
+- Cross-tag marker copy works (ManagedBlam CopyElement/PasteAppendElement), and render-model regions are capped at 16.
+- Foundry round trip had broken stock spartans.model -> black screen after loadout. Restored original tags from HREK.7z
+  (model/render_model/effect/pmcg) and biped backup; rebuilt Forge World and verified rendering + stock flames again.
+- Next: fix Foundry geometry weight ordering, or markers-only merge into render_model while leaving spartans.model stock.
