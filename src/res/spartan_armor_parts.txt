@@ -550,15 +550,15 @@ C armor_fx armor_fx_29 0
 S legendary_flame_pri_rust
 C armor_fx armor_fx_30 0
 S legendary_flame_pri_coral
-C armor_fx armor_fx_31 0
-S legendary_flame_pri_peach
 C armor_fx_pri armor_fx_pri_00 0
-S legendary_flame_pri_gold
+S legendary_flame_pri_peach
 C armor_fx_pri armor_fx_pri_01 0
-S legendary_flame_pri_yellow
+S legendary_flame_pri_gold
 C armor_fx_pri armor_fx_pri_02 0
-S legendary_flame_pri_pale
+S legendary_flame_pri_yellow
 C armor_fx_pri armor_fx_pri_03 0
+S legendary_flame_pri_pale
+C armor_fx_pri armor_fx_pri_04 0
 L 8c 7
 S default_armor
 S legendary_flame

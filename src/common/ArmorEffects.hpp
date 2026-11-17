@@ -73,7 +73,7 @@ inline uint32_t ArmorEffectCustomItemId(int effectIndex, int primaryColorIndex) 
 inline bool ArmorFlamePmcgTarget(int variantIndex, std::string& itemName, std::string& region, std::string& perm) {
     if (variantIndex < 0 || variantIndex >= 30) return false;
     itemName = std::string("legendary_flame_pri_") + kPrimaryFlames[static_cast<size_t>(variantIndex)].id;
-    if (variantIndex < 26) {
+    if (variantIndex < 25) {
         region = "armor_fx";
         char buf[32];
         std::snprintf(buf, sizeof(buf), "armor_fx_%02d", variantIndex + 6);
@@ -81,7 +81,7 @@ inline bool ArmorFlamePmcgTarget(int variantIndex, std::string& itemName, std::s
     } else {
         region = "armor_fx_pri";
         char buf[32];
-        std::snprintf(buf, sizeof(buf), "armor_fx_pri_%02d", variantIndex - 26);
+        std::snprintf(buf, sizeof(buf), "armor_fx_pri_%02d", variantIndex - 25);
         perm = buf;
     }
     return true;

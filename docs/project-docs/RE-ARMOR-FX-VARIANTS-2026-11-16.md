@@ -364,3 +364,57 @@ Verified: Armory preview with BRICK FLAME now shows solid brick-red flames centr
 match captures remain valid for behaviour (they used the previous, lighter palette formula). Thumbnails/photo set are
 left to Tyler; the Armory 3D preview itself is updated. In-match variants still require loading the rebuilt map (e.g.
 Forge World with `-map-override`), since normal MCC maps do not carry the new tags/assets.
+
+## 2026-11-17: note on the "two armor effects at once" bug
+
+Symptom (Tyler): selecting NONE / Birthday Party / Heart Attack / Pestilence / Inclement Weather still showed the regular
+legendary flame, and selecting another flame showed the regular flame underneath it (two effects at once).
+
+Root cause analysis and findings:
+
+* The regular flame is the stock `armor_fx.effect` attachment (biped attachment slot 5) whose `legendary_flame` event is
+  bound to the model marker `armor_fx_00`. That marker is the `armor_fx` region's **permutation 0**, so a model that has
+  no explicit armor-effect permutation change still activates it - the stock flame is effectively the region's default.
+  Any additional effect (stock birthday/pestilence/etc. or one of our extra attachments) then stacks on top.
+* Our new variant effects live in five extra `armor_fx_ext*.effect` attachments, each with six events/locations and six
+  new marker groups. Diagnostics with only one/two/three extra attachments and stock effect removed showed correct
+  marker gating for NONE; with the full five-extra + stock setup the stock flame reappeared, consistent with the default
+  permutation activation above (plus menu map/string-id staleness, see next point).
+* The Armory preview also depends on `noble_menu.string_ids.csv` matching the `noble_menu.map` that was just built. If the
+  menu map is rebuilt without rerunning `tools\menu_sidcsv.ps1`, effect/permutation names resolve to stale string ids and
+  effects either disappear or resolve to the wrong permutation. Every mainmenu rebuild must be followed by the CSV
+  regeneration + copy.
+
+Attempted fix: reorder `armor_fx` so permutation 0 is a new markerless `armor_fx_default`, shift the six stock effect
+perms to indices 1..6 and shift stock markers accordingly, move variants 0..24 onto armor_fx perms 7..31 and variants
+25..29 onto armor_fx_pri perms 0..4; update pmcg entries, embedded data and ArmorEffects mapping. This is the intended
+no-default-flame layout. After the reorder the Armory preview momentarily stopped rendering effects and needs another
+verification pass (stock effect still renders in-match; likely stale menu map/CSV or attachment state from diagnostics).
+Do not treat this as finished until the Armory preview shows one effect at a time for NONE, a stock effect, and a variant.
+
+## 2026-11-17/18: two-armor-effects bug - root cause and final fix
+
+Confirmed root causes of the overlapping/always-on regular flame:
+
+1. **Default region permutation.** The stock legendary-flame event is bound to marker `armor_fx_00`, which was the
+   `armor_fx` region's permutation 0 and therefore active even with no effect selected. Fixed by making permutation 0 a
+   markerless `armor_fx_default`, shifting the six stock effect perms to indices 1..6 (same names `armor_fx_00..05`) and
+   moving the variant perms/markers to match (variants 0..24 on `armor_fx` indices 7..31, variants 25..29 on
+   `armor_fx_pri` 0..4). pmcg entries, embedded Armory data and `ArmorEffects.hpp` mapping were updated.
+2. **Attachment marker-gating limit.** The engine only marker-gates the first 10 effect/model attachments; effect
+   attachments beyond that spawn their events unconditionally (no region/permutation check), which is what produced
+   *two or more armor effects at once* (regular flame plus rose/brick/etc.). Confirmed by bisection: 9-10 attachments
+   behaved correctly, 11+ attachments leaked effects even with NONE selected. Final biped layout is exactly **10
+   attachments**: 5 stock attachments (`shield_down.effect`, `body_damage_screen_distortion.effect`,
+   `out_of_bounds.effect`, `armor_fx.effect`, `flashlight_3p.light`) + 5 `armor_fx_ext0..4.effect` variant tags.
+   Dropped originals to make room: `night_vision.light`, `bungie_helmet.cheap_light`, `flashlight_1p.light`,
+   `shield_down.light` (feature/visual side effects, can be revisited if a different hosting method is found).
+3. **Effect-tag location names:** each ext effect tag's `locations` block must name the real model marker
+   (`flame_pri_<id>`), max 6 locations per tag. Regenerating ext tags creates placeholder `flame_pri_t<n>_<i>` names;
+   those silently disable all variant effects. `docs/test-tools/rename_ext_locations.py` now restores the real names.
+4. **Menu string ids:** rebuild `data/menumpas/noble_menu.map` and immediately rerun `tools/menu_sidcsv.ps1`; a stale
+   CSV makes the Armory resolve effects/permutations to wrong string ids (effects vanish or land on the wrong colour).
+
+Verified after the fix: Armory NONE has no flames, Birthday/Pestilence no regular flame, BRICK FLAME shows only its
+own effect; stock flames and variants render in-match on the rebuilt Forge World map. All 30 variants share the same
+5-marker-tag/10-attachment layout. Thumbnails/photos left to Tyler.
