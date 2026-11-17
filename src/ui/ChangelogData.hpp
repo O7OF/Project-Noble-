@@ -30,6 +30,20 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02023Items = {
+        {"AUDIO & ENGINE", "Cutscene Audio Unmute & Failsafe Watchdog",
+         "Ensured gameplay, gunfire, and footstep sound effects cleanly restore upon skipping campaign cutscenes across all scenarios with active listener reset and sound class un-ducking."},
+        {"CONTROLLER", "Full Controller Keybind Schema Parity & Navigation",
+         "Added full parity for all 66+ Keyboard & Mouse actions to controller mappings (Lower Weapon, 3rd Person, Vehicle 1st Person, Forge tools, Theater controls) with polished menu navigation."},
+    };
+
+    notes.push_back({
+        "v0.20.23",
+        "Cutscene Audio Synchronization & Controller Schema Parity",
+        "Reliable Gameplay Audio Restoration & Extended Controller Mappings",
+        v02023Items
+    });
+
     const std::vector<ChangeItem> v02022Items = {
         {"AUDIO", "Campaign Cutscene Skip Audio Unmute & Listener Recovery",
          "Resolved the engine audio bug where skipping campaign cinematics left weapon firing, footsteps, and gameplay audio muted until dying. Automatically restores audio listeners from cinematic camera mode to first-person, un-ducks all 71 sound classes back to 0 dB, and unhides player units on skip and frame ticks."},
