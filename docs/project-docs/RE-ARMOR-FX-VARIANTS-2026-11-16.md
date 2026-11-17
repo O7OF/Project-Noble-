@@ -438,3 +438,12 @@ drive the flame colour from runtime particle/palette state per player. Do not ha
 
 Also fixed in the embedded Armory data during this pass: the Elite list (8c) `legendary_flame_pri_coral` still pointed at
 the old `armor_fx_31` permutation while the Spartan list correctly used `armor_fx_pri_00`; both lists now agree.
+
+## 2026-11-18: stable build restored while the feature is redesigned
+
+Per Tyler's request, the game was returned to a stable stock-effects state: `spartans.biped` restored from `.bak`
+(stock 9 attachments, no variant effect attachments), Forge World + mainmenu rebuilt, `noble_menu.map`/string ids
+refreshed, and the Armory effect list trimmed back to the 7 stock effects (variants/PRIMARY MATCH hidden). The
+variant assets, palettes, render-model perms/markers and code remain in the repo for the redesign, but nothing variant
+related is selectable in the shipped UI build right now. Verified in the Armory: NONE shows no flame, LEGENDARY shows
+only the stock flames (no overlap).
