@@ -1620,13 +1620,22 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // stock LEGENDARY effect (so the flame particle exists on every stock map) and ParticleTint selects the
         // variant's palette from the Armory selection. Non-variant effects keep the normal item ids.
         int runtimeFlameVariant = -1;
-        if (spEffectIdx >= kArmorEffectVariantBase) {
-            runtimeFlameVariant = spEffectIdx - kArmorEffectVariantBase;
-        } else if (spEffectIdx == kArmorEffectAutoIndex) {
-            runtimeFlameVariant = std::clamp(spPrimaryColor, 0, 29);
+        if (species == 1) {
+            if (elEffectIdx >= kArmorEffectVariantBase) {
+                runtimeFlameVariant = elEffectIdx - kArmorEffectVariantBase;
+            } else if (elEffectIdx == kArmorEffectAutoIndex) {
+                runtimeFlameVariant = std::clamp(elPrimaryColor, 0, 29);
+            }
+        } else {
+            if (spEffectIdx >= kArmorEffectVariantBase) {
+                runtimeFlameVariant = spEffectIdx - kArmorEffectVariantBase;
+            } else if (spEffectIdx == kArmorEffectAutoIndex) {
+                runtimeFlameVariant = std::clamp(spPrimaryColor, 0, 29);
+            }
         }
         noble::ParticleTint::SetVariantIndex(runtimeFlameVariant);
-        const uint32_t flameItem = runtimeFlameVariant >= 0 ? (kEffect + 5) : 0;
+        noble::ElitePack::SetLocalFlameVariant(runtimeFlameVariant);
+        const uint32_t flameItem = (species == 0 && runtimeFlameVariant >= 0) ? (kEffect + 5) : 0;
         put(0x68, devFxItem ? devFxItem : (flameItem ? flameItem : (spCustomFx ? spCustomFx : kEffect + spEffectOff)));
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + visorOff);
@@ -1635,7 +1644,8 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // entries in the appearance record (ElitePack) - so the profile set item stays at Minor (194).
         const int eliteSet = num(el, "armor_set", 0, 10, 0);
         put(0x8C, kEliteSet + (eliteSet < 8 ? eliteSet : 0));
-        put(0x90, devFxItem ? devFxItem : (elCustomFx ? elCustomFx : kEliteEffect + elEffectOff));
+        const uint32_t elFlameItem = (species == 1 && runtimeFlameVariant >= 0) ? (kEliteEffect + 5) : 0;
+        put(0x90, devFxItem ? devFxItem : (elFlameItem ? elFlameItem : (elCustomFx ? elCustomFx : kEliteEffect + elEffectOff)));
         put(0x94, VoiceItem(str(sp, "voice_id")));
         const int primaryColor = (species == 1 && el.contains("primary_color"))
             ? num(el, "primary_color", 0, 29, 1)

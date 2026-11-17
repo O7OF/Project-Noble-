@@ -1457,15 +1457,8 @@ static int PrimaryFlameVariantForEffect(const std::string& id, int primaryColorI
 
 static std::string PmcgEffectName(const std::string& id, int primaryColorIndex) {
     const int variant = PrimaryFlameVariantForEffect(id, primaryColorIndex);
-    // Variants 24..29 have no extra effect slot in the menu map. Preview them through the first custom
-    // effect (steel variant) and let the runtime palette recolour its 256x16 palette to the requested colour.
-    if (variant >= 24) {
-        std::string item, region, perm;
-        if (ArmorFlamePmcgTarget(0, item, region, perm)) return item;
-    }
     if (variant >= 0) {
-        std::string item, region, perm;
-        if (ArmorFlamePmcgTarget(variant, item, region, perm)) return item;
+        return "legendary_flame";
     }
     if (id == "default" || id.empty()) return "default_armor";
     if (id == "flames") return "legendary_flame";
@@ -1477,13 +1470,8 @@ static std::string PmcgEffectName(const std::string& id, int primaryColorIndex) 
 
 static std::string PermutationForArmorEffect(const std::string& id, int primaryColorIndex) {
     const int variant = PrimaryFlameVariantForEffect(id, primaryColorIndex);
-    if (variant >= 24) {
-        std::string item, region, perm;
-        if (ArmorFlamePmcgTarget(0, item, region, perm)) return perm;
-    }
     if (variant >= 0) {
-        std::string item, region, perm;
-        if (ArmorFlamePmcgTarget(variant, item, region, perm)) return perm;
+        return "armor_fx_00";
     }
     if (id == "flames") return "armor_fx_00";
     if (id == "blue_flames") return "armor_fx_01";
@@ -1815,6 +1803,8 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             pushPair("legs",           sel.eliteLegs,          "minor");
             // Elite armor effects (pmcg list 80 / 8c, region armor_fx, permutations armor_fx_00..05)
             if (sel.eliteArmorEffect != "default" && !sel.eliteArmorEffect.empty()) {
+                const int runtimeVariant = PrimaryFlameVariantForEffect(sel.eliteArmorEffect, sel.primaryColorIndex);
+                noble::ParticleTint::SetVariantIndex(runtimeVariant);
                 const std::string fxName = PmcgEffectName(sel.eliteArmorEffect, sel.primaryColorIndex);
                 const std::vector<PmcgChange>* fxChanges = PmcgItem("80", fxName);
                 if (!fxChanges || fxChanges->empty()) {
@@ -1826,6 +1816,8 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                     const std::string perm = PermutationForArmorEffect(sel.eliteArmorEffect, sel.primaryColorIndex);
                     if (!perm.empty()) pushPair("armor_fx", perm.c_str(), nullptr);
                 }
+            } else {
+                noble::ParticleTint::SetVariantIndex(-1);
             }
         } else if (PmcgItem("20", "default") != nullptr) {
             // Resolve each selected Armory item through the player_model_customization_globals (pmcg) table
@@ -2407,6 +2399,8 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
     s_cachedVisorB.store(sel.visorRgb[2], std::memory_order_relaxed);
     s_cachedVisorActive.store(!sel.previewElite && !sel.previewMarine && sel.visorColorIndex != 0 && sel.visor != "default", std::memory_order_relaxed);
     s_cachedPreviewMarine.store(sel.previewMarine, std::memory_order_relaxed);
+    const int flameVariant = PrimaryFlameVariantForEffect(sel.previewElite ? sel.eliteArmorEffect : sel.armorEffect, sel.primaryColorIndex);
+    noble::ParticleTint::SetVariantIndex(flameVariant);
     s_selectionGeneration.fetch_add(1);
     SaveSelectionFile(sel);   // a match process reads this instead of running the Armory
 }
@@ -2604,6 +2598,8 @@ struct BipedRenderColors {
     bool visorActive = false;
     float visorSrgb[3] = { 0.85f, 0.53f, 0.14f };
     float visorLinear[3] = { 0.69f, 0.24f, 0.017f };
+    bool flameActive = false;
+    int flameVariant = -1;
     uint32_t renderedObj = 0xFFFFFFFFu;
 };
 
@@ -2654,7 +2650,13 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
             out.visorSrgb[0] = LinearToSrgbChannel(out.visorLinear[0]);
             out.visorSrgb[1] = LinearToSrgbChannel(out.visorLinear[1]);
             out.visorSrgb[2] = LinearToSrgbChannel(out.visorLinear[2]);
-            return out.lightsActive || out.visorActive;
+            const int localFlame = noble::ElitePack::GetLocalFlameVariant();
+            if (localFlame >= 0 && localFlame < 30) {
+                out.flameActive = true;
+                out.flameVariant = localFlame;
+                noble::ParticleTint::RegisterBipedFlame(renderedObj, localFlame);
+            }
+            return out.lightsActive || out.visorActive || out.flameActive;
         };
 
         if (menuMode || (localUnit != 0xFFFFFFFFu && bipedDatum == localUnit)) {
@@ -2768,7 +2770,17 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
                 out.visorLinear[2] = ArmorySrgbToLinear(out.visorSrgb[2]);
             }
         }
-        return out.lightsActive || out.visorActive;
+
+        if (block32 && (block32[8] & 0x80u) != 0) {
+            out.flameActive = true;
+            out.flameVariant = std::clamp<int>(block32[8] & 0x1Fu, 0, 29);
+            noble::ParticleTint::RegisterBipedFlame(renderedObj, out.flameVariant);
+        } else if ((rec[0x1A] & 0x80u) != 0) {
+            out.flameActive = true;
+            out.flameVariant = std::clamp<int>(rec[0x1A] & 0x1Fu, 0, 29);
+            noble::ParticleTint::RegisterBipedFlame(renderedObj, out.flameVariant);
+        }
+        return out.lightsActive || out.visorActive || out.flameActive;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -3131,6 +3143,15 @@ static bool PrepareMeshPartMaterialSEH(uintptr_t base, uint8_t* rmsh) {
 static uint8_t __fastcall Hook_BindMeshPartMaterial(int32_t a1, uint8_t* rmsh, int32_t a3, int32_t a4, int32_t entryPoint) {
     HMODULE hReach = noble::ReachModule();
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+    if (base) {
+        __try {
+            const uint32_t renderedObj = *reinterpret_cast<const uint32_t*>(base + 0xB43B38);
+            if (renderedObj != 0xFFFFFFFFu) {
+                noble::ParticleTint::NoteRenderedBiped(renderedObj);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
     const bool matched = base ? PrepareMeshPartMaterialSEH(base, rmsh) : false;
     const uint8_t res = s_origBindMeshPartMaterial ? s_origBindMeshPartMaterial(a1, rmsh, a3, a4, entryPoint) : 0;
     if (matched && base) {
@@ -3354,6 +3375,10 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
             const int32_t nSlots = std::min<int32_t>(slotCount, 4);
 
             if (localUnitDatum != 0xFFFFFFFFu && objectDatum == localUnitDatum) {
+                const int localFlame = noble::ElitePack::GetLocalFlameVariant();
+                if (localFlame >= 0 && localFlame < 30) {
+                    noble::ParticleTint::RegisterBipedFlame(objectDatum, localFlame);
+                }
                 bool anySlot = false;
                 for (int32_t s = 0; s < nSlots; ++s) {
                     const float* w = wantSlots[s];
@@ -3393,6 +3418,16 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                 const uint8_t* rec = playerPtr + 0xD8;
                 const uint8_t* block32 = progTable ? (progTable + static_cast<size_t>(playerIdx) * 0x280u + 0x228u) : nullptr;
                 const bool hasBlock32 = block32 && ((block32[14] & 0xF0u) == 0xA0u);
+
+                int remoteFlame = -1;
+                if (hasBlock32 && (block32[8] & 0x80u) != 0) {
+                    remoteFlame = std::clamp<int>(block32[8] & 0x1Fu, 0, 29);
+                } else if ((rec[0x1A] & 0x80u) != 0) {
+                    remoteFlame = std::clamp<int>(rec[0x1A] & 0x1Fu, 0, 29);
+                }
+                if (remoteFlame >= 0 && remoteFlame < 30) {
+                    noble::ParticleTint::RegisterBipedFlame(objectDatum, remoteFlame);
+                }
 
                 float remoteSlots[4][3] = {};
                 const float* remoteWant[4] = { nullptr, nullptr, nullptr, nullptr };

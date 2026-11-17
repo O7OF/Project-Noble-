@@ -5364,9 +5364,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     s_last = now;
     io.DeltaTime = dt;
 
+    const bool uiScreenActive = ReachHost::IsUiScreenActive();
     const bool pointerUiActive =
         open || gameOver || boardPointer || connectionLost ||
-        extraOverlay != nullptr;
+        uiScreenActive || extraOverlay != nullptr;
     const bool gameOverJustReset = s_resetGameOverImGui.exchange(false);
     static bool s_gameOverMouseWaitRelease = false;
     if (gameOverJustReset) {
@@ -5552,7 +5553,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       extraOverlay();
     SocialOverlay::Draw(24.0f, 24.0f,
                         778.0f); // chat stays above the motion tracker
-    if (open || gameOver || boardPointer || extraOverlay != nullptr) {
+    if (open || gameOver || boardPointer || uiScreenActive || extraOverlay != nullptr) {
       UiPad::DrawVirtualCursor(ImGui::GetForegroundDrawList());
     }
     ImGui::Render();

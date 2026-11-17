@@ -2,6 +2,7 @@
 
 #include "common/Logger.hpp"
 #include "common/ArmorEffects.hpp"
+#include "common/EngineModule.hpp"
 #include "hooks/HookManager.hpp"
 
 #include <windows.h>
@@ -52,7 +53,14 @@ bool s_exportsHooked = false;
 
 std::mutex s_deviceMutex;
 std::unordered_map<ID3D11Device*, ID3D11ShaderResourceView*> s_tintSrvs;
+std::unordered_map<ID3D11Device*, std::array<ID3D11ShaderResourceView*, 30>> s_deviceVariantSrvs;
 std::set<void*> s_deferredHookTargets;
+
+// Per-biped multiplayer flame tracking
+std::mutex s_bipedMutex;
+std::unordered_map<uint32_t, int> s_bipedVariants;
+std::atomic<uint32_t> s_lastRenderedBiped{0xFFFFFFFFu};
+std::atomic<int> s_localVariantIndex{-1};
 
 constexpr UINT kPaletteWidth = 256;
 constexpr UINT kPaletteHeight = 16;
@@ -81,6 +89,7 @@ void ParseTintColour() {
     if (variant >= 0 || primary >= 0) {
         const int index = variant >= 0 ? variant : primary;
         if (index < 0 || index >= static_cast<int>(kPrimaryFlames.size())) return;
+        s_localVariantIndex.store(index);
         s_colour[0] = kPrimaryFlames[static_cast<size_t>(index)].r;
         s_colour[1] = kPrimaryFlames[static_cast<size_t>(index)].g;
         s_colour[2] = kPrimaryFlames[static_cast<size_t>(index)].b;
@@ -106,13 +115,8 @@ void ParseTintColour() {
     NOBLE_INFO("ParticleTint: armed for RGB ({:.2f},{:.2f},{:.2f})", s_colour[0], s_colour[1], s_colour[2]);
 }
 
-ID3D11ShaderResourceView* GetTintSrv(ID3D11Device* device) {
+ID3D11ShaderResourceView* BuildPaletteSrv(ID3D11Device* device, float r, float g, float b) {
     if (!device) return nullptr;
-    {
-        std::lock_guard<std::mutex> lock(s_deviceMutex);
-        auto it = s_tintSrvs.find(device);
-        if (it != s_tintSrvs.end()) return it->second;
-    }
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = kPaletteWidth;
     desc.Height = kPaletteHeight;
@@ -132,9 +136,9 @@ ID3D11ShaderResourceView* GetTintSrv(ID3D11Device* device) {
                 return static_cast<unsigned char>(value > 1.0f ? 255 : value * 255.0f);
             };
             const size_t i = (static_cast<size_t>(y) * kPaletteWidth + x) * 4;
-            pixels[i + 0] = mixTo(s_colour[2]);
-            pixels[i + 1] = mixTo(s_colour[1]);
-            pixels[i + 2] = mixTo(s_colour[0]);
+            pixels[i + 0] = mixTo(b);
+            pixels[i + 1] = mixTo(g);
+            pixels[i + 2] = mixTo(r);
             pixels[i + 3] = 255;
         }
     }
@@ -149,11 +153,43 @@ ID3D11ShaderResourceView* GetTintSrv(ID3D11Device* device) {
     srvDesc.Texture2D.MipLevels = 1;
     ID3D11ShaderResourceView* srv = nullptr;
     if (FAILED(device->CreateShaderResourceView(texture.Get(), &srvDesc, &srv))) return nullptr;
+    return srv;
+}
+
+ID3D11ShaderResourceView* GetVariantSrv(ID3D11Device* device, int variantIndex) {
+    if (!device || variantIndex < 0 || variantIndex >= static_cast<int>(kPrimaryFlames.size())) return nullptr;
+    const size_t vIdx = static_cast<size_t>(variantIndex);
+    {
+        std::lock_guard<std::mutex> lock(s_deviceMutex);
+        auto it = s_deviceVariantSrvs.find(device);
+        if (it != s_deviceVariantSrvs.end() && it->second[vIdx]) return it->second[vIdx];
+    }
+    const auto& entry = kPrimaryFlames[vIdx];
+    ID3D11ShaderResourceView* srv = BuildPaletteSrv(device, entry.r, entry.g, entry.b);
+    if (!srv) return nullptr;
+    {
+        std::lock_guard<std::mutex> lock(s_deviceMutex);
+        s_deviceVariantSrvs[device][vIdx] = srv;
+    }
+    NOBLE_INFO("ParticleTint: created palette SRV for variant {} ({}) on device 0x{:X}",
+               variantIndex, entry.id, reinterpret_cast<uintptr_t>(device));
+    return srv;
+}
+
+ID3D11ShaderResourceView* GetTintSrv(ID3D11Device* device) {
+    if (!device) return nullptr;
+    {
+        std::lock_guard<std::mutex> lock(s_deviceMutex);
+        auto it = s_tintSrvs.find(device);
+        if (it != s_tintSrvs.end()) return it->second;
+    }
+    ID3D11ShaderResourceView* srv = BuildPaletteSrv(device, s_colour[0], s_colour[1], s_colour[2]);
+    if (!srv) return nullptr;
     {
         std::lock_guard<std::mutex> lock(s_deviceMutex);
         s_tintSrvs[device] = srv;
     }
-    NOBLE_INFO("ParticleTint: created tint palette SRV on device 0x{:X}", reinterpret_cast<uintptr_t>(device));
+    NOBLE_INFO("ParticleTint: created custom tint SRV on device 0x{:X}", reinterpret_cast<uintptr_t>(device));
     return srv;
 }
 
@@ -168,72 +204,77 @@ bool IsFlamePalette(ID3D11ShaderResourceView* view, D3D11_TEXTURE2D_DESC* outDes
     texture->GetDesc(&desc);
     if (outDesc) *outDesc = desc;
     return desc.Width == kPaletteWidth && desc.Height == kPaletteHeight &&
-           (desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM);
+           (desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+            desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+            desc.Format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB || desc.Format == DXGI_FORMAT_B8G8R8X8_UNORM);
 }
 
 void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceContext* context, UINT startSlot,
                                 UINT numViews, ID3D11ShaderResourceView* const* views) {
-    static std::atomic<int> s_calls{0};
-    const int callNo = ++s_calls;
-    if (callNo == 1 || callNo == 100 || callNo == 1000 || callNo == 5000)
-        NOBLE_INFO("ParticleTint: PSSet hook call #{} (startSlot={} numViews={})", callNo, startSlot, numViews);
-    if (!s_active || numViews == 0 || !views) {
+    if (numViews == 0 || !views) {
         original(context, startSlot, numViews, views);
         return;
     }
-    {
-        static std::mutex s_descMutex;
-        static std::set<std::string> s_seen;
-        std::lock_guard<std::mutex> lock(s_descMutex);
-        for (UINT d = 0; d < numViews; ++d) {
-            if (!views[d]) continue;
-            Microsoft::WRL::ComPtr<ID3D11Resource> res;
-            views[d]->GetResource(&res);
-            Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
-            if (!res || FAILED(res->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(tex.GetAddressOf()))) || !tex) continue;
-            D3D11_TEXTURE2D_DESC td{};
-            tex->GetDesc(&td);
-            char key[96];
-            std::snprintf(key, sizeof(key), "%ux%u fmt=%d slot=%u", td.Width, td.Height, static_cast<int>(td.Format), startSlot + d);
-            if (td.Height <= 64 || td.Width <= 64) {
-                char key2[96];
-                std::snprintf(key2, sizeof(key2), "SMALL %ux%u fmt=%d slot=%u", td.Width, td.Height,
-                              static_cast<int>(td.Format), startSlot + d);
-                if (s_seen.insert(key2).second && s_seen.size() < 200) NOBLE_INFO("ParticleTint: bound texture {}", key2);
-            } else if (s_seen.insert(key).second && s_seen.size() < 40) NOBLE_INFO("ParticleTint: bound texture {}", key);
+    // Only slot 2 can hold the Reach armor flame palette
+    if (startSlot > 2 || (startSlot + numViews) <= 2) {
+        original(context, startSlot, numViews, views);
+        return;
+    }
+    const UINT slot2Idx = 2 - startSlot;
+    if (!views[slot2Idx] || !IsFlamePalette(views[slot2Idx])) {
+        original(context, startSlot, numViews, views);
+        return;
+    }
+
+    // A flame palette at slot 2 is being bound! Resolve which flame variant to use:
+    int variantToUse = -1;
+
+    // 1. Try reading the currently rendered object from haloreach.dll+0xB43B38
+    HMODULE hReach = noble::ReachModule();
+    if (hReach) {
+        uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+        uint32_t currObj = 0xFFFFFFFFu;
+        __try {
+            currObj = *reinterpret_cast<const uint32_t*>(base + 0xB43B38);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        if (currObj != 0xFFFFFFFFu) {
+            variantToUse = GetBipedFlameVariant(currObj);
+        }
+        if (variantToUse < 0) {
+            const uint32_t lastBiped = s_lastRenderedBiped.load(std::memory_order_relaxed);
+            if (lastBiped != 0xFFFFFFFFu) {
+                variantToUse = GetBipedFlameVariant(lastBiped);
+            }
         }
     }
-    std::array<ID3D11ShaderResourceView*, 16> replaced{};
-    if (numViews > replaced.size()) {
-        original(context, startSlot, numViews, views);
-        return;
+
+    // 2. If not matched to a remote biped, use the local player's equipped/previewed variant
+    if (variantToUse < 0) {
+        variantToUse = s_localVariantIndex.load(std::memory_order_relaxed);
     }
+
     ID3D11ShaderResourceView* tint = nullptr;
-    bool changed = false;
-    for (UINT i = 0; i < numViews; ++i) {
-        replaced[i] = views[i];
-        D3D11_TEXTURE2D_DESC matchedDesc{};
-        if (IsFlamePalette(views[i], &matchedDesc)) {
-            static std::atomic<bool> s_loggedMatch{true};
-            if (s_loggedMatch.exchange(false)) {
-                NOBLE_INFO("ParticleTint: matched palette {}x{} fmt={} slot={}", matchedDesc.Width, matchedDesc.Height,
-                           static_cast<int>(matchedDesc.Format), startSlot + i);
-            }
-            if (!tint) {
-                ID3D11Device* device = nullptr;
-                context->GetDevice(&device);
-                tint = GetTintSrv(device);
-                if (device) device->Release();
-            }
-            if (tint) {
-                replaced[i] = tint;
-                changed = true;
-                static std::atomic<bool> s_firstMatch{true};
-                if (s_firstMatch.exchange(false)) NOBLE_INFO("ParticleTint: palette substituted");
-            }
+    ID3D11Device* device = nullptr;
+    context->GetDevice(&device);
+    if (device) {
+        if (variantToUse >= 0 && variantToUse < static_cast<int>(kPrimaryFlames.size())) {
+            tint = GetVariantSrv(device, variantToUse);
+        } else if (s_active) {
+            tint = GetTintSrv(device);
+        }
+        device->Release();
+    }
+
+    if (tint) {
+        std::array<ID3D11ShaderResourceView*, 16> replaced{};
+        if (numViews <= replaced.size()) {
+            for (UINT k = 0; k < numViews; ++k) replaced[k] = views[k];
+            replaced[slot2Idx] = tint;
+            original(context, startSlot, numViews, replaced.data());
+            return;
         }
     }
-    original(context, startSlot, numViews, changed ? replaced.data() : views);
+    original(context, startSlot, numViews, views);
 }
 
 #define DEFINE_PS_HOOK(N)                                                                                 \
@@ -391,29 +432,54 @@ void HookFromContext(ID3D11DeviceContext* context) {
 void Install(ID3D11Device* device, ID3D11DeviceContext* context) {
     if (!s_armed.exchange(true)) {
         ParseTintColour();
-        if (s_active) InstallExportHooks();
+        InstallExportHooks();
     }
-    if (s_active) HookContext(device, context);
+    HookContext(device, context);
 }
 
 void SetVariantIndex(int variantIndex) {
+    s_localVariantIndex.store(variantIndex);
     if (variantIndex < 0 || variantIndex >= static_cast<int>(kPrimaryFlames.size())) {
-        s_active = false;
         return;
     }
-    // Cache is keyed by device only; drop old tint SRVs so the next draw recreates them with the
-    // newly selected colour. Selection changes happen in menus/lobby, not mid-particle-frame.
-    std::lock_guard<std::mutex> lock(s_deviceMutex);
-    for (auto& pair : s_tintSrvs) {
-        if (pair.second) pair.second->Release();
-    }
-    s_tintSrvs.clear();
     const auto& entry = kPrimaryFlames[static_cast<size_t>(variantIndex)];
     s_colour[0] = entry.r;
     s_colour[1] = entry.g;
     s_colour[2] = entry.b;
     s_active = true;
     NOBLE_INFO("ParticleTint: runtime variant {} ({}) selected", variantIndex, entry.id);
+}
+
+int GetVariantIndex() {
+    return s_localVariantIndex.load();
+}
+
+void RegisterBipedFlame(uint32_t bipedDatum, int variantIndex) {
+    if (bipedDatum == 0xFFFFFFFFu) return;
+    std::lock_guard<std::mutex> lock(s_bipedMutex);
+    if (variantIndex >= 0 && variantIndex < static_cast<int>(kPrimaryFlames.size())) {
+        s_bipedVariants[bipedDatum] = variantIndex;
+    } else {
+        s_bipedVariants.erase(bipedDatum);
+    }
+}
+
+void UnregisterBiped(uint32_t bipedDatum) {
+    std::lock_guard<std::mutex> lock(s_bipedMutex);
+    s_bipedVariants.erase(bipedDatum);
+}
+
+void NoteRenderedBiped(uint32_t bipedDatum) {
+    if (bipedDatum != 0xFFFFFFFFu) {
+        s_lastRenderedBiped.store(bipedDatum, std::memory_order_relaxed);
+    }
+}
+
+int GetBipedFlameVariant(uint32_t bipedDatum) {
+    if (bipedDatum == 0xFFFFFFFFu) return -1;
+    std::lock_guard<std::mutex> lock(s_bipedMutex);
+    auto it = s_bipedVariants.find(bipedDatum);
+    return (it != s_bipedVariants.end()) ? it->second : -1;
 }
 
 void Shutdown() {
@@ -423,6 +489,14 @@ void Shutdown() {
         if (pair.second) pair.second->Release();
     }
     s_tintSrvs.clear();
+    for (auto& pair : s_deviceVariantSrvs) {
+        for (auto* srv : pair.second) {
+            if (srv) srv->Release();
+        }
+    }
+    s_deviceVariantSrvs.clear();
+    std::lock_guard<std::mutex> bipedLock(s_bipedMutex);
+    s_bipedVariants.clear();
 }
 
 } // namespace noble::ParticleTint

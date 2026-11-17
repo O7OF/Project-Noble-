@@ -3,6 +3,7 @@
 #include "common/EngineModule.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
+#include "engine/ReachHost.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -644,7 +645,17 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
             // ReachHost clears the class cursor while it owns the mouse (mouse look) and restores the
             // arrow while a menu needs the pointer, so hide it only when the class cursor is cleared.
             if (LOWORD(lParam) == HTCLIENT && IsForeground(hwnd)) {
-                if (Settings::Get().Snapshot().mouseReticleCursor || GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
+                const auto& s = Settings::Get().Snapshot();
+                const bool nativeUiActive = ReachHost::IsUiScreenActive();
+                if (s.mouseReticleCursor) {
+                    SetCursor(nullptr);
+                    return TRUE;
+                }
+                if (nativeUiActive) {
+                    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+                    return TRUE;
+                }
+                if (GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
                     SetCursor(nullptr);
                     return TRUE;
                 }
