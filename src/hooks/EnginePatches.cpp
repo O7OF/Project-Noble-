@@ -601,21 +601,60 @@ bool EnginePatches::ShouldBlockPrematureGameOver() {
   return false;
 }
 
+// RVA 0x92844: Tag Resolve / Descriptor copy crash guard
+// When resolving a tag datum (caller haloreach+0x927D7), if the tag lookup at 0x14124 returns
+// NULL, rdx is NULL (0x0). At 0x92850, "cmp dword ptr [rdx], 1" faults with 0xC0000005.
+// If rdx is NULL, zero [rcx] and [rcx+8] and return rcx.
+typedef void* (__fastcall* TagResolveFn)(void* rcx, void* rdx);
+static TagResolveFn s_originalTagResolve = nullptr;
+
+static void* __fastcall Hook_TagResolve(void* rcx, void* rdx) {
+  if (!rcx) return nullptr;
+  if (!rdx) {
+    *reinterpret_cast<uint64_t*>(rcx) = 0;
+    *reinterpret_cast<uint64_t*>(static_cast<uint8_t*>(rcx) + 8) = 0;
+    return rcx;
+  }
+  return s_originalTagResolve(rcx, rdx);
+}
+
 static void *AllocateNear(uintptr_t target, size_t size, DWORD protect) {
   SYSTEM_INFO si{};
   GetSystemInfo(&si);
   const uintptr_t step = si.dwAllocationGranularity;
-  for (uintptr_t delta = step; delta < 0x7FFF0000ull; delta += step) {
-    const uintptr_t candidates[2] = {target + delta,
-                                     target > delta ? target - delta : 0};
-    for (const uintptr_t candidate : candidates) {
-      if (!candidate)
-        continue;
-      if (void *p =
-              VirtualAlloc(reinterpret_cast<void *>(candidate & ~(step - 1)),
-                           size, MEM_RESERVE | MEM_COMMIT, protect))
+  const uintptr_t minAddr = (target > 0x70000000ull) ? (target - 0x70000000ull) : step;
+  const uintptr_t maxAddr = target + 0x70000000ull;
+
+  // Search downwards first
+  uintptr_t tryAddr = (target & ~(step - 1)) - step;
+  while (tryAddr >= minAddr) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<void *>(tryAddr), &mbi, sizeof(mbi)))
+      break;
+    if (mbi.State == MEM_FREE && mbi.RegionSize >= size) {
+      if (void *p = VirtualAlloc(reinterpret_cast<void *>(tryAddr), size,
+                                 MEM_RESERVE | MEM_COMMIT, protect)) {
         return p;
+      }
     }
+    if (reinterpret_cast<uintptr_t>(mbi.AllocationBase) < step)
+      break;
+    tryAddr = reinterpret_cast<uintptr_t>(mbi.AllocationBase) - step;
+  }
+
+  // Search upwards next
+  tryAddr = (target & ~(step - 1)) + step;
+  while (tryAddr <= maxAddr) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<void *>(tryAddr), &mbi, sizeof(mbi)))
+      break;
+    if (mbi.State == MEM_FREE && mbi.RegionSize >= size) {
+      if (void *p = VirtualAlloc(reinterpret_cast<void *>(tryAddr), size,
+                                 MEM_RESERVE | MEM_COMMIT, protect)) {
+        return p;
+      }
+    }
+    tryAddr = (reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize + step - 1) & ~(step - 1);
   }
   return nullptr;
 }
@@ -1393,6 +1432,75 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
     else
       NOBLE_WARN("EnginePatches: armor-effect variant translator hook failed at RVA 0x3B2F4");
   }
+
+  // 11. Tag resolve descriptor copy crash guard (RVA 0x92844).
+  // In retail Reach, when resolving a tag datum (caller haloreach+0x927D7), if the tag lookup at 0x14124
+  // returns NULL, rdx is passed as NULL. At 0x92850, "cmp dword ptr [rdx], 1" crashes reading address 0.
+  {
+    void* fnAddr = reinterpret_cast<void*>(baseAddress + 0x92844);
+    if (0x92844 < modInfo.SizeOfImage) {
+      if (HookManager::InstallHook(fnAddr, reinterpret_cast<void*>(&Hook_TagResolve),
+                                   reinterpret_cast<void**>(&s_originalTagResolve),
+                                   "tag_resolve_guard")) {
+        NOBLE_INFO("EnginePatches: Installed tag resolve crash guard detour at RVA 0x92844.");
+      } else {
+        NOBLE_WARN("EnginePatches: Failed to install tag resolve detour at RVA 0x92844.");
+      }
+    }
+  }
+
+  // 12. Unit / player array datum null-pointer crash guard (RVA 0x16509C).
+  // At RVA 0x16509C, the engine loads r8 from [rax + rdx*8 + 0x10]. If this datum pointer is NULL,
+  // dereferencing [r8 + 0xCC] at 0x1650A1 faults with 0xC0000005. If r8 is NULL, jump to 0x16523B (skip).
+  {
+    static const uint8_t kExpectedBytes[12] = {
+        0x4C, 0x8B, 0x44, 0xD0, 0x10,             // mov r8, [rax + rdx*8 + 0x10]
+        0x45, 0x8B, 0x88, 0xCC, 0x00, 0x00, 0x00  // mov r9d, [r8 + 0xCC]
+    };
+    uint8_t *patchAddr = reinterpret_cast<uint8_t *>(baseAddress + 0x16509C);
+    if (0x16509C + sizeof(kExpectedBytes) <= modInfo.SizeOfImage &&
+        std::memcmp(patchAddr, kExpectedBytes, sizeof(kExpectedBytes)) == 0) {
+      void *trampoline = AllocateNear(reinterpret_cast<uintptr_t>(patchAddr), 64,
+                                      PAGE_EXECUTE_READWRITE);
+      if (trampoline) {
+        const uintptr_t trampAddr = reinterpret_cast<uintptr_t>(trampoline);
+        const uintptr_t resume = baseAddress + 0x1650A8;
+        const uintptr_t nullPath = baseAddress + 0x16523B;
+        const int32_t relNull = static_cast<int32_t>(nullPath - (trampAddr + 0x0E));
+        const int32_t relResume = static_cast<int32_t>(resume - (trampAddr + 0x1A));
+        uint8_t code[0x1A] = {
+            0x4C, 0x8B, 0x44, 0xD0, 0x10,             // +0x00: mov r8, [rax + rdx*8 + 0x10]
+            0x4D, 0x85, 0xC0,                         // +0x05: test r8, r8
+            0x0F, 0x84, 0, 0, 0, 0,                   // +0x08: jz nullPath (disp at +0x0A)
+            0x45, 0x8B, 0x88, 0xCC, 0x00, 0x00, 0x00, // +0x0E: mov r9d, [r8 + 0xCC]
+            0xE9, 0, 0, 0, 0                          // +0x15: jmp resume (disp at +0x16)
+        };
+        std::memcpy(code + 0x0A, &relNull, sizeof(int32_t));
+        std::memcpy(code + 0x16, &relResume, sizeof(int32_t));
+        std::memcpy(reinterpret_cast<void *>(trampAddr), code, sizeof(code));
+        FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void *>(trampAddr), sizeof(code));
+
+        const int32_t relToTramp = static_cast<int32_t>(
+            trampAddr - (reinterpret_cast<uintptr_t>(patchAddr) + 5));
+        uint8_t patch[12] = {0xE9, 0, 0, 0, 0, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+        std::memcpy(patch + 1, &relToTramp, sizeof(int32_t));
+        DWORD oldProt = 0;
+        if (VirtualProtect(patchAddr, sizeof(patch), PAGE_EXECUTE_READWRITE, &oldProt)) {
+          std::memcpy(patchAddr, patch, sizeof(patch));
+          FlushInstructionCache(GetCurrentProcess(), patchAddr, sizeof(patch));
+          VirtualProtect(patchAddr, sizeof(patch), oldProt, &oldProt);
+          NOBLE_INFO("EnginePatches: Installed unit datum null-guard at RVA 0x16509C -> trampoline 0x{:X}.", trampAddr);
+        } else {
+          NOBLE_WARN("EnginePatches: Failed to VirtualProtect at RVA 0x16509C.");
+        }
+      } else {
+        NOBLE_WARN("EnginePatches: Failed to allocate near trampoline for RVA 0x16509C.");
+      }
+    } else {
+      NOBLE_INFO("EnginePatches: RVA 0x16509C already patched or unexpected opcodes.");
+    }
+  }
+
   s_isApplied = true;
   return true;
 }

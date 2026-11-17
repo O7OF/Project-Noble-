@@ -4749,9 +4749,11 @@ void PauseMenu::DrawLoading() {
   const size_t joined = 1 + (std::max)(peers, engineJoined);
   // The row count comes from live session membership too: a direct/LAN launch has no lobby roster (main.cpp
   // only knows the local name), so sizing from `players` alone drew 1 row while N were already in the session.
-  const int wanted =
+  int wanted =
       (std::max)({expectedPlayers, static_cast<int>(players.size()),
                   1 + static_cast<int>(engineExpected), 1 + static_cast<int>(peers)});
+  if (wanted < 1) wanted = 1;
+  if (wanted > 16) wanted = 16;
   // Test evidence (T2): log once whenever the live roster size changes.
   {
     static int s_lastLiveRoster = -1;

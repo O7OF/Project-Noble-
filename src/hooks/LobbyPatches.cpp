@@ -301,11 +301,9 @@ static void __fastcall Hook_JoinRefuse(void* a1, void* a2, void* a3) {
             RefuseRole(), GetCurrentProcessId(), session, reason, reason, CallerRva(_ReturnAddress()), a1, a2);
         NOBLE_WARN("LobbyPatches: JOIN REFUSED stack: {}", ReachStack());
     }
-    // Join-in-progress (Firefight survival especially) is refused by the host with reason 3, which sends the
-    // joiner home. When Noble is the host of an active transport, drop that refusal so the engine's own join
-    // handshake continues and the player can drop in - but never while the engine holds its launch join lock
-    // (publicSlots 0), or the guest would be forced into a session the engine has closed for joins.
-    if (reason == 3 && IsNobleHost() && IsTransportActive() && s_lastPublicSlots.load() != 0) {
+    // Join-in-progress (Firefight, Campaign, Custom Games, Forge): drop refusal reason 3 so remote players
+    // can join in progress across all game modes without being turned away by the engine's default locks.
+    if (reason == 3 && IsNobleHost() && IsTransportActive()) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED join refusal reason 3 (join in progress) to keep the guest connected");
         return;
     }
@@ -322,7 +320,7 @@ static void __fastcall Hook_ConnectRefuse(void* a1, void* a2, void* a3) {
             RefuseRole(), GetCurrentProcessId(), id, reason, reason, CallerRva(_ReturnAddress()));
         NOBLE_WARN("LobbyPatches: CONNECT REFUSED stack: {}", ReachStack());
     }
-    if (reason == 3 && IsNobleHost() && IsTransportActive() && s_lastPublicSlots.load() != 0) {
+    if (reason == 3 && IsNobleHost() && IsTransportActive()) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED connect refusal reason 3 (join in progress) to keep the guest connected");
         return;
     }
@@ -406,18 +404,23 @@ static const char* SessionMessageName(int32_t t) {
 }
 static std::atomic<int> s_msgOutCount[64];
 static std::atomic<int> s_msgInCount[64];
-static std::atomic<size_t> s_remotePlayersJoinedCount{0};
+static std::atomic<uint32_t> s_remotePeerMask{0};
 
 bool LobbyPatches::HasRemotePlayerJoined() {
-    return s_remotePlayersJoinedCount.load() > 0;
+    return GetRemotePlayerAddCount() > 0;
 }
 
 void LobbyPatches::ResetRemotePlayerJoined() {
-    s_remotePlayersJoinedCount.store(0);
+    s_remotePeerMask.store(0);
 }
 
 size_t LobbyPatches::GetRemotePlayerAddCount() {
-    return s_remotePlayersJoinedCount.load();
+    uint32_t mask = s_remotePeerMask.load();
+    size_t count = static_cast<size_t>(__popcnt(mask));
+#ifndef NOBLE_DEDICATED
+    count = (std::max)(count, NetworkTransport::Get().GetGamePeerCount());
+#endif
+    return count;
 }
 
 size_t LobbyPatches::GetGamePlayerCount() {
@@ -481,7 +484,16 @@ static uint64_t __fastcall Hook_DecodeMessage(void* table, void* stream, int32_t
     const uint64_t ok = s_originalDecodeMessage ? s_originalDecodeMessage(table, stream, type, size, buffer) : 0;
     const int32_t t = type ? *type : -1;
     if (t == 27 && (ok & 0xFF) != 0) {
-        s_remotePlayersJoinedCount.fetch_add(1);
+        if (buffer) {
+            const int peerIndex = static_cast<int>(*static_cast<const uint8_t*>(buffer));
+            if (peerIndex > 0 && peerIndex < 32) {
+                s_remotePeerMask.fetch_or(1u << peerIndex);
+            } else {
+                s_remotePeerMask.fetch_or(1u << 1);
+            }
+        } else {
+            s_remotePeerMask.fetch_or(1u << 1);
+        }
     }
     if (t == 37) {
         static std::atomic<int> msg37InLog{0};

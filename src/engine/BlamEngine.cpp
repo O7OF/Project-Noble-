@@ -1942,25 +1942,10 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         // the launch size ends the mission instead of being seated. Only widen when the roster is already over the
         // engine's stock 4-player co-op size, so the proven 1-4 player launches keep their exact block.
         if (hostWithGuests && declaredPlayers > 4) {
-            // Stock campaign co-op supports four players; the game engine's start cap aborts the session when the launch
-            // declares more (verified 2026-11-16: declaring 5+ makes the engine close the session at simulation start,
-            // while declaring 4 keeps it running and an extra joiner is tolerated in the session membership as a
-            // non-active entry). Declare the stock maximum until the engine cap is lifted for the 16-player goal.
-            constexpr int kCampaignCoopEngineCap = 4;
-            static const bool declareRoster = [] {
-                const char* env = std::getenv("NOBLE_COOP_DECLARE_ROSTER");
-                return env && env[0] != '0';
-            }();
-            if (declareRoster) {
-                // 16-player probe: declare the real roster so the engine creates a player slot for every participant
-                // (start-cap investigation).
-                declaredPlayers = std::min(16, 1 + expectedPeers);
-                NOBLE_WARN("BlamEngine: campaign >4 probe: declaring full roster {} player(s) (0xE8)", declaredPlayers);
-            } else {
-                declaredPlayers = std::min(kCampaignCoopEngineCap, declaredPlayers);
-                NOBLE_INFO("BlamEngine: campaign co-op launch declares {} player(s) (0xE8, stock engine cap {})",
-                           declaredPlayers, kCampaignCoopEngineCap);
-            }
+            // Expanded Campaign co-op: declare up to 16 players in launch block (0xE8) so the engine
+            // allocates player slots for all participants instead of capping at 4.
+            declaredPlayers = std::min(16, 1 + expectedPeers);
+            NOBLE_INFO("BlamEngine: campaign co-op launch declares expanded roster {} player(s) (0xE8)", declaredPlayers);
         }
         // Diagnostic: force the declared player count regardless of peers (block-validation experiments).
         static const int forceDeclare = [] {

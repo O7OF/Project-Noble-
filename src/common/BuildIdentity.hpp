@@ -18,11 +18,11 @@ namespace noble {
 
 constexpr int kClientProtocol = 2;                 // closed-source wire/API revision
 #ifdef NOBLE_DEV_BUILD
-constexpr std::string_view kBuildTag = "0.19.103-dev";
+constexpr std::string_view kBuildTag = "0.20.27-dev";
 #else
-constexpr std::string_view kBuildTag = "0.19.103";  // prefix of VERSION_STRING
+constexpr std::string_view kBuildTag = "0.20.27";  // prefix of VERSION_STRING
 #endif
-constexpr std::string_view kBaseBuildTag = "0.19.103";
+constexpr std::string_view kBaseBuildTag = "0.20.27";
 
 // Sent on every master-server request. The cluster refuses requests without a
 // matching build/protocol pair (HTTP 403 client_outdated).
@@ -56,9 +56,7 @@ inline bool AreBuildsCompatible(std::string_view a, std::string_view b) {
     if (a.empty() || b.empty()) return true;
     const auto baseA = ExtractBaseVersion(a);
     const auto baseB = ExtractBaseVersion(b);
-    if (baseA == baseB) return true;
-    if (baseA.starts_with("0.19.") && baseB.starts_with("0.19.")) return true;
-    return false;
+    return baseA == baseB;
 }
 
 // Orders two builds by their numeric base version ("0.19.34-dev" -> 0.19.34).

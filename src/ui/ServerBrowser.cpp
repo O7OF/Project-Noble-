@@ -741,8 +741,12 @@ void ServerBrowser::RenderFilterBar() {
     const ImVec2 natTextSz = bodyFont->CalcTextSizeA(13.5f * sScale, FLT_MAX, 0.0f, natBadgeText.c_str());
     const float natPillW = natTextSz.x + 28.0f * sScale;
 
-    const float rightBlockW = statsW + natPillW + 16.0f * sScale;
-    const float tabsBudgetW = std::max(U(300.0f), fullW - rightBlockW - U(12.0f));
+    const std::string verBadgeText = std::string("CLIENT: ") + std::string(noble::VERSION_STRING);
+    const ImVec2 verTextSz = bodyFont->CalcTextSizeA(13.0f * sScale, FLT_MAX, 0.0f, verBadgeText.c_str());
+    const float verPillW = verTextSz.x + 22.0f * sScale;
+
+    const float rightBlockW = statsW + natPillW + verPillW + 24.0f * sScale;
+    const float tabsBudgetW = std::max(U(260.0f), fullW - rightBlockW - U(12.0f));
 
     static const char* kModeLabels[] = { "ALL", "MULTIPLAYER", "CAMPAIGN", "FIREFIGHT", "FORGE" };
     float cursorX = row1Origin.x;
@@ -790,8 +794,36 @@ void ServerBrowser::RenderFilterBar() {
                     IM_COL32(143, 216, 255, 220), "[RB]");
     }
 
-    // Right side of Row 1: NAT/UPnP compact indicator pill + Online/Total telemetry
+    // Right side of Row 1: Client Version Pill + NAT/UPnP compact indicator pill + Online/Total telemetry
     {
+        const float verX = row1Origin.x + fullW - statsW - natPillW - verPillW - 20.0f * sScale;
+        const ImVec2 v0(verX, row1Origin.y + 4.0f * sScale);
+        const ImVec2 v1(verX + verPillW, row1Origin.y + tabH - 4.0f * sScale);
+        ImGui::SetCursorScreenPos(v0);
+        ImGui::InvisibleButton("##clientVerPill", ImVec2(verPillW, v1.y - v0.y));
+        const bool verHovered = ImGui::IsItemHovered();
+#ifdef NOBLE_DEV_BUILD
+        const ImU32 verCol = IM_COL32(255, 212, 72, 255);
+        const ImU32 verDotCol = IM_COL32(255, 212, 72, 255);
+#else
+        const ImU32 verCol = IM_COL32(108, 210, 255, 210);
+        const ImU32 verDotCol = IM_COL32(82, 224, 128, 255);
+#endif
+        dl->AddRectFilled(v0, v1, verHovered ? IM_COL32(22, 36, 52, 230) : IM_COL32(10, 18, 28, 200), 3.0f * sScale);
+        dl->AddRect(v0, v1, verCol, 3.0f * sScale, 0, 1.0f * sScale);
+        dl->AddCircleFilled(ImVec2(v0.x + 10.0f * sScale, (v0.y + v1.y) * 0.5f), 3.5f * sScale, verDotCol);
+        dl->AddText(bodyFont, 13.0f * sScale, ImVec2(v0.x + 18.0f * sScale, v0.y + (v1.y - v0.y - verTextSz.y) * 0.5f),
+                    IM_COL32(226, 236, 245, 240), verBadgeText.c_str());
+        if (verHovered) {
+            ImGui::BeginTooltip();
+            ImGui::Text("Client Version: %s", std::string(noble::VERSION_STRING).c_str());
+            ImGui::Text("Network Wire Base: %s", std::string(noble::kBaseBuildTag).c_str());
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1.0f),
+                               "Lobby joining is allowed between release & dev builds on matching numeric versions.");
+            ImGui::EndTooltip();
+        }
+
         const float natX = row1Origin.x + fullW - statsW - natPillW - 12.0f * sScale;
         const ImVec2 n0(natX, row1Origin.y + 4.0f * sScale);
         const ImVec2 n1(natX + natPillW, row1Origin.y + tabH - 4.0f * sScale);
@@ -1426,8 +1458,9 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::PopTextWrapPos();
         if (coloured) ImGui::PopStyleColor();
     };
-    const bool buildMismatch = !s.build.empty() && !noble::AreBuildsCompatible(s.build, noble::kBuildTag);
-    const bool buildDiffers = !s.build.empty() && s.build != noble::kBuildTag;
+    const std::string_view hostVer = !s.gameVersion.empty() ? std::string_view(s.gameVersion) : std::string_view(s.build);
+    const bool buildMismatch = !hostVer.empty() && !noble::AreBuildsCompatible(hostVer, noble::VERSION_STRING);
+    const bool buildDiffers = !hostVer.empty() && hostVer != noble::VERSION_STRING;
     if (buildDiffers) {
         ImGui::Spacing();
         if (buildMismatch) {
@@ -1682,13 +1715,14 @@ void ServerBrowser::ToggleFavorite(const std::string& address, uint16_t port) {
 }
 
 bool ServerBrowser::JoinBlockedByVersion(const ServerEntry& s) {
-    if (s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag)) return false;
-    const int rel = noble::CompareBuilds(noble::kBuildTag, s.build);
+    const std::string_view hostVer = !s.gameVersion.empty() ? std::string_view(s.gameVersion) : std::string_view(s.build);
+    if (hostVer.empty() || noble::AreBuildsCompatible(hostVer, noble::VERSION_STRING)) return false;
+    const int rel = noble::CompareBuilds(noble::VERSION_STRING, hostVer);
     m_status = rel < 0
-        ? "Can't join: the host runs " + std::string(noble::ExtractBaseVersion(s.build)) + " and you have " +
-              std::string(noble::ExtractBaseVersion(noble::kBuildTag)) + ". Select the game and download the update."
-        : "Can't join: the host is on an older version (" + std::string(noble::ExtractBaseVersion(s.build)) +
-              "; you have " + std::string(noble::ExtractBaseVersion(noble::kBuildTag)) + ").";
+        ? "Can't join: the host runs " + std::string(noble::ExtractBaseVersion(hostVer)) + " and you have " +
+              std::string(noble::ExtractBaseVersion(noble::VERSION_STRING)) + ". Select the game and download the update."
+        : "Can't join: the host is on an older version (" + std::string(noble::ExtractBaseVersion(hostVer)) +
+              "; you have " + std::string(noble::ExtractBaseVersion(noble::VERSION_STRING)) + ").";
     NOBLE_WARN("ServerBrowser join refused (version): {}", m_status);
     return true;
 }

@@ -30,6 +30,24 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02027Items = {
+        {"CRASH FIXES", "Engine Crash Mitigation from Crash Dumps",
+         "Patched null pointer dereferences at haloreach.dll+0x41E3EB, 0x92850 (tag resolve guard), and 0x1650A1 (unit iteration bounds). Modernized near-trampoline memory allocation via 64KB VirtualQuery scanner to guarantee 64-bit hook placement."},
+        {"NETCODE & LOBBY", "Join-in-Progress & Peer De-Duplication",
+         "Suppressed connection refusal reason 3 (session locked) across Campaign, Firefight, Custom Games, and Forge when network transport is active. Replaced packet-count heuristics with unique peer bitmasks, eliminating phantom bot entries and premature simulation starts."},
+        {"CO-OP EXPANSION", "Expanded Campaign Co-Op & Firefight Loading",
+         "Expanded Campaign co-op launch block allocation to support up to 16 players, ensuring smooth loading and roster stability across all cooperative and competitive modes."},
+        {"SERVER BROWSER", "Client Version Indicator & Cross-Build Lobby Compatibility",
+         "Added live client build version badge to the Server Browser header. Version checking enforces exact numeric releases while seamlessly allowing release and dev builds to connect when their version numbers match."}
+    };
+
+    notes.push_back({
+        "v0.20.27",
+        "Engine Crash Mitigation, Co-Op Expansion & Server Browser Version Sync",
+        "Minidump Crash Fixes, Join-in-Progress & Accurate Lobby Rostering",
+        v02027Items
+    });
+
     const std::vector<ChangeItem> v02024Items = {
         {"UI & MOUSE", "Themed Reticle Cursor for Mouse & Keyboard",
          "The in-app mouse now displays the stylish controller circular reticle cursor with tactical tick marks and tactile click compression by default instead of the OS pointer, with pixel-perfect alignment and toggleable in Settings."},
