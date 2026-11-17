@@ -5,6 +5,8 @@
 #include "common/Logger.hpp"
 #include "common/SaveCodec.hpp"
 #include "common/ArmoryVisor.hpp"
+#include "common/ArmorEffects.hpp"
+#include "ParticleTint.hpp"
 #include "hooks/HookManager.hpp"
 #include "engine/SharedTagCache.hpp"
 
@@ -1308,6 +1310,7 @@ uint8_t s_localSpartanVisorItemIndex = 0; // 0..29 in kArmoryVisorItemIds / kArm
 bool s_localSpartanVisorCustom = false;
 float s_localSpartanVisorRgb[3] = {0.85f, 0.53f, 0.14f};
 bool s_localSpeciesElite = false;   // appearance.json "species" == 1 (the local player's preferred species)
+static std::atomic<int> s_localFlameVariantIndex{-1};
 std::atomic<int> s_localSettingsIndex{-1};   // settings index the engine last applied the local profile to
 std::atomic<const uint8_t*> s_localUserSettingsPtr{nullptr};
 std::filesystem::file_time_type s_picksStamp{};
@@ -1406,12 +1409,28 @@ void RefreshLocalPicks() {
             }
         }
 
-        NOBLE_INFO("ElitePack: Armory Elite pieces {} {} {} {} {} {} (set {}), colors {}/{}/{}/{}, lightsB x{:.1f}, visor {} (item {})",
+        int effIdx = 0;
+        int priCol = s_localColors[0];
+        if (s_localSpeciesElite) {
+            effIdx = el.value("armor_effect_index", 0);
+        } else if (j.contains("spartan") && j["spartan"].is_object()) {
+            effIdx = j["spartan"].value("armor_effect_index", 0);
+        }
+        int flameVar = -1;
+        if (effIdx >= kArmorEffectVariantBase) {
+            flameVar = effIdx - kArmorEffectVariantBase;
+        } else if (effIdx == kArmorEffectAutoIndex) {
+            flameVar = std::clamp(priCol, 0, 29);
+        }
+        s_localFlameVariantIndex.store(flameVar);
+        ParticleTint::SetVariantIndex(flameVar);
+
+        NOBLE_INFO("ElitePack: Armory Elite pieces {} {} {} {} {} {} (set {}), colors {}/{}/{}/{}, lightsB x{:.1f}, visor {} (item {}), flameVar {}",
                    s_localPicks[0], s_localPicks[1], s_localPicks[2], s_localPicks[3],
                    s_localPicks[4], s_localPicks[5], set,
                    s_localColors[0], s_localColors[1], s_localColors[2], s_localColors[3],
                    0.5f + static_cast<float>(s_localLightsBrightnessIdx) * 0.5f,
-                   s_localSpartanVisorIndex, s_localSpartanVisorItemIndex);
+                   s_localSpartanVisorIndex, s_localSpartanVisorItemIndex, flameVar);
     } catch (...) {
     }
 }
@@ -1502,6 +1521,8 @@ static void StampLocalAppearanceRecordLocked(uint8_t* rec, bool elite) {
     }
     rec[0x01] = cols[0];
     rec[0x02] = cols[1];
+    const int flameVar = s_localFlameVariantIndex.load();
+    rec[0x1A] = (flameVar >= 0 && flameVar < 30) ? static_cast<uint8_t>(0x80 | (flameVar & 0x1F)) : 0;
     if (elite) {
         rec[0x18] = static_cast<uint8_t>(std::clamp(bIdx, 0, 127));
         if (NobleActive()) {
@@ -1575,6 +1596,8 @@ void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
             block[7] = static_cast<uint8_t>(set);
             if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) block[9] = s_localEliteEffect;
         }
+        const int flameVar = s_localFlameVariantIndex.load();
+        block[8] = (flameVar >= 0 && flameVar < 30) ? static_cast<uint8_t>(0x80 | (flameVar & 0x1F)) : 0;
         block[10] = s_localColors[0];
         block[11] = s_localColors[1];
         block[12] = s_localColors[2];
@@ -1618,6 +1641,10 @@ void __fastcall ApplyProfileHook(int settingsIndex, uint8_t* player) {
     RefreshLocalPicks();
     const bool lightsCust = (s_localCustomFlags & (1 << 3)) != 0;
     player[0xB1] = static_cast<uint8_t>((lightsCust ? 0x60 : 0x40) | (s_localColors[3] & 0x1F));
+    const int flameVar = s_localFlameVariantIndex.load();
+    const uint8_t flameVal = (flameVar >= 0 && flameVar < 30) ? static_cast<uint8_t>(0x80 | (flameVar & 0x1F)) : 0;
+    player[0xB0] = flameVal;
+    player[0xD8 + 0x1A] = flameVal;
     if (lightsCust) {
         const int r6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][0] * 5.0f)), 0, 5);
         const int g6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][1] * 5.0f)), 0, 5);
@@ -1771,6 +1798,14 @@ std::optional<std::filesystem::path> ResolveFile(const std::wstring& requested) 
 }
 
 bool Loaded() { return s_loaded; }
+
+void SetLocalFlameVariant(int variantIndex) {
+    s_localFlameVariantIndex.store(variantIndex);
+}
+
+int GetLocalFlameVariant() {
+    return s_localFlameVariantIndex.load();
+}
 
 static std::filesystem::path FindRelocSidecar(const std::filesystem::path& mapPath) {
     std::error_code ec;

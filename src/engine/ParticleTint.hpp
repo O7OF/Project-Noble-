@@ -1,25 +1,28 @@
 #pragma once
 
 #include <d3d11.h>
+#include <cstdint>
 #include <string>
 
 namespace noble::ParticleTint {
 
-// Dev prototype (-armor-fx-runtime-tint r,g,b or hex):
-// Replaces the 256x16 armour-flame palette texture (identified at runtime by its
-// dimensions/format) with a runtime-generated colour palette. This is the first
-// step of the runtime-colour path: no map rebuild, works on stock maps.
-// Per-player colour is not implemented yet - every particle system using the
-// palette in this process sees the tint.
+// Runtime recolouring of the stock 256x16 flame palette (slot 2, fmt 91).
+// Supports all 30 authentic Reach primary flame variants across the Armory
+// preview and multiplayer matches (both host and non-host peer bipeds).
 void Install(ID3D11Device* device, ID3D11DeviceContext* context);
-// Called from the DXGI Present hook: obtains the device/immediate context that owns the presenting
-// swapchain (the engine may have its own context, separate from the launcher's) and hooks it.
 void HookFromSwapChain(struct IDXGISwapChain* swapChain);
-// Hooks the context that owns an arbitrary engine draw (e.g. the menu/Armory preview context).
 void HookFromContext(struct ID3D11DeviceContext* context);
-// Selects one of kPrimaryFlames (0..29) for the local player's runtime flame palette; -1 disables
-// the override (stock effect colours). Called when the profile appearance is built.
+
+// Local player's selected flame variant index (0..29, or -1 for none/stock)
 void SetVariantIndex(int variantIndex);
+int GetVariantIndex();
+
+// Multiplayer per-biped flame registration
+void RegisterBipedFlame(uint32_t bipedDatum, int variantIndex);
+void UnregisterBiped(uint32_t bipedDatum);
+void NoteRenderedBiped(uint32_t bipedDatum);
+int GetBipedFlameVariant(uint32_t bipedDatum);
+
 void Shutdown();
 
 } // namespace noble::ParticleTint

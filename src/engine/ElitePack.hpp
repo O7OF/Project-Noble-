@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <windows.h>
 #include <filesystem>
@@ -31,6 +31,10 @@ std::filesystem::path FindPackMap(const std::filesystem::path& dataDir);
 std::optional<std::filesystem::path> ResolveFile(const std::wstring& requested);
 
 bool Loaded();   // the engine loaded the pack and its pointers were rebased
+
+// Extended customization network replication:
+void SetLocalFlameVariant(int variantIndex);
+int GetLocalFlameVariant();
 
 } // namespace ElitePack
 } // namespace noble
