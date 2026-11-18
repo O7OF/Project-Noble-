@@ -345,7 +345,21 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
     (void)syncInterval;
     // DISPLAY MODE = FULLSCREEN: enter/leave DXGI exclusive full screen on this (the render) thread.
     SyncExclusiveFullscreen(swapChain);
-    const SettingsData settings = Settings::Get().Snapshot();
+    // Performance (2026-11-18): Snapshot() copies every setting (maps, vectors, strings) under a lock. Present only
+    // needs three values, so refresh them at most four times a second instead of on every frame.
+    struct PresentSettings { bool verticalSync = false; int fpsLimit = 0; bool throttleUnfocused = true; };
+    static thread_local PresentSettings settings{};
+    static thread_local ULONGLONG s_settingsReadMs = 0;
+    {
+        const ULONGLONG nowTick = GetTickCount64();
+        if (s_settingsReadMs == 0 || nowTick - s_settingsReadMs >= 250) {
+            s_settingsReadMs = nowTick;
+            const SettingsData full = Settings::Get().Snapshot();
+            settings.verticalSync = full.verticalSync;
+            settings.fpsLimit = full.fpsLimit;
+            settings.throttleUnfocused = full.throttleUnfocused;
+        }
+    }
     const UINT effectiveSyncInterval = settings.verticalSync ? 1u : 0u;
 
     static thread_local LONGLONG nextPresentTicks = 0;
@@ -2879,6 +2893,17 @@ static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1
         uintptr_t pSub = 0;
         if (SafeReadInt32(a1, &idx)) userIndex = static_cast<uint32_t>(idx);
         if (SafeReadPointer(a1 + 8, &pSub) && pSub > 0x10000) outBuf = pSub;
+    }
+    // Performance (2026-11-18): while a match runs in the child process, this (menu) process's engine main
+    // thread kept spinning at a full core (slots 1 and Present already sleep, but the main thread polls input
+    // here every tick). Hand back neutral input and give the core to the match.
+    if (noble::FrontEndMenu::IsMatchRunning()) {
+        if (static_cast<uint32_t>(userIndex) == 0) Sleep(100);
+        if (outBuf > 0x10000) {
+            alignas(16) uint8_t idle[0x130] = {};
+            SafeCopyMemory(reinterpret_cast<void*>(outBuf), idle, sizeof(idle));
+        }
+        return 1;
     }
     EnsureUiCursorHook();
     if (!s_slot36Logged.exchange(true)) {

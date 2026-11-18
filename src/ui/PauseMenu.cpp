@@ -5168,8 +5168,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   // -postgame-test: force the clean GAME OVER panel so its composition over the
   // engine's post-game UI can be captured without playing a match to its score
   // limit.
-  if (!gameOver && (wcsstr(GetCommandLineW(), L"-postgame-test") ||
-                    wcsstr(GetCommandLineW(), L"-postgame-role"))) {
+  static const bool s_postGameTestFlag =
+      wcsstr(GetCommandLineW(), L"-postgame-test") != nullptr ||
+      wcsstr(GetCommandLineW(), L"-postgame-role") != nullptr;
+  if (!gameOver && s_postGameTestFlag) {
     static int s_postGameTestFrames = 0;
     if (!loading && ++s_postGameTestFrames == 900) {
       NOBLE_INFO("PauseMenu: -postgame-test forcing the game-over panel");
@@ -5184,7 +5186,17 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   const size_t peers = NetworkTransport::Get().GetGamePeerCount();
   SetLocalSimulationPaused(open && !loading && !gameOver && peers == 0);
   SocialOverlay::Poll(!open && !loading && !noble::BlamEngine::IsSavedFilmPlayback());
-  const bool showFps = Settings::Get().Snapshot().showFps;
+  // Performance (2026-11-18): read showFps at most four times a second, not a full settings copy every frame.
+  static bool s_showFpsCached = false;
+  static ULONGLONG s_showFpsReadMs = 0;
+  {
+    const ULONGLONG nowTick = GetTickCount64();
+    if (s_showFpsReadMs == 0 || nowTick - s_showFpsReadMs >= 250) {
+      s_showFpsReadMs = nowTick;
+      s_showFpsCached = Settings::Get().Snapshot().showFps;
+    }
+  }
+  const bool showFps = s_showFpsCached;
   static const bool s_scoreboardTest =
       wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
   const int boardVk = KeyBindings::EffectiveKey(20);

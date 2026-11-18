@@ -82,6 +82,45 @@ namespace fs = std::filesystem;
 #include <dbghelp.h>
 #pragma comment(lib, "dbghelp.lib")
 
+#include <mmdeviceapi.h>
+#include <audiopolicy.h>
+
+// Windows remembers each program's volume-mixer mute by its exe path. If Noble is ever closed while Windows has
+// it muted (the engine mutes its session when the window loses focus, e.g. after alt-tabbing out to rebuild), every
+// later launch starts silent in the mixer. Noble's own mutes live inside the game mix, so clear the mixer mute at
+// launch. Retried a few times because the engine opens its audio session a little after startup.
+static void ClearWindowsMixerMute() {
+    std::thread([] {
+        if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) return;
+        for (const int waitMs : {0, 3000, 10000, 30000}) {
+            if (waitMs > 0) Sleep(waitMs);
+            IMMDeviceEnumerator* enumerator = nullptr;
+            if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                        __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator)))) continue;
+            IMMDevice* device = nullptr;
+            if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device))) {
+                IAudioSessionManager* manager = nullptr;
+                if (SUCCEEDED(device->Activate(__uuidof(IAudioSessionManager), CLSCTX_ALL, nullptr,
+                                               reinterpret_cast<void**>(&manager)))) {
+                    ISimpleAudioVolume* volume = nullptr;
+                    if (SUCCEEDED(manager->GetSimpleAudioVolume(nullptr, FALSE, &volume))) {
+                        BOOL muted = FALSE;
+                        if (SUCCEEDED(volume->GetMute(&muted)) && muted) {
+                            volume->SetMute(FALSE, nullptr);
+                            NOBLE_INFO("main: cleared a Windows volume-mixer mute left over from a previous session");
+                        }
+                        volume->Release();
+                    }
+                    manager->Release();
+                }
+                device->Release();
+            }
+            enumerator->Release();
+        }
+        CoUninitialize();
+    }).detach();
+}
+
 // Log and dump file names: the dev build keeps its own pair, so a dev session never truncates a player's log.
 #ifdef NOBLE_DEV_BUILD
 static constexpr const wchar_t* kCrashDumpFileName = L"noble-dev-crash.dmp";
@@ -897,6 +936,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     _set_purecall_handler(&NoblePureCallHandler);
     DisableProcessWindowsGhosting();
     timeBeginPeriod(1);
+    ClearWindowsMixerMute();
     // Windows power throttling (EcoQoS) parks/slows the process when it is not the foreground window and,
     // on Ryzen systems, keeps the whole process on a low-power core budget: frame times then collapse to
     // a fraction of the Intel result on the same GPU. Opt the process out explicitly and run it above

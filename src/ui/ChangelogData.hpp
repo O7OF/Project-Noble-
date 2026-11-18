@@ -30,6 +30,22 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02029Items = {
+        {"PERFORMANCE", "Higher Frame Rates in Matches",
+         "The menu process no longer keeps a full CPU core busy while a match is running, freeing that core for the game. On a Ryzen 5 5600G with an RTX 4070, the busiest spot on the map went from about 70 FPS to 110-120 FPS."},
+        {"PERFORMANCE", "Lighter Per-Frame Work",
+         "Flame colour tinting now skips its work when nothing needs tinting and checks each texture once per frame instead of on every draw. Frame pacing and the FPS counter read their settings a few times a second instead of every frame."},
+        {"AUDIO", "No More Silent Launches",
+         "Noble now clears a leftover Windows volume-mixer mute at launch. Closing the game while it was in the background could leave it muted in the Windows mixer on every later launch."}
+    };
+
+    notes.push_back({
+        "v0.20.29",
+        "Performance: Higher Match Frame Rates",
+        "Idle Menu During Matches, Lighter Per-Frame Hooks & Mixer Mute Fix",
+        v02029Items
+    });
+
     const std::vector<ChangeItem> v02028Items = {
         {"NETCODE & MASTER SERVER", "Master Server 0.20.x Registration & Match Visibility",
          "Updated backend server protocol validation and client handshake to natively support 0.20.x releases, resolving the 403 client_outdated rejection that prevented hosted sessions from publishing to the Server Browser."},

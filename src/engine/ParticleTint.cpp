@@ -61,6 +61,14 @@ std::mutex s_bipedMutex;
 std::unordered_map<uint32_t, int> s_bipedVariants;
 std::atomic<uint32_t> s_lastRenderedBiped{0xFFFFFFFFu};
 std::atomic<int> s_localVariantIndex{-1};
+std::atomic<int> s_bipedVariantCount{0};   // size of s_bipedVariants, readable without the mutex
+
+// Performance (2026-11-18): PSSetShaderResources is called thousands of times per frame. Each new frame (one
+// Present) starts a new epoch; within an epoch each shader resource view is classified once (palette or not)
+// and the answer is kept in a small per-thread table, instead of three COM calls on every bind.
+std::atomic<uint32_t> s_frameEpoch{1};
+std::atomic<IDXGISwapChain*> s_lastHookedSwapChain{nullptr};
+std::atomic<ID3D11DeviceContext*> s_lastHookedContext{nullptr};
 
 constexpr UINT kPaletteWidth = 256;
 constexpr UINT kPaletteHeight = 16;
@@ -209,9 +217,36 @@ bool IsFlamePalette(ID3D11ShaderResourceView* view, D3D11_TEXTURE2D_DESC* outDes
             desc.Format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB || desc.Format == DXGI_FORMAT_B8G8R8X8_UNORM);
 }
 
+struct PaletteCacheEntry {
+    ID3D11ShaderResourceView* view;
+    uint32_t epoch;
+    bool isPalette;
+};
+constexpr size_t kPaletteCacheSize = 1024;   // power of two
+thread_local PaletteCacheEntry t_paletteCache[kPaletteCacheSize] = {};
+
+bool IsFlamePaletteCached(ID3D11ShaderResourceView* view) {
+    const uint32_t epoch = s_frameEpoch.load(std::memory_order_relaxed);
+    const size_t slot = (reinterpret_cast<uintptr_t>(view) >> 4) & (kPaletteCacheSize - 1);
+    PaletteCacheEntry& e = t_paletteCache[slot];
+    if (e.view == view && e.epoch == epoch) return e.isPalette;
+    const bool result = IsFlamePalette(view);
+    e.view = view;
+    e.epoch = epoch;
+    e.isPalette = result;
+    return result;
+}
+
+// True when no flame colour is in use anywhere: then every bind passes straight through with no extra work.
+bool NothingToTint() {
+    return !s_active.load(std::memory_order_relaxed) &&
+           s_localVariantIndex.load(std::memory_order_relaxed) < 0 &&
+           s_bipedVariantCount.load(std::memory_order_relaxed) == 0;
+}
+
 void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceContext* context, UINT startSlot,
                                 UINT numViews, ID3D11ShaderResourceView* const* views) {
-    if (numViews == 0 || !views) {
+    if (numViews == 0 || !views || NothingToTint()) {
         original(context, startSlot, numViews, views);
         return;
     }
@@ -221,7 +256,7 @@ void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceCon
         return;
     }
     const UINT slot2Idx = 2 - startSlot;
-    if (!views[slot2Idx] || !IsFlamePalette(views[slot2Idx])) {
+    if (!views[slot2Idx] || !IsFlamePaletteCached(views[slot2Idx])) {
         original(context, startSlot, numViews, views);
         return;
     }
@@ -407,6 +442,11 @@ void InstallExportHooks() {
 
 void HookFromSwapChain(IDXGISwapChain* swapChain) {
     if (!swapChain) return;
+    // Called on every Present: start a new classification epoch, and only do the (costly) hook installation the
+    // first time a swap chain is seen. Deferred contexts created later are caught by the CreateDeferredContext hook.
+    s_frameEpoch.fetch_add(1, std::memory_order_relaxed);
+    if (s_lastHookedSwapChain.load(std::memory_order_relaxed) == swapChain) return;
+    s_lastHookedSwapChain.store(swapChain, std::memory_order_relaxed);
     Microsoft::WRL::ComPtr<ID3D11Device> device;
     if (FAILED(swapChain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(device.GetAddressOf()))) || !device) return;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
@@ -424,6 +464,8 @@ void HookFromSwapChain(IDXGISwapChain* swapChain) {
 
 void HookFromContext(ID3D11DeviceContext* context) {
     if (!context) return;
+    if (s_lastHookedContext.load(std::memory_order_relaxed) == context) return;
+    s_lastHookedContext.store(context, std::memory_order_relaxed);
     Microsoft::WRL::ComPtr<ID3D11Device> device;
     context->GetDevice(device.GetAddressOf());
     HookContext(device.Get(), context);
@@ -462,11 +504,13 @@ void RegisterBipedFlame(uint32_t bipedDatum, int variantIndex) {
     } else {
         s_bipedVariants.erase(bipedDatum);
     }
+    s_bipedVariantCount.store(static_cast<int>(s_bipedVariants.size()), std::memory_order_relaxed);
 }
 
 void UnregisterBiped(uint32_t bipedDatum) {
     std::lock_guard<std::mutex> lock(s_bipedMutex);
     s_bipedVariants.erase(bipedDatum);
+    s_bipedVariantCount.store(static_cast<int>(s_bipedVariants.size()), std::memory_order_relaxed);
 }
 
 void NoteRenderedBiped(uint32_t bipedDatum) {
@@ -477,6 +521,7 @@ void NoteRenderedBiped(uint32_t bipedDatum) {
 
 int GetBipedFlameVariant(uint32_t bipedDatum) {
     if (bipedDatum == 0xFFFFFFFFu) return -1;
+    if (s_bipedVariantCount.load(std::memory_order_relaxed) == 0) return -1;
     std::lock_guard<std::mutex> lock(s_bipedMutex);
     auto it = s_bipedVariants.find(bipedDatum);
     return (it != s_bipedVariants.end()) ? it->second : -1;
@@ -497,6 +542,9 @@ void Shutdown() {
     s_deviceVariantSrvs.clear();
     std::lock_guard<std::mutex> bipedLock(s_bipedMutex);
     s_bipedVariants.clear();
+    s_bipedVariantCount.store(0, std::memory_order_relaxed);
+    s_lastHookedSwapChain.store(nullptr);
+    s_lastHookedContext.store(nullptr);
 }
 
 } // namespace noble::ParticleTint
