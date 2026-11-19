@@ -124,6 +124,11 @@ public:
   // Packet loss % to one machine (0 = the host, for a guest); -1 = not measured yet.
   float GetPeerLossPercent(uint64_t machineId = 0) const;
 
+  // Host option "max ping": the host asks one guest to leave the lobby because its ping stays above the limit.
+  void SendPingLimitRefusal(uint64_t machineId, int limitMs, int pingMs);
+  // Guest: true once (and fills limit/ping) after the host asked this machine to leave for its ping.
+  bool TakePingLimitRefusal(int &limitMs, int &pingMs);
+
   // Master Server WebSocket packet relay & lobby signaling
   using LobbyLaunchCallback = std::function<void(
       const std::string &map, const std::string &mode,
@@ -223,6 +228,10 @@ private:
   uint64_t m_lastPunchTick = 0;
   uint64_t m_localMachineId = 0;
   uint64_t m_hostMachineId = 0;
+  std::atomic<bool> m_pingRefused{false};
+  std::atomic<int> m_pingRefusedLimit{0};
+  std::atomic<int> m_pingRefusedPing{0};
+  std::atomic<uint64_t> m_pingRefusedAtMs{0};
   uint64_t m_sessionId = kNobleSessionId;
 
   mutable std::mutex m_mutex;

@@ -3,6 +3,15 @@
 
 namespace noble::fe {
 
+// Host MAX PING lobby option: dev builds only until it has been tested in a
+// real lobby with a second player (Tyler, 2026-11-19). Guests on any build
+// still honour a host's request to leave.
+#ifdef NOBLE_DEV_BUILD
+constexpr bool kLobbyMaxPingEnabled = true;
+#else
+constexpr bool kLobbyMaxPingEnabled = false;
+#endif
+
 struct PendingLobbyEvents {
   bool launch = false;
   std::string map, mode, variant, hostEndpoint, sessionId, sessionToken;
@@ -1119,6 +1128,77 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     }
   }
 
+  // Host option MAX PING (every mode): a guest whose ping to the host stays
+  // above the limit for 5 seconds in the pre-game lobby is asked to leave.
+  // Checked only here in the lobby, never during a match, so a short lag
+  // spike can't remove anyone mid-game.
+  if (st.isLobbyHost && kLobbyMaxPingEnabled) {
+    static ULONGLONG s_lastPingCheck = 0;
+    static std::unordered_map<uint64_t, int> s_overSeconds;
+    const ULONGLONG nowMs = GetTickCount64();
+    if (nowMs - s_lastPingCheck >= 1000) {
+      s_lastPingCheck = nowMs;
+      const int limit = Settings::Get().Snapshot().hostMaxPingMs;
+      if (limit <= 0) {
+        s_overSeconds.clear();
+      } else {
+        const auto pings = NetworkTransport::Get().GetAllPeerPingsMs();
+        for (auto it = s_overSeconds.begin(); it != s_overSeconds.end();) {
+          it = pings.count(it->first) ? std::next(it) : s_overSeconds.erase(it);
+        }
+        for (const auto &kv : pings) {
+          if (kv.first == 0 || kv.second <= 0)
+            continue;
+          if (kv.second <= limit) {
+            s_overSeconds.erase(kv.first);
+            continue;
+          }
+          const int secs = ++s_overSeconds[kv.first];
+          // Ask at 5 s, then repeat every 3 s in case the message was lost.
+          if (secs >= 5 && (secs - 5) % 3 == 0) {
+            NetworkTransport::Get().SendPingLimitRefusal(kv.first, limit,
+                                                         kv.second);
+            if (secs == 5)
+              NOBLE_INFO("FrontEndMenu: a player's ping ({} ms) is above this "
+                         "lobby's max ping ({} ms); asking them to leave",
+                         kv.second, limit);
+          }
+        }
+      }
+    }
+  } else if (!st.isLobbyHost) {
+    int refusedLimit = 0, refusedPing = 0;
+    // Always take the flag so a stale request can't affect a later lobby.
+    const bool refused = NetworkTransport::Get().TakePingLimitRefusal(
+        refusedLimit, refusedPing);
+    if (refused && !st.lobbySessionId.empty()) {
+      uint64_t fallbackId =
+          (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+      if (fallbackId < 2ULL)
+        fallbackId = 2ULL;
+      const uint64_t pId =
+          AuthClient::Get().IsLoggedIn()
+              ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
+              : fallbackId;
+      MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
+      NetworkTransport::Get().StopRelay();
+      ClearPendingLobbyEvents();
+      st.lobbyLaunchPending = false;
+      st.lobbySessionId.clear();
+      st.lobbySessionToken.clear();
+      st.lobbyHostEndpoint.clear();
+      st.lobbyRoster.clear();
+      st.screen = Screen::Servers;
+      UIManager::GetServerBrowser().SetStatus(
+          "You left the lobby: the host only allows players with a ping up to " +
+          std::to_string(refusedLimit) + " ms (yours was " +
+          std::to_string(refusedPing) + " ms).");
+      NOBLE_INFO("FrontEndMenu: left the lobby because of the host's max ping "
+                 "setting");
+      return;
+    }
+  }
+
   // If launch was signaled (via WebSocket or HTTP poll) and we are guest,
   // launch!
   if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
@@ -1672,6 +1752,21 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
           {"START GAME", "", true, true, "Start the selected custom game."});
   }
 
+  // Host option for every mode (campaign, custom games, Forge, Firefight):
+  // the highest ping this lobby accepts. Placed just above the start button.
+  if (st.isLobbyHost && kLobbyMaxPingEnabled) {
+    const int maxPing = Settings::Get().Snapshot().hostMaxPingMs;
+    LobbyMenuOption pingRow{
+        "MAX PING", maxPing > 0 ? std::to_string(maxPing) + " MS" : "NO LIMIT",
+        false, true,
+        "Host option: players whose ping to you stays above this for 5 "
+        "seconds are asked to leave the lobby. Checked only before the game "
+        "starts, never during a match."};
+    auto startIt = std::find_if(optRows.begin(), optRows.end(),
+                                [](const LobbyMenuOption &r) { return r.isStart; });
+    optRows.insert(startIt, pingRow);
+  }
+
   const int totalRows = static_cast<int>(optRows.size());
   st.lobbyMenuRow = std::clamp(st.lobbyMenuRow, 0, totalRows - 1);
   if (st.lobbyRoster.empty())
@@ -1795,6 +1890,21 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       return;
     if (row.label == "READY") {
       st.lobbyReady = !st.lobbyReady;
+      MenuSounds::Change();
+    } else if (row.label == "MAX PING") {
+      if (!st.isLobbyHost)
+        return;
+      static constexpr int kSteps[] = {0, 50, 75, 100, 150, 200, 250, 300};
+      constexpr int kCount = static_cast<int>(sizeof(kSteps) / sizeof(kSteps[0]));
+      SettingsData d = Settings::Get().Snapshot();
+      int idx = 0;
+      for (int i = 0; i < kCount; ++i)
+        if (kSteps[i] == d.hostMaxPingMs)
+          idx = i;
+      d.hostMaxPingMs = kSteps[(idx + dir + kCount) % kCount];
+      Settings::Get().Update(d);
+      NOBLE_INFO("FrontEndMenu: lobby max ping set to {} ms (0 = no limit)",
+                 d.hostMaxPingMs);
       MenuSounds::Change();
     } else if (row.label == "TEAM COUNT") {
       if (!st.isLobbyHost)

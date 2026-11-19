@@ -40,6 +40,7 @@ struct SettingsData {
     bool showNetStats = false;     // network overlay: ping, packet loss, upload/download
     bool networkBudgetBoost = true;  // raise the game's 2010-era network upload caps (NetBudget)
     bool packetRedundancy = true;     // co-op: send each game packet a second time so one lost packet doesn't stall the game
+    int hostMaxPingMs = 0;           // host option: players whose ping to this host stays above this leave the lobby; 0 = no limit
     int hostUploadKbps = 0;          // this PC's real upload speed in kbit/s for the network budget; 0 = let the game estimate
     float uiScale = 1.0f;          // 0.75..1.50: the player's UI size, multiplied on top of the screen-height scale (SETTINGS > VIDEO)
     bool throttleUnfocused = true;   // drop to 30 FPS when Noble is not the active window

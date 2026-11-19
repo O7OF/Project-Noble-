@@ -30,6 +30,32 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02031Items = {
+        {"FIX", "Your Flame Colour Shows for Everyone",
+         "Other players now see your armour flames in the colour you picked, in first and third person, instead of the stock colour. Fires in the level keep their normal look."},
+        {"NETCODE", "Smoother Co-op on Shaky Connections",
+         "In smaller games (up to 8 players) Noble now sends a backup copy of each game update, so one lost update no longer causes a stutter for everyone."},
+        {"NETCODE", "Higher Upload Limits for Hosts",
+         "The game's network limits from 2010 have been raised, so hosts with faster internet can send more updates to their players. Fast connections and dedicated servers are no longer held to a 10 Mbit/s limit."},
+        {"SERVER BROWSER", "Closest Server Picked Automatically",
+         "When you host, Noble now picks the server closest to you by itself. Campaign games with high ping also show a warning before you join."},
+        {"UI", "Connection Info",
+         "A new NETWORK STATS option in Settings shows your ping, packet loss and network use. The scoreboard marks players with a poor connection, and loading screens now show tips."},
+        {"FIREFIGHT", "Up to 16 Players",
+         "Firefight lobbies can now hold up to 16 players."},
+        {"FIX", "Smoother Frame Times",
+         "Fixed a small stutter caused by Noble checking your armour settings file far too often."},
+        {"STABILITY", "Game Version Check",
+         "Noble now checks that your Halo: Reach files are the version it was made for, so an MCC update can be spotted and handled safely."}
+    };
+
+    notes.push_back({
+        "v0.20.31",
+        "Flame Colours for Everyone & Smoother Online Play",
+        "Your Flame Colour Shared, Smoother Co-op, Higher Upload Limits & 16-Player Firefight",
+        v02031Items
+    });
+
     const std::vector<ChangeItem> v02030Items = {
         {"FIX", "Co-op Joining Fixed",
          "Players could be dropped right after joining a campaign co-op game, leaving the host to play alone. This started in v0.20.26, when custom flame colours were added to the player data the game shares with everyone. That data is now left untouched, and every player gets in again."},

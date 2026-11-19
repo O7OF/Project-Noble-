@@ -9,7 +9,7 @@ if(WIN32)
     set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
     set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
 endif()
-project(ProjectNoble VERSION 0.20.30 LANGUAGES C CXX)
+project(ProjectNoble VERSION 0.20.31 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -152,6 +152,7 @@ set(SOURCES
     src/host/PoolResize.cpp
     src/host/MemberTrace.cpp
     src/host/SlotPatch.cpp
+    src/host/SlotMask.cpp
     src/host/SlotMessage.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
@@ -165,6 +166,7 @@ set(SOURCES
     src/engine/ElitePack.cpp
     src/engine/AppearanceSync.cpp
     src/engine/NetBudget.cpp
+    src/engine/GameBuildCheck.cpp
     src/engine/MvarDump.cpp
     src/engine/MemoryDiff.cpp
     src/engine/ParticleTint.cpp
@@ -249,6 +251,7 @@ set(HEADERS
     src/host/MemberTrace.hpp
     src/host/MemberKnown.inc
     src/host/SlotPatch.hpp
+    src/host/SlotMask.hpp
     src/host/SlotMessage.hpp
     src/host/SlotPatchTable.inc
     src/host/SlotTableSites.inc
@@ -264,6 +267,7 @@ set(HEADERS
     src/engine/ElitePack.hpp
     src/engine/AppearanceSync.hpp
     src/engine/NetBudget.hpp
+    src/engine/GameBuildCheck.hpp
     src/engine/SharedTagCache.hpp
     src/engine/DevCheats.hpp
     src/engine/CameraFov.hpp
@@ -432,6 +436,7 @@ set(DEDICATED_SOURCES
     src/host/PoolResize.cpp
     src/host/MemberTrace.cpp
     src/host/SlotPatch.cpp
+    src/host/SlotMask.cpp
     src/host/SlotMessage.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
@@ -462,6 +467,7 @@ set(DEDICATED_HEADERS
     src/host/MemberTrace.hpp
     src/host/MemberKnown.inc
     src/host/SlotPatch.hpp
+    src/host/SlotMask.hpp
     src/host/SlotMessage.hpp
     src/host/SlotPatchTable.inc
     src/host/SlotTableSites.inc

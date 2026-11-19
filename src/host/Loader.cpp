@@ -7,6 +7,7 @@
 #include "PoolResize.hpp"
 #include "MemberTrace.hpp"
 #include "SlotPatch.hpp"
+#include "SlotMask.hpp"
 #include "common/Logger.hpp"
 
 #include <psapi.h>
@@ -159,6 +160,7 @@ bool Loader::LoadReachDll(const fs::path& dllPath, const fs::path& dependencyDll
     limits::RegisterUnwindTables(m_hModule);   // profile Full only: unwind info for the relocated light-volume code
     membertrace::Install(m_hModule);   // dev only, opt-in -trace-members (C12 slot access map)
     slots::Install(m_hModule, limits::ActiveProfile() != limits::Profile::Stock);   // opt-in -slot-patch (C12)
+    slotmask::Install(m_hModule);   // dev-only 64-player mask functions (NOBLE_MASK64 / NOBLE_MASK64_VERIFY)
 
     // Resolve exported engine interfaces
     m_exports.CreateGameEngine = reinterpret_cast<CreateGameEngineFn>(

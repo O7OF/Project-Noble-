@@ -163,6 +163,8 @@ void Settings::Load() {
     Read(j, "networkBudgetBoost", d.networkBudgetBoost);
     Read(j, "hostUploadKbps", d.hostUploadKbps);
     Read(j, "packetRedundancy", d.packetRedundancy);
+    Read(j, "hostMaxPingMs", d.hostMaxPingMs);
+    if (d.hostMaxPingMs < 0 || d.hostMaxPingMs > 1000) d.hostMaxPingMs = 0;
     if (d.hostUploadKbps < 0) d.hostUploadKbps = 0;
     if (d.hostUploadKbps > 1000000) d.hostUploadKbps = 1000000;
             Read(j, "exclusiveFullscreen", d.exclusiveFullscreen);
@@ -428,6 +430,7 @@ bool Settings::Save() {
         j["borderless"] = d.borderless;
     j["networkBudgetBoost"] = d.networkBudgetBoost;
     j["hostUploadKbps"] = d.hostUploadKbps;
+    j["hostMaxPingMs"] = d.hostMaxPingMs;
     j["packetRedundancy"] = d.packetRedundancy;
         j["exclusiveFullscreen"] = d.exclusiveFullscreen;
         j["fullscreenWidth"] = d.fullscreenWidth;

@@ -983,6 +983,16 @@ uint8_t* PeerRecord(uint8_t* session, int32_t peer) {
            static_cast<size_t>(peer - chunk->first) * 0x158;
 }
 
+uint32_t PeerSlotCount() { return gPlayers32Active && gCapacity > 17 ? gCapacity : 17; }
+
+uint32_t* PeerMaskHigh(uint8_t* session) {
+    if (!gPlayers32Active || gCapacity <= 32 || !gShadow || !session) return nullptr;
+    uint32_t o = 0;
+    const int k = StaticSession(session, o);
+    if (k < 0 || o != 0) return nullptr;
+    return reinterpret_cast<uint32_t*>(gShadow + static_cast<size_t>(k) * kSessionStride + kMaskHighBase);
+}
+
 void Install(HMODULE engine, bool extendedProfile) {
     if (!engine || !Requested()) return;
     if (!extendedProfile) {

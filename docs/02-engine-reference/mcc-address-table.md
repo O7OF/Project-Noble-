@@ -92,3 +92,12 @@ column honest: an address that was only signature-checked is listed as UNPROVEN.
 4. Record the row here (retail name, VA, MCC function, hr+RVA, behaviour, how proven, date). Mark it UNPROVEN until
    step 2/3 are done; a static match is PROVEN for identity only.
 5. Prove runtime behaviour with a read-only probe before any write (briefing §3).
+## Checking every address after an MCC update (added 2026-11-19)
+- Noble's source holds ~350 distinct game addresses (named constants, `base + 0x...`, `hr+0x...`, SizeOfImage checks).
+- Dev tool: `python tools\check-addresses.py --dll <old haloreach.dll> --new-dll <new haloreach.dll>` lists every address with
+  the file/line that uses it and marks it **same** or **CHANGED** (16 bytes compared; writable data is listed for a manual check).
+  With only `--dll` it checks every address is inside the DLL and says what it points at (function start / code / data).
+  Baseline 2026-11-19 against the supported DLL: 347 addresses, 290 code/read-only same, 57 writable data, 0 outside.
+- Runtime: `src/engine/GameBuildCheck.cpp` compares the loaded engine's link time with the supported build (68A0EFE1) once per
+  run and logs a plain-text result (no addresses). In-memory image size differs from the file (Noble's loader), so only the
+  link time is compared. Update `kKnownTimeDateStamp` together with the addresses when moving to a new MCC build.

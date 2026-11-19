@@ -1060,6 +1060,27 @@ bool NetworkTransport::SendSessionSync(uint64_t frame, bool running) {
   return sent;
 }
 
+void NetworkTransport::SendPingLimitRefusal(uint64_t machineId, int limitMs,
+                                            int pingMs) {
+  if (machineId == 0)
+    return;
+  nlohmann::json j = {{"type", "host_ping_limit"},
+                      {"target", std::to_string(machineId)},
+                      {"limit", limitMs},
+                      {"ping", pingMs}};
+  SendLobbyControlJson(j.dump());
+}
+
+bool NetworkTransport::TakePingLimitRefusal(int &limitMs, int &pingMs) {
+  if (!m_pingRefused.exchange(false))
+    return false;
+  if (GetTickCount64() - m_pingRefusedAtMs.load() > 10000)
+    return false; // old request (arrived while not in a lobby): ignore
+  limitMs = m_pingRefusedLimit.load();
+  pingMs = m_pingRefusedPing.load();
+  return true;
+}
+
 void NetworkTransport::SendLobbyControlJson(const std::string &jsonString) {
   if (jsonString.empty())
     return;
@@ -1297,6 +1318,23 @@ void NetworkTransport::HandleControlJson(const std::string &msgStr,
       }
       if (cb) {
         cb(reason);
+      }
+    } else if (type == "host_ping_limit") {
+      // Only the host (or the master server relay, sender 0) may ask a guest to leave.
+      const bool fromHost = udpSenderPeerId == 0 || m_hostMachineId == 0 ||
+                            udpSenderPeerId == m_hostMachineId;
+      uint64_t target = 0;
+      try {
+        target = std::stoull(j.value("target", std::string("0")));
+      } catch (...) {
+      }
+      if (fromHost && target != 0 &&
+          (target == m_localMachineId || target == GetRelayMachineId())) {
+        m_pingRefusedLimit.store(j.value("limit", 0));
+        m_pingRefusedPing.store(j.value("ping", 0));
+        m_pingRefusedAtMs.store(GetTickCount64());
+        if (!m_pingRefused.exchange(true))
+          NOBLE_INFO("NetworkTransport: the host's max ping setting asked this player to leave the lobby");
       }
     } else if (type == "match_over") {
       // The relay thread must not touch UI/career state: the render thread is often already tearing the
