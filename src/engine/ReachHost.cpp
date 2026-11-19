@@ -11,6 +11,7 @@
 #include "common/ArmoryVisor.hpp"
 #include "common/ArmorEffects.hpp"
 #include "common/DeviceIdentity.hpp"
+#include "engine/AppearanceSync.hpp"
 #include "hooks/EnginePatches.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
@@ -836,6 +837,8 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         }
         noble::NetworkTransport::Get().SendSessionSync(frames, sessionState == 2);
     }
+    // Noble-only appearance extras (flame colour) over Noble's own channel; rate-limited inside.
+    noble::AppearanceSync::Tick();
 
     // "Game running" flag (TLS block +0x48, byte +0x1EAB8). The engine's main loop finishes the game and tears the
     // session down when it is 0, so logging every change says exactly when a co-op match is declared over.
@@ -4515,12 +4518,8 @@ static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, u
         return 0;
     }
 
-    uint64_t xuid = 0x0009000000000001ULL;
-    if (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost()) {
-        uint64_t guestLow = NetworkTransport::Get().GetLocalMachineId() & 0x0000FFFFFFFFFFFFULL;
-        if (guestLow <= 1ULL) guestLow = 2ULL;
-        xuid = 0x0009000000000000ULL | guestLow;
-    }
+    // Host 0x0009000000000001, guest 0x0009 + low 48 bits of the machine id (AppearanceSync keys players by this).
+    const uint64_t xuid = noble::AppearanceSync::LocalXuid();
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 88 - UserIdentity]: user {} -> '{}' (XUID: 0x{:X})", userIndex,
                    Settings::Get().Snapshot().playerName, xuid);

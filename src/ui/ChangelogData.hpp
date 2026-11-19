@@ -30,6 +30,20 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02030Items = {
+        {"FIX", "Co-op Joining Fixed",
+         "Players could be dropped right after joining a campaign co-op game, leaving the host to play alone. This started in v0.20.26, when custom flame colours were added to the player data the game shares with everyone. That data is now left untouched, and every player gets in again."},
+        {"NETCODE", "Flame Colours Shared Over Noble's Own Connection",
+         "Your custom flame colour now reaches other Noble players through Noble's own network messages instead of the game's player data, so it can never interfere with joining a match in campaign, Firefight or multiplayer."}
+    };
+
+    notes.push_back({
+        "v0.20.30",
+        "Co-op Joining Fix",
+        "Players No Longer Dropped on Join & Flame Colours Over Noble's Connection",
+        v02030Items
+    });
+
     const std::vector<ChangeItem> v02029Items = {
         {"PERFORMANCE", "Higher Frame Rates in Matches",
          "The menu process no longer keeps a full CPU core busy while a match is running, freeing that core for the game. On a Ryzen 5 5600G with an RTX 4070, the busiest spot on the map went from about 70 FPS to 110-120 FPS."},

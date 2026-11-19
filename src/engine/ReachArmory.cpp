@@ -2,6 +2,7 @@
 #include "ParticleTint.hpp"
 #include "common/ArmorEffects.hpp"
 #include "ElitePack.hpp"
+#include "AppearanceSync.hpp"
 #include "SharedTagCache.hpp"
 #include "common/Logger.hpp"
 #include "common/SaveCodec.hpp"
@@ -2850,17 +2851,11 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
             }
         }
 
-        if (block32 && (block32[23] & 0x80u) != 0) {
+        // Remote flame colour comes from Noble's own channel (AppearanceSync), never from engine player data.
+        const int remoteFlame = noble::AppearanceSync::FlameForPlayerRecord(playerPtr);
+        if (remoteFlame >= 0 && remoteFlame < 30) {
             out.flameActive = true;
-            out.flameVariant = std::clamp<int>(block32[23] & 0x1Fu, 0, 29);
-            noble::ParticleTint::RegisterBipedFlame(renderedObj, out.flameVariant);
-        } else if (block32 && (block32[8] & 0x80u) != 0) {
-            out.flameActive = true;
-            out.flameVariant = std::clamp<int>(block32[8] & 0x1Fu, 0, 29);
-            noble::ParticleTint::RegisterBipedFlame(renderedObj, out.flameVariant);
-        } else if ((rec[0x1A] & 0x80u) != 0) {
-            out.flameActive = true;
-            out.flameVariant = std::clamp<int>(rec[0x1A] & 0x1Fu, 0, 29);
+            out.flameVariant = remoteFlame;
             noble::ParticleTint::RegisterBipedFlame(renderedObj, out.flameVariant);
         }
         return out.lightsActive || out.visorActive || out.flameActive;
@@ -3559,14 +3554,8 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                 const uint8_t* block32 = progTable ? (progTable + static_cast<size_t>(playerIdx) * 0x280u + 0x228u) : nullptr;
                 const bool hasBlock32 = block32 && ((block32[14] & 0xF0u) == 0xA0u);
 
-                int remoteFlame = -1;
-                if (hasBlock32 && (block32[23] & 0x80u) != 0) {
-                    remoteFlame = std::clamp<int>(block32[23] & 0x1Fu, 0, 29);
-                } else if (hasBlock32 && (block32[8] & 0x80u) != 0) {
-                    remoteFlame = std::clamp<int>(block32[8] & 0x1Fu, 0, 29);
-                } else if ((rec[0x1A] & 0x80u) != 0) {
-                    remoteFlame = std::clamp<int>(rec[0x1A] & 0x1Fu, 0, 29);
-                }
+                // Remote flame colour comes from Noble's own channel (AppearanceSync), never from engine player data.
+                const int remoteFlame = noble::AppearanceSync::FlameForPlayerRecord(playerPtr);
                 if (remoteFlame >= 0 && remoteFlame < 30) {
                     noble::ParticleTint::RegisterBipedFlame(objectDatum, remoteFlame);
                 }

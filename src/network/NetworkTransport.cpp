@@ -4,6 +4,7 @@
 #include "common/BuildIdentity.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
+#include "engine/AppearanceSync.hpp"
 #include "engine/DevCheats.hpp"
 #include "engine/SharedTagCache.hpp"
 #include "host/EngineLimits.hpp"
@@ -1297,6 +1298,20 @@ void NetworkTransport::HandleControlJson(const std::string &msgStr,
         m_hostSimRunning.store(false);
       }
       m_hostSimFrame.store(frame);
+    } else if (type == "appearance_extra") {
+      // Noble-only appearance extras (flame colour) - see engine/AppearanceSync.hpp. Kept out of engine player data.
+      const auto players = j.value("players", nlohmann::json::array());
+      for (const auto &p : players) {
+        if (!p.is_object())
+          continue;
+        uint64_t xuid = 0;
+        try {
+          xuid = std::stoull(p.value("xuid", std::string()), nullptr, 16);
+        } catch (...) {
+          continue;
+        }
+        noble::AppearanceSync::SetRemote(xuid, p.value("flame", -1));
+      }
     } else if (type == "spawn_request") {
       if (m_isHost) {
         uint32_t datum = j.value("datum", 0xFFFFFFFF);

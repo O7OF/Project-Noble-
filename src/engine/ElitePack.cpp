@@ -1538,8 +1538,9 @@ static void StampLocalAppearanceRecordLocked(uint8_t* rec, bool elite) {
     }
     rec[0x01] = cols[0];
     rec[0x02] = cols[1];
-    const int flameVar = s_localFlameVariantIndex.load();
-    rec[0x1A] = (flameVar >= 0 && flameVar < 30) ? static_cast<uint8_t>(0x80 | (flameVar & 0x1F)) : 0;
+    // Flame colour must NOT be written into this record: byte 0x1A is an engine armour slot that the engine replicates
+    // and validates (-1 or 0..127). Writing it made peers reject the membership update and broke co-op joining
+    // (regression from 1b2cf67, found 2026-11-18). Flame colour travels over Noble's channel (AppearanceSync).
     rec[0x18] = s_localSpartanEffect;
     rec[0x19] = s_localEliteEffect;
 
@@ -1614,8 +1615,7 @@ void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
         block[8] = s_localSpartanEffect;
         block[9] = s_localEliteEffect;
 
-        const int flameVar = s_localFlameVariantIndex.load();
-        block[23] = (flameVar >= 0 && flameVar < 30) ? static_cast<uint8_t>(0x80 | (flameVar & 0x1F)) : 0;
+        // (No flame byte here: block[16..27] are the custom RGB slots below; flame colour travels via AppearanceSync.)
         block[10] = s_localColors[0];
         block[11] = s_localColors[1];
         block[12] = s_localColors[2];
@@ -1659,10 +1659,8 @@ void __fastcall ApplyProfileHook(int settingsIndex, uint8_t* player) {
     RefreshLocalPicks();
     const bool lightsCust = (s_localCustomFlags & (1 << 3)) != 0;
     player[0xB1] = static_cast<uint8_t>((lightsCust ? 0x60 : 0x40) | (s_localColors[3] & 0x1F));
-    const int flameVar = s_localFlameVariantIndex.load();
-    const uint8_t flameVal = (flameVar >= 0 && flameVar < 30) ? static_cast<uint8_t>(0x80 | (flameVar & 0x1F)) : 0;
-    player[0xB0] = flameVal;
-    player[0xD8 + 0x1A] = flameVal;
+    // Flame colour is not written into the engine's player profile (0xB0 / appearance +0x1A): those are engine fields
+    // replicated to peers. It travels over Noble's own channel instead (AppearanceSync).
     if (lightsCust) {
         const int r6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][0] * 5.0f)), 0, 5);
         const int g6 = std::clamp(static_cast<int>(std::lround(s_localCustomRgb[3][1] * 5.0f)), 0, 5);
