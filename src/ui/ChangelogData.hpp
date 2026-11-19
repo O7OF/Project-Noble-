@@ -30,6 +30,18 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02032Items = {
+        {"CAMPAIGN", "Up to 8 Players in Campaign Co-op",
+         "When hosting a campaign game you can now pick 4, 5, 6 or 8 players. The menu was still limited to 4 from before the co-op joining fix."}
+    };
+
+    notes.push_back({
+        "v0.20.32",
+        "Bigger Campaign Lobbies",
+        "Host Campaign Co-op for Up to 8 Players",
+        v02032Items
+    });
+
     const std::vector<ChangeItem> v02031Items = {
         {"FIX", "Your Flame Colour Shows for Everyone",
          "Other players now see your armour flames in the colour you picked, in first and third person, instead of the stock colour. Fires in the level keep their normal look."},

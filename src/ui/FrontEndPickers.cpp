@@ -2638,15 +2638,13 @@ void DrawCampaignScreen(OverlayContext &ctx, const Ui &ui, float left,
         cardTop, diffY, maxPlayersY, cardBot, px, innerW, actionsY,
         px + pad + innerW * 0.48f);
   }
-  // HOST CO-OP size: campaign lobbies used to have no player-count control. The
-  // row used to offer 4/8/12/16, but 5-player campaign co-op is not proven and
-  // crashes at 5 (Tyler, 2026-11-15 Phase-2 Stage 2 report). 4 is the only
-  // proven campaign count, so the row is clamped to it until the
-  // session/membership work proves more (see
-  // project-docs\NOTE-NETWORK-HANDOFF-TO-CLAUDE.md). Do not re-open without a
-  // real 5-player test.
-  static const int kCampCaps[] = {4};
-  constexpr int kNumCampCaps = 1;
+  // HOST CO-OP size. Was clamped to 4 after the 5-player crash of 2026-11-15;
+  // that crash was the v0.20.26 flame-byte join bug (fixed in v0.20.30).
+  // Re-opened 2026-11-19 (Tyler): 5- and 6-player campaign proven on one PC
+  // (10-minute 5-player run with no drops); 8 is the next target and needs a
+  // real multi-PC test. The engine session seats up to 16.
+  static const int kCampCaps[] = {4, 5, 6, 8};
+  constexpr int kNumCampCaps = 4;
   int campCapIdx = kNumCampCaps - 1;
   for (int ci = 0; ci < kNumCampCaps; ++ci) {
     if (kCampCaps[ci] >= st.campaignMaxPlayers) {
