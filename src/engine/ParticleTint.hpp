@@ -17,7 +17,9 @@ void HookFromContext(struct ID3D11DeviceContext* context);
 void SetVariantIndex(int variantIndex);
 int GetVariantIndex();
 
-// Multiplayer per-biped flame registration
+// Multiplayer per-biped flame registration. kStockFlame marks a player whose flames must stay stock (no Noble
+// colour, or none received yet), so the local player's colour is never painted onto them.
+constexpr int kStockFlame = -2;
 void RegisterBipedFlame(uint32_t bipedDatum, int variantIndex);
 void UnregisterBiped(uint32_t bipedDatum);
 void NoteRenderedBiped(uint32_t bipedDatum);

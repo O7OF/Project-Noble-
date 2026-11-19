@@ -2857,6 +2857,9 @@ static bool ResolveRenderedBipedColorsSEH(uintptr_t base, uint32_t localUnit, bo
             out.flameActive = true;
             out.flameVariant = remoteFlame;
             noble::ParticleTint::RegisterBipedFlame(renderedObj, out.flameVariant);
+        } else {
+            // No Noble colour for this player (stock flames, or nothing received yet): keep their flames stock.
+            noble::ParticleTint::RegisterBipedFlame(renderedObj, noble::ParticleTint::kStockFlame);
         }
         return out.lightsActive || out.visorActive || out.flameActive;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -3556,9 +3559,9 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
 
                 // Remote flame colour comes from Noble's own channel (AppearanceSync), never from engine player data.
                 const int remoteFlame = noble::AppearanceSync::FlameForPlayerRecord(playerPtr);
-                if (remoteFlame >= 0 && remoteFlame < 30) {
-                    noble::ParticleTint::RegisterBipedFlame(objectDatum, remoteFlame);
-                }
+                noble::ParticleTint::RegisterBipedFlame(objectDatum, (remoteFlame >= 0 && remoteFlame < 30)
+                                                                         ? remoteFlame
+                                                                         : noble::ParticleTint::kStockFlame);
 
                 float remoteSlots[4][3] = {};
                 const float* remoteWant[4] = { nullptr, nullptr, nullptr, nullptr };
@@ -3670,6 +3673,36 @@ static bool ReadEngineModeFlagsSEH(uintptr_t base, bool* outIsCampaign, bool* ou
     }
 }
 
+// Remote players' flame colours (2026-11-19). Read-only: walks the engine's player list and registers each remote
+// player's unit with ParticleTint, using the colour received over Noble's own channel (AppearanceSync). Writes nothing
+// into game state, so it also runs in synchronous co-op, where the colour pass below must stay out of the game state.
+static void RegisterRemoteFlamesSEH(uintptr_t base, uint32_t localUnit) {
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return;
+        const uint8_t* players = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x18);
+        if (!players) return;
+        const int32_t maxPlayers = std::clamp(*reinterpret_cast<const int32_t*>(players + 0x44), 0, 16);
+        const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(players + 0x50);
+        if (!entries) return;
+        for (int32_t i = 0; i < maxPlayers; ++i) {
+            const uint8_t* p = entries + static_cast<size_t>(i) * 0x490u;
+            if (*reinterpret_cast<const uint16_t*>(p) == 0) continue;
+            const uint32_t unit = *reinterpret_cast<const uint32_t*>(p + 0x28);
+            if (unit == 0xFFFFFFFFu) continue;
+            if (unit == localUnit) {   // the local player's own character: its own flame colour
+                const int own = noble::ElitePack::GetLocalFlameVariant();
+                noble::ParticleTint::RegisterBipedFlame(unit, (own >= 0 && own < 30) ? own : noble::ParticleTint::kStockFlame);
+                continue;
+            }
+            const int flame = noble::AppearanceSync::FlameForPlayerRecord(p);
+            noble::ParticleTint::RegisterBipedFlame(unit, (flame >= 0 && flame < 30) ? flame : noble::ParticleTint::kStockFlame);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 void ReachArmory::SyncMatchLiveBipeds() {
     HMODULE hReach = noble::ReachModule();
     if (!hReach) return;
@@ -3704,6 +3737,7 @@ void ReachArmory::SyncMatchLiveBipeds() {
     EnsureSpartanLightsPsHook(base);
     s_cachedLocalUnitDatum.store(localUnit, std::memory_order_relaxed);
     UpdateCachedLightsAndVisor(sel, true);
+    RegisterRemoteFlamesSEH(base, localUnit);
 
     const bool customVisor = (sel.visorColorIndex > 0 && sel.visor != "default");
     const float visFloats[3] = {

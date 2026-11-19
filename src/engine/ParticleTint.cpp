@@ -17,6 +17,7 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <set>
 #include <string>
@@ -244,6 +245,234 @@ bool NothingToTint() {
            s_bipedVariantCount.load(std::memory_order_relaxed) == 0;
 }
 
+// ---- Which character owns the flame being drawn (2026-11-19) ----
+// The engine queues each particle emitter's draw and runs it later from its sorted transparent pass. The queued draw
+// (one call per emitter) carries its particle system index; particle system -> parent effect -> the object the effect
+// is attached to. A hook on that draw records the owner for the duration of the call, so the palette bind inside it
+// can use the owner's flame colour instead of guessing. Data-array layout as the engine's own datum lookup reads it:
+// count +0x44, element size +0x20, elements +0x50, first u16 of an element = salt.
+constexpr uint32_t kNoOwner = 0xFFFFFFFFu;
+constexpr uintptr_t kEmitterDrawRva = 0x27B6C4;
+constexpr uintptr_t kTlsIndexRva = 0xC17B18;
+constexpr size_t kTlsParticleSystems = 0x270;
+constexpr size_t kTlsEffects = 0x68;
+constexpr size_t kParticleSystemStride = 0x54;
+constexpr size_t kParticleSystemEffect = 0x14;
+constexpr size_t kEffectObject = 0x3C;
+constexpr uint8_t kEmitterDrawBytes[] = {0x48, 0x8B, 0xC4, 0x48, 0x89, 0x48, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55};
+
+using EmitterDrawFn = void(__fastcall*)(uint8_t*);
+EmitterDrawFn s_originalEmitterDraw = nullptr;
+std::atomic<bool> s_ownerHookTried{false};
+std::atomic<bool> s_ownerHookActive{false};
+thread_local uint32_t t_flameOwner = kNoOwner;
+std::atomic<uint32_t> s_statBinds{0}, s_statOwned{0}, s_statMatched{0};
+std::atomic<ULONGLONG> s_statLastLog{0};
+std::atomic<uint32_t> s_statLastOwner{0xFFFFFFFFu};
+std::atomic<ULONGLONG> s_lastRegisterMs{0};   // a match is registering players' flame colours
+std::atomic<uint32_t> s_statRebinds{0};
+
+// The engine skips re-binding the flame palette when the next flame uses the same one, so a player's flames drawn
+// right after a level fire would keep the fire's (stock) palette. Remember, per render thread, which flame palette
+// is bound right now so each flame draw can switch it to its owner's colour itself.
+constexpr int kNoPalette = INT_MIN;
+constexpr int kBoundCustom = -3;
+thread_local ID3D11DeviceContext* t_palCtx = nullptr;
+thread_local PSSetShaderResourcesFn t_palOriginal = nullptr;
+thread_local ID3D11ShaderResourceView* t_palStock = nullptr;
+thread_local int t_palBound = kNoPalette;
+
+// What an owner's flames should use: a variant (>= 0), kStockFlame, or -1 = no decision (old fallback).
+int OwnerDecision(uint32_t owner) {
+    if (owner == kNoOwner) return -1;
+    const int v = GetBipedFlameVariant(owner);
+    if (v == kStockFlame || v >= 0) return v;
+    if (s_ownerHookActive.load(std::memory_order_relaxed) &&
+        GetTickCount64() - s_lastRegisterMs.load(std::memory_order_relaxed) < 2000) {
+        return kStockFlame;   // a level fire, an AI, a vehicle
+    }
+    return -1;
+}
+
+void RebindPaletteForOwner(uint32_t owner) {
+    if (owner == kNoOwner || !t_palCtx || !t_palOriginal || !t_palStock || t_palBound == kNoPalette) return;
+    if (NothingToTint()) return;
+    const int want = OwnerDecision(owner);
+    if (want == -1 || want == t_palBound) return;
+    ID3D11ShaderResourceView* view = nullptr;
+    if (want == kStockFlame) {
+        view = t_palStock;
+    } else if (want < static_cast<int>(kPrimaryFlames.size())) {
+        ID3D11Device* device = nullptr;
+        t_palCtx->GetDevice(&device);
+        if (device) {
+            view = GetVariantSrv(device, want);
+            device->Release();
+        }
+    }
+    if (!view) return;
+    t_palOriginal(t_palCtx, 2, 1, &view);
+    t_palBound = want;
+    s_statRebinds.fetch_add(1, std::memory_order_relaxed);
+}
+#ifdef NOBLE_DEV_BUILD
+std::atomic<bool> s_diagBusy{false};
+std::atomic<uint32_t> s_diagOwner{0xFFFFFFFFu};
+uint8_t s_diagEntry[0x18] = {};
+uint8_t s_diagObj[0x200] = {};
+#endif
+
+const uint8_t* DatumGet(const uint8_t* array, uint32_t datum) {
+    if (!array || datum == kNoOwner) return nullptr;
+    const int32_t count = *reinterpret_cast<const int32_t*>(array + 0x44);
+    const uint32_t index = datum & 0xFFFFu;
+    if (static_cast<int32_t>(index) >= count) return nullptr;
+    const uint64_t size = *reinterpret_cast<const uint64_t*>(array + 0x20);
+    const uint8_t* data = *reinterpret_cast<const uint8_t* const*>(array + 0x50);
+    if (!data || size == 0 || size > 0x10000) return nullptr;
+    const uint8_t* e = data + size * index;
+    const uint16_t salt = *reinterpret_cast<const uint16_t*>(e);
+    return (salt != 0 && salt == static_cast<uint16_t>(datum >> 16)) ? e : nullptr;
+}
+
+uint32_t ResolveFlameOwner(const uint8_t* emitterDraw) {
+    __try {
+        const auto base = reinterpret_cast<uintptr_t>(noble::ReachModule());
+        if (!base || !emitterDraw) return kNoOwner;
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(base + kTlsIndexRva);
+        const auto tlsVec = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t tls = *reinterpret_cast<const uintptr_t*>(tlsVec + static_cast<uintptr_t>(tlsIndex) * 8);
+        if (!tls) return kNoOwner;
+        const uint8_t* systems = *reinterpret_cast<const uint8_t* const*>(tls + kTlsParticleSystems);
+        if (!systems) return kNoOwner;
+        const uint16_t psIndex = *reinterpret_cast<const uint16_t*>(emitterDraw + 4);
+        if (static_cast<int32_t>(psIndex) >= *reinterpret_cast<const int32_t*>(systems + 0x44)) return kNoOwner;
+        const uint8_t* psData = *reinterpret_cast<const uint8_t* const*>(systems + 0x50);
+        if (!psData) return kNoOwner;
+        const uint8_t* ps = psData + static_cast<size_t>(psIndex) * kParticleSystemStride;
+        const uint32_t effectDatum = *reinterpret_cast<const uint32_t*>(ps + kParticleSystemEffect);
+        const uint8_t* effects = *reinterpret_cast<const uint8_t* const*>(tls + kTlsEffects);
+        const uint8_t* effect = DatumGet(effects, effectDatum);
+        if (!effect) return kNoOwner;
+        uint32_t obj = *reinterpret_cast<const uint32_t*>(effect + kEffectObject);
+        // The armour effect can sit on an attachment object; walk up to the root object (the character), the way the
+        // engine itself finds an effect's location. Object table: TLS +0x10, entries +0x50 (0x18 each, object
+        // pointer at +0x10); an object's parent is at +0x14.
+        const uint8_t* objects = *reinterpret_cast<const uint8_t* const*>(tls + 0x10);
+        if (!objects) return obj;
+        const int32_t maxObjects = *reinterpret_cast<const int32_t*>(objects + 0x44);
+        const uint8_t* objEntries = *reinterpret_cast<const uint8_t* const*>(objects + 0x50);
+        for (int depth = 0; depth < 8 && obj != kNoOwner && objEntries; ++depth) {
+            const uint32_t idx = obj & 0xFFFFu;
+            if (static_cast<int32_t>(idx) >= maxObjects) break;
+            const uint8_t* entry = objEntries + static_cast<size_t>(idx) * 0x18;
+            if (*reinterpret_cast<const uint16_t*>(entry) != static_cast<uint16_t>(obj >> 16)) break;
+            const uint8_t* objPtr = *reinterpret_cast<const uint8_t* const*>(entry + 0x10);
+            if (!objPtr) break;
+            const uint32_t parent = *reinterpret_cast<const uint32_t*>(objPtr + 0x14);
+            if (parent == kNoOwner || parent == obj) break;
+            obj = parent;
+        }
+#ifdef NOBLE_DEV_BUILD
+        // Dev: keep a copy of the final owner object so the stats log can show how it links to a player.
+        if (!s_diagBusy.exchange(true)) {
+            const uint32_t idx = obj & 0xFFFFu;
+            if (objEntries && obj != kNoOwner && static_cast<int32_t>(idx) < maxObjects) {
+                const uint8_t* entry = objEntries + static_cast<size_t>(idx) * 0x18;
+                const uint8_t* objPtr = *reinterpret_cast<const uint8_t* const*>(entry + 0x10);
+                if (objPtr) {
+                    std::memcpy(s_diagEntry, entry, sizeof(s_diagEntry));
+                    std::memcpy(s_diagObj, objPtr, sizeof(s_diagObj));
+                    s_diagOwner.store(obj);
+                }
+            }
+            s_diagBusy.store(false);
+        }
+#endif
+        return obj;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return kNoOwner;
+    }
+}
+
+void __fastcall EmitterDrawDetour(uint8_t* emitterDraw) {
+    const uint32_t previous = t_flameOwner;
+    t_flameOwner = ResolveFlameOwner(emitterDraw);
+    RebindPaletteForOwner(t_flameOwner);
+    s_originalEmitterDraw(emitterDraw);
+    t_flameOwner = previous;
+}
+
+bool EntryBytesMatch(const uint8_t* target) {
+    __try {
+        return std::memcmp(target, kEmitterDrawBytes, sizeof(kEmitterDrawBytes)) == 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Installed once the game module is loaded. All-or-nothing: if the entry bytes don't match this game build the hook
+// is skipped and flame colours fall back to the old behaviour.
+void TryInstallOwnerHook() {
+    if (s_ownerHookActive.load() || !noble::ReachModule()) return;
+    if (s_ownerHookTried.exchange(true)) return;
+    const auto base = reinterpret_cast<uint8_t*>(noble::ReachModule());
+    uint8_t* target = base + kEmitterDrawRva;
+    if (!EntryBytesMatch(target)) {
+        NOBLE_WARN("ParticleTint: flame owner tracking not installed (unexpected game build); using the old flame colour matching");
+        return;
+    }
+    if (noble::HookManager::InstallHook(target, reinterpret_cast<void*>(&EmitterDrawDetour),
+                                        reinterpret_cast<void**>(&s_originalEmitterDraw), "particle_emitter_draw")) {
+        s_ownerHookActive.store(true);
+        NOBLE_INFO("ParticleTint: flame owner tracking installed (each player's flames use that player's colour)");
+    }
+}
+
+void LogOwnerStats() {
+#ifdef NOBLE_DEV_BUILD
+    const ULONGLONG now = GetTickCount64();
+    ULONGLONG last = s_statLastLog.load(std::memory_order_relaxed);
+    if (now - last < 10000) return;
+    if (!s_statLastLog.compare_exchange_strong(last, now)) return;
+    const uint32_t binds = s_statBinds.exchange(0), owned = s_statOwned.exchange(0), matched = s_statMatched.exchange(0);
+    if (binds) {
+        std::string reg;
+        {
+            std::lock_guard<std::mutex> lock(s_bipedMutex);
+            for (const auto& kv : s_bipedVariants) reg += fmt::format(" {:08X}={}", kv.first, kv.second);
+        }
+        NOBLE_INFO("ParticleTint: last 10 s: {} flame palette binds, {} with a known owner, {} owner had a registered colour, {} switched per flame (last owner {:08X}; registered:{})",
+                   binds, owned, matched, s_statRebinds.exchange(0), s_statLastOwner.load(), reg.empty() ? std::string(" none") : reg);
+        if (!s_diagBusy.exchange(true)) {
+            uint8_t entry[0x18], obj[0x200];
+            std::memcpy(entry, s_diagEntry, sizeof(entry));
+            std::memcpy(obj, s_diagObj, sizeof(obj));
+            const uint32_t diagOwner = s_diagOwner.load();
+            s_diagBusy.store(false);
+            std::string links;
+            {
+                std::lock_guard<std::mutex> lock(s_bipedMutex);
+                for (size_t off = 0; off + 4 <= sizeof(obj); off += 4) {
+                    uint32_t v;
+                    std::memcpy(&v, obj + off, 4);
+                    if (s_bipedVariants.count(v)) links += fmt::format(" +{:X}={:08X}", off, v);
+                }
+            }
+            std::string head, ent;
+            for (size_t off = 0; off < 0x40; off += 4) {
+                uint32_t v;
+                std::memcpy(&v, obj + off, 4);
+                head += fmt::format(" {:08X}", v);
+            }
+            for (size_t i = 0; i < 8; ++i) ent += fmt::format("{:02X}", entry[i]);
+            NOBLE_INFO("ParticleTint: owner {:08X} entry {} head{} player links:{}", diagOwner, ent, head,
+                       links.empty() ? std::string(" none") : links);
+        }
+    }
+#endif
+}
+
 void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceContext* context, UINT startSlot,
                                 UINT numViews, ID3D11ShaderResourceView* const* views) {
     if (numViews == 0 || !views || NothingToTint()) {
@@ -257,16 +486,47 @@ void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceCon
     }
     const UINT slot2Idx = 2 - startSlot;
     if (!views[slot2Idx] || !IsFlamePaletteCached(views[slot2Idx])) {
+        if (t_palCtx == context) t_palBound = kNoPalette;   // slot 2 no longer holds a flame palette
         original(context, startSlot, numViews, views);
         return;
     }
+    t_palCtx = context;
+    t_palOriginal = original;
+    t_palStock = views[slot2Idx];
+    t_palBound = kStockFlame;
 
     // A flame palette at slot 2 is being bound! Resolve which flame variant to use:
     int variantToUse = -1;
+    bool ownerResolved = false;
+    s_statBinds.fetch_add(1, std::memory_order_relaxed);
+    LogOwnerStats();
 
-    // 1. Try reading the currently rendered object from haloreach.dll+0xB43B38
+    // 0. Best: the engine draw that is running right now told us whose flame this is.
+    const uint32_t owner = t_flameOwner;
+    if (owner != kNoOwner) {
+        s_statOwned.fetch_add(1, std::memory_order_relaxed);
+        s_statLastOwner.store(owner, std::memory_order_relaxed);
+        const int ownerVariant = GetBipedFlameVariant(owner);
+        if (ownerVariant == kStockFlame) {
+            s_statMatched.fetch_add(1, std::memory_order_relaxed);
+            original(context, startSlot, numViews, views);   // this player's flames stay stock
+            return;
+        }
+        if (ownerVariant >= 0) {
+            s_statMatched.fetch_add(1, std::memory_order_relaxed);
+            variantToUse = ownerVariant;
+            ownerResolved = true;
+        } else if (s_ownerHookActive.load(std::memory_order_relaxed) &&
+                   GetTickCount64() - s_lastRegisterMs.load(std::memory_order_relaxed) < 2000) {
+            // The owner is known but is not a player with a Noble colour (a level fire, an AI, a vehicle): stock.
+            original(context, startSlot, numViews, views);
+            return;
+        }
+    }
+
+    // 1. Fallback: try reading the currently rendered object from haloreach.dll+0xB43B38
     HMODULE hReach = noble::ReachModule();
-    if (hReach) {
+    if (!ownerResolved && hReach) {
         uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
         uint32_t currObj = 0xFFFFFFFFu;
         __try {
@@ -305,6 +565,8 @@ void HandlePSSetShaderResources(PSSetShaderResourcesFn original, ID3D11DeviceCon
         if (numViews <= replaced.size()) {
             for (UINT k = 0; k < numViews; ++k) replaced[k] = views[k];
             replaced[slot2Idx] = tint;
+            t_palBound = (variantToUse >= 0 && variantToUse < static_cast<int>(kPrimaryFlames.size())) ? variantToUse
+                                                                                                         : kBoundCustom;
             original(context, startSlot, numViews, replaced.data());
             return;
         }
@@ -447,6 +709,7 @@ void HookFromSwapChain(IDXGISwapChain* swapChain) {
     s_frameEpoch.fetch_add(1, std::memory_order_relaxed);
     if (s_lastHookedSwapChain.load(std::memory_order_relaxed) == swapChain) return;
     s_lastHookedSwapChain.store(swapChain, std::memory_order_relaxed);
+    TryInstallOwnerHook();
     Microsoft::WRL::ComPtr<ID3D11Device> device;
     if (FAILED(swapChain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(device.GetAddressOf()))) || !device) return;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
@@ -466,12 +729,14 @@ void HookFromContext(ID3D11DeviceContext* context) {
     if (!context) return;
     if (s_lastHookedContext.load(std::memory_order_relaxed) == context) return;
     s_lastHookedContext.store(context, std::memory_order_relaxed);
+    TryInstallOwnerHook();
     Microsoft::WRL::ComPtr<ID3D11Device> device;
     context->GetDevice(device.GetAddressOf());
     HookContext(device.Get(), context);
 }
 
 void Install(ID3D11Device* device, ID3D11DeviceContext* context) {
+    TryInstallOwnerHook();
     if (!s_armed.exchange(true)) {
         ParseTintColour();
         InstallExportHooks();
@@ -498,8 +763,9 @@ int GetVariantIndex() {
 
 void RegisterBipedFlame(uint32_t bipedDatum, int variantIndex) {
     if (bipedDatum == 0xFFFFFFFFu) return;
+    s_lastRegisterMs.store(GetTickCount64(), std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(s_bipedMutex);
-    if (variantIndex >= 0 && variantIndex < static_cast<int>(kPrimaryFlames.size())) {
+    if ((variantIndex >= 0 && variantIndex < static_cast<int>(kPrimaryFlames.size())) || variantIndex == kStockFlame) {
         s_bipedVariants[bipedDatum] = variantIndex;
     } else {
         s_bipedVariants.erase(bipedDatum);

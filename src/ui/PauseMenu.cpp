@@ -3567,6 +3567,17 @@ static void DrawScoreboardPanel() {
       const ImVec2 pill1(pill0.x + pillW, pill0.y + pillH);
 
       dl->AddRectFilled(pill0, pill1, pingBadgeCol, 3.0f * s);
+      // Packet loss marker (2026-11-19): an amber dot beside the pill when this player's connection is losing
+      // packets (2 % or more of the ping probes), so the host can see who is causing stalls.
+      if (!r.local && NetworkTransport::Get().IsActive()) {
+        const float loss = r.hostPeer ? (NetworkTransport::Get().IsHost() ? -1.0f
+                                                                          : NetworkTransport::Get().GetPeerLossPercent(0))
+                                      : (r.machine ? NetworkTransport::Get().GetPeerLossPercent(r.machine) : -1.0f);
+        if (loss >= 2.0f) {
+          dl->AddCircleFilled(ImVec2(pill1.x + 6.0f * s, (pill0.y + pill1.y) * 0.5f), 3.5f * s,
+                              loss >= 5.0f ? IM_COL32(255, 90, 70, 255) : IM_COL32(255, 198, 72, 255));
+        }
+      }
       const std::string pingText = (ping >= 0) ? std::to_string(ping) : "-";
       Text(dl, NobleStyle::SmallFont(), 12.0f * s,
            ImVec2(pill0.x + (pillW - TextWidth(NobleStyle::SmallFont(),
@@ -5108,6 +5119,32 @@ void PauseMenu::DrawLoading() {
                  ImVec2(logoRight + logoSize, logoBottom), ImVec2(0, 0),
                  ImVec2(1, 1), IM_COL32(150, 186, 220, 185));
   }
+
+  // ---- Connection tips (2026-11-19): rotate every 8 s; a measured packet-loss problem takes priority ----
+  {
+    static const char *const kTips[] = {
+        "TIP: A wired connection plays smoother than Wi-Fi. Packet loss is the biggest cause of lag.",
+        "TIP: Pause downloads, streaming and updates on your network while you play online.",
+        "TIP: In co-op everyone plays at the host's pace, so the player with the best connection should host.",
+        "TIP: Turn on NETWORK STATS in Settings to see your ping and packet loss while you play.",
+        "TIP: Lower ping to the host means less input lag in co-op.",
+    };
+    const char *tip = kTips[static_cast<size_t>(ImGui::GetTime() / 8.0) % (sizeof(kTips) / sizeof(kTips[0]))];
+    ImU32 tipCol = IM_COL32(170, 196, 220, 210);
+    if (online) {
+      const auto q = NetworkTransport::Get().GetConnectionQuality();
+      if (q.lossPercent > 2.0f) {
+        tip = "YOUR CONNECTION IS LOSING PACKETS. A wired connection and a quiet network help a lot.";
+        tipCol = IM_COL32(255, 198, 72, 235);
+      }
+    }
+    const float tipPx = 14.5f * s;
+    const float maxW = (logoRight - logoLeft) - logoSize - 32.0f * s;
+    const float tw = (std::min)(maxW, smallFont->CalcTextSizeA(tipPx, FLT_MAX, 0.0f, tip).x);
+    const float tx = (w - tw) * 0.5f;
+    const float ty = logoBottom - logoSize * 0.5f - tipPx * 0.5f;
+    dl->AddText(smallFont, tipPx, ImVec2(tx, ty), tipCol, tip, nullptr, maxW);
+  }
 }
 
 void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading,
@@ -5188,15 +5225,19 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   SocialOverlay::Poll(!open && !loading && !noble::BlamEngine::IsSavedFilmPlayback());
   // Performance (2026-11-18): read showFps at most four times a second, not a full settings copy every frame.
   static bool s_showFpsCached = false;
+  static bool s_showNetCached = false;
   static ULONGLONG s_showFpsReadMs = 0;
   {
     const ULONGLONG nowTick = GetTickCount64();
     if (s_showFpsReadMs == 0 || nowTick - s_showFpsReadMs >= 250) {
       s_showFpsReadMs = nowTick;
-      s_showFpsCached = Settings::Get().Snapshot().showFps;
+      const auto snap = Settings::Get().Snapshot();
+      s_showFpsCached = snap.showFps;
+      s_showNetCached = snap.showNetStats;
     }
   }
   const bool showFps = s_showFpsCached;
+  const bool showNet = s_showNetCached && noble::NetworkTransport::Get().IsActive();
   static const bool s_scoreboardTest =
       wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
   const int boardVk = KeyBindings::EffectiveKey(20);
@@ -5300,7 +5341,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   const bool isTheater = noble::BlamEngine::IsSavedFilmPlayback();
   // The engine's loading screen is gone before an online co-op host has all its players: keep drawing our screen as
   // WAITING FOR PLAYERS until the game session starts (otherwise this is a black frame with the FPS counter).
-  if (!(open || gameOver || loading || waitingForPlayersScreen || showFps || scoreboardHeld ||
+  if (!(open || gameOver || loading || waitingForPlayersScreen || showFps || showNet || scoreboardHeld ||
         connectionLost || extraOverlay || SocialOverlay::WantsFrame() ||
         isTheater) ||
       !swapChain || !ImGui::GetCurrentContext())
@@ -5497,6 +5538,37 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
           ImVec2(pos.x + textSize.x + 8.0f, pos.y + textSize.y + 5.0f),
           IM_COL32(10, 16, 24, 190), 5.0f);
       foreground->AddText(pos, IM_COL32(143, 216, 255, 255), fpsLabel);
+    }
+    if (showNet) {
+      // Network overlay: refreshed twice a second so the numbers are readable.
+      static char s_netLabel[128] = {};
+      static ImU32 s_netColour = IM_COL32(143, 216, 255, 255);
+      static ULONGLONG s_netMs = 0;
+      const ULONGLONG nowMs = GetTickCount64();
+      if (s_netMs == 0 || nowMs - s_netMs >= 500) {
+        s_netMs = nowMs;
+        auto &net = noble::NetworkTransport::Get();
+        const auto q = net.GetConnectionQuality();
+        const auto prof = net.GetNetworkProfile();
+        char ping[24], loss[24];
+        if (q.pingMs >= 0) std::snprintf(ping, sizeof(ping), "%d ms", q.pingMs);
+        else std::snprintf(ping, sizeof(ping), "--");
+        if (q.lossPercent >= 0) std::snprintf(loss, sizeof(loss), "%.0f%%", q.lossPercent);
+        else std::snprintf(loss, sizeof(loss), "--");
+        std::snprintf(s_netLabel, sizeof(s_netLabel), "%s  PING %s  LOSS %s  UP %u kbit/s  DOWN %u kbit/s%s",
+                      net.IsHost() ? "HOST" : "GUEST", ping, loss, prof.sendRateBps * 8 / 1000,
+                      prof.recvRateBps * 8 / 1000, prof.relayActive && !prof.directUdpActive ? "  RELAY" : "");
+        const bool bad = q.pingMs > 150 || q.lossPercent > 5.0f;
+        const bool fair = q.pingMs > 80 || q.lossPercent > 1.0f;
+        s_netColour = bad ? IM_COL32(255, 120, 100, 255) : fair ? IM_COL32(255, 198, 72, 255) : IM_COL32(82, 224, 128, 255);
+      }
+      ImDrawList *foreground = ImGui::GetForegroundDrawList();
+      const ImVec2 textSize = ImGui::CalcTextSize(s_netLabel);
+      const ImVec2 pos(io.DisplaySize.x - textSize.x - 24.0f, showFps ? 48.0f : 16.0f);
+      foreground->AddRectFilled(ImVec2(pos.x - 8.0f, pos.y - 5.0f),
+                                ImVec2(pos.x + textSize.x + 8.0f, pos.y + textSize.y + 5.0f),
+                                IM_COL32(10, 16, 24, 190), 5.0f);
+      foreground->AddText(pos, s_netColour, s_netLabel);
     }
     if (gameOver) {
       DrawGameOver(hwnd);

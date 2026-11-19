@@ -37,6 +37,10 @@ struct SettingsData {
     bool verticalSync = false;     // Noble default: off (Tyler)
     int fpsLimit = 0;              // 0 = uncapped
     bool showFps = false;
+    bool showNetStats = false;     // network overlay: ping, packet loss, upload/download
+    bool networkBudgetBoost = true;  // raise the game's 2010-era network upload caps (NetBudget)
+    bool packetRedundancy = true;     // co-op: send each game packet a second time so one lost packet doesn't stall the game
+    int hostUploadKbps = 0;          // this PC's real upload speed in kbit/s for the network budget; 0 = let the game estimate
     float uiScale = 1.0f;          // 0.75..1.50: the player's UI size, multiplied on top of the screen-height scale (SETTINGS > VIDEO)
     bool throttleUnfocused = true;   // drop to 30 FPS when Noble is not the active window
     float brightness = 1.0f;    // 0.7..1.4, applied as a gamma exponent by the post-process (1.0 = untouched)

@@ -986,6 +986,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Provenance for support: which source tree/exe this log came from. Log-only, dev builds only.
     NOBLE_INFO("Build: {}", noble::BuildStamp());
 
+#ifdef NOBLE_DEV_BUILD
+    // `-test-master-nodes <url>`: headless check of nearest-node picking against a (fake) cluster at <url>.
+    // Writes "master-nodes-result.txt" beside the exe with the picked node, then exits.
+    {
+        int argcT = 0;
+        LPWSTR* argvT = CommandLineToArgvW(GetCommandLineW(), &argcT);
+        for (int i = 1; argvT && i + 1 < argcT; ++i) {
+            if (_wcsicmp(argvT[i], L"-test-master-nodes") != 0) continue;
+            std::string base;
+            for (const wchar_t ch : std::wstring(argvT[i + 1])) base.push_back(static_cast<char>(ch & 0x7F));
+            const std::string picked = noble::MasterServerClient::Get().PickFastestNode(base);
+            wchar_t exePath[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+            std::ofstream(std::filesystem::path(exePath).parent_path() / "master-nodes-result.txt") << picked << "\n";
+            LocalFree(argvT);
+            noble::Logger::Shutdown();
+            return 0;
+        }
+        if (argvT) LocalFree(argvT);
+    }
+#endif
     // Headless synthetic validation of the 32/64/128 slot-shadow layouts (no MCC, no window, no engine).
     // `-test-slot-capacity`: prints one line per capacity into the log and returns non-zero if a layout is invalid.
     if (std::wstring(pCmdLine ? pCmdLine : L"").find(L"-test-slot-capacity") != std::wstring::npos) {

@@ -1441,18 +1441,50 @@ static void UpdateFivePlayerLatch() {
 // Identity-check probe: hr+0x40B4C8 compares a local TLS machine identity against the launch-data descriptor returned by
 // the session object's vtable+0x90 getter; a mismatch sets launch status 4 (session-start mode) and is the five-player
 // discriminator. Dump both sides so the differing field can be aligned.
+// 2026-11-18 correction: hr+0x40B4C8 is the engine's end-load-map check (retail
+// c_life_cycle_state_handler_in_game::end_load_map). It reads the LIVE game's options through one more pointer:
+// gameGlobals = *(TLS block + 0x48); options = gameGlobals + 0x10. It requires a live game (gameGlobals byte 0 or 1
+// non-zero), then compares two 16-byte ids at options+0x1C and options+0x2C with the session's game-start parameter.
+// The earlier probe read TLS block + 0x10 directly (wrong struct) and only 0x28 bytes (second id never captured).
+static uintptr_t ReadGameGlobals() {
+    const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+    const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+    const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+    return block ? *reinterpret_cast<const uintptr_t*>(block + 0x48) : 0;
+}
+// POD-only helper: "live game" flag plus both live-game ids, as end_load_map sees them on this thread.
+static int CaptureLiveGameIds(char* out, size_t outSize) {
+    __try {
+        const uintptr_t gg = ReadGameGlobals();
+        if (!gg) return std::snprintf(out, outSize, "live 0 (no game globals)");
+        const int b0 = *reinterpret_cast<const uint8_t*>(gg);
+        const int b1 = *reinterpret_cast<const uint8_t*>(gg + 1);
+        const uintptr_t opts = gg + 0x10;
+        const int simType = *reinterpret_cast<const uint8_t*>(opts + 0x01);   // game simulation type byte (4/5 = distributed)
+        int n = std::snprintf(out, outSize, "live %d (b0 %d b1 %d) sim %d ids[", (b0 || b1) ? 1 : 0, b0, b1, simType);
+        for (int i = 0; i < 0x20 && n > 0 && static_cast<size_t>(n) < outSize; ++i) {
+            n += std::snprintf(out + n, outSize - n, "%02X%s", *reinterpret_cast<const unsigned char*>(opts + 0x1C + i),
+                               i == 0x0F ? " | " : "");
+        }
+        if (n > 0 && static_cast<size_t>(n) < outSize) n += std::snprintf(out + n, outSize - n, "]");
+        return n;
+    } __except (1) {
+        return std::snprintf(out, outSize, "live ? (probe fault)");
+    }
+}
 typedef uint64_t(__fastcall* LaunchIdentityCheckFn)(void* session);
 static LaunchIdentityCheckFn s_originalIdentityCheck = nullptr;
 // POD-only helper: formats the identity-check inputs (SEH lives here to avoid C2712 in the logging hook).
 static int CaptureIdentityProbe(void* session, char* out, size_t outSize) {
     __try {
-        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
-        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
-        const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
-        const uintptr_t local = block + 0x10;
+        const uintptr_t gg = ReadGameGlobals();
+        const uintptr_t local = gg ? gg + 0x10 : 0;
         uintptr_t launchData = 0;
         if (session) {
-            const uintptr_t obj = *reinterpret_cast<const uintptr_t*>(reinterpret_cast<uintptr_t>(session) + 0x49A0);
+            // Embedded object (the engine does "lea rcx,[session+0x49A0]; mov rax,[rcx]; call [rax+0x90]"), so the
+            // object IS session+0x49A0 and its first qword is the vtable (fixed 2026-11-19; it was dereferenced once
+            // too often and every call faulted).
+            const uintptr_t obj = reinterpret_cast<uintptr_t>(session) + 0x49A0;
             if (obj) {
                 const uintptr_t vtable = *reinterpret_cast<const uintptr_t*>(obj);
                 if (vtable) {
@@ -1463,13 +1495,14 @@ static int CaptureIdentityProbe(void* session, char* out, size_t outSize) {
                 }
             }
         }
-        int n = std::snprintf(out, outSize, "local[");
-        for (int i = 0; i < 0x28 && n > 0 && static_cast<size_t>(n) < outSize; ++i) {
-            n += std::snprintf(out + n, outSize - n, "%02X%s", *reinterpret_cast<const unsigned char*>(local + i),
-                               (i & 3) == 3 && i != 0x27 ? " " : "");
+        const int live = gg ? ((*reinterpret_cast<const uint8_t*>(gg) || *reinterpret_cast<const uint8_t*>(gg + 1)) ? 1 : 0) : 0;
+        int n = std::snprintf(out, outSize, "live %d game[", live);
+        for (int i = 0; local && i < 0x20 && n > 0 && static_cast<size_t>(n) < outSize; ++i) {
+            n += std::snprintf(out + n, outSize - n, "%02X%s", *reinterpret_cast<const unsigned char*>(local + 0x1C + i),
+                               (i & 3) == 3 && i != 0x1F ? " " : "");
         }
-        if (n > 0 && static_cast<size_t>(n) < outSize) n += std::snprintf(out + n, outSize - n, "] launch[");
-        for (int i = 0; i < 0x20 && n > 0 && static_cast<size_t>(n) < outSize; ++i) {
+        if (n > 0 && static_cast<size_t>(n) < outSize) n += std::snprintf(out + n, outSize - n, "] session[");
+        for (int i = 0; launchData && i < 0x20 && n > 0 && static_cast<size_t>(n) < outSize; ++i) {
             n += std::snprintf(out + n, outSize - n, "%02X%s", *reinterpret_cast<const unsigned char*>(launchData + i),
                                (i & 3) == 3 && i != 0x1F ? " " : "");
         }
@@ -1488,15 +1521,14 @@ static uint64_t __fastcall Hook_IdentityCheck(void* session) {
         UpdateFivePlayerLatch();
         if (s_fivePlayerSeen.load()) {
             __try {
-                const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
-                const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
-                const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
-                if (block && session) {
-                    const uintptr_t local = block + 0x10;
+                // Same pointer hop as the engine (see ReadGameGlobals). Only meaningful when a live game exists.
+                const uintptr_t gg = ReadGameGlobals();
+                if (gg && session) {
+                    const uintptr_t local = gg + 0x10;
                     *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(session) + 0x614DC) =
                         (*(reinterpret_cast<const char*>(local + 0x1CA)) == 0 &&
                          *(reinterpret_cast<const char*>(local + 1)) != 1) ? 1 : 0;
-                    const uint64_t id = *reinterpret_cast<const uint64_t*>(block + 0x18);
+                    const uint64_t id = *reinterpret_cast<const uint64_t*>(gg + 0x18);
                     static std::atomic<int> forceLog{0};
                     if (forceLog.fetch_add(1) < 10) {
                         NOBLE_WARN("LobbyPatches: campaign >4 probe: forced identity match, id {:#x}", id);
@@ -1508,8 +1540,11 @@ static uint64_t __fastcall Hook_IdentityCheck(void* session) {
         }
     }
     static std::atomic<int> logCount{0};
+    // While the queued launch is still pending (byte hr+0x27CD3EF), end_load_map returns -1 without comparing anything;
+    // skip those calls so the log shows the real comparison after the map load.
+    const bool launchPending = s_reachBase && *reinterpret_cast<const uint8_t*>(s_reachBase + 0x27CD3EF) != 0;
     const uint64_t result = s_originalIdentityCheck ? s_originalIdentityCheck(session) : ~0ull;
-    if (s_campaignCoop.load() && IsNobleHost() && logCount.fetch_add(1) < 12) {
+    if (!launchPending && s_campaignCoop.load() && IsNobleHost() && logCount.fetch_add(1) < 12) {
         char message[512] = {};
         const int ok = CaptureIdentityProbe(session, message, sizeof(message));
         NOBLE_WARN("LobbyPatches: identity_check ret {:#x} {}", result, ok ? message : "(probe fault)");
@@ -2245,7 +2280,23 @@ static void __fastcall Hook_LaunchFrame(char* block, uint64_t a2, uint64_t a3, u
                    s_reachBase ? SafeReadU8Ptr(s_reachBase + 0x4E0E8F8) : -1,
                    sess ? SafeReadU32Ptr(sess + 0x173C) : 0, sess ? SafeReadU32Ptr(sess + 0x60EF8) : -1);
     }
+    // 2026-11-18: this is the main-loop consumer of the launch queued by begin_load_map (hr+0xA2CE4). Record what the
+    // queued options declare (+0x18 count field, +0x254 player mask) and whether a live game exists afterwards, so a
+    // five-player run shows whether the map load accepted the roster before end_load_map compares ids.
+    const bool trace = n < 40;
+    if (trace) {
+        char before[160] = {};
+        CaptureLiveGameIds(before, sizeof(before));
+        NOBLE_WARN("LobbyPatches: [{} pid {}] launch_frame IN opts count {} mask {:08X} | {}", RefuseRole(),
+                   GetCurrentProcessId(), block ? SafeReadU32Ptr(reinterpret_cast<uintptr_t>(block) + 0x18) : -1,
+                   block ? static_cast<uint32_t>(SafeReadU32Ptr(reinterpret_cast<uintptr_t>(block) + 0x254)) : 0u, before);
+    }
     if (s_originalLaunchFrame) s_originalLaunchFrame(block, a2, a3, a4);
+    if (trace) {
+        char after[160] = {};
+        CaptureLiveGameIds(after, sizeof(after));
+        NOBLE_WARN("LobbyPatches: [{} pid {}] launch_frame OUT | {}", RefuseRole(), GetCurrentProcessId(), after);
+    }
 }
 
 // Engine fatal/error reporter (hr+0x00D648(code, reasonString, a3, a4)): stores the first error and forwards event 10
@@ -3402,6 +3453,25 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
             }
         } else {
             NOBLE_WARN("LobbyPatches: campaign launch-info player limit bytes differ at hr+0x5804A; left alone");
+        }
+    }
+
+    // 8ad. Firefight launch-info player-count limit (2026-11-18). The same validator tail holds Firefight at 8: r14d
+    // is preloaded with 8 (it doubles as an 8-byte memcmp length earlier in the routine, so that load cannot change)
+    // and the "cmovne r14d,ecx" right after 8ac only swaps in ecx for the non-Firefight modes. Turning the cmovne into a
+    // plain "mov r14d,ecx" applies ecx (16 after 8ac) to every mode, so Firefight launches validate up to 16 too.
+    // Requires 8ac: if ecx is still the stock 4 this would lower Firefight to 4, so it is skipped in that case.
+    {
+        uint8_t* atMode = reinterpret_cast<uint8_t*>(base + 0x5804A);
+        static const uint8_t kRaisedPair[9] = { 0xB9, 0x10, 0x00, 0x00, 0x00, 0x44, 0x0F, 0x45, 0xF1 }; // mov ecx,16 / cmovne r14d,ecx
+        if (0x5804A + 9 <= size && std::memcmp(atMode, kRaisedPair, 9) == 0) {
+            static const uint8_t kAllModes[4] = { 0x44, 0x8B, 0xF1, 0x90 }; // mov r14d,ecx / nop
+            if (WriteProtectedMemory(atMode + 5, kAllModes, 4)) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: Firefight launch player limit raised from 8 to 16");
+            }
+        } else {
+            NOBLE_WARN("LobbyPatches: Firefight launch player limit left at 8 (validator bytes not as expected)");
         }
     }
 

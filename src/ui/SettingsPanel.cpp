@@ -1588,6 +1588,13 @@ void SettingsPanel::RenderGraphics() {
           When::Apply, "Off", m_edit.showFps != m_saved.showFps)) {
     ToggleValue(m_edit.showFps);
   }
+  if (Row("NETWORK STATS",
+          "Shows your connection while you play online: ping, packet loss and "
+          "how much data is going up and down. As host it shows the worst "
+          "connection among your players.",
+          When::Apply, "Off", m_edit.showNetStats != m_saved.showNetStats)) {
+    ToggleValue(m_edit.showNetStats);
+  }
   if (Row("UI SCALE",
           "Size of Noble's menus, text and the in-match pause menu, on top of "
           "the automatic scaling for your screen's resolution. 100 % is the "
@@ -2885,7 +2892,7 @@ int SettingsPanel::CountDiff(const SettingsData &a, const SettingsData &b,
            (a.borderless != b.borderless ||
             a.exclusiveFullscreen != b.exclusiveFullscreen) +
            (a.verticalSync != b.verticalSync) + (a.fpsLimit != b.fpsLimit) +
-           (a.showFps != b.showFps) + f(a.uiScale, b.uiScale) +
+           (a.showFps != b.showFps) + (a.showNetStats != b.showNetStats) + f(a.uiScale, b.uiScale) +
            (a.fullscreenWidth != b.fullscreenWidth ||
             a.fullscreenHeight != b.fullscreenHeight) +
            (a.monitor != b.monitor) +
@@ -3000,6 +3007,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     e.verticalSync = d.verticalSync;
     e.fpsLimit = Settings::DefaultFpsLimit();
     e.showFps = d.showFps;
+    e.showNetStats = d.showNetStats;
     e.uiScale = d.uiScale;
     e.fullscreenWidth = d.fullscreenWidth;
     e.fullscreenHeight = d.fullscreenHeight;

@@ -1568,6 +1568,15 @@ void ServerBrowser::RenderServerDetails() {
                     std::to_string(fe::EffectiveMultiplayerCap()) + " players).");
     }
 
+    // High-ping warning for campaign co-op (2026-11-19): campaign co-op runs at the host's pace, so a slow link to the
+    // host adds input lag for this player and can stall everyone else.
+    if (Lower(s.gameMode) == "campaign" && s.ping > 150) {
+        ImGui::Spacing();
+        wrappedLine(true, ImVec4{1.0f, 0.62f, 0.35f, 1.0f},
+                    "High ping for co-op (" + std::to_string(s.ping) +
+                        " ms). Everyone in campaign co-op plays at the host's pace, so this adds input lag for you "
+                        "and can make the game stutter for the other players.");
+    }
     if (s.isPasswordProtected) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Password protected session");

@@ -160,6 +160,11 @@ void Settings::Load() {
             Read(j, "width", d.width);
             Read(j, "height", d.height);
             Read(j, "borderless", d.borderless);
+    Read(j, "networkBudgetBoost", d.networkBudgetBoost);
+    Read(j, "hostUploadKbps", d.hostUploadKbps);
+    Read(j, "packetRedundancy", d.packetRedundancy);
+    if (d.hostUploadKbps < 0) d.hostUploadKbps = 0;
+    if (d.hostUploadKbps > 1000000) d.hostUploadKbps = 1000000;
             Read(j, "exclusiveFullscreen", d.exclusiveFullscreen);
             if (d.exclusiveFullscreen) d.borderless = true;
             Read(j, "fullscreenWidth", d.fullscreenWidth);
@@ -176,6 +181,7 @@ void Settings::Load() {
             Read(j, "verticalSync", d.verticalSync);
             Read(j, "fpsLimit", d.fpsLimit);
             Read(j, "showFps", d.showFps);
+    Read(j, "showNetStats", d.showNetStats);
             Read(j, "uiScale", d.uiScale);
             Read(j, "throttleUnfocused", d.throttleUnfocused);
             Read(j, "brightness", d.brightness);
@@ -420,6 +426,9 @@ bool Settings::Save() {
         j["width"] = d.width;
         j["height"] = d.height;
         j["borderless"] = d.borderless;
+    j["networkBudgetBoost"] = d.networkBudgetBoost;
+    j["hostUploadKbps"] = d.hostUploadKbps;
+    j["packetRedundancy"] = d.packetRedundancy;
         j["exclusiveFullscreen"] = d.exclusiveFullscreen;
         j["fullscreenWidth"] = d.fullscreenWidth;
         j["fullscreenHeight"] = d.fullscreenHeight;
@@ -435,6 +444,7 @@ bool Settings::Save() {
         j["verticalSync"] = d.verticalSync;
         j["fpsLimit"] = d.fpsLimit;
         j["showFps"] = d.showFps;
+    j["showNetStats"] = d.showNetStats;
         j["uiScale"] = d.uiScale;
         j["throttleUnfocused"] = d.throttleUnfocused;
         j["brightness"] = d.brightness;

@@ -15,18 +15,27 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <climits>
 
 namespace noble {
 namespace AppearanceSync {
 namespace {
 
-constexpr uint64_t kSendIntervalMs = 2000;
+// Sent on change, not on a timer: a player's own colour when it changes, the host's relay of a changed entry, and a
+// full snapshot when someone new joins. A slow refresh covers a lost packet. This keeps traffic flat as lobbies grow.
+constexpr uint64_t kRefreshIntervalMs = 15000;
+constexpr uint64_t kMinGapMs = 250;   // bursts of changes are merged into one message
 constexpr size_t kPlayerRecordSize = 0x490;   // engine players data array entry
 constexpr int kMaxPlayers = 16;
 
 std::mutex s_mutex;
 std::unordered_map<uint64_t, int> s_remoteFlame;   // xuid -> flame variant (-1 = none)
+std::unordered_set<uint64_t> s_pendingRelay;       // host only: entries changed since the last send
 std::atomic<ULONGLONG> s_lastSendMs{0};
+std::atomic<ULONGLONG> s_lastFullMs{0};
+std::atomic<int> s_lastSentLocalFlame{INT_MIN};
+std::atomic<size_t> s_lastPeerCount{0};
 std::atomic<bool> s_wasActive{false};
 
 // Where the engine keeps the player id inside a player record. Found once at runtime from the local player's own
@@ -69,11 +78,11 @@ int LocateXuidOffset(uint64_t localXuid) {
         int maxP = 0;
         const uint8_t* entries = PlayerEntries(&maxP);
         if (!entries) return -1;
+        // Every record is searched for this machine's id (the "local machine" flag isn't reliable on every build of
+        // the session); only this machine's own record holds its id.
         for (int i = 0; i < maxP; ++i) {
             const uint8_t* entry = entries + static_cast<size_t>(i) * kPlayerRecordSize;
             if (*reinterpret_cast<const uint16_t*>(entry) == 0) continue;
-            const uint32_t flags = *reinterpret_cast<const uint32_t*>(entry + 0x04);
-            if ((flags & 0x08u) == 0) continue;   // 0x08 = this machine's player
             for (size_t off = 0x08; off + 8 <= kPlayerRecordSize; off += 4) {
                 uint64_t v = 0;
                 std::memcpy(&v, entry + off, sizeof(v));
@@ -105,22 +114,29 @@ void TryLocateXuidOffset() {
     }
 }
 
-void SendLocalAndTable() {
+// full = local entry plus (host) every known entry; otherwise local entry plus (host) only the changed ones.
+void SendEntries(bool full, int localFlame) {
     NetworkTransport& net = NetworkTransport::Get();
-    const uint64_t self = LocalXuid();
     nlohmann::json players = nlohmann::json::array();
-    players.push_back({{"xuid", ToHex(self)}, {"flame", ElitePack::GetLocalFlameVariant()}});
+    players.push_back({{"xuid", ToHex(LocalXuid())}, {"flame", localFlame}});
     if (net.IsHost()) {
-        // The host relays every guest's entry so guests also see each other.
+        // The host relays guests' entries so guests also see each other.
         std::lock_guard<std::mutex> lock(s_mutex);
-        for (const auto& [xuid, flame] : s_remoteFlame) {
-            players.push_back({{"xuid", ToHex(xuid)}, {"flame", flame}});
+        if (full) {
+            for (const auto& [xuid, flame] : s_remoteFlame) {
+                players.push_back({{"xuid", ToHex(xuid)}, {"flame", flame}});
+            }
+        } else {
+            for (const uint64_t xuid : s_pendingRelay) {
+                const auto it = s_remoteFlame.find(xuid);
+                if (it != s_remoteFlame.end()) players.push_back({{"xuid", ToHex(xuid)}, {"flame", it->second}});
+            }
         }
+        s_pendingRelay.clear();
     }
     const nlohmann::json j = {{"type", "appearance_extra"}, {"players", players}};
     net.SendLobbyControlJson(j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
 }
-
 } // namespace
 
 uint64_t LocalXuid() {
@@ -141,6 +157,11 @@ void Tick() {
         if (s_wasActive.exchange(false)) {
             std::lock_guard<std::mutex> lock(s_mutex);
             s_remoteFlame.clear();
+            s_pendingRelay.clear();
+            s_lastSendMs.store(0);
+            s_lastFullMs.store(0);
+            s_lastSentLocalFlame.store(INT_MIN);
+            s_lastPeerCount.store(0);
             s_xuidOffset.store(-1);
             s_locateAttempts.store(0);
         }
@@ -149,10 +170,25 @@ void Tick() {
     s_wasActive.store(true);
     TryLocateXuidOffset();
     const ULONGLONG now = GetTickCount64();
-    const ULONGLONG last = s_lastSendMs.load();
-    if (last != 0 && now - last < kSendIntervalMs) return;
+    const ULONGLONG lastSend = s_lastSendMs.load();
+    if (lastSend != 0 && now - lastSend < kMinGapMs) return;
+
+    const int localFlame = ElitePack::GetLocalFlameVariant();
+    const size_t peers = net.GetGamePeerCount();
+    const bool someoneJoined = peers > s_lastPeerCount.exchange(peers);
+    const ULONGLONG lastFull = s_lastFullMs.load();
+    const bool full = lastFull == 0 || someoneJoined || now - lastFull >= kRefreshIntervalMs;
+    bool relayPending = false;
+    if (net.IsHost()) {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        relayPending = !s_pendingRelay.empty();
+    }
+    if (!full && localFlame == s_lastSentLocalFlame.load() && !relayPending) return;
+
+    SendEntries(full, localFlame);
     s_lastSendMs.store(now);
-    SendLocalAndTable();
+    if (full) s_lastFullMs.store(now);
+    s_lastSentLocalFlame.store(localFlame);
 }
 
 void SetRemote(uint64_t xuid, int flameVariant) {
@@ -164,6 +200,7 @@ void SetRemote(uint64_t xuid, int flameVariant) {
         auto it = s_remoteFlame.find(xuid);
         if (it == s_remoteFlame.end() || it->second != flameVariant) {
             s_remoteFlame[xuid] = flameVariant;
+            if (NetworkTransport::Get().IsHost()) s_pendingRelay.insert(xuid);
             changed = true;
         }
     }

@@ -238,7 +238,89 @@ void MasterServerClient::SetUrl(const std::string& url) {
     std::lock_guard<std::mutex> lock(m_mutex);
     // Accept URLs copied from a browser (often with a trailing slash) and normalise before every
     // request; m_url + "/api/..." with a double slash 404s on Express.
-    m_url = NormalizeUrl(url);
+    const std::string normalized = NormalizeUrl(url);
+    if (normalized != m_url) {
+        m_hostUrl.clear();
+        m_nodeProbeDone = false;
+    }
+    m_url = normalized;
+}
+
+std::string MasterServerClient::HostUrl() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const std::string base = m_url.empty() ? MasterDefaultUrl() : m_url;
+    if (!m_hostUrl.empty() && NormalizeUrl(base) == NormalizeUrl(MasterDefaultUrl())) return m_hostUrl;
+    return base;
+}
+
+// Runs on the worker thread before the first registration. Reads the cluster's node list from the main server and
+// times a /api/health round trip to each node (best of two). With no other nodes this is one request and changes
+// nothing. A node that is asleep or down simply loses.
+void MasterServerClient::ProbeNearestNode() {
+    std::string base;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_nodeProbeDone) return;
+        m_nodeProbeDone = true;
+        base = m_url.empty() ? MasterDefaultUrl() : m_url;
+    }
+    if (NormalizeUrl(base) != NormalizeUrl(MasterDefaultUrl())) return;
+    const std::string fastest = PickFastestNode(base);
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_hostUrl = fastest == NormalizeUrl(base) ? std::string() : fastest;
+}
+
+std::string MasterServerClient::PickFastestNode(const std::string& base) {
+    const HttpResult health = HttpRequest(base, L"GET", "/api/health", {});
+    if (!health.ok) return NormalizeUrl(base);
+    std::vector<std::string> nodes;
+    try {
+        const nlohmann::json j = nlohmann::json::parse(health.body);
+        if (j.contains("cluster") && j["cluster"].is_object() && j["cluster"].contains("nodes") &&
+            j["cluster"]["nodes"].is_array()) {
+            for (const auto& n : j["cluster"]["nodes"]) {
+                std::string u;
+                if (n.is_string()) u = n.get<std::string>();
+                else if (n.is_object()) u = n.value("url", n.value("host", std::string()));
+                u = NormalizeUrl(u);
+                if (u.empty()) continue;
+                if (u.find("://") == std::string::npos) u = "https://" + u;
+                if (u != NormalizeUrl(base) && std::find(nodes.begin(), nodes.end(), u) == nodes.end()) nodes.push_back(u);
+                if (nodes.size() >= 8) break;
+            }
+        }
+    } catch (...) {
+        return NormalizeUrl(base);
+    }
+    if (nodes.empty()) return NormalizeUrl(base);
+    nodes.insert(nodes.begin(), NormalizeUrl(base));
+
+    auto timeNode = [](const std::string& url) -> long long {
+        long long best = -1;
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            const auto t0 = std::chrono::steady_clock::now();
+            const HttpResult r = HttpRequest(url, L"GET", "/api/health", {});
+            const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            if (r.ok && (best < 0 || ms < best)) best = ms;
+        }
+        return best;
+    };
+    std::vector<std::future<long long>> timings;
+    for (const std::string& u : nodes) timings.push_back(std::async(std::launch::async, timeNode, u));
+    size_t bestIndex = 0;
+    long long bestMs = -1;
+    for (size_t i = 0; i < timings.size(); ++i) {
+        const long long ms = timings[i].get();
+        if (ms >= 0 && (bestMs < 0 || ms < bestMs)) {
+            bestMs = ms;
+            bestIndex = i;
+        }
+    }
+    if (bestMs < 0) return NormalizeUrl(base);
+    NOBLE_INFO("MasterServer: {} master nodes checked; hosting on the fastest ({} ms{})", nodes.size(), bestMs,
+               bestIndex == 0 ? ", the main server" : "");
+    return nodes[bestIndex];
 }
 
 std::string MasterServerClient::Url() const {
@@ -803,7 +885,9 @@ void MasterServerClient::DoRegister() {
             }
         });
     }
-    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions", body.dump());
+    ProbeNearestNode();
+    const std::string hostUrl = HostUrl();
+    const HttpResult r = HttpRequest(hostUrl, L"POST", "/api/sessions", body.dump());
     if (!r.ok) {
         SetStatus("could not list your game: " + r.error);
         return;
@@ -815,8 +899,8 @@ void MasterServerClient::DoRegister() {
             std::lock_guard<std::mutex> lock(m_mutex);
             m_sessionId = Str(j, "session_id", 64);
             m_sessionToken = Str(j, "token", 128);
-            if (!m_sessionId.empty() && !m_url.empty()) {
-                m_sessionRegionUrl[m_sessionId] = m_url;
+            if (!m_sessionId.empty() && !hostUrl.empty()) {
+                m_sessionRegionUrl[m_sessionId] = NormalizeUrl(hostUrl);
             }
             m_status = "your game is listed on the master server";
             sid = m_sessionId;
@@ -895,7 +979,7 @@ void MasterServerClient::DoHeartbeat() {
         body["peer_pings"] = std::move(pingsObj);
     }
     if (id.empty() || token.empty()) return;
-    const HttpResult r = HttpRequest(Url(), L"PUT", "/api/sessions/heartbeat", body.dump(), token);
+    const HttpResult r = HttpRequest(HostUrl(), L"PUT", "/api/sessions/heartbeat", body.dump(), token);
     if (r.ok) {
         try {
             auto j = nlohmann::json::parse(r.body);

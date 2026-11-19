@@ -164,6 +164,7 @@ set(SOURCES
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
     src/engine/AppearanceSync.cpp
+    src/engine/NetBudget.cpp
     src/engine/MvarDump.cpp
     src/engine/MemoryDiff.cpp
     src/engine/ParticleTint.cpp
@@ -262,6 +263,7 @@ set(HEADERS
     src/engine/ReachArmory.hpp
     src/engine/ElitePack.hpp
     src/engine/AppearanceSync.hpp
+    src/engine/NetBudget.hpp
     src/engine/SharedTagCache.hpp
     src/engine/DevCheats.hpp
     src/engine/CameraFov.hpp

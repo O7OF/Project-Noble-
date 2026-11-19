@@ -12,6 +12,7 @@
 #include "common/ArmorEffects.hpp"
 #include "common/DeviceIdentity.hpp"
 #include "engine/AppearanceSync.hpp"
+#include "engine/NetBudget.hpp"
 #include "hooks/EnginePatches.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
@@ -839,6 +840,8 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     }
     // Noble-only appearance extras (flame colour) over Noble's own channel; rate-limited inside.
     noble::AppearanceSync::Tick();
+    // Modern network upload budget instead of the game's 2010 caps; rate-limited inside.
+    noble::NetBudget::Tick();
 
     // "Game running" flag (TLS block +0x48, byte +0x1EAB8). The engine's main loop finishes the game and tears the
     // session down when it is 0, so logging every change says exactly when a co-op match is declared over.

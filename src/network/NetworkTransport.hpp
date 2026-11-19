@@ -1,6 +1,7 @@
 #include <functional>
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -112,6 +113,16 @@ public:
   // peer, returns -1 if unknown)
   int GetPeerPingMs(uint64_t machineId = 0) const;
   std::unordered_map<uint64_t, int> GetAllPeerPingsMs() const;
+
+  // For the network overlay. Guest: the connection to the host. Host: the worst ping and loss among its peers.
+  struct ConnectionQuality {
+    int pingMs = -1;        // -1 = not measured yet
+    float lossPercent = -1; // -1 = not measured yet
+    int peers = 0;
+  };
+  ConnectionQuality GetConnectionQuality() const;
+  // Packet loss % to one machine (0 = the host, for a guest); -1 = not measured yet.
+  float GetPeerLossPercent(uint64_t machineId = 0) const;
 
   // Master Server WebSocket packet relay & lobby signaling
   using LobbyLaunchCallback = std::function<void(
@@ -266,7 +277,27 @@ private:
     int rttMs = -1;
     bool directConfirmed = false;
     bool pongConfirmed = false;
+    // Packet-loss estimate from the once-a-second PING/PONG probes: a probe not answered within 1.5 s is lost.
+    uint64_t probeAwaitTick = 0;
+    uint32_t probes = 0;
+    uint32_t probesLost = 0;
   };
+  static void NoteProbeSent(PeerRouteState &route, uint64_t nowTick) {
+    route.lastPingSentTick = nowTick;
+    if (route.probeAwaitTick != 0 && nowTick >= route.probeAwaitTick &&
+        nowTick - route.probeAwaitTick > 1500ULL) {
+      ++route.probesLost;
+      route.probeAwaitTick = 0;
+    }
+    if (route.probeAwaitTick == 0) {
+      route.probeAwaitTick = nowTick;
+      if (++route.probes > 60) {   // rolling window: halve the history
+        route.probes /= 2;
+        route.probesLost /= 2;
+      }
+    }
+  }
+  static void NoteProbeAnswered(PeerRouteState &route) { route.probeAwaitTick = 0; }
   static bool IsRouteBidirectionalAlive(const PeerRouteState &route,
                                         uint64_t nowTick) {
     return route.pongConfirmed && route.lastPongRecvTick != 0 &&
@@ -304,6 +335,33 @@ private:
   mutable uint32_t m_packetsRecvPerSec{0};
 
   std::atomic<bool> m_relayStopRequested{false};
+
+  // ---- Co-op packet redundancy (2026-11-19) ----
+  // Each game packet sent over direct UDP is followed (with the next send to the same machine, within 100 ms) by one
+  // tagged copy. The receiver uses a copy only if the original never arrived, so a single lost packet no longer
+  // stalls lockstep co-op. The engine's own identical re-sends are never filtered. On only for small games.
+  static constexpr uint16_t kRedundantCopyPort = 0xFFF0;
+  int SendGamePacket(const sockaddr_in &dest, uint64_t destKey, const uint8_t *wire, size_t wireLen);
+  bool AcceptRedundantCopy(const uint8_t *wire, size_t wireLen, uint8_t *outWire, size_t &outLen);
+  void NotePrimaryReceived(const uint8_t *wire, size_t wireLen);
+  bool RedundancyWanted();
+  struct LastSent {
+    std::vector<uint8_t> wire;
+    uint64_t tick = 0;
+  };
+  struct SeenHash {
+    uint64_t hash = 0;
+    uint64_t tick = 0;
+  };
+  std::mutex m_redMutex;
+  std::unordered_map<uint64_t, LastSent> m_lastSentTo;
+  std::unordered_map<uint64_t, std::array<SeenHash, 128>> m_recentPrimaries;
+  std::unordered_map<uint64_t, size_t> m_recentPrimaryNext;
+  std::atomic<uint64_t> m_redundancyCheckTick{0};
+  std::atomic<bool> m_redundancyOn{false};
+  std::atomic<uint64_t> m_copiesUsed{0};
+  // Dev statistics: game packet sizes (a datagram over ~1200 bytes is split by the network and lost if any piece is).
+  std::atomic<uint64_t> m_statGamePkts{0}, m_statGameBytes{0}, m_statGameMax{0}, m_statGameBig{0};
 };
 
 } // namespace noble

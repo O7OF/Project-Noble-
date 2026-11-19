@@ -1351,9 +1351,15 @@ static uint8_t ParsePmcgEffect(const nlohmann::json& obj, int primaryColor, int&
 
 // Re-reads data\appearance.json when it changes (an Armory save mid-match reaches the next spawn).
 void RefreshLocalPicks() {
+    static int s_seenNobleGen = -1;
+    // Called from engine hooks on the game thread: check the file's time at most twice a second (2026-11-19 hitch
+    // audit), unless the Armory has signalled a change.
+    static ULONGLONG s_lastStampCheck = 0;
+    const ULONGLONG nowMs = GetTickCount64();
+    if (s_seenNobleGen == s_nobleGen.load() && s_lastStampCheck != 0 && nowMs - s_lastStampCheck < 500) return;
+    s_lastStampCheck = nowMs;
     std::error_code ec;
     const auto stamp = std::filesystem::last_write_time(s_appearancePath, ec);
-    static int s_seenNobleGen = -1;
     if (ec || (stamp == s_picksStamp && s_seenNobleGen == s_nobleGen.load())) return;
     s_picksStamp = stamp;
     s_seenNobleGen = s_nobleGen.load();

@@ -169,6 +169,9 @@ public:
 
     void SetUrl(const std::string& url);
     std::string Url() const;
+    // Times every node the cluster at ase lists and returns the fastest (base itself when it lists none).
+    // Blocking; used by hosting (worker thread) and the dev self-test -test-master-nodes.
+    std::string PickFastestNode(const std::string& base);
     bool Enabled() const { return !Url().empty(); }
 
     // Hosting: register, then send a heartbeat until StopAdvertising (which removes the
@@ -262,6 +265,10 @@ private:
     void DoRegister();
     void DoHeartbeat();
     void DoUnregister();
+    // Hosting picks the fastest node of the master-server cluster (by a timed /api/health), so the game's relay is
+    // the one closest to the host. Only when the player is on the default server; a server they typed in is kept.
+    std::string HostUrl() const;
+    void ProbeNearestNode();
     void SetStatus(const std::string& status);
     std::string GetSessionRegionUrl(const std::string& sessionId) const;
     void SetSessionRegionUrl(const std::string& sessionId, const std::string& regionUrl);
@@ -277,6 +284,8 @@ private:
     bool m_unregisterRequested = false;
 
     std::string m_url = MasterDefaultUrl();
+    std::string m_hostUrl;          // nearest cluster node for hosting; empty = use m_url
+    bool m_nodeProbeDone = false;
     std::unordered_map<std::string, std::string> m_sessionRegionUrl;
     std::unordered_map<std::string, std::string> m_browserEtags;
     std::unordered_map<std::string, std::string> m_browserBodyCache;
