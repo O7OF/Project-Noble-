@@ -54,7 +54,7 @@ player's installed haloreach.dll; never run build.bat; never push without Tyler'
    Map RVA → function with objdump on the generated DLL (`--out-dll`); file offset = RVA − 0xC00 in .text.
 3. Measure frame time at 256/512/1,024 (main game thread bound).
 4. Then make actor count a real setting + include it in ProfileNetworkId (host/clients must match) — C7d.
-5. Commit (Tyler runs git; message ends with the Co-Authored-By / Claude-Session lines from AGENT-STATUS).
+5. Commit (Tyler runs git; the message carries only the authors' names: no Co-Authored-By / Claude-Session lines).
 
 ## Other open items (unchanged)
 C11 render list 4,096 → 16,384 (flicker/HUD past ~4,096 visible objects), C12 engine players pool = 16 (real

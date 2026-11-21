@@ -46,7 +46,7 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
         {"CHAT", "Word Filter",
          "Hosts can hide slurs in chat, plus their own list of words. It is off by default; the first-time setup asks if you want it."},
         {"SERVER BROWSER", "Clean Server Names",
-         "Server names no longer show slurs or swear words. Only whole words are hidden, so normal names stay the same."},
+         "Server names no longer show slurs or swear words, also when spelled with numbers, symbols or other spellings. Only whole words are hidden, so normal names like Assistance or Class stay the same."},
         {"CAREER", "No Credits for Very Short Games",
          "Leaving or restarting a game in under 5 minutes no longer pays credits, challenges or commendations. Games that end normally pay as before."},
         {"CAMPAIGN", "Restarts Wait for Everyone",

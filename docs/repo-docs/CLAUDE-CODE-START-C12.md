@@ -19,9 +19,8 @@ Paste into a local Claude Code session opened in `D:\Project-Noble-Closed-Source
 - Never run `build.bat` (it publishes a release). Use `build-dev.bat`.
 - Never push without Tyler's OK. Never edit `D:\Project-Noble-ORIGINAL`.
 - `recipes/` and `.nlp` files contain Reach code: never commit them.
-- Commit messages end with:
-  `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
-  `Claude-Session: https://claude.ai/code/session_01SzNr7z37j7jNFPDtqF65hh`
+- Commit messages, PRs and docs carry only the authors' names: no "Co-Authored-By: Claude", no
+  "Claude-Session" line, no "generated with" line (Tyler 2026-11-20).
 
 ## Parallel work with the cloud Claude session
 The cloud session can't run commands on this PC (it can only read and write files and click in apps), so the local

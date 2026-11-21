@@ -214,7 +214,15 @@ const char *const kBuiltIn[] = {
     "faggot", "faggots", "faggit", "fag", "fags", "kike", "kikes", "chink",
     "chinks", "spic", "spics", "wetback", "wetbacks", "gook", "gooks",
     "beaner", "beaners", "raghead", "ragheads", "towelhead", "towelheads",
-    "tranny", "trannies", "retard", "retards", "coon", "coons", "dyke", "dykes"};
+    "tranny", "trannies", "retard", "retards", "coon", "coons", "dyke", "dykes",
+    // Alternate spellings (Tyler 2026-11-20).
+    "spick", "spicks", "spik", "spiks", "kyke", "kykes", "niggah", "niggahs",
+    "niggerz", "nigglet", "nigglets", "nignog", "niglet", "niglets", "negroid",
+    "jigaboo", "jigaboos", "porchmonkey", "porchmonkeys", "zipperhead",
+    "zipperheads", "chinky", "chinkies", "gookie", "wop", "wops", "dago",
+    "dagos", "paki", "pakis", "fagot", "fagots", "fagg",
+    "faggy", "faggots", "fagget", "faggets", "trannys", "shemale", "shemales",
+    "retarded", "tard", "tards", "dykey", "beanerz"};
 struct WordSets {
   std::set<std::string> exact, collapsed;
 };

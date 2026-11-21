@@ -16,8 +16,8 @@ Read before doing anything. Sources: every handoff in this folder.
 - **Commit, pull, push cadence (Tyler, 2026-11-14):** every time a *major feature is finished fully* (verified in-game
   or proven, not half-done), pull the latest, commit it, and push it. Do not let a finished feature sit uncommitted
   across sessions, and do not push half-finished work. `main` only on Tyler's explicit word (the 11-14 push was one).
-- Commit messages end with:
-  `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` and `Claude-Session: <session url>`.
+- Commit messages, PRs and docs carry only the authors' names: no "Co-Authored-By: Claude", no
+  "Claude-Session" line, no "generated with" line (Tyler 2026-11-20).
 - Update the handoff + TODO-MASTER (and this folder) before finishing.
 
 ## How to work (what has worked)
