@@ -16,11 +16,15 @@ try {
     [Bungie.ManagedBlamSystem]::Start($Hrek, [Bungie.ManagedBlamCrashCallback]{ param($i) Log "CRASH $i" })
     $tf = New-Object Bungie.Tags.TagFile
     $tf.Load([Bungie.Tags.TagPath]::FromPathAndExtension($Tag, $Ext))
-    $blk = $null
-    foreach ($f in $tf.Fields) { if ($f -is [Bungie.Tags.TagFieldBlock] -and $f.GetTagFieldPath().FieldName -eq $Block) { $blk = $f } }
-    if (-not $blk) { throw "block '$Block' not found" }
+    $fields = $tf.Fields   # -Block '' = a top-level flags field
+    if ($Block) {
+        $blk = $null
+        foreach ($f in $tf.Fields) { if ($f -is [Bungie.Tags.TagFieldBlock] -and $f.GetTagFieldPath().FieldName -eq $Block) { $blk = $f } }
+        if (-not $blk) { throw "block '$Block' not found" }
+        $fields = $blk.Elements[$Index].Fields
+    }
     $fl = $null
-    foreach ($f in $blk.Elements[$Index].Fields) { if ($f -is [Bungie.Tags.TagFieldFlags] -and $f.GetTagFieldPath().FieldName -eq $Field) { $fl = $f } }
+    foreach ($f in $fields) { if ($f -is [Bungie.Tags.TagFieldFlags] -and $f.GetTagFieldPath().FieldName -eq $Field) { $fl = $f } }
     if (-not $fl) { throw "flags field '$Field' not found" }
     $before = [long]$fl.RawValue
     $after = ($before -bor $Set) -band (-bnot $Clear)

@@ -2,7 +2,21 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
-## Status (2026-11-21 13:25) - AI WALK ON FORGE WORLD
+## Status (2026-11-21 14:15) - PROPER FIX: "don't strip pathfinding" (no solo build, no runtime hack)
+
+The scenario's top-level `flags` field has bit 1 **"don't strip pathfinding"** (bit 13 is "survival"; ff20 = 8192).
+The cache builder strips the nav mesh from multiplayer scenarios unless this flag is set. Forge World now:
+`type = multiplayer` (unchanged from stock) + `flags |= 2` + `structure bsps[0].flags` bit 9 cleared + bake + build.
+- Build: 799 MiB, **identical tag list to the plain MP build (16,992 tags, 0 missing)**, so Monitor, Elite players,
+  MP objects and Megalo all stay. The solo-type build (below) dropped 403 tags (`globals\mp` and everything under
+  it: Monitor, Elite / elite_noble players, MP objects, Megalo, MP weapon sounds) and must not be used.
+- Test p7x (Slayer, `-mp-ai` only): scenario type 1, pathfinding pointer set, 12 AI walk up to 12 m and fight.
+  p7y: Forge mode loads with the nav mesh.
+- `-mp-ai-pathing` (type reset) is no longer needed; kept as a dev switch for solo-built maps only.
+- Backups: `HREK\noble_mods\phase7_backup_2026-11-21\forge_halo.map.mp_keep_pathfinding` / `.scenario.mp_keep_pathfinding`.
+- Tools: `noble-tag-set-flags.ps1 -Block ''` edits top-level flags; `noble-tag-set-enum.ps1` sets enums.
+
+## Status (2026-11-21 13:25) - AI WALK ON FORGE WORLD (superseded by the 14:15 fix above)
 
 **Proven (run p7v):** on a Forge World built with scenario type = solo, with `-mp-ai -mp-ai-pathing`, 14 AI spawn,
 walk on the baked ground (up to 15 m, 6-10 of 12 moving per 5 s), close to 1-10 m of the player and fight; the
