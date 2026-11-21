@@ -16,6 +16,29 @@ The cache builder strips the nav mesh from multiplayer scenarios unless this fla
 - Backups: `HREK\noble_mods\phase7_backup_2026-11-21\forge_halo.map.mp_keep_pathfinding` / `.scenario.mp_keep_pathfinding`.
 - Tools: `noble-tag-set-flags.ps1 -Block ''` edits top-level flags; `noble-tag-set-enum.ps1` sets enums.
 
+### Size (14:20)
+- Shipped today: main package 360 MB zipped; separate Forge World pack `Noble-ForgeWorld-v0.20.34-win64.zip` 653 MB
+  (its map 760 MB; HREK builds a self-contained map, stock MCC forge_halo.map is 332 MB because it uses MCC's
+  shared maps).
+- AI-capable MP build: 799 MiB, **682 MB zipped (+29 MB, ~4%)**. The AI work does not double the install; the
+  Forge World pack was already a separate ~650 MB download.
+- `tool build-cache-file <scenario> pc english compress-most`: ran ~25 min, then "hash mismatch, verification
+  failed" and crashed; no map written. Not usable.
+- Untried, biggest possible saving: build with MCC's shared maps (`build-cache-file-use-sharing`, see
+  `HREK\BuildMapsSharedOptimizedPlusSharedSounds.ps1`), back toward the stock 332 MB. Needs a hash check of the
+  player's MCC shared maps and a re-check after MCC updates.
+
+### Number 2 design (next session / 15:45 resume)
+- `-mp-ai` -> a real host option (lobby row "AI" on maps whose scenario has baked pathfinding; detect at runtime by
+  the per-BSP pathfinding pointer being non-zero) instead of a dev switch.
+- Whole-map firing positions: generate areas / firing positions from the baked sectors (scenario
+  `ai pathfinding data` -> sector polygons via links / vertices), not a local grid; one zone, a few objectives.
+- Forge-menu AI: Noble already NOPs the Forge AI spawn check (ForgePatches, hr+0x692CB5) so the menu places biped
+  OBJECTS without actors. Plan: treat a Forge-placed AI biped as a spawn marker: remove it and place a squad there
+  (one generic `noble_ai_dynamic` squad per character whose spawn point Noble moves at runtime, or
+  `PlaceTemplateDatum` with a squad template). 360 `actor_create_internal(unit, swarm, character, squad, bool)`
+  (0x82613F98) is the alternative (attach an actor to an existing biped); MCC address not found yet.
+
 ## Status (2026-11-21 13:25) - AI WALK ON FORGE WORLD (superseded by the 14:15 fix above)
 
 **Proven (run p7v):** on a Forge World built with scenario type = solo, with `-mp-ai -mp-ai-pathing`, 14 AI spawn,
