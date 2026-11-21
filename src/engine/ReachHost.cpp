@@ -71,6 +71,7 @@
 #include <cstddef>
 #include <memory>
 #include <vector>
+#include <bit>
 #include <nlohmann/json.hpp>
 
 #pragma comment(lib, "gdi32.lib")
@@ -355,6 +356,61 @@ static void DumpScenarioSquadsOnce() {
         // +0x48 is the field ai_place_wave matches against a wave template entry's +0x20 (FUN_18070bec8).
         int32_t f48 = 0; std::memcpy(&f48, rec + 0x48, 4);
         NOBLE_INFO("SquadDump: [{}] name '{}' +48={} | +20..: {}", i, name, f48, hex);
+    }
+    // Wave pacing research: find the scenario block holding the script globals (char[32] names like k_sur_wave_timer):
+    // scan the scenario struct for (count, packed address) pairs whose first element starts with a printable name.
+    for (uint32_t off = 0; off + 8 <= 0x2000; off += 4) {
+        int32_t n = 0; uint32_t packed = 0;
+        ReadBytesSEH(reinterpret_cast<void*>(scenario + off), &n, 4);
+        ReadBytesSEH(reinterpret_cast<void*>(scenario + off + 4), &packed, 4);
+        if (n <= 0 || n > 20000 || packed == 0 || packed == 0xFFFFFFFFu) continue;
+        uintptr_t pg = 0;
+        ReadBytesSEH(reinterpret_cast<void*>(base + 0x4E39F20 + static_cast<uintptr_t>(packed >> 28) * 8), &pg, 8);
+        if (!pg) continue;
+        char head[33] = {};
+        if (!ReadBytesSEH(reinterpret_cast<void*>(pg + static_cast<uint64_t>(packed) * 4), head, 32)) continue;
+        size_t len = 0;
+        while (len < 32 && ((head[len] >= 'a' && head[len] <= 'z') || (head[len] >= '0' && head[len] <= '9') || head[len] == '_')) ++len;
+        if (len >= 3 && (len == 32 || head[len] == 0)) {
+            uint8_t raw[0x30] = {};
+            ReadBytesSEH(reinterpret_cast<void*>(pg + static_cast<uint64_t>(packed) * 4), raw, sizeof(raw));
+            char hex[0x10 * 3 + 1] = {};
+            for (int b = 0; b < 0x10; ++b) std::snprintf(hex + b * 3, 4, "%02X ", raw[0x20 + b]);
+            NOBLE_INFO("SquadDump: scenario+0x{:X}: {} entries, first '{}' +20: {}", off, n, head, hex);
+        }
+    }
+    // Script globals: scenario+0x43C (count) / +0x440 (block), 0x28 bytes each: char[32] name, u16 type, u16 pad, u32
+    // initial-value expression. Runtime values: data array "hs globals" (8-byte records). Log each k_sur_* global with
+    // the runtime record at index i and at (used - count + i) to see which layout holds the value.
+    {
+        int32_t nGlobals = 0; uint32_t gPacked = 0;
+        ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x43C), &nGlobals, 4);
+        ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x440), &gPacked, 4);
+        uintptr_t gpg = 0;
+        ReadBytesSEH(reinterpret_cast<void*>(base + 0x4E39F20 + static_cast<uintptr_t>(gPacked >> 28) * 8), &gpg, 8);
+        const uintptr_t gBlock = gpg ? gpg + static_cast<uint64_t>(gPacked) * 4 : 0;
+        uintptr_t hsRecords = 0;
+        uint32_t hsUsed = 0;
+        for (const auto& p : noble::pools::Scan(base, 0x6000000))
+            if (p.name == "hs globals") {
+                ReadBytesSEH(reinterpret_cast<void*>(p.address + 0x50), &hsRecords, 8);
+                hsUsed = p.used;
+            }
+        NOBLE_INFO("SquadDump: {} script globals, hs globals used {}, records 0x{:X}", nGlobals, hsUsed, hsRecords);
+        for (int i = 0; gBlock && i < nGlobals && i < 4096; ++i) {
+            char rec[0x28] = {};
+            if (!ReadBytesSEH(reinterpret_cast<void*>(gBlock + static_cast<uintptr_t>(i) * 0x28), rec, sizeof(rec))) break;
+            if (std::strncmp(rec, "k_sur_", 6) != 0 && std::strcmp(rec, "survival_refresh_sleep") != 0) continue;
+            uint16_t type = 0; std::memcpy(&type, rec + 0x20, 2);
+            uint32_t a[2] = {}, b[2] = {};
+            if (hsRecords) {
+                ReadBytesSEH(reinterpret_cast<void*>(hsRecords + static_cast<uintptr_t>(i) * 8), a, 8);
+                const int alt = static_cast<int>(hsUsed) - nGlobals + i;
+                if (alt >= 0) ReadBytesSEH(reinterpret_cast<void*>(hsRecords + static_cast<uintptr_t>(alt) * 8), b, 8);
+            }
+            NOBLE_INFO("SquadDump: global [{}] '{}' type {} | rec[i] {:08X} {:08X} | rec[used-n+i] {:08X} {:08X}", i,
+                       std::string(rec, strnlen(rec, 32)), type, a[0], a[1], b[0], b[1]);
+        }
     }
     // Squad groups: count scenario+0x38C, block +0x390. Element size unknown: dump the raw head of the block.
     {
@@ -667,6 +723,75 @@ static uint32_t FindSquadTemplate(const std::string& name) {
     return (static_cast<uint32_t>(salt) << 16) | it->second;
 }
 
+// Wave pacing (Phase 5b): Firefight's breaks are script globals k_sur_wave_timer / k_sur_round_timer / k_sur_set_timer
+// (shorts, in ticks; ff20: 180 / 150 / 300). Scenario globals: scenario+0x43C count / +0x440 block, 0x28 bytes each
+// (char[32] name, u16 type, 7 = short). Runtime values: the data array "hs globals" (8-byte records, value at +4); the
+// scenario's globals follow the engine's own, so global i is record (used - count + i). The array is found by name
+// through the game-state root, so this runs on the game thread. Returns the number of timers changed.
+static int ScaleFirefightTimers(int percent) {
+    const uintptr_t base = reinterpret_cast<uintptr_t>(noble::ReachModule());
+    uintptr_t scenario = 0;
+    if (!base || !ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A230), &scenario, 8) || !scenario) return 0;
+    int32_t count = 0; uint32_t packed = 0;
+    ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x43C), &count, 4);
+    ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x440), &packed, 4);
+    const uintptr_t block = TagPageAddress(packed);
+    if (count <= 0 || count > 4096 || !block) return 0;
+    uint32_t tlsIndex = 0;
+    uintptr_t root = 0;
+    ReadBytesSEH(reinterpret_cast<void*>(base + 0xC17B18), &tlsIndex, 4);
+    ReadBytesSEH(reinterpret_cast<void*>(__readgsqword(0x58) + tlsIndex * 8ULL), &root, 8);
+    if (!root) return 0;
+    uintptr_t header = 0;
+    for (uint32_t off = 0; off < 0x1000 && !header; off += 8) {
+        uintptr_t candidate = 0;
+        char name[16] = {};
+        if (ReadBytesSEH(reinterpret_cast<void*>(root + off), &candidate, 8) && candidate &&
+            ReadBytesSEH(reinterpret_cast<void*>(candidate), name, 11) && std::memcmp(name, "hs globals", 11) == 0)
+            header = candidate;
+    }
+    if (!header) return 0;
+    int32_t capacity = 0;
+    uintptr_t records = 0;
+    int64_t bitmapOffset = 0;
+    ReadBytesSEH(reinterpret_cast<void*>(header + 0x2C), &capacity, 4);
+    ReadBytesSEH(reinterpret_cast<void*>(header + 0x50), &records, 8);
+    ReadBytesSEH(reinterpret_cast<void*>(header + 0x68), &bitmapOffset, 8);
+    if (capacity <= 0 || capacity > 65536 || !records || bitmapOffset <= 0) return 0;
+    std::vector<uint32_t> bitmap(static_cast<size_t>(capacity + 31) / 32);
+    if (!ReadBytesSEH(reinterpret_cast<void*>(header + bitmapOffset), bitmap.data(), bitmap.size() * 4)) return 0;
+    int used = 0;
+    for (uint32_t w : bitmap) used += std::popcount(w);
+    const int first = used - count;
+    if (first < 0) return 0;
+    int changed = 0;
+    for (int i = 0; i < count; ++i) {
+        char rec[0x24] = {};
+        if (!ReadBytesSEH(reinterpret_cast<void*>(block + static_cast<uintptr_t>(i) * 0x28), rec, sizeof(rec))) break;
+        const std::string name(rec, strnlen(rec, 32));
+        if (name != "k_sur_wave_timer" && name != "k_sur_round_timer" && name != "k_sur_set_timer") continue;
+        uint16_t type = 0;
+        std::memcpy(&type, rec + 0x20, 2);
+        auto* value = reinterpret_cast<int16_t*>(records + static_cast<uintptr_t>(first + i) * 8 + 4);
+        int16_t old = 0;
+        if (type != 7 || !ReadBytesSEH(value, &old, 2) || old <= 0 || old > 20000) {
+            NOBLE_WARN("ReachHost: wave pacing: {} not as expected (type {}, value {}), left alone", name, type, old);
+            continue;
+        }
+        // The script sets these during the match too (ff20 read 180, later 150), so this runs every second: a value
+        // other than the one written last is a new base from the script and is scaled again.
+        static std::unordered_map<std::string, int16_t> s_written;
+        const auto it = s_written.find(name);
+        if (it != s_written.end() && it->second == old) continue;
+        const int scaled = std::clamp(old * percent / 100, 1, 32767);
+        *value = static_cast<int16_t>(scaled);
+        s_written[name] = static_cast<int16_t>(scaled);
+        NOBLE_INFO("ReachHost: wave pacing: {} {} -> {} ticks", name, old, scaled);
+        ++changed;
+    }
+    return changed;
+}
+
 static std::atomic<int> s_alliesKind{ 0 };
 static std::atomic<int> s_alliesSquads{ 0 };
 static std::atomic<bool> s_alliesRequest{ false };
@@ -801,7 +926,7 @@ void ReachHost::GameThreadTick() {
             for (auto& ch : mode) ch = static_cast<wchar_t>(std::towlower(ch));
             s_mode = (mode == L"firefight" && CommandLineValue(L"-connect").empty()) ? 1 : 0;
         }
-        static int s_kind = 0, s_squads = 2;
+        static int s_kind = 0, s_squads = 2, s_pacing = 100;
         static ULONGLONG s_settingsRead = 0;
         const ULONGLONG now = GetTickCount64();
         if (s_mode == 1 && now - s_settingsRead >= 1000) {   // not every frame: Snapshot copies the whole settings
@@ -809,6 +934,16 @@ void ReachHost::GameThreadTick() {
             const SettingsData settings = Settings::Get().Snapshot();
             s_kind = settings.hostFirefightAllies;
             s_squads = settings.hostFirefightAllySquads;
+            s_pacing = settings.hostFirefightWavePacing;
+        }
+        // WAVE PACING: from 5 s in, once a second, scale the break timers whenever the script has set a new value.
+        static ULONGLONG s_pacingStart = 0, s_pacingTry = 0;
+        if (s_mode == 1 && s_settingsRead && s_pacing != 100) {
+            if (!s_pacingStart) s_pacingStart = now;
+            if (now - s_pacingStart >= 5000 && now - s_pacingTry >= 1000) {
+                s_pacingTry = now;
+                ScaleFirefightTimers(s_pacing);
+            }
         }
         struct { int hostFirefightAllies, hostFirefightAllySquads; } settings{ s_kind, s_squads };
         if (s_mode == 1 && settings.hostFirefightAllies > 0) {

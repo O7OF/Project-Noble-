@@ -2068,6 +2068,17 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
              false, true,
              "Host option: how many allied squads (1-5). Each squad is a few "
              "Elites."});
+      const int pacing = allies.hostFirefightWavePacing;
+      optRows.push_back(
+          {"WAVE PACING",
+           pacing == 50    ? "FAST (0.5X BREAKS)"
+           : pacing == 150 ? "SLOW (1.5X BREAKS)"
+           : pacing == 200 ? "SLOWEST (2X BREAKS)"
+                           : "NORMAL",
+           false, true,
+           "Host option: the breaks between waves, rounds and sets. FAST halves "
+           "them, SLOW and SLOWEST make them longer. Bonus round length is in "
+           "GAME OPTIONS."});
     } else
       optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
                          false, false, hostModeTip});
@@ -2451,6 +2462,19 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       d.hostFirefightAllySquads = (d.hostFirefightAllySquads - 1 + dir + 5) % 5 + 1;
       Settings::Get().Update(d);
       NOBLE_INFO("FrontEndMenu: Firefight ally squads {}", d.hostFirefightAllySquads);
+      MenuSounds::Change();
+    } else if (row.label == "WAVE PACING") {
+      if (!st.isLobbyHost)
+        return;
+      static constexpr int kPacing[] = {50, 100, 150, 200};
+      SettingsData d = Settings::Get().Snapshot();
+      int idx = 1;
+      for (int i = 0; i < 4; ++i)
+        if (kPacing[i] == d.hostFirefightWavePacing)
+          idx = i;
+      d.hostFirefightWavePacing = kPacing[(idx + dir + 4) % 4];
+      Settings::Get().Update(d);
+      NOBLE_INFO("FrontEndMenu: Firefight wave pacing {}%", d.hostFirefightWavePacing);
       MenuSounds::Change();
     } else if (row.label == "MIN PING") {
       if (!st.isLobbyHost)
