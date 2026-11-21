@@ -25,6 +25,20 @@ relaunch), `host_notice.txt` (removal message from the match process to the menu
 | `lobby_auth {from, mid, account, user, pw}` | guest -> host | join check after entering the lobby, every 2 s up to 60 s; `pw` is an FNV-1a hash, not the password |
 | `lobby_admit {mid, account}` | host -> guests | stops that guest's `lobby_auth` |
 
+Added after v0.20.33 (dev builds `5136669`, `b6a9cf9`, `d267e92`):
+
+| type | from -> to | what it does |
+|---|---|---|
+| `vote_request {kind, target, name, from}` | player -> host | ask for a vote: kind 0 kick, 1 end round, 2 end game (`src/network/HostVotes`) |
+| `vote_start {id, kind, target, name, starter, starter_id, voters, need, seconds}` | host -> everyone | a vote opened (30 s); `voters` = match machine ids allowed to vote |
+| `vote_cast {id, yes, from}` | player -> host | a voter's choice |
+| `vote_state {id, yes, no}` / `vote_end {id, passed, vetoed, yes, no}` | host -> everyone | counts / result |
+| `host_remove` kinds `no_jip`, `min_ping` | host -> guest | join in progress off; ping below the host's MIN PING |
+| `host_rules` + `rules`, `lock_teams` | host -> guests | lobby rules text; LOCK TEAMS hides CHANGE TEAM for guests |
+
+A passed END ROUND calls `mp_round_end` (haloreach+0x7B3EC) on the engine thread (`ReachHost::RequestRoundEnd`);
+END GAME takes everyone back to the lobby; a passed kick is `HostModeration::Kick`.
+
 Host-sender checks use the existing pattern
 (`udpSenderPeerId == 0 || m_hostMachineId == 0 || udpSenderPeerId == m_hostMachineId`).
 

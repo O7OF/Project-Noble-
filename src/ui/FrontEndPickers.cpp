@@ -3102,7 +3102,8 @@ void DrawFirefightCustomForgeScreen(OverlayContext &ctx, const Ui &ui,
     // The list so far. Y or a click on a row takes it out again.
     Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(lx, panelTop + 4.0f * ui.s),
          kAccent,
-         ("ENTRIES (" + std::to_string(st.playlistEdit.entries.size()) + ")")
+         ("ENTRIES (" + std::to_string(st.playlistEdit.entries.size()) +
+          ")   LB / RB or CTRL + UP / DOWN MOVES")
              .c_str());
     std::vector<ListItem> rows;
     for (const Playlists::Entry &entry : st.playlistEdit.entries) {
@@ -3130,6 +3131,27 @@ void DrawFirefightCustomForgeScreen(OverlayContext &ctx, const Ui &ui,
       st.playlistEdit.entries.erase(st.playlistEdit.entries.begin() +
                                     removeRow);
       MenuSounds::Back();
+    }
+    // Reorder: LB / RB (or Ctrl + Up / Down) moves the selected entry.
+    {
+      const int count = static_cast<int>(st.playlistEdit.entries.size());
+      const int at = st.playlistEditEntry;
+      if (!typing && at >= 0 && at < count) {
+        const ImGuiIO &io = ImGui::GetIO();
+        int move = 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ||
+            (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)))
+          move = -1;
+        else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ||
+                 (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)))
+          move = 1;
+        const int to = at + move;
+        if (move != 0 && to >= 0 && to < count) {
+          std::swap(st.playlistEdit.entries[at], st.playlistEdit.entries[to]);
+          st.playlistEditEntry = to;
+          MenuSounds::Change();
+        }
+      }
     }
     std::error_code listExistsError;
     const std::filesystem::path listTarget =
