@@ -2,6 +2,40 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
+## Status (2026-11-21 16:50) - Step 4 done (one-command bake); step 3 blocked (bake removes added objects)
+
+**Step 4: `tools\noble-map-ai-bake.ps1 -Tag <scenario> -Centre x,y,z [-Bsp 0] [-SkipBuild] [-SkipSquads]`**
+(commit 6c3998a). Backs up the scenario and built map into `HREK\noble_mods\ai_bake_<map>_<time>\` (with `bake.log`
+and each tool log), clears "no pathfinding" on every BSP, sets "don't strip pathfinding", adds characters + squads
+around `-Centre`, `generate-pathfinding`, zones from the nav mesh, `generate-pathfinding` again (fills the firing
+positions' sectors), `build-cache-file`. Stops at the first failure. Forge World run: 6 min (72 s + 18 s + 72 s +
+176 s), 17 zones / 17,318 firing positions, map 800 MB. Test p9b (MAP AI setting only): 14 AI placed, 3 spawn heights
+corrected, AI walked up to 14.5 m. It also cleared the flag on Forge World's BSP 1 (stock had it set; no harm seen).
+The built map stays in `HREK\maps`; copying into `data\maps` is a separate, deliberate step.
+
+**Step 3 (Forge pieces in the nav mesh): not working yet.** `tools\noble-forge-bake-objects.ps1 -Layout <json>`
+places Forge pieces (crate tags such as `levels\multi\dlc\objects\dlc_ff_bridge_2x5`) in the scenario, as crates
+(`-Kind crate`) or wrapped in scenery tags `objects\noble\forge_baked\<piece>\<piece>.scenery` (default; model,
+bounding radius / offset copied, pathfinding policy STATIC). Test layout `tools\forge-layouts\island_test.json`
+(bridge, wall, shallow ramp near 38,32). Findings:
+- The placement saves and reads back (crate palette 135 -> 138, crates 0 -> 3; scenery 19 -> 22).
+- `tool generate-pathfinding` then writes the scenario back **without** them: crates, scenery, their palette
+  entries and object names all return to stock (scenario size byte-identical to before). Tried crates, scenery,
+  STATIC policy, editor source, negative unique ids, no object name, neutral owner team: same each time. Other
+  ManagedBlam edits (flags, squads, zones) survive the bake, so the tool rebuilds the object placement blocks of
+  this scenario from elsewhere (not found yet). "object refs" stays 0; nav-mesh vertices around the pieces are
+  identical before / after (checked with `navmesh-near.ps1` on a saved copy).
+- `tools\research\pathfinding-object-refs.ps1`: ff10_prototype has 7 object refs (ff60_airview 182, ff20 0) whose
+  unique ids match none of the placed scenery / crates / machines, so stitched objects may come from another source
+  (child scenarios / structure design / instanced geometry).
+- Next ideas: (a) find what the tool rebuilds the object blocks from (tool log with verbose flags; Ghidra on tool.exe
+  for the strip); (b) bake the pieces into the structure BSP as instanced geometry; (c) Noble's own runtime sectors
+  for Forge pieces (plan option C), which also covers player-made layouts without a map build.
+- HREK state: `forge_halo.scenario` = the stock object set again (pieces gone), baked; backups
+  `phase7_backup_2026-11-21\forge_halo.scenario.before_step3`, `forge_halo.map.before_step3`; bake logs
+  `noble_mods\phase7_genpath_step3*.log`. The three scenery wrapper tags stay in `HREK\tags\objects\noble\forge_baked\`
+  (not referenced by any scenario; the script reuses them).
+
 ## Status (2026-11-21 16:40) - Place a squad at any point; spawn heights from the nav mesh (tested, pushed)
 
 - `spawn::PlaceSquadAt(name, pos)` (commit 7ade3bb): moves the squad's spawn points to a 1.2 m ring around `pos`,
@@ -195,11 +229,13 @@ HREK build)
   `-ai-watch` (now also dumps one actor, the per-BSP pathfinding pointers and the biped ground fields once),
   `-player-at x,y,z@s`.
 
-## Next (16:40; Tyler's order 1 -> 5)
+## Next (16:50; Tyler's order 1 -> 5)
 1. Done: solo build dropped 403 MP tags; fixed with "don't strip pathfinding" (14:15).
 2. Mostly done: MAP AI host option, whole-map zones, PlaceSquadAt, nav-mesh heights. Left: Forge-menu trigger for
    `PlaceSquadAt` (hands-on test); team rules (Troopers vs Covenant vs players).
-3. Forge pieces: place a small layout's objects as scenery in a scenario copy, bake, confirm AI walk onto them.
-4. One-command bake script for other maps (BSP flag, "don't strip pathfinding", characters, squads,
-   generate-pathfinding, zones from nav mesh, build-cache-file).
-5. Shipping: map size, map hash for online play, guests (the host places AI; guests need the same map).
+3. Blocked: generate-pathfinding removes pieces added to Forge World's scenario (see 16:50). Ideas listed there.
+4. Done: `tools\noble-map-ai-bake.ps1` (one command, tested on Forge World).
+5. Shipping (needs Tyler / O7): put the AI Forge World build into the Forge World pack (`data\maps`, +29 MB zipped)
+   or keep it dev-only; map hash check so guests with the old map cannot join an AI session (O7: session / network);
+   guests receive AI through the normal object sync (host-only placement; test with 2 players); MAP AI stays a host
+   option. No public release without Tyler.
