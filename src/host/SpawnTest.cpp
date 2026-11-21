@@ -1190,6 +1190,8 @@ bool MapHasAiPaths() {
     return false;
 }
 
+bool NavGroundZ(float x, float y, float z, float& out);
+
 int PlaceMapSquads() {
     if (!s_base || !s_aiPlace) return -1;
     const uint8_t* scen = *reinterpret_cast<uint8_t* const*>(s_base + kScenarioRva);
@@ -1197,6 +1199,29 @@ int PlaceMapSquads() {
     const int32_t squads = *reinterpret_cast<const int32_t*>(scen + 0x398);
     int before = 0, after = 0, capacity = 0;
     if (!ActorUsage(before, capacity)) return -1;
+    // Stand every spawn point on the nav mesh first: a hand-authored height under the terrain drops the actor through
+    // the map (seen at z -47 on Forge World). The squad block layout is described above PlaceSquadAt.
+    const auto* pages = reinterpret_cast<const uint64_t*>(s_base + 0x4E39F20);
+    auto addr = [&](uint32_t packed) { return reinterpret_cast<uint8_t*>(pages[packed >> 28] + static_cast<uint64_t>(packed) * 4); };
+    const uint32_t squadsPacked = *reinterpret_cast<const uint32_t*>(scen + 0x39C);
+    int snapped = 0;
+    for (int32_t i = 0; squadsPacked && i < squads && i < 256; ++i) {
+        const uint8_t* sq = addr(squadsPacked) + static_cast<size_t>(i) * 0x6C;
+        const int32_t points = *reinterpret_cast<const int32_t*>(sq + 0x3C);
+        const uint32_t pointsPacked = *reinterpret_cast<const uint32_t*>(sq + 0x40);
+        if (points <= 0 || points > 128 || !pointsPacked) continue;
+        uint8_t* first = addr(pointsPacked);
+        DWORD old = 0;
+        const size_t span = static_cast<size_t>(points) * 0x7C;
+        if (!VirtualProtect(first, span, PAGE_READWRITE, &old)) continue;
+        for (int k = 0; k < points; ++k) {
+            float* p = reinterpret_cast<float*>(first + static_cast<size_t>(k) * 0x7C + 0x14);
+            float ground = 0.0f;
+            if (NavGroundZ(p[0], p[1], p[2], ground) && std::fabs(ground + 0.4f - p[2]) > 0.5f) { p[2] = ground + 0.4f; ++snapped; }
+        }
+        VirtualProtect(first, span, old, &old);
+    }
+    if (snapped) NOBLE_INFO("SpawnTest: map AI: stood {} squad spawn points on the nav mesh", snapped);
     for (int32_t i = 0; i < squads; ++i) s_aiPlace(0x20000000u | static_cast<uint32_t>(i), -1, 0);
     ActorUsage(after, capacity);
     NOBLE_INFO("SpawnTest: map AI: placed {} squads | actors {} -> {} / {}", squads, before, after, capacity);
