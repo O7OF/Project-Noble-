@@ -815,6 +815,63 @@ void Install(HMODULE engine) {
         (s_autoHorde > 0 ? ", -horde " + std::to_string(s_autoHorde) : std::string()));
 }
 
+// Firefight allies (Phase 5b). Game thread only. `place` performs one engine squad placement; every actor it creates
+// is moved into scenario squad `destSquad` (ai_migrate's per-actor step), given that squad's runtime team, and walked
+// next to the local player through the horde's teleport queue. The destination is a Firefight fireteam squad
+// (sur_fireteam_0N): no spawn points of its own, player-side team, outside the wave's living count.
+int PlaceAllies(const std::function<bool()>& place, int destSquad) {
+    using MigrateFn = void(__fastcall*)(uint32_t actor, uint32_t squad);   // FUN_1806ab15c
+    using ActorTeamFn = void(__fastcall*)(uint32_t actor, int32_t team);  // FUN_1806a7c38
+    using SquadRefreshFn = void(__fastcall*)(uint32_t squad);            // FUN_1806944c0
+    using MigrateDoneFn = void(__fastcall*)();                           // FUN_180697628
+    if (!s_base || destSquad < 0) return -1;
+    ObjectPool objects;
+    ActorPool actors;
+    if (!GetObjectPool(objects) || !GetActorPool(actors)) return -1;
+    // Squad runtime records: game-state root +0x40 -> data array, records at +0x50, 0xEC bytes each (indexed like
+    // the scenario squads), team byte at +0xE7 (what ai_set_team writes).
+    const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_base + kTlsIndexRva);
+    auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
+    uint8_t* squadArray = (tls && tls[tlsIndex]) ? *reinterpret_cast<uint8_t**>(tls[tlsIndex] + 0x40) : nullptr;
+    uint8_t* squadRecords = squadArray ? *reinterpret_cast<uint8_t**>(squadArray + 0x50) : nullptr;
+    if (!squadRecords) return -1;
+    const int team = static_cast<int8_t>(squadRecords[static_cast<size_t>(destSquad) * 0xEC + 0xE7]);
+    std::vector<uint32_t> before(actors.bitmap, actors.bitmap + (actors.capacity + 31) / 32);
+    if (!place()) return -1;
+    float player[3] = {}, fwd[2] = { 1.0f, 0.0f };
+    const bool havePlayer = PlayerPosition(objects, player, fwd);
+    auto migrate = reinterpret_cast<MigrateFn>(s_base + 0x6AB15C);
+    auto setTeam = reinterpret_cast<ActorTeamFn>(s_base + 0x6A7C38);
+    int created = 0;
+    for (int i = 0; i < actors.capacity; ++i) {
+        if (!ActorSlotUsed(actors, i) || ((before[i >> 5] >> (i & 31)) & 1)) continue;
+        const int32_t actor = ActorHandle(actors, i);
+        {
+            const uint8_t* body = ObjectData(objects, ActorUnit(actors, actor));
+            NOBLE_INFO("SpawnTest: allies: new actor 0x{:X} unit 0x{:X} definition 0x{:X}", static_cast<uint32_t>(actor),
+                       static_cast<uint32_t>(ActorUnit(actors, actor)), body ? *reinterpret_cast<const uint32_t*>(body) : 0u);
+        }
+        migrate(static_cast<uint32_t>(actor), static_cast<uint32_t>(destSquad));
+        if (team >= 0) setTeam(static_cast<uint32_t>(actor), team);
+        if (havePlayer && s_objectSetPosition && s_objectRefresh && s_actorTeleported && s_unitExitVehicle) {
+            // A small ring behind and beside the player (the queue leaves anyone already within 30 m alone).
+            const float angle = static_cast<float>(created) * 2.39996f;
+            const float radius = 3.0f + static_cast<float>(created % 4);
+            const float cx = player[0] - fwd[0] * 3.0f, cy = player[1] - fwd[1] * 3.0f;
+            s_hordeMoving.push_back(HordeActor{ actor, GetTickCount64(), false,
+                { cx + std::cos(angle) * radius, cy + std::sin(angle) * radius, player[2] + 0.5f } });
+        }
+        ++created;
+    }
+    if (created > 0) {
+        reinterpret_cast<SquadRefreshFn>(s_base + 0x6944C0)(static_cast<uint32_t>(destSquad));
+        reinterpret_cast<MigrateDoneFn>(s_base + 0x697628)();
+    }
+    NOBLE_INFO("SpawnTest: allies: {} actors into squad {} (team {}){}", created, destSquad, team,
+               havePlayer ? ", moving next to the player" : ", no local player to move them to");
+    return created;
+}
+
 void TriggerAiHorde(int count) {
     if (s_aiPlace && s_unitExitVehicle) {
         s_hordePending += count;

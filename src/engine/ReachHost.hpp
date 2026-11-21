@@ -37,6 +37,9 @@ public:
     // GAME thread only. Fills a scenario squad's spawn points with a squad_template tag (by tag index), the
     // way ai_place_wave fills Firefight squads. count -1 = the template's default.
     static bool PlaceSquadTemplate(const char* squadName, uint16_t templateTagIndex, int count);
+    // Thread-safe: Firefight allies on the next game-thread tick. kind 1 Marines, 2 ODSTs, 3 Troopers, 4 Noble Team;
+    // squads 1-5 (one sur_fireteam_0N squad each). Host only; the actors are moved next to the local player.
+    static void RequestFirefightAllies(int kind, int squads);
     // Thread-safe: queues a placement for the next game-thread tick. count -1 = the squad's default.
     static void RequestSquadPlacement(const char* squadName, int count);
     // Called by SpawnTest's per-player control tick hook (0x61A38, player 0) on the game thread.

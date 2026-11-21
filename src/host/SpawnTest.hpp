@@ -20,8 +20,14 @@
 // Progress, refusals and the object pool's live usage go to the log ("SpawnTest: ..."). On Stock,
 // object_new starts refusing near 2,048 objects; with V16 it continues toward 32,767.
 #include <windows.h>
+#include <functional>
 
 namespace noble::spawn {
+
+// Firefight allies (game thread only): runs `place` (one engine squad placement), then moves every actor it created
+// into scenario squad `destSquad` with that squad's team and walks them next to the local player. Returns the number
+// of actors created, -1 if the engine state was not readable.
+int PlaceAllies(const std::function<bool()>& place, int destSquad);
 
 // Development builds only (no-op otherwise). Call once after haloreach.dll is loaded.
 void Install(HMODULE engine);

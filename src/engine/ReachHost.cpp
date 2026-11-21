@@ -8,6 +8,7 @@
 #include "common/Logger.hpp"
 #include "common/EngineModule.hpp"
 #include "host/PoolReport.hpp"
+#include "host/SpawnTest.hpp"
 #include "common/SaveCodec.hpp"
 #include "common/ArmoryVisor.hpp"
 #include "common/ArmorEffects.hpp"
@@ -503,25 +504,218 @@ static uint32_t TagDatumByIndex(uint16_t index) {
     return (static_cast<uint32_t>(entry[1]) << 16) | index;
 }
 
-bool ReachHost::PlaceSquadTemplate(const char* squadName, uint16_t templateTagIndex, int count) {
+static bool PlaceTemplateDatum(int squadIndex, uint32_t datum, int count) {
     HMODULE reach = noble::ReachModule();
-    const int index = FindScenarioSquad(squadName);
-    const uint32_t datum = TagDatumByIndex(templateTagIndex);
-    if (!reach || index < 0 || datum == 0xFFFFFFFFu) {
-        NOBLE_INFO("ReachHost: template placement refused (squad '{}' index {}, template 0x{:X} datum 0x{:X})",
-                   squadName ? squadName : "", index, templateTagIndex, datum);
-        return false;
-    }
+    if (!reach || squadIndex < 0 || datum == 0xFFFFFFFFu) return false;
     SquadPlaceParams params;
     params.templateDatum = static_cast<int32_t>(datum);
     params.count = static_cast<int16_t>(count > 0 ? count : -1);
-    const bool ok = PlaceTemplateSEH(reinterpret_cast<uintptr_t>(reach) + 0x694CB4, static_cast<uint32_t>(index), &params);
-    NOBLE_INFO("ReachHost: placed template 0x{:X} (datum 0x{:X}) into squad '{}' (index {}, count {}) {}", templateTagIndex,
-               datum, squadName, index, count, ok ? "ok" : "FAILED");
+    const bool ok = PlaceTemplateSEH(reinterpret_cast<uintptr_t>(reach) + 0x694CB4, static_cast<uint32_t>(squadIndex), &params);
     if (!ok)
         NOBLE_WARN("ReachHost: squad placement exception 0x{:X} at haloreach+0x{:X}", s_placeExcCode,
                    s_placeExcAddr - reinterpret_cast<uintptr_t>(reach));
     return ok;
+}
+
+bool ReachHost::PlaceSquadTemplate(const char* squadName, uint16_t templateTagIndex, int count) {
+    const int index = FindScenarioSquad(squadName);
+    const uint32_t datum = TagDatumByIndex(templateTagIndex);
+    if (index < 0 || datum == 0xFFFFFFFFu) {
+        NOBLE_INFO("ReachHost: template placement refused (squad '{}' index {}, template 0x{:X} datum 0x{:X})",
+                   squadName ? squadName : "", index, templateTagIndex, datum);
+        return false;
+    }
+    const bool ok = PlaceTemplateDatum(index, datum, count);
+    NOBLE_INFO("ReachHost: placed template 0x{:X} (datum 0x{:X}) into squad '{}' (index {}, count {}) {}", templateTagIndex,
+               datum, squadName, index, count, ok ? "ok" : "FAILED");
+    return ok;
+}
+
+// ---- Firefight allies (Phase 5b) ----
+// Tag addresses: page table haloreach+0x4E39F20[packed >> 28] + packed * 4.
+static uintptr_t TagPageAddress(uint32_t packed) {
+    const uintptr_t base = reinterpret_cast<uintptr_t>(noble::ReachModule());
+    uintptr_t page = 0;
+    if (!base || !packed) return 0;
+    ReadBytesSEH(reinterpret_cast<void*>(base + 0x4E39F20 + static_cast<uintptr_t>(packed >> 28) * 8), &page, 8);
+    return page ? page + static_cast<uint64_t>(packed) * 4 : 0;
+}
+// Tag instance table entry: u16 group index, u16 salt, u32 packed address.
+static bool TagInstanceEntry(uint16_t index, uint16_t& group, uint16_t& salt, uint32_t& packed) {
+    const uintptr_t base = reinterpret_cast<uintptr_t>(noble::ReachModule());
+    uintptr_t table = 0;
+    if (!base || !ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A600), &table, 8) || !table) return false;
+    uint8_t e[8] = {};
+    if (!ReadBytesSEH(reinterpret_cast<void*>(table + static_cast<uintptr_t>(index) * 8), e, sizeof(e))) return false;
+    std::memcpy(&group, e, 2); std::memcpy(&salt, e + 2, 2); std::memcpy(&packed, e + 4, 4);
+    return packed != 0;
+}
+
+// The squad_template tag group's index, taken from a tag the engine itself uses as a squad template: the first entry
+// of the first Firefight wave template (globals qword haloreach+0xC1A238, +0x50C wave template list tag; list block
+// count +0x40 / address +0x44, 0x14 bytes each, template tag index at +0x10; template entries 0x24 bytes, squad
+// template datum at +0x0C). -1 if unreadable.
+static int SquadTemplateGroupIndex() {
+    const uintptr_t base = reinterpret_cast<uintptr_t>(noble::ReachModule());
+    uintptr_t globals = 0;
+    uint32_t listTag = 0xFFFFFFFFu, block = 0, templateTag = 0xFFFFFFFFu, entries = 0, squadTemplate = 0xFFFFFFFFu;
+    int32_t count = 0, entryCount = 0;
+    uint16_t group = 0, salt = 0;
+    uint32_t packed = 0;
+    if (!base || !ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A238), &globals, 8) || !globals) return -1;
+    ReadBytesSEH(reinterpret_cast<void*>(globals + 0x50C), &listTag, 4);
+    if (listTag == 0xFFFFFFFFu || !TagInstanceEntry(static_cast<uint16_t>(listTag), group, salt, packed)) return -1;
+    const uintptr_t list = TagPageAddress(packed);
+    if (!list) return -1;
+    ReadBytesSEH(reinterpret_cast<void*>(list + 0x40), &count, 4);
+    ReadBytesSEH(reinterpret_cast<void*>(list + 0x44), &block, 4);
+    const uintptr_t blockAddr = TagPageAddress(block);
+    if (count <= 0 || !blockAddr) return -1;
+    ReadBytesSEH(reinterpret_cast<void*>(blockAddr + 0x10), &templateTag, 4);
+    if (templateTag == 0xFFFFFFFFu || !TagInstanceEntry(static_cast<uint16_t>(templateTag), group, salt, packed)) return -1;
+    const uintptr_t tmpl = TagPageAddress(packed);
+    if (!tmpl) return -1;
+    ReadBytesSEH(reinterpret_cast<void*>(tmpl), &entryCount, 4);
+    ReadBytesSEH(reinterpret_cast<void*>(tmpl + 4), &entries, 4);
+    const uintptr_t entryAddr = TagPageAddress(entries);
+    if (entryCount <= 0 || !entryAddr) return -1;
+    ReadBytesSEH(reinterpret_cast<void*>(entryAddr + 0x0C), &squadTemplate, 4);
+    if (squadTemplate == 0xFFFFFFFFu || !TagInstanceEntry(static_cast<uint16_t>(squadTemplate), group, salt, packed)) return -1;
+    return group;
+}
+
+static std::wstring CommandLineValue(const wchar_t* key) {
+    std::wstring value;
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; argv && i + 1 < argc; ++i)
+        if (_wcsicmp(argv[i], key) == 0) value = argv[i + 1];
+    if (argv) LocalFree(argv);
+    return value;
+}
+
+// Squad template tag indexes for the running map ("sq_camp_marine_1" -> tag index), read once per process from the
+// .map file's tag-name buffer: null-separated names in tag-index order, the first being globals\globals (tag 0).
+static std::unordered_map<std::string, uint16_t> s_squadTemplates;
+static bool s_squadTemplatesLoaded = false;
+
+static void LoadSquadTemplateNames() {
+    if (s_squadTemplatesLoaded) return;
+    s_squadTemplatesLoaded = true;
+    const std::wstring map = CommandLineValue(L"-map");
+    if (map.empty()) {
+        NOBLE_WARN("ReachHost: allies: no -map on the command line, squad templates unknown");
+        return;
+    }
+    const std::filesystem::path path = ReachHost::Get().GetMapsDir() / (map + L".map");
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        NOBLE_WARN("ReachHost: allies: cannot open {}", path.string());
+        return;
+    }
+    static const char kNeedle[] = "\0globals\\globals\0";
+    const std::string needle(kNeedle, sizeof(kNeedle) - 1);
+    std::vector<char> buffer(8u << 20);
+    std::string carry;
+    uint64_t consumed = 0;
+    int64_t start = -1;
+    while (in && start < 0) {
+        in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize got = in.gcount();
+        if (got <= 0) break;
+        const std::string chunk = carry + std::string(buffer.data(), static_cast<size_t>(got));
+        const size_t pos = chunk.find(needle);
+        if (pos != std::string::npos) start = static_cast<int64_t>(consumed - carry.size() + pos + 1);
+        carry = chunk.substr(chunk.size() - (needle.size() - 1));
+        consumed += static_cast<uint64_t>(got);
+    }
+    if (start < 0) {
+        NOBLE_WARN("ReachHost: allies: tag names not found in {}", path.string());
+        return;
+    }
+    in.clear();
+    in.seekg(start);
+    in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const size_t got = static_cast<size_t>(in.gcount());
+    static const std::string kPrefix = "ai\\squad_templates\\";
+    size_t index = 0;
+    for (size_t at = 0; at < got && index <= 0xFFFF; ++index) {
+        const char* name = buffer.data() + at;
+        const size_t len = strnlen(name, got - at);
+        if (len > kPrefix.size() && std::memcmp(name, kPrefix.data(), kPrefix.size()) == 0)
+            s_squadTemplates.emplace(std::string(name + kPrefix.size(), len - kPrefix.size()), static_cast<uint16_t>(index));
+        at += len + 1;
+    }
+    NOBLE_INFO("ReachHost: allies: {} squad templates named in {}", s_squadTemplates.size(), path.filename().string());
+}
+
+// Datum of a squad template by name on the running map, checked against the engine's own tag table (the tag must be
+// loaded and in the squad_template group). 0xFFFFFFFF if not available.
+static uint32_t FindSquadTemplate(const std::string& name) {
+    LoadSquadTemplateNames();
+    const auto it = s_squadTemplates.find(name);
+    if (it == s_squadTemplates.end()) return 0xFFFFFFFFu;
+    static int s_group = -2;
+    if (s_group == -2) s_group = SquadTemplateGroupIndex();
+    uint16_t group = 0, salt = 0;
+    uint32_t packed = 0;
+    if (s_group < 0 || !TagInstanceEntry(it->second, group, salt, packed) || group != s_group) {
+        NOBLE_WARN("ReachHost: allies: template '{}' (tag 0x{:X}) failed the group check (group {} vs {})", name, it->second,
+                   group, s_group);
+        return 0xFFFFFFFFu;
+    }
+    return (static_cast<uint32_t>(salt) << 16) | it->second;
+}
+
+static std::atomic<int> s_alliesKind{ 0 };
+static std::atomic<int> s_alliesSquads{ 0 };
+static std::atomic<bool> s_alliesRequest{ false };
+
+void ReachHost::RequestFirefightAllies(int kind, int squads) {
+    s_alliesKind = kind;
+    s_alliesSquads = squads;
+    s_alliesRequest = true;
+}
+
+// kind: 1 Marines, 2 ODSTs, 3 Troopers, 4 Noble Team. squads: 1-5 (one fireteam squad each, sur_fireteam_01..).
+// Templates are placed through a wave squad's spawn points (Firefight squads have no characters of their own) and
+// the new actors are moved into the fireteam squads at once, so the wave squad keeps its enemies only.
+static void PlaceFirefightAllies(int kind, int squads) {
+    static const std::vector<std::string> kMarines = { "sq_camp_marine_1", "sq_camp_marine_2", "sq_camp_marine_3",
+                                                       "sq_camp_marine_4", "sq_camp_marine_5" };
+    static const std::vector<std::string> kOdsts = { "sq_camp_odst_1", "sq_camp_odst_2", "sq_camp_odst_3" };
+    static const std::vector<std::string> kTroopers = { "sq_camp_trooper_1", "sq_camp_trooper_2", "sq_camp_trooper_3",
+                                                        "sq_camp_trooper_4" };
+    static const std::vector<std::string> kNoble = { "sq_camp_spartan_carter", "sq_camp_spartan_kat", "sq_camp_spartan_jorge",
+                                                     "sq_camp_spartan_emile", "sq_camp_spartan_jun" };
+    // Firefight maps carry no human AI characters (only the Covenant ones), so kinds 1-4 cannot produce humans
+    // until those tags are loaded into the map; kind 5 uses Firefight's own Elite templates.
+    static const std::vector<std::string> kElites = { "sq_ff_elite_4", "sq_ff_elite_specops_4", "sq_ff_elite_jetpack_4" };
+    const std::vector<std::string>* names = kind == 1 ? &kMarines : kind == 2 ? &kOdsts : kind == 3 ? &kTroopers
+                                          : kind == 4 ? &kNoble : kind == 5 ? &kElites : nullptr;
+    if (!names || squads <= 0) return;
+    int host = -1;
+    for (const char* candidate : { "sq_sur_wave_08", "sq_sur_wave_07", "sq_sur_wave_06", "sq_sur_wave_01" })
+        if ((host = FindScenarioSquad(candidate)) >= 0) break;
+    if (host < 0) {
+        NOBLE_WARN("ReachHost: allies: this map has no Firefight wave squad to spawn through");
+        return;
+    }
+    int total = 0;
+    for (int i = 0; i < squads && i < 6; ++i) {
+        char fireteam[32];
+        std::snprintf(fireteam, sizeof(fireteam), "sur_fireteam_%02d", i + 1);
+        const int dest = FindScenarioSquad(fireteam);
+        const std::string& name = (*names)[static_cast<size_t>(i) % names->size()];
+        const uint32_t datum = FindSquadTemplate(name);
+        if (dest < 0 || datum == 0xFFFFFFFFu) {
+            NOBLE_WARN("ReachHost: allies: skipped {} ({} index {}, template datum 0x{:X})", name, fireteam, dest, datum);
+            continue;
+        }
+        const int made = noble::spawn::PlaceAllies([&] { return PlaceTemplateDatum(host, datum, -1); }, dest);
+        if (made > 0) total += made;
+    }
+    NOBLE_INFO("ReachHost: allies: kind {} squads {} -> {} actors", kind, squads, total);
 }
 
 bool ReachHost::PlaceSquadByName(const char* squadName, int count) {
@@ -569,6 +763,32 @@ void ReachHost::GameThreadTick() {
         work.swap(s_squadQueue);
     }
     for (const auto& item : work) PlaceSquadByName(item.first.c_str(), item.second);
+#ifdef NOBLE_DEV_BUILD
+    // Dev: "-ff-allies <kind 1-4> <squads 1-5> -ff-allies-at <seconds after the first game tick>".
+    {
+        static int s_kind = -1, s_squads = 0;
+        static double s_at = -1.0;
+        static ULONGLONG s_first = 0;
+        if (s_kind < 0) {
+            s_kind = 0;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-ff-allies") == 0 && i + 2 < argc) { s_kind = _wtoi(argv[i + 1]); s_squads = _wtoi(argv[i + 2]); }
+                if (_wcsicmp(argv[i], L"-ff-allies-at") == 0) s_at = _wtof(argv[i + 1]);
+            }
+            if (argv) LocalFree(argv);
+        }
+        if (s_kind > 0 && s_at >= 0.0) {
+            if (!s_first) s_first = GetTickCount64();
+            if (GetTickCount64() - s_first >= static_cast<ULONGLONG>(s_at * 1000.0)) {
+                RequestFirefightAllies(s_kind, s_squads);
+                s_kind = 0;
+            }
+        }
+    }
+#endif
+    if (s_alliesRequest.exchange(false)) PlaceFirefightAllies(s_alliesKind, s_alliesSquads);
 }
 
 #ifdef NOBLE_DEV_BUILD
