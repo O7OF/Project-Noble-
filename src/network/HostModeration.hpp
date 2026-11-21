@@ -107,6 +107,25 @@ bool LocalIsCoHost();                // guest side, from the host's last host_ru
 void RequestCoHostAction(const std::string &action, uint64_t targetMachine,
                          const std::string &targetName);
 
+// ---- Lobby rules message (host option, saved) ----
+// Up to 200 characters, shown to players in the lobby. Sent with host_rules;
+// filtered like a server name.
+inline constexpr size_t kLobbyRulesMax = 200;
+std::string LobbyRules();
+void SetLobbyRules(const std::string &text);
+std::string GuestLobbyRules(); // the host's text as received ("" = none / stale)
+
+// ---- Join in progress (host option, saved) ----
+// Off: once a match has started, players who were not in it when it began are
+// sent away (host_remove "no_jip"). Players present during loading and the
+// first 90 s count as having started it; a player who drops and comes back
+// under the same name is let back in.
+bool JoinInProgress();
+void SetJoinInProgress(bool on);
+// Host, in the match: call every frame with everyone connected. `loading` =
+// the match is still loading.
+void TickMatchJoins(const std::vector<PlayerRef> &players, bool loading);
+
 // ---- Lobby access: lock, invite only, password (host side) ----
 // The host decides who may join its lobby. Players already admitted (in the
 // lobby while it was open, or let in since) always stay admitted, so a locked

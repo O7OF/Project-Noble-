@@ -48,6 +48,9 @@ ULONGLONG s_rulesAt = 0;
 // Lobby access (host): saved password; the mode, admitted players and invites
 // live in host_access.json so a match relaunch keeps them.
 std::string s_lobbyPassword;
+bool s_joinInProgress = true;
+std::string s_lobbyRules;
+std::string s_guestRules;
 JoinAccess s_access = JoinAccess::Open;
 std::set<std::string> s_admitted;  // "a:<account>", "m:<machine>", "n:<name>"
 std::set<std::string> s_invited;   // lower-case usernames
@@ -85,6 +88,8 @@ void SaveLocked() {
   j["filter"] = {{"enabled", s_filterOn}, {"custom", s_customWords}};
   j["afk_minutes"] = s_afkMinutes;
   j["lobby_password"] = s_lobbyPassword;
+  j["join_in_progress"] = s_joinInProgress;
+  j["lobby_rules"] = s_lobbyRules;
   try {
     const std::filesystem::path path = FilePath();
     std::filesystem::create_directories(path.parent_path());
@@ -129,6 +134,8 @@ void LoadLocked() {
     s_customWords = f.value("custom", std::vector<std::string>());
     s_afkMinutes = j.value("afk_minutes", 0);
     s_lobbyPassword = j.value("lobby_password", std::string());
+    s_joinInProgress = j.value("join_in_progress", true);
+    s_lobbyRules = j.value("lobby_rules", std::string());
     NOBLE_INFO("HostModeration: {} ban(s), word filter {} ({} custom word(s))",
                s_bans.size(), s_filterOn ? "on" : "off", s_customWords.size());
   } catch (...) {
@@ -411,6 +418,7 @@ void Tick(const std::vector<PlayerRef> &players) {
       for (uint64_t id : s_hostMuted)
         muted.push_back(std::to_string(id));
       rules["muted"] = muted;
+      rules["rules"] = s_lobbyRules;
     }
     rules["cohosts"] = ids;
     NetworkTransport::Get().SendLobbyControlJson(rules.dump());
@@ -667,6 +675,8 @@ void OnHostRules(const std::string &json) {
     s_guestMuted = std::move(muted);
     s_guestFilterOn = j.value("filter", false);
     s_guestWords = std::move(words);
+    s_guestRules = FilterServerName(
+        j.value("rules", std::string()).substr(0, kLobbyRulesMax));
     s_rulesAt = GetTickCount64();
   } catch (...) {
   }
@@ -741,6 +751,87 @@ std::string TakeRemovalNotice() {
   return text;
 }
 
+
+// ---------------- Lobby rules ----------------
+std::string LobbyRules() {
+  std::lock_guard<std::mutex> lock(s_mutex);
+  LoadLocked();
+  return s_lobbyRules;
+}
+
+void SetLobbyRules(const std::string &text) {
+  std::string clean;
+  for (char c : text.substr(0, kLobbyRulesMax))
+    clean += (c == '\r' || c == '\n' || c == '\t') ? ' ' : c;
+  while (!clean.empty() && clean.back() == ' ')
+    clean.pop_back();
+  clean = FilterServerName(clean);
+  std::lock_guard<std::mutex> lock(s_mutex);
+  LoadLocked();
+  s_lobbyRules = clean;
+  SaveLocked();
+}
+
+std::string GuestLobbyRules() {
+  std::lock_guard<std::mutex> lock(s_mutex);
+  if (s_rulesAt == 0 || GetTickCount64() - s_rulesAt > 20000)
+    return {};
+  return s_guestRules;
+}
+
+// ---------------- Join in progress ----------------
+bool JoinInProgress() {
+  std::lock_guard<std::mutex> lock(s_mutex);
+  LoadLocked();
+  return s_joinInProgress;
+}
+
+void SetJoinInProgress(bool on) {
+  std::lock_guard<std::mutex> lock(s_mutex);
+  LoadLocked();
+  s_joinInProgress = on;
+  SaveLocked();
+}
+
+void TickMatchJoins(const std::vector<PlayerRef> &players, bool loading) {
+  static ULONGLONG s_started = 0; // first frame after loading
+  static std::set<uint64_t> s_startIds;
+  static std::set<std::string> s_startNames;
+  const ULONGLONG now = GetTickCount64();
+  const bool settling = loading || s_started == 0 || now - s_started < 90000;
+  if (!loading && s_started == 0)
+    s_started = now;
+  std::vector<PlayerRef> late;
+  for (const PlayerRef &p : players) {
+    if (p.machineId == 0)
+      continue;
+    std::string name = p.name;
+    for (char &c : name)
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (settling) {
+      s_startIds.insert(p.machineId);
+      if (!name.empty())
+        s_startNames.insert(name);
+      continue;
+    }
+    if (s_startIds.count(p.machineId) ||
+        (!name.empty() && s_startNames.count(name)))
+      continue;
+    late.push_back(p);
+  }
+  if (late.empty() || JoinInProgress())
+    return;
+  for (const PlayerRef &p : late) {
+    ULONGLONG &last = s_lastSent[p.machineId];
+    if (last != 0 && now - last < 3000)
+      continue;
+    last = now;
+    NetworkTransport::Get().SendHostRemove(p.machineId, "no_jip", "", 0);
+    NOBLE_INFO("HostModeration: '{}' joined after the start; join in progress "
+               "is off, asked them to leave",
+               p.name);
+  }
+}
 
 // ---------------- Lobby access ----------------
 namespace {
@@ -1106,6 +1197,11 @@ std::string RemovalText(const std::string &kind, const std::string &reason,
            "(or Direct Connect) and enter the password.";
   if (kind == "wrong_password")
     return "Wrong lobby password.";
+  if (kind == "no_jip")
+    return "This game doesn't allow joining once the match has started. Try "
+           "again when it's back in the lobby.";
+  if (kind == "min_ping")
+    return reason; // the host's MIN PING text, with both numbers
   std::string text = kind == "ban" ? "You were banned by the host" : "You were removed by the host";
   if (kind == "ban")
     text += minutes > 0 ? " for " + std::to_string(minutes) + " more minute(s)"

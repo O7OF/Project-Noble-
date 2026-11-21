@@ -164,6 +164,8 @@ void Settings::Load() {
     Read(j, "hostUploadKbps", d.hostUploadKbps);
     Read(j, "packetRedundancy", d.packetRedundancy);
     Read(j, "hostMaxPingMs", d.hostMaxPingMs);
+    Read(j, "hostMinPingMs", d.hostMinPingMs);
+    if (d.hostMinPingMs < 0 || d.hostMinPingMs > 1000) d.hostMinPingMs = 0;
     if (d.hostMaxPingMs < 0 || d.hostMaxPingMs > 1000) d.hostMaxPingMs = 0;
     if (d.hostUploadKbps < 0) d.hostUploadKbps = 0;
     if (d.hostUploadKbps > 1000000) d.hostUploadKbps = 1000000;
@@ -431,6 +433,7 @@ bool Settings::Save() {
     j["networkBudgetBoost"] = d.networkBudgetBoost;
     j["hostUploadKbps"] = d.hostUploadKbps;
     j["hostMaxPingMs"] = d.hostMaxPingMs;
+    j["hostMinPingMs"] = d.hostMinPingMs;
     j["packetRedundancy"] = d.packetRedundancy;
         j["exclusiveFullscreen"] = d.exclusiveFullscreen;
         j["fullscreenWidth"] = d.fullscreenWidth;

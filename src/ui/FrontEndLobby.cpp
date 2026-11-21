@@ -2,6 +2,7 @@
 #include "network/InviteCode.hpp"
 #include "network/HostModeration.hpp"
 
+#include <cstring>
 #include <ctime>
 
 namespace noble::fe {
@@ -995,11 +996,112 @@ static void DrawLobbyPasswordEditor(const Ui &ui, bool back) {
   ImGui::End();
 }
 
+// Host: LOBBY RULES editor (one short message shown to players who join).
+static bool s_rulesEditorOpen = false;
+static char s_rulesEditorText[HostModeration::kLobbyRulesMax + 1] = {};
+
+static void OpenLobbyRulesEditor() {
+  std::snprintf(s_rulesEditorText, sizeof(s_rulesEditorText), "%s",
+                HostModeration::LobbyRules().c_str());
+  s_rulesEditorOpen = true;
+}
+
+static void DrawLobbyRulesEditor(const Ui &ui, bool back) {
+  const float s = ui.s;
+  const ImVec2 size(680.0f * s, 360.0f * s);
+  ImGui::SetNextWindowPos(ImVec2(ui.origin.x + (ui.size.x - size.x) * 0.5f,
+                                 ui.origin.y + (ui.size.y - size.y) * 0.5f));
+  ImGui::SetNextWindowSize(size);
+  ImGui::SetNextWindowBgAlpha(0.97f);
+  ImGui::Begin("##lobbyrules", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                   ImGuiWindowFlags_NoSavedSettings);
+  ImGui::PushFont(NobleStyle::TitleFont());
+  ImGui::TextUnformatted("LOBBY RULES");
+  ImGui::PopFont();
+  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+  ImGui::TextWrapped("A short message for players who join your lobby (up to "
+                     "%d characters), for example \"No camping, have fun\". "
+                     "Leave it empty to show nothing.",
+                     static_cast<int>(HostModeration::kLobbyRulesMax));
+  ImGui::PopStyleColor();
+  ImGui::Dummy(ImVec2(0, 8.0f * s));
+  if (ImGui::IsWindowAppearing())
+    ImGui::SetKeyboardFocusHere();
+  ImGui::InputTextMultiline("##lobbyrulestext", s_rulesEditorText,
+                            sizeof(s_rulesEditorText),
+                            ImVec2(-1.0f, 150.0f * s));
+  ImGui::TextDisabled("%d / %d", static_cast<int>(std::strlen(s_rulesEditorText)),
+                      static_cast<int>(HostModeration::kLobbyRulesMax));
+  ImGui::Dummy(ImVec2(0, 6.0f * s));
+  const float bw = (ImGui::GetContentRegionAvail().x - 10.0f * s) * 0.5f;
+  const bool save = ImGui::Button("SAVE", ImVec2(bw, 42.0f * s));
+  ImGui::SameLine(0.0f, 10.0f * s);
+  const bool cancel = ImGui::Button("CANCEL", ImVec2(bw, 42.0f * s)) ||
+                      (back && !ImGui::GetIO().WantTextInput);
+  if (save) {
+    HostModeration::SetLobbyRules(s_rulesEditorText);
+    NOBLE_INFO("FrontEndMenu: lobby rules saved ({} chars)",
+               HostModeration::LobbyRules().size());
+    MenuSounds::Click();
+    s_rulesEditorOpen = false;
+  } else if (cancel) {
+    MenuSounds::Back();
+    s_rulesEditorOpen = false;
+  }
+  ImGui::End();
+}
+
+// Guest: the host's rules, shown at the top of the lobby for 30 s after they
+// arrive or change.
+static void DrawGuestLobbyRules(const Ui &ui) {
+  static std::string s_shown;
+  static double s_since = 0.0;
+  const std::string rules = HostModeration::GuestLobbyRules();
+  if (rules.empty())
+    return;
+  const double now = ImGui::GetTime();
+  if (rules != s_shown) {
+    s_shown = rules;
+    s_since = now;
+    NOBLE_INFO("FrontEndMenu: host lobby rules: {}", rules);
+  }
+  if (now - s_since > 30.0)
+    return;
+  const float s = ui.s;
+  const float w = (std::min)(760.0f * s, ui.size.x - 40.0f * s);
+  const float pad = 10.0f * s;
+  ImFont *font = ImGui::GetFont();
+  const float fs = ImGui::GetFontSize();
+  const ImVec2 textSize =
+      font->CalcTextSizeA(fs, FLT_MAX, w - 2.0f * pad, rules.c_str());
+  const ImVec2 p0(ui.origin.x + (ui.size.x - w) * 0.5f, ui.origin.y + 14.0f * s);
+  const ImVec2 p1(p0.x + w, p0.y + pad * 2.0f + fs + 4.0f * s + textSize.y);
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  dl->AddRectFilled(p0, p1, IM_COL32(10, 14, 18, 235), 4.0f * s);
+  dl->AddRect(p0, p1, IM_COL32(120, 170, 210, 200), 4.0f * s);
+  dl->AddText(font, fs, ImVec2(p0.x + pad, p0.y + pad),
+              IM_COL32(150, 180, 200, 255), "HOST RULES");
+  dl->AddText(font, fs, ImVec2(p0.x + pad, p0.y + pad + fs + 4.0f * s),
+              IM_COL32(235, 240, 245, 255), rules.c_str(), nullptr,
+              w - 2.0f * pad);
+}
+
 void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
                              float top, FrontEndChoice &choice, bool &done,
                              bool back) {
   MenuState &st = ctx.st;
   TakePendingLobbyEvents(st);
+  if (s_rulesEditorOpen) {
+    if (!st.isLobbyHost)
+      s_rulesEditorOpen = false;
+    else {
+      DrawLobbyRulesEditor(ui, back);
+      return;
+    }
+  }
+  if (!st.isLobbyHost)
+    DrawGuestLobbyRules(ui);
   if (s_passwordEditorOpen) {
     if (!st.isLobbyHost)
       s_passwordEditorOpen = false;
@@ -1309,8 +1411,10 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     }
   }
 
-  // Host option MAX PING (every mode): a guest whose ping to the host stays
-  // above the limit for 5 seconds in the pre-game lobby is asked to leave.
+  // Host options MIN / MAX PING (every mode): a guest whose ping to the host
+  // stays above MAX PING (or below MIN PING) for 5 seconds in the pre-game
+  // lobby is asked to leave. MIN PING keeps games regional; it is ignored when
+  // it is not below MAX PING.
   // Checked only here in the lobby, never during a match, so a short lag
   // spike can't remove anyone mid-game.
   if (st.isLobbyHost && kLobbyMaxPingEnabled) {
@@ -1320,7 +1424,10 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     if (nowMs - s_lastPingCheck >= 1000) {
       s_lastPingCheck = nowMs;
       const int limit = Settings::Get().Snapshot().hostMaxPingMs;
-      if (limit <= 0) {
+      int minLimit = Settings::Get().Snapshot().hostMinPingMs;
+      if (limit > 0 && minLimit >= limit)
+        minLimit = 0;
+      if (limit <= 0 && minLimit <= 0) {
         s_overSeconds.clear();
       } else {
         const auto pings = NetworkTransport::Get().GetAllPeerPingsMs();
@@ -1330,13 +1437,28 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         for (const auto &kv : pings) {
           if (kv.first == 0 || kv.second <= 0)
             continue;
-          if (kv.second <= limit) {
+          const bool tooHigh = limit > 0 && kv.second > limit;
+          const bool tooLow = minLimit > 0 && kv.second < minLimit;
+          if (!tooHigh && !tooLow) {
             s_overSeconds.erase(kv.first);
             continue;
           }
           const int secs = ++s_overSeconds[kv.first];
           // Ask at 5 s, then repeat every 3 s in case the message was lost.
-          if (secs >= 5 && (secs - 5) % 3 == 0) {
+          if (secs >= 5 && (secs - 5) % 3 == 0 && tooLow) {
+            NetworkTransport::Get().SendHostRemove(
+                kv.first, "min_ping",
+                "You left the lobby: the host only allows players with a ping "
+                "of at least " +
+                    std::to_string(minLimit) + " ms, to keep games regional "
+                    "(yours was " +
+                    std::to_string(kv.second) + " ms).",
+                0);
+            if (secs == 5)
+              NOBLE_INFO("FrontEndMenu: a player's ping ({} ms) is below this "
+                         "lobby's min ping ({} ms); asking them to leave",
+                         kv.second, minLimit);
+          } else if (secs >= 5 && (secs - 5) % 3 == 0) {
             NetworkTransport::Get().SendPingLimitRefusal(kv.first, limit,
                                                          kv.second);
             if (secs == 5)
@@ -1985,8 +2107,21 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         "Host option: players whose ping to you stays above this for 5 "
         "seconds are asked to leave the lobby. Checked only before the game "
         "starts, never during a match."};
+    const int minPing = Settings::Get().Snapshot().hostMinPingMs;
+    const bool minIgnored = minPing > 0 && maxPing > 0 && minPing >= maxPing;
+    LobbyMenuOption minRow{
+        "MIN PING",
+        minPing > 0 ? std::to_string(minPing) + " MS" +
+                          (minIgnored ? std::string(" (OFF: NOT BELOW MAX)") : std::string())
+                    : "NO MINIMUM",
+        false, true,
+        "Host option: players whose ping to you stays below this for 5 seconds "
+        "are asked to leave, to keep games regional. Ignored unless it is "
+        "below MAX PING. Checked only before the game starts."};
     auto startIt = std::find_if(optRows.begin(), optRows.end(),
                                 [](const LobbyMenuOption &r) { return r.isStart; });
+    startIt = optRows.insert(startIt, minRow);
+    ++startIt;
     optRows.insert(startIt, pingRow);
   }
 
@@ -2015,6 +2150,20 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       modRows.push_back(
           {"LOBBY PASSWORD", hasPw ? std::string("SET") : std::string("NONE"),
            false, true, "Set or remove your lobby password. Press to edit."});
+      const std::string rulesText = HostModeration::LobbyRules();
+      modRows.push_back(
+          {"LOBBY RULES",
+           rulesText.empty() ? std::string("NONE") : std::string("SET"), false,
+           true,
+           "A short message players see when they join your lobby. Press to "
+           "edit."});
+      modRows.push_back(
+          {"JOIN IN PROGRESS",
+           HostModeration::JoinInProgress() ? std::string("ON")
+                                            : std::string("OFF"),
+           false, true,
+           "Host option: OFF means nobody new can join once the match has "
+           "started (players who drop can still come back)."});
     }
     modRows.push_back(
         {"WORD FILTER", HostModeration::FilterEnabled() ? "ON" : "OFF", false,
@@ -2205,6 +2354,22 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       NOBLE_INFO("FrontEndMenu: lobby max ping set to {} ms (0 = no limit)",
                  d.hostMaxPingMs);
       MenuSounds::Change();
+    } else if (row.label == "MIN PING") {
+      if (!st.isLobbyHost)
+        return;
+      static constexpr int kMinSteps[] = {0, 20, 40, 60, 80, 100, 150};
+      constexpr int kMinCount =
+          static_cast<int>(sizeof(kMinSteps) / sizeof(kMinSteps[0]));
+      SettingsData d = Settings::Get().Snapshot();
+      int idx = 0;
+      for (int i = 0; i < kMinCount; ++i)
+        if (kMinSteps[i] == d.hostMinPingMs)
+          idx = i;
+      d.hostMinPingMs = kMinSteps[(idx + dir + kMinCount) % kMinCount];
+      Settings::Get().Update(d);
+      NOBLE_INFO("FrontEndMenu: lobby min ping set to {} ms (0 = none)",
+                 d.hostMinPingMs);
+      MenuSounds::Change();
     } else if (row.label == "JOINS") {
       if (!st.isLobbyHost)
         return;
@@ -2225,6 +2390,18 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         return;
       OpenLobbyPasswordEditor();
       MenuSounds::Click();
+    } else if (row.label == "LOBBY RULES") {
+      if (!st.isLobbyHost)
+        return;
+      OpenLobbyRulesEditor();
+      MenuSounds::Click();
+    } else if (row.label == "JOIN IN PROGRESS") {
+      if (!st.isLobbyHost)
+        return;
+      HostModeration::SetJoinInProgress(!HostModeration::JoinInProgress());
+      NOBLE_INFO("FrontEndMenu: join in progress {}",
+                 HostModeration::JoinInProgress() ? "on" : "off");
+      MenuSounds::Change();
     } else if (row.label == "WORD FILTER") {
       if (!st.isLobbyHost)
         return;
@@ -2565,6 +2742,9 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     } else if (cur.label == "LOBBY PASSWORD" && st.isLobbyHost) {
       OpenLobbyPasswordEditor();
       MenuSounds::Click();
+    } else if (cur.label == "LOBBY RULES" && st.isLobbyHost) {
+      OpenLobbyRulesEditor();
+      MenuSounds::Click();
     } else if (cur.label == "LIFT BAN" && st.isLobbyHost) {
       HostModeration::Unban(static_cast<size_t>(s_banView));
       s_banView = 0;
@@ -2794,7 +2974,7 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       if (row.label == "CHANGE TEAM" || row.label == "GAME OPTIONS" ||
           row.label == "VOTE" || row.label == "GAME TYPE" ||
           row.label == "LIFT BAN" || row.label == "FILTER WORDS" ||
-          row.label == "LOBBY PASSWORD") {
+          row.label == "LOBBY PASSWORD" || row.label == "LOBBY RULES") {
         triggerAction();
       } else {
         cycleOption(ImGui::GetMousePos().x < colX + colW * 0.48f + 28.0f * ui.s

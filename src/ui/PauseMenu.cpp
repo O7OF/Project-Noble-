@@ -612,6 +612,18 @@ void HostReturnToLobbyAlone(HWND hwnd) {
   RelaunchAndClose(hwnd, args, "host return to lobby alone");
 }
 
+// Host: DISBAND LOBBY from the match. Everyone (the host too) goes to the main
+// menu and the session closes; same messages as RETURN TO LOBBY ALONE.
+void HostDisbandLobby(HWND hwnd) {
+  const std::string session = HostSessionUtf8();
+  NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+  if (!session.empty())
+    MasterServerClient::Get().DisbandSessionSync(session);
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+  RelaunchAndClose(hwnd, L"-main-menu", "host disband lobby");
+}
+
 void QuitFromMatch(HWND hwnd, const char *what) {
   NOBLE_INFO("PauseMenu: {}", what);
   Career::EnsureMatchSaved(what);
@@ -1875,6 +1887,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   }
   int leaveEntry = static_cast<int>(entries.size());
   int aloneEntry = -1;
+  int disbandEntry = -1;
   if (hostedSession) {
     entries.push_back({"RETURN TO LOBBY", nullptr,
                        "End the match and go back to the lobby. Everyone "
@@ -1885,6 +1898,10 @@ void PauseMenu::DrawMenu(HWND hwnd) {
                  "other players are sent to their main menu.",
                  "Select again: the other players leave and this lobby closes.",
                  true);
+    addConfirmed(disbandEntry, "DISBAND LOBBY", "CONFIRM DISBAND?",
+                 "End the match and close the lobby. Everyone goes to their "
+                 "main menu, you too.",
+                 "Select again: everyone leaves and the lobby closes.", true);
   } else if (noble::BlamEngine::IsSavedFilmPlayback()) {
     entries.push_back({"LEAVE THEATER", nullptr,
                        "Stop Theater playback and return to the front-end.",
@@ -2227,6 +2244,11 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   } else if (pauseAllEntry >= 0 && activated == pauseAllEntry) {
     MenuSounds::Click();
     SetHostPauseForEveryone(!s_hostPausedAll);
+  } else if (disbandEntry >= 0 && activated == disbandEntry) {
+    if (confirmed(disbandEntry)) {
+      Close();
+      HostDisbandLobby(hwnd);
+    }
   } else if (aloneEntry >= 0 && activated == aloneEntry) {
     if (confirmed(aloneEntry)) {
       Close();
@@ -5844,6 +5866,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
               ref.name = r.name;
       }
       HostModeration::Tick(refs);
+      HostModeration::TickMatchJoins(refs, loading);
     }
 #ifdef NOBLE_DEV_BUILD
     PollHostMenuTest(loading);
