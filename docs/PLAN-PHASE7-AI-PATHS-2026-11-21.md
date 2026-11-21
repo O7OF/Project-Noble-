@@ -1,4 +1,4 @@
-# Phase 7 plan: AI paths on custom and Forge maps (research, 2026-11-21)
+# Phase 7 plan: AI paths on custom and Forge maps (research, 2026-11-21; updated 01:45)
 
 Research only. Nothing here is built yet; a new session starts the work from this plan.
 
@@ -91,7 +91,20 @@ Forge canvas; the 1,024-actor profile; guests see the same AI behaviour.
 - Performance: big layouts may make many sectors; keep the A* iteration cap in mind.
 - Multiplayer: the sidecar must be identical on every PC (hash check, refuse the bake when it differs).
 
-## 6. First tasks for the new session
+## 6. Research tools on Tyler's PC (found 2026-11-21)
+
+- **`D:\MCC_DECOMP\MCC HALO REACH DECOMP\decompiled\hr_000NN.c`** - the whole MCC `haloreach.dll` decompiled to text
+  (15 files, 52 MB, same build: SHA-256 738dd2d2...; `functions_index.csv` lists every function). Searching it with
+  Select-String / grep is much faster than Ghidra calls, and it answered the variant questions in minutes (Firefight
+  waves, social flags). Start Step 1 here: search for the 360 function shapes (A* heap, sector loops) and for the
+  BSP pathfinding-data accessors, then confirm in Ghidra.
+- **Ghidra (`ghidra-reach` connector)**: the Claude app may start the helper twice; the second copy locks the project
+  (`NobleReach.lock`) and the other copy reports "locked". Fix used on 2026-11-21: end the copy holding the lock and the
+  copy that cached the failure, so only a fresh copy runs; lasting fix: give the helper its own project copy.
+- Other games' decompiles in `D:\MCC_DECOMP` (Halo 3, ODST, Halo 4) can help compare how later engines handle object
+  pathfinding.
+
+## 7. First tasks for the new session
 
 1. Close Ghidra on the PC or give the headless tool its own copy; run Step 1 and write the data doc.
 2. Do the Step 2 proof and report pass / fail before building the bake tool.

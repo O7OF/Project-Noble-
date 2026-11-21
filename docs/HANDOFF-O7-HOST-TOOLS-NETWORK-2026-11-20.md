@@ -1,4 +1,4 @@
-# Handoff for O7: host tools network changes (v0.20.33, 2026-11-20)
+# Handoff for O7: host tools network changes (v0.20.33, 2026-11-20; updated 2026-11-21 01:45)
 
 Tyler and Claude built the host tools (Phase 1-2 and the start of Phase 3 of
 `claude/TODO-HOST-TOOLS-AND-REMAINING-2026-11-20.md`). They touch your networking
@@ -25,7 +25,8 @@ relaunch), `host_notice.txt` (removal message from the match process to the menu
 | `lobby_auth {from, mid, account, user, pw}` | guest -> host | join check after entering the lobby, every 2 s up to 60 s; `pw` is an FNV-1a hash, not the password |
 | `lobby_admit {mid, account}` | host -> guests | stops that guest's `lobby_auth` |
 
-Added after v0.20.33 (dev builds `5136669`, `b6a9cf9`, `d267e92`):
+Added after v0.20.33 (dev builds on the closed repo `main`: `5136669`, `b6a9cf9`, `d267e92`, `9f02b20`, `803761b`,
+`99ccb43`; not released publicly yet - Tyler tests first):
 
 | type | from -> to | what it does |
 |---|---|---|
@@ -87,9 +88,16 @@ Host-sender checks use the existing pattern
    it waits for your server side. In-match host rows already follow whoever is host (`NetworkTransport::IsHost`).
 6. **Mid-match host migration** stays parked (engine path + master server).
 
+## No network changes in the last builds
+
+`803761b` (Firefight wave options) and `99ccb43` (friendly fire / betrayal booting / team changing in GAME OPTIONS)
+only edit the game variant before launch; the host's variant reaches guests through the session as before, so nothing
+new goes over the wire. Phase 6 host transfer stays parked on item 5 above.
+
 ## Tested on one PC
 
 Pause for everyone, return to lobby alone (disband), kick / ban message, restart
 waits for everyone, no credits under 5 minutes, 2-player smoke match after all changes
 (0 crashes). Not tested (needs two logged-in players): rejoin enforcement, lobby lock /
-password, co-host requests over the relay, relay chat mute / filter.
+password, co-host requests over the relay, relay chat mute / filter. Since then: join in progress off (late guest removed
+in 12 ms), END ROUND vote (round ended, post-game panel), MP restart with everyone (lobby countdown, 0 crashes).
