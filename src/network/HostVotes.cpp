@@ -22,6 +22,7 @@ int s_passPercent = 60;
 bool s_hostVeto = true;
 int s_cooldown = 60;
 bool s_enabled = true;
+bool s_nextMapVote = false;
 
 constexpr int kVoteSeconds = 30;
 
@@ -80,6 +81,7 @@ void LoadLocked() {
     s_hostVeto = j.value("host_veto", true);
     s_cooldown = std::clamp(j.value("cooldown_seconds", 60), 0, 3600);
     s_enabled = j.value("enabled", true);
+    s_nextMapVote = j.value("next_map_vote", false);
   } catch (...) {
   }
 }
@@ -88,7 +90,8 @@ void SaveLocked() {
   nlohmann::json j = {{"pass_percent", s_passPercent},
                       {"host_veto", s_hostVeto},
                       {"cooldown_seconds", s_cooldown},
-                      {"enabled", s_enabled}};
+                      {"enabled", s_enabled},
+                      {"next_map_vote", s_nextMapVote}};
   try {
     const auto path = FilePath();
     std::filesystem::create_directories(path.parent_path());
@@ -306,6 +309,18 @@ void SetVotesEnabled(bool on) {
   std::lock_guard<std::mutex> lock(s_mutex);
   LoadLocked();
   s_enabled = on;
+  SaveLocked();
+}
+
+bool NextMapVote() {
+  std::lock_guard<std::mutex> lock(s_mutex);
+  LoadLocked();
+  return s_nextMapVote;
+}
+void SetNextMapVote(bool on) {
+  std::lock_guard<std::mutex> lock(s_mutex);
+  LoadLocked();
+  s_nextMapVote = on;
   SaveLocked();
 }
 

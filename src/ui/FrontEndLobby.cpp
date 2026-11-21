@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <ctime>
+#include <random>
 
 namespace noble::fe {
 
@@ -588,6 +589,35 @@ void AssignLobbyTeams(MenuState &st) {
     st.teamsPushFailed = true;
     NOBLE_WARN("FrontEndMenu: the server didn't accept the team list");
   }
+}
+
+// Host: BALANCE TEAMS (deal players evenly in roster order) / SHUFFLE TEAMS
+// (random order, then deal). Marks the teams as the host's own choice.
+static void DealLobbyTeams(MenuState &st, bool shuffle) {
+  if (!st.lobbyTeamsOn || st.lobbyRoster.empty())
+    return;
+  const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
+  std::vector<size_t> order(st.lobbyRoster.size());
+  for (size_t i = 0; i < order.size(); ++i)
+    order[i] = i;
+  if (shuffle) {
+    static std::mt19937 s_random{std::random_device{}()};
+    std::shuffle(order.begin(), order.end(), s_random);
+  }
+  std::vector<std::pair<uint64_t, int>> changes;
+  for (size_t k = 0; k < order.size(); ++k) {
+    LobbyPlayer &p = st.lobbyRoster[order[k]];
+    const int team = static_cast<int>(k % static_cast<size_t>(teams)) + 1;
+    p.team = team;
+    changes.emplace_back(p.peerId, team);
+    if (p.isHost)
+      MasterServerClient::Get().SetAdvertHostTeam(team);
+  }
+  st.lobbyTeamsManual = true;
+  if (!st.lobbySessionId.empty())
+    MasterServerClient::Get().SetTeamsSync(st.lobbySessionId, changes);
+  NOBLE_INFO("FrontEndMenu: teams {} for {} player(s) over {} teams",
+             shuffle ? "shuffled" : "balanced", changes.size(), teams);
 }
 
 // Opens the game options editor on a variant; Custom Game and Firefight share
@@ -2151,6 +2181,18 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       modRows.push_back(
           {"LOBBY PASSWORD", hasPw ? std::string("SET") : std::string("NONE"),
            false, true, "Set or remove your lobby password. Press to edit."});
+      if (st.lobbyTeamsOn) {
+        modRows.push_back({"BALANCE TEAMS", "", false, true,
+                           "Deal the players out evenly over the teams."});
+        modRows.push_back({"SHUFFLE TEAMS", "", false, true,
+                           "Mix the players up, then deal them out evenly."});
+        modRows.push_back(
+            {"LOCK TEAMS",
+             HostModeration::TeamsLocked() ? std::string("ON") : std::string("OFF"),
+             false, true,
+             "Host option: players can't change team themselves in the match. "
+             "You still set teams here."});
+      }
       // In-match votes (vote kick, end round, end game).
       const bool votesOn = HostVotes::VotesEnabled();
       modRows.push_back({"VOTES", votesOn ? std::string("ON") : std::string("OFF"),
@@ -2166,6 +2208,12 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         modRows.push_back(
             {"HOST VETO", HostVotes::HostVeto() ? std::string("ON") : std::string("OFF"),
              false, true, "Host option: you can cancel any vote with F3."});
+        modRows.push_back(
+            {"NEXT MAP VOTE",
+             HostVotes::NextMapVote() ? std::string("ON") : std::string("OFF"),
+             false, true,
+             "With a playlist: when everyone is back from a match, the map "
+             "vote opens by itself so players pick the next map."});
         modRows.push_back(
             {"VOTE COOLDOWN", std::to_string(HostVotes::CooldownSeconds()) + " S",
              false, true, "Time after a vote before another one can start."});
@@ -2424,6 +2472,21 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         if (HostVotes::kPassChoices[i] == HostVotes::PassPercent())
           idx = i;
       HostVotes::SetPassPercent(HostVotes::kPassChoices[(idx + dir + n) % n]);
+      MenuSounds::Change();
+    } else if (row.label == "LOCK TEAMS") {
+      if (!st.isLobbyHost)
+        return;
+      HostModeration::SetTeamsLocked(!HostModeration::TeamsLocked());
+      MenuSounds::Change();
+    } else if (row.label == "BALANCE TEAMS" || row.label == "SHUFFLE TEAMS") {
+      if (!st.isLobbyHost)
+        return;
+      DealLobbyTeams(st, row.label == "SHUFFLE TEAMS");
+      MenuSounds::Click();
+    } else if (row.label == "NEXT MAP VOTE") {
+      if (!st.isLobbyHost)
+        return;
+      HostVotes::SetNextMapVote(!HostVotes::NextMapVote());
       MenuSounds::Change();
     } else if (row.label == "HOST VETO") {
       if (!st.isLobbyHost)
@@ -2750,6 +2813,15 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     RequestMatchLaunch(choice, done, choice);
   };
 
+  // NEXT MAP VOTE: open the map vote by itself once the party is back.
+  if (st.autoVoteAt > 0.0 && st.isLobbyHost && ImGui::GetTime() >= st.autoVoteAt) {
+    st.autoVoteAt = 0.0;
+    if (!st.lobbySessionId.empty()) {
+      NOBLE_INFO("FrontEndMenu: opening the next-map vote");
+      StartLobbyVote(ctx);
+    }
+  }
+
   // A rotation that starts by itself. B or Esc stops the countdown for this
   // lobby, and a vote holds it.
   if (st.autoStartAt > 0.0 && st.isLobbyHost) {
@@ -2791,6 +2863,10 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       MenuSounds::Click();
     } else if (cur.label == "LOBBY PASSWORD" && st.isLobbyHost) {
       OpenLobbyPasswordEditor();
+      MenuSounds::Click();
+    } else if ((cur.label == "BALANCE TEAMS" || cur.label == "SHUFFLE TEAMS") &&
+               st.isLobbyHost) {
+      DealLobbyTeams(st, cur.label == "SHUFFLE TEAMS");
       MenuSounds::Click();
     } else if (cur.label == "LOBBY RULES" && st.isLobbyHost) {
       OpenLobbyRulesEditor();
@@ -3024,7 +3100,8 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       if (row.label == "CHANGE TEAM" || row.label == "GAME OPTIONS" ||
           row.label == "VOTE" || row.label == "GAME TYPE" ||
           row.label == "LIFT BAN" || row.label == "FILTER WORDS" ||
-          row.label == "LOBBY PASSWORD" || row.label == "LOBBY RULES") {
+          row.label == "LOBBY PASSWORD" || row.label == "LOBBY RULES" ||
+          row.label == "BALANCE TEAMS" || row.label == "SHUFFLE TEAMS") {
         triggerAction();
       } else {
         cycleOption(ImGui::GetMousePos().x < colX + colW * 0.48f + 28.0f * ui.s

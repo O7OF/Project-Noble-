@@ -57,6 +57,9 @@ int CooldownSeconds();
 void SetCooldownSeconds(int seconds);
 bool VotesEnabled();
 void SetVotesEnabled(bool on);
+// Back in the lobby after a playlist match, open the lobby's map VOTE by itself.
+bool NextMapVote();
+void SetNextMapVote(bool on);
 
 // Any player: ask for a vote (the host starts it straight away). Returns a
 // message for the player when the vote can't start ("" when it was sent).

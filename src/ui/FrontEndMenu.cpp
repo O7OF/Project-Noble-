@@ -3,6 +3,7 @@
 #include "hooks/LobbyPatches.hpp"
 #include "host/SlotPatch.hpp"
 #include "network/HostModeration.hpp"
+#include "network/HostVotes.hpp"
 
 namespace noble {
 namespace fe {
@@ -7039,6 +7040,13 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
               ApplyEntryToLobby(ctx.st, resolved);
           }
           ctx.st.playlistPosition = at;
+          // NEXT MAP VOTE: the lobby's map vote opens by itself a few seconds
+          // after the party is back (players vote on the next map).
+          if (HostVotes::NextMapVote() && playlist.entries.size() >= 2 &&
+              text(L"-lobby-autostart").empty()) {
+            ctx.st.autoVoteAt = 8.0; // ImGui time starts at 0 here
+            NOBLE_INFO("FrontEndMenu: next-map vote opens in 8 s");
+          }
         }
         // RESTART MISSION / NEXT MISSION from the host's in-match menu: the party comes back to this lobby and
         // the match starts again by itself after a countdown (B / Esc cancels it, like a rotation countdown).

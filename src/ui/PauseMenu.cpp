@@ -1840,6 +1840,10 @@ void PauseMenu::DrawMenu(HWND hwnd) {
                  restartWithParty && hostedSession
                      ? "Restart from the beginning. Everyone comes back to the "
                        "lobby and it starts again once all players are back."
+                 : hostedSession
+                     ? "Restart from the beginning. Everyone comes back to the "
+                       "lobby and the match starts again after a short "
+                       "countdown."
                      : (isCampaign ? "Restart this mission from the beginning."
                                    : "Reload this match from the beginning."),
                  "Select again to confirm restarting from the beginning.", true);
@@ -1882,7 +1886,9 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   int teamEntry = -1;
   const bool isMultiOrForge = (currentMode == "multiplayer" ||
                                currentMode == "forge" || currentMode.empty());
-  if (BlamEngine::GameTeamsEnabled() || isMultiOrForge) {
+  // LOCK TEAMS (host option): guests can't change team themselves.
+  const bool teamsLockedForMe = isGuest && HostModeration::GuestTeamsLocked();
+  if ((BlamEngine::GameTeamsEnabled() || isMultiOrForge) && !teamsLockedForMe) {
     teamEntry = static_cast<int>(entries.size());
     entries.push_back({"CHANGE TEAM", nullptr,
                        "Switch your active team assignment.",
@@ -2243,6 +2249,11 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         HostReturnToLobby(hwnd, missionLobbyArgs(std::wstring()),
                           isCampaign ? "host restart mission with everyone"
                                      : "host restart Firefight with everyone");
+      else if (hostedSession)
+        // Multiplayer / Forge: back to the lobby with everyone, then a 10 s
+        // countdown (no waiting for every player; Tyler 2026-11-20).
+        HostReturnToLobby(hwnd, LobbyReturnArgs(true) + L" -lobby-autostart 10",
+                          "host restart match with everyone");
       else
         RelaunchAndClose(hwnd, restartArgs,
                          isCampaign ? "restart mission" : "restart match");

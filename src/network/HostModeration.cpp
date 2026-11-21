@@ -50,6 +50,8 @@ ULONGLONG s_rulesAt = 0;
 std::string s_lobbyPassword;
 bool s_joinInProgress = true;
 std::string s_lobbyRules;
+bool s_teamsLocked = false;
+bool s_guestTeamsLocked = false;
 std::string s_guestRules;
 JoinAccess s_access = JoinAccess::Open;
 std::set<std::string> s_admitted;  // "a:<account>", "m:<machine>", "n:<name>"
@@ -90,6 +92,7 @@ void SaveLocked() {
   j["lobby_password"] = s_lobbyPassword;
   j["join_in_progress"] = s_joinInProgress;
   j["lobby_rules"] = s_lobbyRules;
+  j["lock_teams"] = s_teamsLocked;
   try {
     const std::filesystem::path path = FilePath();
     std::filesystem::create_directories(path.parent_path());
@@ -136,6 +139,7 @@ void LoadLocked() {
     s_lobbyPassword = j.value("lobby_password", std::string());
     s_joinInProgress = j.value("join_in_progress", true);
     s_lobbyRules = j.value("lobby_rules", std::string());
+    s_teamsLocked = j.value("lock_teams", false);
     NOBLE_INFO("HostModeration: {} ban(s), word filter {} ({} custom word(s))",
                s_bans.size(), s_filterOn ? "on" : "off", s_customWords.size());
   } catch (...) {
@@ -419,6 +423,7 @@ void Tick(const std::vector<PlayerRef> &players) {
         muted.push_back(std::to_string(id));
       rules["muted"] = muted;
       rules["rules"] = s_lobbyRules;
+      rules["lock_teams"] = s_teamsLocked;
     }
     rules["cohosts"] = ids;
     NetworkTransport::Get().SendLobbyControlJson(rules.dump());
@@ -675,6 +680,7 @@ void OnHostRules(const std::string &json) {
     s_guestMuted = std::move(muted);
     s_guestFilterOn = j.value("filter", false);
     s_guestWords = std::move(words);
+    s_guestTeamsLocked = j.value("lock_teams", false);
     s_guestRules = FilterServerName(
         j.value("rules", std::string()).substr(0, kLobbyRulesMax));
     s_rulesAt = GetTickCount64();
@@ -751,6 +757,25 @@ std::string TakeRemovalNotice() {
   return text;
 }
 
+
+// ---------------- Lock teams ----------------
+bool TeamsLocked() {
+  std::lock_guard<std::mutex> lock(s_mutex);
+  LoadLocked();
+  return s_teamsLocked;
+}
+void SetTeamsLocked(bool on) {
+  std::lock_guard<std::mutex> lock(s_mutex);
+  LoadLocked();
+  s_teamsLocked = on;
+  SaveLocked();
+}
+bool GuestTeamsLocked() {
+  std::lock_guard<std::mutex> lock(s_mutex);
+  if (s_rulesAt == 0 || GetTickCount64() - s_rulesAt > 20000)
+    return false;
+  return s_guestTeamsLocked;
+}
 
 // ---------------- Lobby rules ----------------
 std::string LobbyRules() {

@@ -107,6 +107,12 @@ bool LocalIsCoHost();                // guest side, from the host's last host_ru
 void RequestCoHostAction(const std::string &action, uint64_t targetMachine,
                          const std::string &targetName);
 
+// ---- Lock teams (host option, saved; sent with host_rules) ----
+// On: guests can't change team themselves in the match (the host still can).
+bool TeamsLocked();
+void SetTeamsLocked(bool on);
+bool GuestTeamsLocked(); // guest: the host's rule as received
+
 // ---- Lobby rules message (host option, saved) ----
 // Up to 200 characters, shown to players in the lobby. Sent with host_rules;
 // filtered like a server name.
