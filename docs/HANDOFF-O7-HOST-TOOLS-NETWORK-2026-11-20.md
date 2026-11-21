@@ -79,6 +79,14 @@ Host-sender checks use the existing pattern
    `bans`, `unban <n>`, and the server loop now runs `HostModeration::Tick` over the
    connected peers.
 
+5. **Host transfer (Phase 6, parked for you).** Proposal: a master-server call such as
+   `POST /api/sessions/<id>/lobby/transfer {new_host_peer_id}` (host token) that makes another lobby member the
+   host and tells everyone over the relay (e.g. `lobby_host_changed {peer_id}`). The new host then re-registers the
+   advert from the same lobby settings and the others stay in the same session. Doing it client-only would mean the
+   chosen player opens a new lobby and everyone else hunts for it in `/api/sessions` (breaks for private lobbies), so
+   it waits for your server side. In-match host rows already follow whoever is host (`NetworkTransport::IsHost`).
+6. **Mid-match host migration** stays parked (engine path + master server).
+
 ## Tested on one PC
 
 Pause for everyone, return to lobby alone (disband), kick / ban message, restart
