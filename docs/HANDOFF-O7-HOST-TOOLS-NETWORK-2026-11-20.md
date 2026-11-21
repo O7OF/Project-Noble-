@@ -1,4 +1,4 @@
-# Handoff for O7: host tools network changes (v0.20.33, 2026-11-20; updated 2026-11-21 01:45)
+# Handoff for O7: host tools network changes (v0.20.33, 2026-11-20; updated 2026-11-21 06:10)
 
 Tyler and Claude built the host tools (Phase 1-2 and the start of Phase 3 of
 `claude/TODO-HOST-TOOLS-AND-REMAINING-2026-11-20.md`). They touch your networking
@@ -94,10 +94,17 @@ Host-sender checks use the existing pattern
 only edit the game variant before launch; the host's variant reaches guests through the session as before, so nothing
 new goes over the wire. Phase 6 host transfer stays parked on item 5 above.
 
+Firefight allies (2026-11-21, `5aa0c95`, `05ea310`, `2deb660`, `e0262df`): the Firefight host places allied AI squads
+in its match process (engine calls on the game thread); guests (`-connect`) never place AI. The host's actors reach
+guests through the engine's own simulation replication, the same as wave enemies, so there are no new Noble messages.
+New host settings `hostFirefightAllies` / `hostFirefightAllySquads` live only in the host's `settings.json`.
+Worth a look on your side: allies add up to ~20 actors on top of the waves (more simulation traffic in a 4-player game).
+
 ## Tested on one PC
 
 Pause for everyone, return to lobby alone (disband), kick / ban message, restart
 waits for everyone, no credits under 5 minutes, 2-player smoke match after all changes
 (0 crashes). Not tested (needs two logged-in players): rejoin enforcement, lobby lock /
 password, co-host requests over the relay, relay chat mute / filter. Since then: join in progress off (late guest removed
-in 12 ms), END ROUND vote (round ended, post-game panel), MP restart with everyone (lobby countdown, 0 crashes).
+in 12 ms), END ROUND vote (round ended, post-game panel), MP restart with everyone (lobby countdown, 0 crashes),
+Firefight allies in a 2-player LAN match (host + guest, 0 crashes).
