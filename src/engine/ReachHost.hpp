@@ -28,6 +28,9 @@ public:
     static bool IsUiScreenActive();
     // GetTickCount64 of the last engine frame (0 until the first), for the stall watchdog.
     static uint64_t GetLastFrameTickMs();
+    // Ends the current round on the engine thread's next frame (same call as the script command
+    // mp_round_end). Used by a passed END ROUND vote.
+    static void RequestRoundEnd();
 
     // Sends the settled award to every connected guest as a match_over packet (host only). Called
     // after any settlement, including the fallback used when the engine never produced results, so

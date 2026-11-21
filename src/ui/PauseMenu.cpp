@@ -34,6 +34,7 @@
 #include "mvar/MapVariantLibrary.hpp"
 #include "mvar/MapVariantWriter.hpp"
 #include "network/HostModeration.hpp"
+#include "network/HostVotes.hpp"
 #include "network/MasterServerClient.hpp"
 #include "network/NetworkTransport.hpp"
 #include "network/SessionManager.hpp"
@@ -1601,6 +1602,8 @@ void PauseMenu::SetLoadingSession(const std::string &mode,
   s_loadingJoiner = joiner;
 }
 
+static void VoteNotice(const std::string &text); // vote card note (below)
+
 void PauseMenu::DrawMenu(HWND hwnd) {
   using namespace NobleUi;
   ImGuiIO &io = ImGui::GetIO();
@@ -1884,6 +1887,19 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     entries.push_back({"CHANGE TEAM", nullptr,
                        "Switch your active team assignment.",
                        teamBadge, false, true});
+  }
+  // Votes (multiplayer, Forge and Firefight with other players).
+  int voteRoundEntry = -1, voteGameEntry = -1;
+  if (!isCampaign && !isTheaterPlayback && (isGuest || peers > 0)) {
+    voteRoundEntry = static_cast<int>(entries.size());
+    entries.push_back({"VOTE: END ROUND", nullptr,
+                       "Ask everyone to vote on ending this round now.",
+                       "VOTE", false, true});
+    voteGameEntry = static_cast<int>(entries.size());
+    entries.push_back({"VOTE: END GAME", nullptr,
+                       "Ask everyone to vote on ending the game and going "
+                       "back to the lobby.",
+                       "VOTE", false, true});
   }
   int leaveEntry = static_cast<int>(entries.size());
   int aloneEntry = -1;
@@ -2244,6 +2260,17 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   } else if (pauseAllEntry >= 0 && activated == pauseAllEntry) {
     MenuSounds::Click();
     SetHostPauseForEveryone(!s_hostPausedAll);
+  } else if ((voteRoundEntry >= 0 && activated == voteRoundEntry) ||
+             (voteGameEntry >= 0 && activated == voteGameEntry)) {
+    const HostVotes::Kind kind = activated == voteRoundEntry
+                                     ? HostVotes::Kind::EndRound
+                                     : HostVotes::Kind::EndGame;
+    const std::string why = HostVotes::Request(kind, 0, "");
+    VoteNotice(why.empty() ? (isGuest ? std::string("Vote asked for: the host starts it.")
+                                      : std::string("Vote started."))
+                           : why);
+    MenuSounds::Click();
+    Close();
   } else if (disbandEntry >= 0 && activated == disbandEntry) {
     if (confirmed(disbandEntry)) {
       Close();
@@ -4265,6 +4292,21 @@ static void DrawScoreboardPanel() {
         }
       }
 
+      // Vote kick (players, not the host; the host just kicks).
+      if (!isHost && selEntry && !selEntry->local && !selEntry->hostPeer &&
+          selEntry->machine != 0) {
+        ImGui::Spacing();
+        if (NobleStyle::DangerButton("VOTE TO KICK",
+                                     ImVec2(btnW * 2.0f + 10.0f * s, 38.0f * s))) {
+          const std::string why = HostVotes::Request(
+              HostVotes::Kind::Kick, selEntry->machine, selEntry->name);
+          s_status = why.empty() ? "Asked for a vote to kick " + s_selected : why;
+          VoteNotice(s_status);
+          s_showPlayerModal = false;
+          MenuSounds::Click();
+        }
+      }
+
       // Text-only mute (this PC only): chat lines from this player are hidden.
       if (selEntry && !selEntry->local) {
         ImGui::Spacing();
@@ -4384,6 +4426,96 @@ static void DrawHostPausedBanner() {
   Text(dl, NobleStyle::SmallFont(), 15.0f * s,
        ImVec2(p0.x + 32.0f * s, p0.y + 66.0f * s), IM_COL32(150, 190, 220, 255),
        "The host paused the mission. It carries on when the host resumes.");
+}
+
+// In-match vote card (everyone): who started it, the question, yes / no counts
+// and the keys. F1 = yes, F2 = no (D-pad left / right on a controller); the
+// host can veto with F3 when HOST VETO is on.
+static std::string s_voteNotice;
+static ULONGLONG s_voteNoticeUntil = 0;
+static void VoteNotice(const std::string &text) {
+  s_voteNotice = text;
+  s_voteNoticeUntil = GetTickCount64() + 4000;
+}
+
+static bool KeyEdge(int vk, bool &held) {
+  const bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
+  const bool edge = down && !held;
+  held = down;
+  return edge;
+}
+
+static void DrawVoteCard(HWND hwnd) {
+  using namespace NobleUi;
+  const HostVotes::View v = HostVotes::Current();
+  const bool notice = GetTickCount64() < s_voteNoticeUntil;
+  if (!v.active && !v.showResult && !notice)
+    return;
+  // Keys only count while the game window has focus.
+  static bool s_f1 = false, s_f2 = false, s_f3 = false;
+  const bool focused = GetForegroundWindow() == hwnd;
+  const bool yesKey = KeyEdge(VK_F1, s_f1) ||
+                      ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false);
+  const bool noKey = KeyEdge(VK_F2, s_f2) ||
+                     ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false);
+  const bool vetoKey = KeyEdge(VK_F3, s_f3);
+  const bool isHost = NetworkTransport::Get().IsHost();
+  if (focused && v.active && v.canVote && v.myChoice < 0) {
+    if (yesKey)
+      HostVotes::Cast(true);
+    else if (noKey)
+      HostVotes::Cast(false);
+  }
+  if (focused && v.active && isHost && vetoKey && HostVotes::HostVeto())
+    HostVotes::Veto();
+
+  ImGuiIO &io = ImGui::GetIO();
+  const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f) * Settings::UiScale();
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  const float panelW = std::min(W * 0.5f, 460.0f * s), panelH = 92.0f * s;
+  const ImVec2 p0((W - panelW) * 0.5f, 18.0f * s),
+      p1(p0.x + panelW, p0.y + panelH);
+  dl->AddRectFilled(p0, p1, IM_COL32(10, 16, 26, 230), 6.0f * s);
+  dl->AddRect(p0, p1, IM_COL32(70, 120, 165, 220), 6.0f * s, 0, 2.0f * s);
+  std::string title, line1, line2;
+  if (v.active) {
+    title = v.kind == HostVotes::Kind::Kick
+                ? "VOTE: KICK " + v.targetName
+                : std::string("VOTE: ") + HostVotes::KindText(v.kind);
+    line1 = (v.starterName.empty() ? std::string("A player")
+                                   : v.starterName) +
+            " started this vote.  YES " + std::to_string(v.yes) + "  NO " +
+            std::to_string(v.no) + "  (" + std::to_string(v.need) +
+            " needed)  " + std::to_string(v.secondsLeft) + " s";
+    if (!v.canVote)
+      line2 = "You can't vote on this one.";
+    else if (v.myChoice >= 0)
+      line2 = v.myChoice == 1 ? "You voted YES." : "You voted NO.";
+    else
+      line2 = "F1 / D-pad left: YES      F2 / D-pad right: NO";
+    if (isHost && HostVotes::HostVeto())
+      line2 += "      F3: VETO";
+  } else if (v.showResult) {
+    title = v.kind == HostVotes::Kind::Kick
+                ? "VOTE: KICK " + v.targetName
+                : std::string("VOTE: ") + HostVotes::KindText(v.kind);
+    line1 = v.vetoed ? "The host vetoed the vote."
+                     : (v.passed ? "The vote passed." : "The vote failed.");
+  } else {
+    title = "VOTE";
+    line1 = s_voteNotice;
+  }
+  Text(dl, NobleStyle::TitleFont(), 22.0f * s,
+       ImVec2(p0.x + 18.0f * s, p0.y + 10.0f * s), IM_COL32(236, 240, 244, 255),
+       title.c_str());
+  Text(dl, NobleStyle::SmallFont(), 14.0f * s,
+       ImVec2(p0.x + 20.0f * s, p0.y + 42.0f * s), IM_COL32(170, 200, 225, 255),
+       line1.c_str());
+  if (!line2.empty())
+    Text(dl, NobleStyle::SmallFont(), 14.0f * s,
+         ImVec2(p0.x + 20.0f * s, p0.y + 64.0f * s),
+         IM_COL32(150, 190, 220, 255), line2.c_str());
 }
 
 // Guest: anti-AFK warning for the last 30 s before the host's idle limit.
@@ -5867,6 +5999,45 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       }
       HostModeration::Tick(refs);
       HostModeration::TickMatchJoins(refs, loading);
+      // Votes: everyone in the match (the host too), with their teams.
+      // The connected peers are the list; the scoreboard adds names / teams.
+      std::vector<HostVotes::Voter> voters;
+      {
+        HostVotes::Voter self;
+        self.machineId = NetworkTransport::Get().GetLocalMachineId();
+        voters.push_back(self);
+        for (const auto &ref : refs) {
+          HostVotes::Voter v;
+          v.machineId = ref.machineId;
+          v.name = ref.name;
+          voters.push_back(v);
+        }
+        std::lock_guard<std::mutex> lock(s_boardMutex);
+        for (auto &v : voters)
+          for (const auto &r : s_boardRows)
+            if ((r.local && v.machineId == voters.front().machineId) ||
+                (!r.local && r.machine == v.machineId)) {
+              v.name = r.name;
+              v.team = r.team;
+            }
+      }
+      HostVotes::HostTick(voters);
+      HostVotes::Kind voteKind = HostVotes::Kind::Kick;
+      uint64_t voteTarget = 0;
+      std::string voteName;
+      if (!loading && HostVotes::TakeResult(voteKind, voteTarget, voteName)) {
+        if (voteKind == HostVotes::Kind::Kick) {
+          HostModeration::PlayerRef ref;
+          ref.machineId = voteTarget;
+          ref.name = voteName;
+          HostModeration::Kick(ref, "The other players voted to remove you.");
+        } else if (voteKind == HostVotes::Kind::EndRound) {
+          ReachHost::RequestRoundEnd();
+        } else {
+          HostReturnToLobby(hwnd, LobbyReturnArgs(true),
+                            "vote end game (everyone back to the lobby)");
+        }
+      }
     }
 #ifdef NOBLE_DEV_BUILD
     PollHostMenuTest(loading);
@@ -6204,6 +6375,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
         DrawHostPausedBanner();
       else if (afkBanner && !gameOver)
         DrawIdleWarningBanner(s_afkSecondsLeft);
+      if (!connectionLost && !relaunched && !gameOver && !loading)
+        DrawVoteCard(hwnd);
       if (scoreboardHeld && !connectionLost && !relaunched) {
         DrawScoreboardPanel();
         // -scoreboard-demo: one screenshot about 30 s in, so the match is on

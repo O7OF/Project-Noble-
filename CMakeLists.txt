@@ -224,6 +224,7 @@ set(SOURCES
     src/network/SteamAuth.cpp
     src/network/NetworkTransport.cpp
     src/network/HostModeration.cpp
+    src/network/HostVotes.cpp
     src/network/AuthClient.cpp
     src/network/SocialClient.cpp
     src/network/InviteCode.cpp
@@ -310,6 +311,7 @@ set(HEADERS
     src/network/MasterServerClient.hpp
     src/network/NetworkTransport.hpp
     src/network/HostModeration.hpp
+    src/network/HostVotes.hpp
     src/network/AuthClient.hpp
     src/network/SocialClient.hpp
     src/network/InviteCode.hpp

@@ -302,6 +302,8 @@ bool ReachHost::IsSessionStarted() { return s_sessionStarted.load(); }
 // thread stacks when the engine stops making progress without crashing.
 std::atomic<uint64_t> s_lastFrameTickMs{0};
 uint64_t ReachHost::GetLastFrameTickMs() { return s_lastFrameTickMs.load(); }
+static std::atomic<bool> s_roundEndRequest{false};
+void ReachHost::RequestRoundEnd() { s_roundEndRequest.store(true); }
 static std::atomic<bool> s_testCaptureRequest{false};  // -scoreboard-at: screenshot on the next frame  // set on the first slot-10 call (loading screen ends)
 
 // Test option "-end-round-after <seconds>": ends the current round that many seconds after the
@@ -309,6 +311,15 @@ static std::atomic<bool> s_testCaptureRequest{false};  // -scoreboard-at: screen
 // called by its evaluator at +0x1B699C). Lets automated runs reach the post-game results (slot 6).
 // Runs on the engine thread (slot 1), which is where the engine's own scripts run.
 static void EndRoundForTest() {
+    // A passed END ROUND vote (or any other request) runs here, on the engine thread.
+    if (s_roundEndRequest.exchange(false)) {
+        if (HMODULE reachModule = noble::ReachModule()) {
+            using RoundEndFn = void(__fastcall*)(int, int, int);
+            auto roundEnd = reinterpret_cast<RoundEndFn>(reinterpret_cast<uintptr_t>(reachModule) + 0x7B3EC);
+            NOBLE_INFO("ReachHost: ending the round (request)");
+            roundEnd(-1, 0, 1);
+        }
+    }
     static double s_seconds = -1.0;
     static bool s_parsed = false;
     static bool s_done = false;

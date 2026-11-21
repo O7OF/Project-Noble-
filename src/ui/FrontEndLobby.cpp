@@ -1,6 +1,7 @@
 #include "FrontEndInternal.hpp"
 #include "network/InviteCode.hpp"
 #include "network/HostModeration.hpp"
+#include "network/HostVotes.hpp"
 
 #include <cstring>
 #include <ctime>
@@ -2150,6 +2151,25 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       modRows.push_back(
           {"LOBBY PASSWORD", hasPw ? std::string("SET") : std::string("NONE"),
            false, true, "Set or remove your lobby password. Press to edit."});
+      // In-match votes (vote kick, end round, end game).
+      const bool votesOn = HostVotes::VotesEnabled();
+      modRows.push_back({"VOTES", votesOn ? std::string("ON") : std::string("OFF"),
+                         false, true,
+                         "Host option: players can start votes in the match "
+                         "(kick a player, end the round, end the game)."});
+      if (votesOn) {
+        modRows.push_back(
+            {"VOTE TO PASS", std::to_string(HostVotes::PassPercent()) + "%",
+             false, true,
+             "Share of the voters who must say yes. A kick vote is only for "
+             "the player's own team."});
+        modRows.push_back(
+            {"HOST VETO", HostVotes::HostVeto() ? std::string("ON") : std::string("OFF"),
+             false, true, "Host option: you can cancel any vote with F3."});
+        modRows.push_back(
+            {"VOTE COOLDOWN", std::to_string(HostVotes::CooldownSeconds()) + " S",
+             false, true, "Time after a vote before another one can start."});
+      }
       const std::string rulesText = HostModeration::LobbyRules();
       modRows.push_back(
           {"LOBBY RULES",
@@ -2390,6 +2410,36 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
         return;
       OpenLobbyPasswordEditor();
       MenuSounds::Click();
+    } else if (row.label == "VOTES") {
+      if (!st.isLobbyHost)
+        return;
+      HostVotes::SetVotesEnabled(!HostVotes::VotesEnabled());
+      MenuSounds::Change();
+    } else if (row.label == "VOTE TO PASS") {
+      if (!st.isLobbyHost)
+        return;
+      constexpr int n = static_cast<int>(sizeof(HostVotes::kPassChoices) / sizeof(int));
+      int idx = 0;
+      for (int i = 0; i < n; ++i)
+        if (HostVotes::kPassChoices[i] == HostVotes::PassPercent())
+          idx = i;
+      HostVotes::SetPassPercent(HostVotes::kPassChoices[(idx + dir + n) % n]);
+      MenuSounds::Change();
+    } else if (row.label == "HOST VETO") {
+      if (!st.isLobbyHost)
+        return;
+      HostVotes::SetHostVeto(!HostVotes::HostVeto());
+      MenuSounds::Change();
+    } else if (row.label == "VOTE COOLDOWN") {
+      if (!st.isLobbyHost)
+        return;
+      constexpr int n = static_cast<int>(sizeof(HostVotes::kCooldownChoices) / sizeof(int));
+      int idx = 0;
+      for (int i = 0; i < n; ++i)
+        if (HostVotes::kCooldownChoices[i] == HostVotes::CooldownSeconds())
+          idx = i;
+      HostVotes::SetCooldownSeconds(HostVotes::kCooldownChoices[(idx + dir + n) % n]);
+      MenuSounds::Change();
     } else if (row.label == "LOBBY RULES") {
       if (!st.isLobbyHost)
         return;

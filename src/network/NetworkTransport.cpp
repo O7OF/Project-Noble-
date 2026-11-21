@@ -4,6 +4,7 @@
 #include "common/BuildIdentity.hpp"
 #include "common/Logger.hpp"
 #include "network/HostModeration.hpp"
+#include "network/HostVotes.hpp"
 #include "common/Settings.hpp"
 #include "engine/AppearanceSync.hpp"
 #include "engine/DevCheats.hpp"
@@ -1422,6 +1423,16 @@ void NetworkTransport::HandleControlJson(const std::string &msgStr,
                             udpSenderPeerId == m_hostMachineId;
       if (fromHost && !m_isHost)
         HostModeration::OnHostRules(msgStr);
+    } else if (type == "vote_request" || type == "vote_cast") {
+      // In-match votes: players ask / vote, the host counts.
+      if (m_isHost)
+        HostVotes::OnMessage(type, msgStr, udpSenderPeerId, true);
+    } else if (type == "vote_start" || type == "vote_state" ||
+               type == "vote_end") {
+      const bool fromHost = udpSenderPeerId == 0 || m_hostMachineId == 0 ||
+                            udpSenderPeerId == m_hostMachineId;
+      if (fromHost && !m_isHost)
+        HostVotes::OnMessage(type, msgStr, udpSenderPeerId, false);
     } else if (type == "lobby_auth") {
       // A guest that just joined the lobby sends its join check (password
       // hash); the host decides whether it may stay.
