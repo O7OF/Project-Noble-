@@ -11,6 +11,7 @@
 #include <bit>
 #include <cstdint>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <intrin.h>
 #include <string>
@@ -20,6 +21,7 @@
 namespace noble::spawn {
 
 void WatchAllies();   // defined with PlaceAllies below; called from the game tick
+void WatchActors();   // -ai-watch, defined with WatchAllies
 
 namespace {
 
@@ -605,6 +607,7 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
     noble::pelican::GameTick(s_base);
     noble::ReachHost::GameThreadTick();   // queued squad placements (Firefight allies) need this thread
     WatchAllies();
+    WatchActors();
     if (!s_firstTick) s_firstTick = GetTickCount64();
 #ifndef NOBLE_DEDICATED
     const bool isDev = noble::AuthClient::Get().IsDeveloper();
@@ -787,6 +790,9 @@ void Install(HMODULE engine) {
                 s_hordeNoTeleport = true;
                 SetEnvironmentVariableW(L"NOBLE_HORDE_NO_TELEPORT", L"1");
             }
+            if (_wcsicmp(argv[i], L"-ai-watch") == 0) {
+                SetEnvironmentVariableW(L"NOBLE_AI_WATCH", L"1");   // carried into the relaunched match process
+            }
             if (hasValue && _wcsicmp(argv[i], L"-horde-team") == 0) {
                 s_hordeTeam = _wtoi(argv[i + 1]);
                 SetEnvironmentVariableW(L"NOBLE_HORDE_TEAM", argv[i + 1]);
@@ -803,6 +809,35 @@ void Install(HMODULE engine) {
                 s_hordeNoTeleport ? "off" : "on", s_hordeFullLod ? "on" : "off", s_hordeInfantry ? "on" : "off");
         if (argv) LocalFree(argv);
         if (s_maxObjects <= 0) s_maxObjects = 8000;
+    }
+    {
+        // -mp-ai (Phase 7, dev): ai_place (0x6C2B10) returns at once unless game_is_campaign_or_survival()
+        // (0x58B5C: game globals +0x10 is 1 campaign or 2 survival; multiplayer and Forge are 3). Only that one call
+        // site is changed, to "mov al, 1", so squads can be placed on MP maps; everything else that asks the same
+        // question (team relations, damage, metagame) keeps the multiplayer answer.
+        bool mpAi = false;
+        int argc2 = 0;
+        LPWSTR* argv2 = CommandLineToArgvW(GetCommandLineW(), &argc2);
+        for (int i = 1; argv2 && i < argc2; ++i)
+            if (_wcsicmp(argv2[i], L"-mp-ai") == 0) { mpAi = true; SetEnvironmentVariableW(L"NOBLE_MP_AI", L"1"); }
+        if (argv2) LocalFree(argv2);
+        wchar_t mpEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_MP_AI", mpEnv, 8) > 0 && mpEnv[0] == L'1') mpAi = true;
+        if (mpAi) {
+            constexpr uintptr_t kAiPlaceGateCallRva = 0x6C2B2B;   // E8 2C 60 99 FF  call 0x58B5C
+            static const uint8_t expect[] = { 0xE8, 0x2C, 0x60, 0x99, 0xFF };
+            static const uint8_t patch[] = { 0xB0, 0x01, 0x90, 0x90, 0x90 };   // mov al, 1 ; nop x3
+            auto* site = reinterpret_cast<uint8_t*>(s_base + kAiPlaceGateCallRva);
+            DWORD old = 0;
+            if (std::memcmp(site, expect, sizeof(expect)) == 0 && VirtualProtect(site, sizeof(patch), PAGE_EXECUTE_READWRITE, &old)) {
+                std::memcpy(site, patch, sizeof(patch));
+                VirtualProtect(site, sizeof(patch), old, &old);
+                FlushInstructionCache(GetCurrentProcess(), site, sizeof(patch));
+                NOBLE_INFO("SpawnTest: -mp-ai: ai_place allowed outside campaign / Firefight (patched hr+0x{:X})", kAiPlaceGateCallRva);
+            } else {
+                NOBLE_WARN("SpawnTest: -mp-ai: ai_place gate bytes at hr+0x{:X} do not match; not patched", kAiPlaceGateCallRva);
+            }
+        }
     }
     if (!HookManager::InstallHook(reinterpret_cast<void*>(s_base + kTickRva), reinterpret_cast<void*>(&Hook_Tick),
             reinterpret_cast<void**>(&s_originalTick), "spawn_test_tick")) {
@@ -844,6 +879,81 @@ void WatchAllies() {
         }
     }
     NOBLE_INFO("SpawnTest: allies alive {} / {}, distance to player:{}", alive, s_allyWatch.size(), dist);
+}
+
+// -ai-watch (Phase 7, dev): every 5 s, every live actor's body position compared with the last sample and with the
+// local player. Shows unattended whether placed AI walk (moved), stay on the ground (z range) and approach the player.
+int s_aiWatch = -1;   // -1 = not read yet; set from NOBLE_AI_WATCH (Install turns -ai-watch into it)
+ULONGLONG s_aiWatchLast = 0;
+struct WatchedActor { int32_t actor; float pos[3]; float start[3]; };
+std::vector<WatchedActor> s_aiWatched;
+void WatchActors() {
+    if (s_aiWatch < 0) {
+        wchar_t env[8] = {};
+        s_aiWatch = (GetEnvironmentVariableW(L"NOBLE_AI_WATCH", env, 8) > 0 && env[0] == L'1') ? 1 : 0;
+        if (s_aiWatch) NOBLE_INFO("SpawnTest: ai-watch on (actor positions every 5 s)");
+    }
+    if (!s_aiWatch || GetTickCount64() - s_aiWatchLast < 5000) return;
+    s_aiWatchLast = GetTickCount64();
+    ObjectPool objects;
+    ActorPool actors;
+    if (!GetObjectPool(objects) || !GetActorPool(actors)) return;
+    float player[3] = {}, fwd[2] = {};
+    const bool havePlayer = PlayerPosition(objects, player, fwd);
+    std::vector<WatchedActor> now;
+    int moved = 0, total = 0;
+    float zMin = 1e9f, zMax = -1e9f, dMin = 1e9f, dMax = 0.0f, dSum = 0.0f, travelMax = 0.0f;
+    std::string detail;
+    for (int i = 0; i < actors.capacity; ++i) {
+        if (!ActorSlotUsed(actors, i)) continue;
+        const int32_t actor = ActorHandle(actors, i);
+        const uint8_t* body = ObjectData(objects, ActorUnit(actors, actor));
+        if (!body) continue;
+        WatchedActor w{ actor, {}, {} };
+        std::memcpy(w.pos, body + 0x44, sizeof(w.pos));
+        std::memcpy(w.start, w.pos, sizeof(w.start));
+        for (const WatchedActor& old : s_aiWatched) {
+            if (old.actor != actor) continue;
+            std::memcpy(w.start, old.start, sizeof(w.start));
+            const float mx = w.pos[0] - old.pos[0], my = w.pos[1] - old.pos[1];
+            if (mx * mx + my * my > 1.0f) ++moved;
+            break;
+        }
+        const float tx = w.pos[0] - w.start[0], ty = w.pos[1] - w.start[1];
+        travelMax = (std::max)(travelMax, std::sqrt(tx * tx + ty * ty));
+        zMin = (std::min)(zMin, w.pos[2]);
+        zMax = (std::max)(zMax, w.pos[2]);
+        float d = 0.0f;
+        if (havePlayer) {
+            const float dx = w.pos[0] - player[0], dy = w.pos[1] - player[1], dz = w.pos[2] - player[2];
+            d = std::sqrt(dx * dx + dy * dy + dz * dz);
+            dMin = (std::min)(dMin, d); dMax = (std::max)(dMax, d); dSum += d;
+        }
+        if (total < 6) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), " [%X %.1f,%.1f,%.1f d%.0f]", static_cast<unsigned>(i), w.pos[0], w.pos[1], w.pos[2], d);
+            detail += buf;
+        }
+        ++total;
+        now.push_back(w);
+    }
+    s_aiWatched = std::move(now);
+    if (total == 0) {
+        // The ai_place gates (0x6C2B10 -> 0x694CB4): game globals +0x10 == 1 or 0x58BBC(), and AI globals +1 != 0.
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_base + kTlsIndexRva);
+        auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
+        const uint8_t* root = (tls && tls[tlsIndex]) ? tls[tlsIndex] : nullptr;
+        const uint8_t* ai = root ? *reinterpret_cast<uint8_t* const*>(root + 0x30) : nullptr;
+        const uint8_t* game = root ? *reinterpret_cast<uint8_t* const*>(root + 0x48) : nullptr;
+        NOBLE_INFO("SpawnTest: ai-watch: no actors | AI globals +0..+3 {} {} {} {} | game globals +0x10 {}",
+            ai ? ai[0] : -1, ai ? ai[1] : -1, ai ? ai[2] : -1, ai ? ai[3] : -1, game ? game[0x10] : -1);
+        (void)ai; (void)game;   // the log line is compiled out of noble-client
+        return;
+    }
+    NOBLE_INFO("SpawnTest: ai-watch: actors {} | moved >1m in 5s {} | furthest from spawn {:.1f}m | z {:.1f}..{:.1f} | to player {:.0f}/{:.0f}/{:.0f}m (min/avg/max){} |{}",
+        total, moved, travelMax, zMin, zMax, havePlayer ? dMin : 0.0f, havePlayer ? dSum / total : 0.0f, havePlayer ? dMax : 0.0f,
+        havePlayer ? "" : " (no player)", detail);
+    if (havePlayer) NOBLE_INFO("SpawnTest: ai-watch: player at {:.1f},{:.1f},{:.1f}", player[0], player[1], player[2]);
 }
 
 bool ActorsInUse(int& used, int& capacity) { return ActorUsage(used, capacity); }
