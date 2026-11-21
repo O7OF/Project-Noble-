@@ -164,6 +164,10 @@ void Settings::Load() {
     Read(j, "hostUploadKbps", d.hostUploadKbps);
     Read(j, "packetRedundancy", d.packetRedundancy);
     Read(j, "hostMaxPingMs", d.hostMaxPingMs);
+    Read(j, "hostFirefightAllies", d.hostFirefightAllies);
+    if (d.hostFirefightAllies != 0 && d.hostFirefightAllies != 5) d.hostFirefightAllies = 0;
+    Read(j, "hostFirefightAllySquads", d.hostFirefightAllySquads);
+    if (d.hostFirefightAllySquads < 1 || d.hostFirefightAllySquads > 5) d.hostFirefightAllySquads = 2;
     Read(j, "hostMinPingMs", d.hostMinPingMs);
     if (d.hostMinPingMs < 0 || d.hostMinPingMs > 1000) d.hostMinPingMs = 0;
     if (d.hostMaxPingMs < 0 || d.hostMaxPingMs > 1000) d.hostMaxPingMs = 0;
@@ -433,6 +437,8 @@ bool Settings::Save() {
     j["networkBudgetBoost"] = d.networkBudgetBoost;
     j["hostUploadKbps"] = d.hostUploadKbps;
     j["hostMaxPingMs"] = d.hostMaxPingMs;
+    j["hostFirefightAllies"] = d.hostFirefightAllies;
+    j["hostFirefightAllySquads"] = d.hostFirefightAllySquads;
     j["hostMinPingMs"] = d.hostMinPingMs;
     j["packetRedundancy"] = d.packetRedundancy;
         j["exclusiveFullscreen"] = d.exclusiveFullscreen;

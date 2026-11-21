@@ -40,6 +40,8 @@ struct SettingsData {
     bool showNetStats = false;     // network overlay: ping, packet loss, upload/download
     bool networkBudgetBoost = true;  // raise the game's 2010-era network upload caps (NetBudget)
     bool packetRedundancy = true;     // co-op: send each game packet a second time so one lost packet doesn't stall the game
+    int hostFirefightAllies = 0;      // host option, Firefight: allied AI kind (0 off, 5 Elites; 1-4 humans need tags the maps lack)
+    int hostFirefightAllySquads = 2;  // host option, Firefight: allied squads (1-5, one fireteam squad each)
     int hostMinPingMs = 0;           // host option: players whose ping to this host stays below this leave the lobby (keeps games regional); 0 = no minimum
     int hostMaxPingMs = 0;           // host option: players whose ping to this host stays above this leave the lobby; 0 = no limit
     int hostUploadKbps = 0;          // this PC's real upload speed in kbit/s for the network budget; 0 = let the game estimate

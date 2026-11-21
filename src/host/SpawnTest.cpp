@@ -846,6 +846,16 @@ void WatchAllies() {
     NOBLE_INFO("SpawnTest: allies alive {} / {}, distance to player:{}", alive, s_allyWatch.size(), dist);
 }
 
+int AlliesAlive() {
+    ActorPool actors;
+    if (s_allyWatch.empty() || !GetActorPool(actors)) return 0;
+    int alive = 0;
+    for (const int32_t a : s_allyWatch)
+        if (ActorAlive(actors, a)) ++alive;
+    if (alive == 0) s_allyWatch.clear();   // the next placement starts a fresh list
+    return alive;
+}
+
 // Firefight allies (Phase 5b). Game thread only. `place` performs one engine squad placement; every actor it creates
 // is moved into scenario squad `destSquad` (ai_migrate's per-actor step), given that squad's runtime team, and walked
 // next to the local player through the horde's teleport queue. The destination is a Firefight fireteam squad
@@ -877,11 +887,10 @@ int PlaceAllies(const std::function<bool()>& place, int destSquad) {
     for (int i = 0; i < actors.capacity; ++i) {
         if (!ActorSlotUsed(actors, i) || ((before[i >> 5] >> (i & 31)) & 1)) continue;
         const int32_t actor = ActorHandle(actors, i);
-        {
-            const uint8_t* body = ObjectData(objects, ActorUnit(actors, actor));
-            NOBLE_INFO("SpawnTest: allies: new actor 0x{:X} unit 0x{:X} definition 0x{:X}", static_cast<uint32_t>(actor),
-                       static_cast<uint32_t>(ActorUnit(actors, actor)), body ? *reinterpret_cast<const uint32_t*>(body) : 0u);
-        }
+        NOBLE_INFO("SpawnTest: allies: new actor 0x{:X} unit 0x{:X} definition 0x{:X}", static_cast<uint32_t>(actor),
+                   static_cast<uint32_t>(ActorUnit(actors, actor)),
+                   ObjectData(objects, ActorUnit(actors, actor))
+                       ? *reinterpret_cast<const uint32_t*>(ObjectData(objects, ActorUnit(actors, actor))) : 0u);
         s_allyWatch.push_back(actor);
         migrate(static_cast<uint32_t>(actor), static_cast<uint32_t>(destSquad));
         if (team >= 0) setTeam(static_cast<uint32_t>(actor), team);

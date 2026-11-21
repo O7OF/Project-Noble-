@@ -789,6 +789,47 @@ void ReachHost::GameThreadTick() {
     }
 #endif
     if (s_alliesRequest.exchange(false)) PlaceFirefightAllies(s_alliesKind, s_alliesSquads);
+
+    // Host option ALLIES (Firefight lobby): the host places allies 15 s into the match and sends them again 20 s after
+    // the last one has died. Guests (-connect) never place AI; the host's actors reach them over the network.
+    {
+        static int s_mode = -1;   // 1 = Firefight host, 0 = anything else
+        static ULONGLONG s_first = 0, s_allDeadSince = 0;
+        static bool s_placedOnce = false;
+        if (s_mode < 0) {
+            std::wstring mode = CommandLineValue(L"-mode");
+            for (auto& ch : mode) ch = static_cast<wchar_t>(std::towlower(ch));
+            s_mode = (mode == L"firefight" && CommandLineValue(L"-connect").empty()) ? 1 : 0;
+        }
+        static int s_kind = 0, s_squads = 2;
+        static ULONGLONG s_settingsRead = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (s_mode == 1 && now - s_settingsRead >= 1000) {   // not every frame: Snapshot copies the whole settings
+            s_settingsRead = now;
+            const SettingsData settings = Settings::Get().Snapshot();
+            s_kind = settings.hostFirefightAllies;
+            s_squads = settings.hostFirefightAllySquads;
+        }
+        struct { int hostFirefightAllies, hostFirefightAllySquads; } settings{ s_kind, s_squads };
+        if (s_mode == 1 && settings.hostFirefightAllies > 0) {
+            if (!s_first) s_first = now;
+            if (!s_placedOnce) {
+                if (now - s_first >= 15000) {
+                    s_placedOnce = true;
+                    PlaceFirefightAllies(settings.hostFirefightAllies, settings.hostFirefightAllySquads);
+                }
+            } else if (noble::spawn::AlliesAlive() == 0) {
+                if (!s_allDeadSince) s_allDeadSince = now;
+                if (now - s_allDeadSince >= 20000) {
+                    s_allDeadSince = 0;
+                    NOBLE_INFO("ReachHost: allies: all down for 20 s, sending them again");
+                    PlaceFirefightAllies(settings.hostFirefightAllies, settings.hostFirefightAllySquads);
+                }
+            } else {
+                s_allDeadSince = 0;
+            }
+        }
+    }
 }
 
 #ifdef NOBLE_DEV_BUILD

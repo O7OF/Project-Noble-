@@ -2054,6 +2054,20 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
                                         : std::string(kOptionsTip);
       optRows.push_back(
           {"GAME OPTIONS", ffModeValue, false, st.isLobbyHost, ffModeTip});
+      const SettingsData allies = Settings::Get().Snapshot();
+      optRows.push_back(
+          {"ALLIES", allies.hostFirefightAllies == 5 ? "ELITES" : "OFF", false,
+           true,
+           "Host option: allied AI that fight the waves with you. They spawn a "
+           "few seconds into the match, follow the players and are sent again "
+           "after they have all died. Elites only for now: Firefight maps do "
+           "not carry the Marine / ODST / Spartan AI."});
+      if (allies.hostFirefightAllies != 0)
+        optRows.push_back(
+            {"ALLY SQUADS", std::to_string(allies.hostFirefightAllySquads),
+             false, true,
+             "Host option: how many allied squads (1-5). Each squad is a few "
+             "Elites."});
     } else
       optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
                          false, false, hostModeTip});
@@ -2421,6 +2435,22 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       Settings::Get().Update(d);
       NOBLE_INFO("FrontEndMenu: lobby max ping set to {} ms (0 = no limit)",
                  d.hostMaxPingMs);
+      MenuSounds::Change();
+    } else if (row.label == "ALLIES") {
+      if (!st.isLobbyHost)
+        return;
+      SettingsData d = Settings::Get().Snapshot();
+      d.hostFirefightAllies = d.hostFirefightAllies == 0 ? 5 : 0;
+      Settings::Get().Update(d);
+      NOBLE_INFO("FrontEndMenu: Firefight allies {}", d.hostFirefightAllies == 5 ? "Elites" : "off");
+      MenuSounds::Change();
+    } else if (row.label == "ALLY SQUADS") {
+      if (!st.isLobbyHost)
+        return;
+      SettingsData d = Settings::Get().Snapshot();
+      d.hostFirefightAllySquads = (d.hostFirefightAllySquads - 1 + dir + 5) % 5 + 1;
+      Settings::Get().Update(d);
+      NOBLE_INFO("FrontEndMenu: Firefight ally squads {}", d.hostFirefightAllySquads);
       MenuSounds::Change();
     } else if (row.label == "MIN PING") {
       if (!st.isLobbyHost)

@@ -28,6 +28,8 @@ namespace noble::spawn {
 // into scenario squad `destSquad` with that squad's team and walks them next to the local player. Returns the number
 // of actors created, -1 if the engine state was not readable.
 int PlaceAllies(const std::function<bool()>& place, int destSquad);
+// Allies from PlaceAllies still alive (game thread). 0 clears the list.
+int AlliesAlive();
 
 // Development builds only (no-op otherwise). Call once after haloreach.dll is loaded.
 void Install(HMODULE engine);
