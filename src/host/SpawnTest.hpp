@@ -41,6 +41,10 @@ bool EnableMpAiPlacement();
 bool MapHasAiPaths();
 // ai_place for every squad the map defines (game thread). Returns the number of new actors, -1 if not possible.
 int PlaceMapSquads();
+// Places one map squad (by name) at a point: its spawn points are moved to a 1.2 m ring around `pos` for the
+// placement and then restored (game thread). Returns the number of new actors, -1 if not possible. The building
+// block for AI placed from the Forge menu.
+int PlaceSquadAt(const char* squadName, const float pos[3]);
 
 // Development builds only (no-op otherwise). Call once after haloreach.dll is loaded.
 void Install(HMODULE engine);

@@ -25,6 +25,7 @@ void WatchActors();   // -ai-watch, defined with WatchAllies
 void PlayerAtStep();  // -player-at, defined with WatchAllies
 void MpPathingStep(); // -mp-ai-pathing, defined with WatchAllies
 bool EnableMpAiPlacement();   // MAP AI / -mp-ai, defined with ActorsInUse
+void MapAiAtStep();           // -map-ai-at, defined with PlaceSquadAt
 
 namespace {
 
@@ -613,6 +614,7 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
     WatchActors();
     PlayerAtStep();
     MpPathingStep();
+    MapAiAtStep();
     if (!s_firstTick) s_firstTick = GetTickCount64();
 #ifndef NOBLE_DEDICATED
     const bool isDev = noble::AuthClient::Get().IsDeveloper();
@@ -798,6 +800,9 @@ void Install(HMODULE engine) {
             if (hasValue && _wcsicmp(argv[i], L"-player-at") == 0) {
                 SetEnvironmentVariableW(L"NOBLE_PLAYER_AT", argv[i + 1]);   // "x,y,z@seconds"
             }
+            if (hasValue && _wcsicmp(argv[i], L"-map-ai-at") == 0) {
+                SetEnvironmentVariableW(L"NOBLE_MAP_AI_AT", argv[i + 1]);   // "squad|x,y,z@seconds"
+            }
             if (_wcsicmp(argv[i], L"-mp-ai-pathing") == 0) {
                 SetEnvironmentVariableW(L"NOBLE_MP_AI_PATHING", L"1");   // carried into the relaunched match process
             }
@@ -975,6 +980,26 @@ void WatchActors() {
         for (int bsp = 0; bsp < 4; ++bsp)
             NOBLE_INFO("SpawnTest: ai-watch: pathfinding data bsp {} = 0x{:X}", bsp,
                 *reinterpret_cast<const uint64_t*>(s_base + 0x27B7C18 + static_cast<size_t>(bsp) * 0x490));
+        // Research (Phase 7): squad 0's element (0x6C bytes) and the start of its spawn points block, to find the
+        // spawn point layout (position offset, stride) for moving a squad's spawn point at runtime.
+        {
+            const uint8_t* scen = *reinterpret_cast<uint8_t* const*>(s_base + kScenarioRva);
+            const auto* pages = reinterpret_cast<const uint64_t*>(s_base + 0x4E39F20);
+            if (scen && *reinterpret_cast<const int32_t*>(scen + 0x398) > 0) {
+                const uint32_t sp = *reinterpret_cast<const uint32_t*>(scen + 0x39C);
+                const uint8_t* sq = reinterpret_cast<const uint8_t*>(pages[sp >> 28] + static_cast<uint64_t>(sp) * 4);
+                auto hex = [](const uint8_t* p, size_t n) { std::string s; char b[4]; for (size_t i = 0; i < n; ++i) { std::snprintf(b, sizeof(b), "%02X ", p[i]); s += b; } return s; };
+                NOBLE_INFO("SQDUMP squad0 {}", hex(sq, 0x6C));
+                for (int off = 0x20; off <= 0x60; off += 4) {
+                    const int32_t cnt = *reinterpret_cast<const int32_t*>(sq + off);
+                    const uint32_t pk = *reinterpret_cast<const uint32_t*>(sq + off + 4);
+                    if (cnt <= 0 || cnt > 128 || !pk) continue;
+                    const uint8_t* el = reinterpret_cast<const uint8_t*>(pages[pk >> 28] + static_cast<uint64_t>(pk) * 4);
+                    NOBLE_INFO("SQDUMP block at +0x{:X} count {} first 0xC0: {}", off, cnt, hex(el, 0xC0));
+                    (void)el;
+                }
+            }
+        }
         // The loader (0x97C70) only sets that pointer when: the BSP's bit is set in the active mask (hr+0x4E2FB2C),
         // the scenario's structure bsps[bsp].flags (element 0xAC bytes, u16 at +0x50) lacks 0x200 "no pathfinding",
         // and the BSP tag's resource (u16 index at bsp tag +0x520) holds a non-empty block.
@@ -1176,6 +1201,108 @@ int PlaceMapSquads() {
     ActorUsage(after, capacity);
     NOBLE_INFO("SpawnTest: map AI: placed {} squads | actors {} -> {} / {}", squads, before, after, capacity);
     return after - before;
+}
+
+// Ground height from the loaded nav mesh (Phase 7): the runtime pathfinding data (qword hr+0x27B7C18 + bsp*0x490) has
+// the tag block layout: 12-byte block headers, vertices at +0x30 (count) / +0x34 (packed), 12 bytes per vertex. Picks,
+// among vertices within 4 m in x/y, the one whose height is closest to `z`. False when nothing is near.
+bool NavGroundZ(float x, float y, float z, float& out) {
+    const auto* pages = reinterpret_cast<const uint64_t*>(s_base + 0x4E39F20);
+    bool found = false;
+    float best = 1e9f;
+    for (int bsp = 0; bsp < 4; ++bsp) {
+        const uint8_t* pf = reinterpret_cast<const uint8_t*>(*reinterpret_cast<const uint64_t*>(s_base + 0x27B7C18 + static_cast<size_t>(bsp) * 0x490));
+        if (!pf) continue;
+        const int32_t count = *reinterpret_cast<const int32_t*>(pf + 0x30);
+        const uint32_t packed = *reinterpret_cast<const uint32_t*>(pf + 0x34);
+        if (count <= 0 || count > 1000000 || !packed) continue;
+        const auto* v = reinterpret_cast<const float*>(pages[packed >> 28] + static_cast<uint64_t>(packed) * 4);
+        for (int i = 0; i < count; ++i) {
+            const float dx = v[i * 3] - x, dy = v[i * 3 + 1] - y;
+            if (dx * dx + dy * dy > 16.0f) continue;
+            const float dz = std::fabs(v[i * 3 + 2] - z);
+            if (dz < best) { best = dz; out = v[i * 3 + 2]; found = true; }
+        }
+    }
+    return found;
+}
+
+// Squads in the scenario tag (runtime layout, Phase 7): scenario +0x398 count / +0x39C packed address, 0x6C bytes per
+// squad, char[32] name at +0; spawn points block at squad +0x3C (count) / +0x40 (packed); spawn point elements 0x7C
+// bytes, position (real_point3d) at +0x14.
+int PlaceSquadAt(const char* squadName, const float pos[3]) {
+    if (!s_base || !s_aiPlace || !squadName || !pos) return -1;
+    const uint8_t* scen = *reinterpret_cast<uint8_t* const*>(s_base + kScenarioRva);
+    if (!scen) return -1;
+    const auto* pages = reinterpret_cast<const uint64_t*>(s_base + 0x4E39F20);
+    auto addr = [&](uint32_t packed) { return reinterpret_cast<uint8_t*>(pages[packed >> 28] + static_cast<uint64_t>(packed) * 4); };
+    const int32_t squads = *reinterpret_cast<const int32_t*>(scen + 0x398);
+    const uint32_t squadsPacked = *reinterpret_cast<const uint32_t*>(scen + 0x39C);
+    if (squads <= 0 || !squadsPacked) return -1;
+    int index = -1;
+    uint8_t* squad = nullptr;
+    for (int i = 0; i < squads; ++i) {
+        uint8_t* s = addr(squadsPacked) + static_cast<size_t>(i) * 0x6C;
+        if (_strnicmp(reinterpret_cast<const char*>(s), squadName, 32) == 0) { index = i; squad = s; break; }
+    }
+    if (!squad) { NOBLE_WARN("SpawnTest: map AI: no squad named '{}'", squadName); return -1; }
+    const int32_t points = *reinterpret_cast<const int32_t*>(squad + 0x3C);
+    const uint32_t pointsPacked = *reinterpret_cast<const uint32_t*>(squad + 0x40);
+    if (points <= 0 || points > 128 || !pointsPacked) { NOBLE_WARN("SpawnTest: map AI: squad '{}' has no spawn points", squadName); return -1; }
+    uint8_t* first = addr(pointsPacked);
+    std::vector<float> saved(static_cast<size_t>(points) * 3);
+    DWORD old = 0;
+    const size_t span = static_cast<size_t>(points) * 0x7C;
+    const bool unprotected = VirtualProtect(first, span, PAGE_READWRITE, &old) != 0;
+    for (int k = 0; k < points; ++k) {   // a small ring around the target, 1.2 m out
+        float* p = reinterpret_cast<float*>(first + static_cast<size_t>(k) * 0x7C + 0x14);
+        std::memcpy(&saved[static_cast<size_t>(k) * 3], p, sizeof(float) * 3);
+        const float a = 6.2831853f * static_cast<float>(k) / static_cast<float>(points);
+        p[0] = pos[0] + (points > 1 ? 1.2f * std::cos(a) : 0.0f);
+        p[1] = pos[1] + (points > 1 ? 1.2f * std::sin(a) : 0.0f);
+        float ground = 0.0f;   // a point inside the terrain drops the actor through the map: stand it on the nav mesh
+        const bool onMesh = NavGroundZ(p[0], p[1], pos[2], ground);
+        p[2] = onMesh ? ground + 0.4f : pos[2];
+        NOBLE_INFO("SpawnTest: map AI: spawn point {} -> {:.1f},{:.1f},{:.1f} ({})", k, p[0], p[1], p[2], onMesh ? "nav mesh" : "no nav vertex near");
+    }
+    int before = 0, after = 0, capacity = 0;
+    ActorUsage(before, capacity);
+    s_aiPlace(0x20000000u | static_cast<uint32_t>(index), -1, 0);
+    ActorUsage(after, capacity);
+    for (int k = 0; k < points; ++k)   // put the map's own spawn points back
+        std::memcpy(first + static_cast<size_t>(k) * 0x7C + 0x14, &saved[static_cast<size_t>(k) * 3], sizeof(float) * 3);
+    if (unprotected) VirtualProtect(first, span, old, &old);
+    NOBLE_INFO("SpawnTest: map AI: squad '{}' placed at {:.1f},{:.1f},{:.1f} | actors {} -> {}", squadName, pos[0], pos[1], pos[2], before, after);
+    return after - before;
+}
+
+// -map-ai-at <squad> x,y,z@seconds (Phase 7, dev): places one map squad at a point once (test for Forge-menu AI).
+void MapAiAtStep() {
+    static int s_state = -1;
+    static std::string s_squad;
+    static float s_pos[3] = {};
+    static ULONGLONG s_delay = 0, s_first = 0;
+    if (s_state < 0) {
+        s_state = 0;
+        wchar_t env[160] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_MAP_AI_AT", env, 160) > 0) {
+            wchar_t name[64] = {}; float x = 0, y = 0, z = 0; int sec = 20;
+            if (swscanf_s(env, L"%63[^|]|%f,%f,%f@%d", name, static_cast<unsigned>(_countof(name)), &x, &y, &z, &sec) >= 4) {
+                for (const wchar_t* c = name; *c; ++c) s_squad += static_cast<char>(*c);
+                s_pos[0] = x; s_pos[1] = y; s_pos[2] = z;
+                s_delay = static_cast<ULONGLONG>(sec) * 1000;
+                s_state = 1;
+                NOBLE_INFO("SpawnTest: -map-ai-at {} at {:.1f},{:.1f},{:.1f} after {} s", s_squad, x, y, z, sec);
+            }
+        }
+    }
+    if (s_state != 1) return;
+    const ULONGLONG now = GetTickCount64();
+    if (!s_first) s_first = now;
+    if (now - s_first < s_delay) return;
+    s_state = 2;
+    EnableMpAiPlacement();
+    PlaceSquadAt(s_squad.c_str(), s_pos);
 }
 
 int AlliesAlive() {
