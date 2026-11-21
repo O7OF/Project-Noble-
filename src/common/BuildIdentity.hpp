@@ -18,11 +18,11 @@ namespace noble {
 
 constexpr int kClientProtocol = 2;                 // closed-source wire/API revision
 #ifdef NOBLE_DEV_BUILD
-constexpr std::string_view kBuildTag = "0.20.32-dev";
+constexpr std::string_view kBuildTag = "0.20.33-dev";
 #else
-constexpr std::string_view kBuildTag = "0.20.32";  // prefix of VERSION_STRING
+constexpr std::string_view kBuildTag = "0.20.33";  // prefix of VERSION_STRING
 #endif
-constexpr std::string_view kBaseBuildTag = "0.20.32";
+constexpr std::string_view kBaseBuildTag = "0.20.33";
 
 // Sent on every master-server request. The cluster refuses requests without a
 // matching build/protocol pair (HTTP 403 client_outdated).

@@ -3,6 +3,7 @@
 #include "career/Career.hpp"
 #include "common/BuildIdentity.hpp"
 #include "common/Logger.hpp"
+#include "network/HostModeration.hpp"
 #include "common/Settings.hpp"
 #include "engine/AppearanceSync.hpp"
 #include "engine/DevCheats.hpp"
@@ -1060,6 +1061,31 @@ bool NetworkTransport::SendSessionSync(uint64_t frame, bool running) {
   return sent;
 }
 
+void NetworkTransport::SendHostRemove(uint64_t machineId,
+                                      const std::string &kind,
+                                      const std::string &reason, int minutes) {
+  if (machineId == 0 || !m_isHost)
+    return;
+  nlohmann::json j = {{"type", "host_remove"},
+                      {"target", std::to_string(machineId)},
+                      {"kind", kind},
+                      {"reason", reason},
+                      {"minutes", minutes}};
+  SendLobbyControlJson(
+      j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+}
+
+bool NetworkTransport::TakeHostRemoval(HostRemoval &out) {
+  std::lock_guard<std::mutex> lock(m_removalMutex);
+  if (!m_removalPending)
+    return false;
+  m_removalPending = false;
+  if (GetTickCount64() - m_removalAtMs > 15000)
+    return false; // old request: ignore
+  out = m_removal;
+  return true;
+}
+
 void NetworkTransport::SendPingLimitRefusal(uint64_t machineId, int limitMs,
                                             int pingMs) {
   if (machineId == 0)
@@ -1081,6 +1107,18 @@ bool NetworkTransport::TakePingLimitRefusal(int &limitMs, int &pingMs) {
   return true;
 }
 
+void NetworkTransport::SendHostPause(bool paused) {
+  if (!m_isHost)
+    return;
+  SendLobbyControlJson(paused ? "{\"type\":\"host_pause\",\"paused\":true}"
+                              : "{\"type\":\"host_pause\",\"paused\":false}");
+}
+
+uint64_t NetworkTransport::HostPauseAgeMs() const {
+  const uint64_t at = m_hostPauseAtMs.load();
+  return at == 0 ? UINT64_MAX : GetTickCount64() - at;
+}
+
 void NetworkTransport::SendLobbyControlJson(const std::string &jsonString) {
   if (jsonString.empty())
     return;
@@ -1091,7 +1129,10 @@ void NetworkTransport::SendLobbyControlJson(const std::string &jsonString) {
   const bool lifecycleEvent =
       jsonString.find("lobby_disband") != std::string::npos ||
       jsonString.find("lobby_launch") != std::string::npos ||
-      jsonString.find("host_return_to_lobby") != std::string::npos;
+      jsonString.find("host_return_to_lobby") != std::string::npos ||
+      jsonString.find("host_pause") != std::string::npos ||
+      jsonString.find("lobby_auth") != std::string::npos ||
+      jsonString.find("lobby_admit") != std::string::npos;
   if (!m_active.load() || !IsDirectUdpActive() || lifecycleEvent) {
     {
       std::lock_guard<std::mutex> lock(m_relayMutex);
@@ -1164,7 +1205,12 @@ bool NetworkTransport::SendChat(const std::string &channel,
   const std::string ch =
       (channel == "team" || channel == "party") ? channel : "all";
   nlohmann::json j = {
-      {"type", "chat"}, {"channel", ch}, {"text", text}, {"from", from}};
+      {"type", "chat"},
+      {"channel", ch},
+      {"text", m_isHost ? HostModeration::FilterText(text) : text},
+      {"from", from},
+      // Sender's machine id, so a player can text-mute someone (per PC).
+      {"sid", std::to_string(m_localMachineId)}};
   const std::string payload =
       j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 
@@ -1293,6 +1339,18 @@ void NetworkTransport::HandleControlJson(const std::string &msgStr,
       m.channel = rawCh;
       m.from = j.value("from", "player");
       m.text = j.value("text", "");
+      uint64_t sid = 0;
+      try {
+        sid = std::stoull(j.value("sid", std::string("0")));
+      } catch (...) {
+      }
+      // Text-muted on this PC (the player's own choice): drop the line.
+      if (HostModeration::IsChatMuted(sid, m.from))
+        return;
+      // The host's mute list and word filter (also for relay chat that never
+      // passed through the host).
+      if (!HostModeration::ApplyChatRules(sid, m.text))
+        return;
       ChatCallback cb;
       {
         std::lock_guard<std::mutex> lock(m_chatCbMutex);
@@ -1335,6 +1393,75 @@ void NetworkTransport::HandleControlJson(const std::string &msgStr,
         m_pingRefusedAtMs.store(GetTickCount64());
         if (!m_pingRefused.exchange(true))
           NOBLE_INFO("NetworkTransport: the host's max ping setting asked this player to leave the lobby");
+      }
+    } else if (type == "host_remove") {
+      // Host moderation: kick / ban. Only the host (or relay, sender 0).
+      const bool fromHost = udpSenderPeerId == 0 || m_hostMachineId == 0 ||
+                            udpSenderPeerId == m_hostMachineId;
+      uint64_t target = 0;
+      try {
+        target = std::stoull(j.value("target", std::string("0")));
+      } catch (...) {
+      }
+      if (fromHost && !m_isHost && target != 0 &&
+          (target == m_localMachineId || target == GetRelayMachineId())) {
+        std::lock_guard<std::mutex> lock(m_removalMutex);
+        const bool first = !m_removalPending;
+        m_removal.kind = j.value("kind", std::string("kick"));
+        m_removal.reason = j.value("reason", std::string());
+        m_removal.minutes = j.value("minutes", 0);
+        m_removalAtMs = GetTickCount64();
+        m_removalPending = true;
+        if (first)
+          NOBLE_INFO("NetworkTransport: the host removed this player ({})",
+                     m_removal.kind);
+      }
+    } else if (type == "host_rules") {
+      // Host moderation rules (anti-AFK limit, co-host list), every 5 s.
+      const bool fromHost = udpSenderPeerId == 0 || m_hostMachineId == 0 ||
+                            udpSenderPeerId == m_hostMachineId;
+      if (fromHost && !m_isHost)
+        HostModeration::OnHostRules(msgStr);
+    } else if (type == "lobby_auth") {
+      // A guest that just joined the lobby sends its join check (password
+      // hash); the host decides whether it may stay.
+      if (m_isHost)
+        HostModeration::OnLobbyAuth(msgStr, udpSenderPeerId);
+    } else if (type == "lobby_admit") {
+      const bool fromHost = udpSenderPeerId == 0 || m_hostMachineId == 0 ||
+                            udpSenderPeerId == m_hostMachineId;
+      if (fromHost && !m_isHost)
+        HostModeration::OnLobbyAdmit(msgStr);
+    } else if (type == "cohost_action") {
+      // A co-host asks the host to kick / mute; the host checks the sender.
+      if (m_isHost)
+        HostModeration::OnCoHostAction(msgStr, udpSenderPeerId);
+    } else if (type == "lobby_disband") {
+      // The host disbanded the lobby (post-game DISBAND LOBBY, RETURN TO LOBBY
+      // ALONE). Sent straight to the guests, so LAN / direct games without a
+      // master-server lobby hear it too, not only the relay's lobby_closed.
+      const bool fromHost = udpSenderPeerId == 0 || m_hostMachineId == 0 ||
+                            udpSenderPeerId == m_hostMachineId;
+      if (fromHost && !m_isHost) {
+        LobbyClosedCallback cb;
+        {
+          std::lock_guard<std::mutex> lock(m_relayMutex);
+          cb = m_lobbyClosedCb;
+        }
+        NOBLE_INFO("NetworkTransport: the host disbanded the lobby");
+        if (cb)
+          cb("The host closed the lobby");
+      }
+    } else if (type == "host_pause") {
+      // Only the host (or the master server relay, sender 0) may pause the match for everyone.
+      const bool fromHost = udpSenderPeerId == 0 || m_hostMachineId == 0 ||
+                            udpSenderPeerId == m_hostMachineId;
+      if (fromHost && !m_isHost) {
+        const int state = j.value("paused", false) ? 1 : 0;
+        m_hostPauseAtMs.store(GetTickCount64());
+        if (m_hostPauseState.exchange(state) != state)
+          NOBLE_INFO("NetworkTransport: host {} the match for everyone",
+                     state ? "paused" : "resumed");
       }
     } else if (type == "match_over") {
       // The relay thread must not touch UI/career state: the render thread is often already tearing the
@@ -2460,6 +2587,9 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t *outBuffer, size_t bufferCapacity,
         route.addr = senderAddr;
         route.lastUdpRecvTick = now;
       }
+      // Host moderation: a player the host muted is not heard by anyone.
+      if (m_isHost && HostModeration::IsHostMuted(wireSender))
+        continue;
       if (std::memcmp(rawBuf + 12, "NVOX", 4) == 0) {
         if (const VoiceFrameCallback cb = m_voiceFrameCb.load()) {
           cb(rawBuf + 12, static_cast<size_t>(received - 12));
@@ -2486,18 +2616,34 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t *outBuffer, size_t bufferCapacity,
       std::string msgStr(reinterpret_cast<const char *>(rawBuf + 12),
                          static_cast<size_t>(received - 12));
       if (m_isHost && msgStr.find("\"chat\"") != std::string::npos) {
+        bool dropChat = false;
         try {
           auto jc = nlohmann::json::parse(msgStr);
           if (jc.value("type", "") == "chat") {
-            const std::string rch = jc.value("channel", "all");
-            if (rch != "global" && rch != "dm" && rch != "whisper") {
-              SendControlUdp("NBCJ",
-                             reinterpret_cast<const uint8_t *>(msgStr.data()),
-                             msgStr.size(), 0, 0);
+            // Host moderation: a player the host muted is not heard by anyone,
+            // and every relayed line goes through the host's word filter.
+            if (HostModeration::IsHostMuted(wireSender)) {
+              dropChat = true;
+            } else {
+              const std::string text = jc.value("text", std::string());
+              const std::string filtered = HostModeration::FilterText(text);
+              if (filtered != text) {
+                jc["text"] = filtered;
+                msgStr = jc.dump(-1, ' ', false,
+                                 nlohmann::json::error_handler_t::replace);
+              }
+              const std::string rch = jc.value("channel", "all");
+              if (rch != "global" && rch != "dm" && rch != "whisper") {
+                SendControlUdp("NBCJ",
+                               reinterpret_cast<const uint8_t *>(msgStr.data()),
+                               msgStr.size(), 0, 0);
+              }
             }
           }
         } catch (...) {
         }
+        if (dropChat)
+          continue;
       }
       HandleControlJson(msgStr, wireSender);
       continue;

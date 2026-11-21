@@ -4,6 +4,7 @@
 #include "common/Settings.hpp"
 #include "common/BuildIdentity.hpp"
 #include "common/DeviceIdentity.hpp"
+#include "network/HostModeration.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -507,6 +508,8 @@ void SocialClient::SendInviteAsync(const std::string& targetUsername, const std:
                                    const std::string& mode,
                                    const std::string& map,
                                    const std::string& sessionId) {
+    // A host's invite lets that player into an invite-only or locked lobby.
+    HostModeration::NoteInvited(targetUsername);
     const std::string senderUsername = AuthClient::Get().GetUsername();
     if (senderUsername.empty()) {
         if (callback) callback(false, "Must be logged in");

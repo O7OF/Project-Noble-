@@ -9,7 +9,7 @@ if(WIN32)
     set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
     set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
 endif()
-project(ProjectNoble VERSION 0.20.32 LANGUAGES C CXX)
+project(ProjectNoble VERSION 0.20.33 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -223,6 +223,7 @@ set(SOURCES
     src/network/MasterServerClient.cpp
     src/network/SteamAuth.cpp
     src/network/NetworkTransport.cpp
+    src/network/HostModeration.cpp
     src/network/AuthClient.cpp
     src/network/SocialClient.cpp
     src/network/InviteCode.cpp
@@ -308,6 +309,7 @@ set(HEADERS
     src/career/Career.hpp
     src/network/MasterServerClient.hpp
     src/network/NetworkTransport.hpp
+    src/network/HostModeration.hpp
     src/network/AuthClient.hpp
     src/network/SocialClient.hpp
     src/network/InviteCode.hpp

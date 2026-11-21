@@ -26,12 +26,14 @@
 #include "engine/KeyBindings.hpp"
 #include "engine/ReachHost.hpp"
 #include "engine/SessionVariant.hpp"
+#include "hooks/EnginePatches.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "host/Window.hpp"
 #include "mvar/ForgePlacementApply.hpp"
 #include "mvar/MapVariant.hpp"
 #include "mvar/MapVariantLibrary.hpp"
 #include "mvar/MapVariantWriter.hpp"
+#include "network/HostModeration.hpp"
 #include "network/MasterServerClient.hpp"
 #include "network/NetworkTransport.hpp"
 #include "network/SessionManager.hpp"
@@ -54,6 +56,7 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include <shellapi.h>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -466,8 +469,12 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
   Career::EnsureMatchSaved(what);
   const bool isLobbyReturn = args.find(L"-lobby-return") != std::wstring::npos;
+  // "-lobby-alone": RETURN TO LOBBY ALONE. The host gets a new lobby; the old
+  // session was disbanded, so neither the guests nor the master server are told
+  // to keep it.
+  const bool alone = args.find(L"-lobby-alone") != std::wstring::npos;
   const bool keepHostSession =
-      args.find(L"-lobby-return host") != std::wstring::npos;
+      !alone && args.find(L"-lobby-return host") != std::wstring::npos;
   const bool isMainMenu = (args == L"-main-menu");
   // A host going back to the lobby (or on to the next mission) tells the party right away, so the
   // guests' post-game panels unlock RETURN TO LOBBY instead of waiting for the master server to
@@ -564,6 +571,47 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }
 
+std::string HostSessionUtf8() {
+  std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+  if (wSession.empty())
+    wSession = ArgValue(GetCommandLineW(), L"-session-id");
+  if (wSession.empty())
+    return MasterServerClient::Get().GetCurrentSessionId();
+  char sessUtf8[128] = {};
+  WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8,
+                      sizeof(sessUtf8) - 1, nullptr, nullptr);
+  return sessUtf8;
+}
+
+// Host: end the match and bring the whole party back to this lobby (args from
+// LobbyReturnArgs(true), maybe with another mission or -lobby-autostart).
+void HostReturnToLobby(HWND hwnd, const std::wstring &args, const char *what) {
+  const std::string session = HostSessionUtf8();
+  NetworkTransport::Get().SendLobbyControlJson(
+      "{\"type\":\"host_return_to_lobby\"}");
+  if (!session.empty())
+    MasterServerClient::Get().ReturnLobbySync(session);
+  RelaunchAndClose(hwnd, args, what);
+}
+
+// Host: RETURN TO LOBBY ALONE. The other players are sent to their main menu
+// (lobby_disband, as when a host disbands the lobby), the old session is
+// closed, and the host opens a new lobby with the same map / mission settings.
+void HostReturnToLobbyAlone(HWND hwnd) {
+  const std::string session = HostSessionUtf8();
+  NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+  if (!session.empty())
+    MasterServerClient::Get().DisbandSessionSync(session);
+  // A second copy (UDP can drop one) before this process hands off and closes.
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+  std::wstring args = LobbyReturnArgs(true);
+  RemoveArg(args, L"-lobby-session");
+  RemoveArg(args, L"-lobby-session-token");
+  args += L" -lobby-alone 1";
+  RelaunchAndClose(hwnd, args, "host return to lobby alone");
+}
+
 void QuitFromMatch(HWND hwnd, const char *what) {
   NOBLE_INFO("PauseMenu: {}", what);
   Career::EnsureMatchSaved(what);
@@ -646,21 +694,87 @@ void DrawSettingsPage(HWND hwnd);
 namespace {
 // The engine has no pause API, but it does expose its game_speed console
 // global. Zero freezes the simulation while the render/input thread keeps
-// pumping, which is exactly what a local pause needs. Only used when the
-// session has no remote players; an online match must keep running.
-void SetLocalSimulationPaused(bool paused) {
+// pumping, which is exactly what a local pause needs. Without `everyone` it is
+// only used when the session has no remote players (an online match keeps
+// running); `everyone` is the campaign host's PAUSE FOR EVERYONE, applied on
+// the host and on every guest.
+bool s_hostPausedAll = false;   // host: this host paused the match for everyone
+bool s_guestHostPaused = false; // guest: the host has the match paused
+int s_afkSecondsLeft = -1;      // guest: anti-AFK warning countdown (-1 = none)
+ULONGLONG s_hostPauseSentAt = 0;
+
+void SetLocalSimulationPaused(bool paused, bool everyone = false) {
   static bool s_applied = false;
   if (paused == s_applied)
     return;
-  if (paused && NetworkTransport::Get().GetGamePeerCount() > 0)
-    return;
+  if (!everyone) {
+    if (paused && NetworkTransport::Get().GetGamePeerCount() > 0)
+      return;
+    // A guest closing its own menu must not resume a match the host paused,
+    // and a host closing the menu resumes through SetHostPauseForEveryone.
+    if (!paused && (s_guestHostPaused || s_hostPausedAll))
+      return;
+  }
   BlamEngine *engine = BlamEngine::Active();
   if (!engine)
     return;
   if (engine->ExecuteCommand(paused ? "game_speed 0" : "game_speed 1")) {
     s_applied = paused;
-    NOBLE_INFO("PauseMenu: local simulation {}", paused ? "paused" : "resumed");
+    NOBLE_INFO("PauseMenu: {} simulation {}", everyone ? "shared" : "local",
+               paused ? "paused" : "resumed");
   }
+}
+
+// Campaign host: PAUSE / RESUME FOR EVERYONE. The state is sent again every
+// 1.5 s while paused (UDP control packets can drop), so a guest that misses one
+// copy still pauses, and one that stops hearing it resumes (UpdateGuestHostPause).
+void SetHostPauseForEveryone(bool paused) {
+  if (s_hostPausedAll == paused)
+    return;
+  s_hostPausedAll = paused;
+  s_hostPauseSentAt = GetTickCount64();
+  NetworkTransport::Get().SendHostPause(paused);
+  if (!paused) {
+    // Two extra copies so a dropped "resumed" does not leave a guest waiting
+    // for the 6 s timeout.
+    std::thread([] {
+      for (int i = 0; i < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        NetworkTransport::Get().SendHostPause(false);
+      }
+    }).detach();
+  }
+  SetLocalSimulationPaused(paused, true);
+  NOBLE_INFO("PauseMenu: host {} the match for everyone",
+             paused ? "paused" : "resumed");
+}
+
+void RefreshHostPause() {
+  if (!s_hostPausedAll)
+    return;
+  const ULONGLONG now = GetTickCount64();
+  if (now - s_hostPauseSentAt > 1500) {
+    s_hostPauseSentAt = now;
+    NetworkTransport::Get().SendHostPause(true);
+  }
+}
+
+// Guest: follow the host's pause. A pause that is not refreshed for 6 s (host
+// gone, or its copies stopped arriving) is dropped so nobody stays frozen.
+void UpdateGuestHostPause() {
+  NetworkTransport &net = NetworkTransport::Get();
+  const int state = net.HostPauseState();
+  bool want = state == 1;
+  if (want && net.HostPauseAgeMs() > 6000) {
+    NOBLE_WARN("PauseMenu: the host's pause was not refreshed for 6 s; "
+               "resuming locally");
+    net.ClearHostPause();
+    want = false;
+  }
+  if (want == s_guestHostPaused)
+    return;
+  s_guestHostPaused = want;
+  SetLocalSimulationPaused(want, true);
 }
 
 static ULONGLONG s_openedAt = 0;
@@ -669,7 +783,79 @@ static int s_pausePane = 0;       // 0 = action list, 1 = challenges panel
 static int s_challengeFocus = 0;
 static bool s_resetPauseScroll = false;
 static bool s_waitForRelease = true;
-static bool s_confirmRestart = false;
+static int s_confirmEntry = -1; // row waiting for its second press (restart, revert, ...)
+
+#ifdef NOBLE_DEV_BUILD
+// Dev test option -pause-menu-test "LABEL@seconds;LABEL@seconds": opens the
+// in-match menu and presses the row with that label, the seconds counted from
+// the first frame after loading. Lets the host options be tested unattended.
+static std::string s_testActivate;
+void PollHostMenuTest(bool loading) {
+  struct Step {
+    std::string label;
+    double at;
+  };
+  static std::vector<Step> s_steps;
+  static bool s_parsed = false;
+  static size_t s_next = 0;
+  static ULONGLONG s_base = 0;
+  if (!s_parsed) {
+    s_parsed = true;
+    int argc = 0;
+    LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; argv && i + 1 < argc; ++i) {
+      if (_wcsicmp(argv[i], L"-pause-menu-test") != 0)
+        continue;
+      char narrow[1024] = {};
+      WideCharToMultiByte(CP_UTF8, 0, argv[i + 1], -1, narrow,
+                          sizeof(narrow) - 1, nullptr, nullptr);
+      std::string all = narrow, item;
+      std::stringstream ss(all);
+      while (std::getline(ss, item, ';')) {
+        const size_t at = item.rfind('@');
+        if (at == std::string::npos)
+          continue;
+        s_steps.push_back({item.substr(0, at), std::atof(item.c_str() + at + 1)});
+      }
+    }
+    if (argv)
+      LocalFree(argv);
+    if (!s_steps.empty())
+      NOBLE_INFO("PauseMenu: -pause-menu-test has {} step(s)", s_steps.size());
+  }
+  if (s_next >= s_steps.size() || loading)
+    return;
+  const ULONGLONG now = GetTickCount64();
+  if (s_base == 0)
+    s_base = now;
+  if (static_cast<double>(now - s_base) / 1000.0 < s_steps[s_next].at)
+    return;
+  const std::string label = s_steps[s_next].label;
+  ++s_next;
+  // "!KICK" / "!BAN" / "!HOSTMUTE": host moderation on the first other player.
+  if (!label.empty() && label[0] == '!') {
+    HostModeration::PlayerRef ref;
+    for (const auto &kv : NetworkTransport::Get().GetAllPeerPingsMs())
+      if (kv.first != 0) {
+        ref.machineId = kv.first;
+        break;
+      }
+    ref.name = "test-target";
+    NOBLE_INFO("PauseMenu: -pause-menu-test {} on machine 0x{:X}", label,
+               ref.machineId);
+    if (label == "!KICK")
+      HostModeration::Kick(ref, "Test kick.");
+    else if (label == "!BAN")
+      HostModeration::Ban(ref, 30, "Test ban.");
+    else if (label == "!HOSTMUTE")
+      HostModeration::SetHostMuted(ref.machineId, true);
+    return;
+  }
+  if (!PauseMenu::IsOpen())
+    PauseMenu::Toggle();
+  s_testActivate = label;
+}
+#endif
 static std::string
     s_saveMapVariantResult; // shown under the SAVE MAP VARIANT row after a save
 static bool s_saveVariantOpen = false; // the "name this map variant" box is up
@@ -1007,7 +1193,7 @@ void PauseMenu::Toggle() {
   s_challengeFocus = 0;
   s_resetPauseScroll = nowOpen;
   s_waitForRelease = true;
-  s_confirmRestart = false;
+  s_confirmEntry = -1;
   (void)Window::TakeWheelSteps(); // forget scroll notches accumulated before transition
   if (nowOpen)
     Window::TakeLeftClicks(); // forget clicks made in game (shots) before the
@@ -1015,6 +1201,8 @@ void PauseMenu::Toggle() {
   s_open.store(nowOpen);
   if (nowOpen)
     s_challengesStale.store(true);
+  if (!nowOpen)
+    SetHostPauseForEveryone(false); // closing the host's menu resumes everyone
   SetLocalSimulationPaused(nowOpen);
   NOBLE_INFO("PauseMenu: {}", nowOpen ? "opened" : "closed");
 }
@@ -1026,11 +1214,12 @@ void PauseMenu::Close() {
   s_challengeFocus = 0;
   s_resetPauseScroll = false;
   s_waitForRelease = true;
-  s_confirmRestart = false;
+  s_confirmEntry = -1;
   s_teamPickerOpen = false;
   s_showSettings.store(false);
   (void)Window::TakeWheelSteps();
   if (s_open.exchange(false)) {
+    SetHostPauseForEveryone(false);
     SetLocalSimulationPaused(false);
     NOBLE_INFO("PauseMenu: closed");
   }
@@ -1572,24 +1761,100 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   const int curTeam = LocalTeamFromBoard();
   const TeamStyle &curStyle = TeamStyleFor(curTeam);
   const char *teamBadge = curStyle.name;
-  std::vector<Entry> entries = {
-      {"RESUME", nullptr, "Return to gameplay immediately.", nullptr, false,
-       true},
-      {s_confirmRestart ? "CONFIRM RESTART?" : "RESTART MATCH", nullptr,
-       canRestart
-           ? (s_confirmRestart
-                  ? "Select again to confirm restarting from the beginning."
-                  : "Reload this match from the beginning.")
-           : (isGuest ? "Only the session host can restart the match."
-                      : "Unavailable: match launch arguments were not passed."),
-       s_confirmRestart ? "CONFIRM" : nullptr, s_confirmRestart, canRestart},
-      {"SETTINGS", nullptr,
-       "Adjust video, audio, HUD, and gameplay options live.", nullptr, false,
-       true},
+  const bool isTheaterPlayback = noble::BlamEngine::IsSavedFilmPlayback();
+  const bool isCampaign = _stricmp(currentMode.c_str(), "campaign") == 0 &&
+                          !isTheaterPlayback;
+  const bool isFirefight = _stricmp(currentMode.c_str(), "firefight") == 0 &&
+                           !isTheaterPlayback;
+  // Campaign and Firefight restart through the lobby with everyone, and the
+  // lobby waits until every player is back before it starts again.
+  const bool restartWithParty = (isCampaign || isFirefight);
+  // A host whose lobby lives on (master server session, LAN beacon or players
+  // in the match): its rows take the party along instead of ending the match.
+  std::wstring hostSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+  if (hostSession.empty())
+    hostSession = ArgValue(GetCommandLineW(), L"-session-id");
+  const bool hostedSession =
+      !isGuest && !isTheaterPlayback &&
+      (peers > 0 || !hostSession.empty() ||
+       MasterServerClient::Get().IsAdvertising() ||
+       restartArgs.find(L" -host") != std::wstring::npos ||
+       wcsstr(GetCommandLineW(), L"-host") != nullptr);
+  const std::wstring nextMission =
+      isCampaign && !isGuest ? NextCampaignMission(restartArgs) : std::wstring();
+  static std::string s_nextMissionLabel;
+  if (!nextMission.empty()) {
+    char narrow[128] = {};
+    WideCharToMultiByte(CP_UTF8, 0, MissionTitle(nextMission).c_str(), -1,
+                        narrow, sizeof(narrow) - 1, nullptr, nullptr);
+    s_nextMissionLabel = std::string("Start ") + narrow +
+                         (hostedSession ? " with everyone. The lobby starts it "
+                                          "after a short countdown."
+                                        : ".");
+  }
+
+  std::vector<Entry> entries;
+  // Rows that need a second press show CONFIRM on the first one.
+  const auto addConfirmed = [&](int &index, const char *label,
+                                const char *confirmLabel, const char *desc,
+                                const char *confirmDesc, bool enabled) {
+    index = static_cast<int>(entries.size());
+    const bool armed = s_confirmEntry == index;
+    entries.push_back({armed ? confirmLabel : label, nullptr,
+                       armed ? confirmDesc : desc, armed ? "CONFIRM" : nullptr,
+                       armed, enabled});
+  };
+  entries.push_back({"RESUME", nullptr,
+                     s_hostPausedAll ? "Return to gameplay. Everyone resumes."
+                                     : "Return to gameplay immediately.",
+                     nullptr, false, true});
+
+  // ---- Host options: built only for the host, guests never see them ----
+  int revertEntry = -1, restartEntry = -1, nextMissionEntry = -1,
+      pauseAllEntry = -1;
+  if (isCampaign && !isGuest) {
+    addConfirmed(revertEntry, "REVERT TO CHECKPOINT", "CONFIRM REVERT?",
+                 peers > 0 ? "Go back to the last checkpoint. Everyone in the "
+                             "mission goes back with you."
+                           : "Go back to the last checkpoint.",
+                 "Select again to go back to the last checkpoint.", true);
+  }
+  if (canRestart) {
+    addConfirmed(restartEntry, isCampaign ? "RESTART MISSION" : "RESTART MATCH",
+                 "CONFIRM RESTART?",
+                 restartWithParty && hostedSession
+                     ? "Restart from the beginning. Everyone comes back to the "
+                       "lobby and it starts again once all players are back."
+                     : (isCampaign ? "Restart this mission from the beginning."
+                                   : "Reload this match from the beginning."),
+                 "Select again to confirm restarting from the beginning.", true);
+  }
+  if (!nextMission.empty()) {
+    addConfirmed(nextMissionEntry, "NEXT MISSION", "CONFIRM NEXT MISSION?",
+                 s_nextMissionLabel.c_str(),
+                 "Select again to leave this mission and start the next one.",
+                 true);
+  }
+  if (isCampaign && !isGuest && peers > 0) {
+    pauseAllEntry = static_cast<int>(entries.size());
+    entries.push_back(
+        {s_hostPausedAll ? "RESUME FOR EVERYONE" : "PAUSE FOR EVERYONE", nullptr,
+         s_hostPausedAll
+             ? "The match is paused for every player. Select to resume (closing "
+               "this menu resumes too)."
+             : "Freeze the mission for every player until you resume.",
+         s_hostPausedAll ? "PAUSED" : "HOST", false, true});
+  }
+
+  entries.push_back({"SETTINGS", nullptr,
+                     "Adjust video, audio, HUD, and gameplay options live.",
+                     nullptr, false, true});
+  const int settingsEntry = static_cast<int>(entries.size()) - 1;
+  entries.push_back(
       {"CONTROLS", nullptr,
        "Configure key bindings, mouse sensitivity, and controller layout.",
-       nullptr, false, true},
-  };
+       nullptr, false, true});
+  const int controlsEntry = static_cast<int>(entries.size()) - 1;
   int saveMapVariantEntry = -1;
   if (_stricmp(currentMode.c_str(), "forge") == 0) {
     saveMapVariantEntry = static_cast<int>(entries.size());
@@ -1608,8 +1873,19 @@ void PauseMenu::DrawMenu(HWND hwnd) {
                        "Switch your active team assignment.",
                        teamBadge, false, true});
   }
-  const int leaveEntry = static_cast<int>(entries.size());
-  if (noble::BlamEngine::IsSavedFilmPlayback()) {
+  int leaveEntry = static_cast<int>(entries.size());
+  int aloneEntry = -1;
+  if (hostedSession) {
+    entries.push_back({"RETURN TO LOBBY", nullptr,
+                       "End the match and go back to the lobby. Everyone "
+                       "comes back with you.",
+                       "HOST", false, true});
+    addConfirmed(aloneEntry, "RETURN TO LOBBY ALONE", "CONFIRM LEAVE PLAYERS?",
+                 "End the match and go back to a new lobby of your own. The "
+                 "other players are sent to their main menu.",
+                 "Select again: the other players leave and this lobby closes.",
+                 true);
+  } else if (noble::BlamEngine::IsSavedFilmPlayback()) {
     entries.push_back({"LEAVE THEATER", nullptr,
                        "Stop Theater playback and return to the front-end.",
                        nullptr, false, true});
@@ -1671,8 +1947,8 @@ void PauseMenu::DrawMenu(HWND hwnd) {
       s_lastMove = now;
       if (s_pausePane == 0) {
         s_focus = (s_focus + (goDown ? 1 : entryCount - 1)) % entryCount;
-        if (s_focus != 1)
-          s_confirmRestart = false;
+        if (s_focus != s_confirmEntry)
+          s_confirmEntry = -1;
       } else if (chCount > 0) {
         s_challengeFocus =
             (s_challengeFocus + (goDown ? 1 : chCount - 1)) % chCount;
@@ -1682,8 +1958,8 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     }
   }
   s_focus = std::clamp(s_focus, 0, entryCount - 1);
-  if (s_focus != 1)
-    s_confirmRestart = false;
+  if (s_focus != s_confirmEntry)
+    s_confirmEntry = -1;
 
   // ---- Left Column: Tactical Command Deck + Info Card ----
   const float descBoxH = 62.0f * s;
@@ -1706,7 +1982,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
 
     ImGui::SetCursorScreenPos(t0);
     if (DrawTile(dl, "##pause_tile", t0, t1, entries[i].label, nullptr, focused,
-                 s_confirmRestart && i == 1, enabled, entries[i].badge) &&
+                 s_confirmEntry == i, enabled, entries[i].badge) &&
         enabled && navInteractive) {
       s_pausePane = 0;
       s_focus = i;
@@ -1716,8 +1992,8 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         NobleUi::IsMouseMoved(2.5f)) {
       s_pausePane = 0;
       s_focus = i;
-      if (s_focus != 1)
-        s_confirmRestart = false;
+      if (s_focus != s_confirmEntry)
+        s_confirmEntry = -1;
     }
     // Multi-team color strip accent on CHANGE TEAM, crimson edge on QUIT.
     if (i == teamEntry) {
@@ -1745,7 +2021,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     const ImVec2 d1(leftX + listW, bodyTop + bodyH);
     dl->AddRectFilled(d0, d1, IM_COL32(12, 20, 32, 220), 3.0f * s);
     dl->AddRectFilled(d0, ImVec2(d0.x + 3.0f * s, d1.y),
-                      s_confirmRestart ? kAmber : kAccent);
+                      s_confirmEntry == s_focus ? kAmber : kAccent);
     dl->AddRect(d0, d1, IM_COL32(143, 216, 255, 48), 3.0f * s);
     const char *descText = entries[s_focus].description;
     if (s_focus == saveMapVariantEntry && !s_saveMapVariantResult.empty())
@@ -1871,26 +2147,103 @@ void PauseMenu::DrawMenu(HWND hwnd) {
   ImGui::EndChild();
   ImGui::PopStyleColor();
 
-  // ---- Act on selected action (never early-return before End()) ----
-  if (activated == 0) {
-    Close();
-  } else if (activated == 1) {
-    if (canRestart) {
-      MenuSounds::Click();
-      if (!s_confirmRestart) {
-        s_confirmRestart = true;
-      } else {
-        Close();
-        RelaunchAndClose(hwnd, restartArgs, "restart match");
+#ifdef NOBLE_DEV_BUILD
+  // -pause-menu-test: press the named row (confirm rows count as confirmed).
+  if (!s_testActivate.empty() && timeReady && activated < 0) {
+    for (int i = 0; i < entryCount; ++i) {
+      if (s_testActivate == entries[i].label && entries[i].enabled) {
+        s_focus = i;
+        s_confirmEntry = i;
+        activated = i;
+        NOBLE_INFO("PauseMenu: -pause-menu-test pressed '{}'", s_testActivate);
+        break;
       }
     }
-  } else if (activated == 2) {
+    if (activated < 0)
+      NOBLE_WARN("PauseMenu: -pause-menu-test found no row '{}'", s_testActivate);
+    s_testActivate.clear();
+  }
+#endif
+
+  // ---- Act on selected action (never early-return before End()) ----
+  // First press arms a confirm row, the second one runs it.
+  const auto confirmed = [](int index) {
+    MenuSounds::Click();
+    if (s_confirmEntry != index) {
+      s_confirmEntry = index;
+      return false;
+    }
+    s_confirmEntry = -1;
+    return true;
+  };
+  // The lobby arguments for another mission (or this one again), with the
+  // lobby starting it by itself after a countdown.
+  const auto missionLobbyArgs = [&](const std::wstring &mission) {
+    std::wstring args = LobbyReturnArgs(true);
+    if (!mission.empty()) {
+      SetArg(args, L"-lobby-map", mission);
+      SetArg(args, L"-lobby-map-title", MissionTitle(mission));
+      RemoveArg(args, L"-lobby-map-image");
+      RemoveArg(args, L"-lobby-map-thumb");
+    }
+    // Everyone in this match (host included) must be back before it starts.
+    return args + L" -lobby-autostart 10 -lobby-autostart-players " +
+           std::to_wstring(peers + 1);
+  };
+  if (activated == 0) {
+    Close();
+  } else if (revertEntry >= 0 && activated == revertEntry) {
+    if (confirmed(revertEntry)) {
+      Close(); // resumes the simulation first; the revert runs on a game tick
+      BlamEngine *engine = BlamEngine::Active();
+      const bool ok = engine && engine->ExecuteCommand("game_revert");
+      (void)ok;
+      NOBLE_INFO("PauseMenu: host revert to the last checkpoint ({}, {} other "
+                 "player(s))",
+                 ok ? "sent to the engine" : "engine refused the command",
+                 peers);
+    }
+  } else if (restartEntry >= 0 && activated == restartEntry) {
+    if (confirmed(restartEntry)) {
+      Close();
+      if (restartWithParty && hostedSession)
+        HostReturnToLobby(hwnd, missionLobbyArgs(std::wstring()),
+                          isCampaign ? "host restart mission with everyone"
+                                     : "host restart Firefight with everyone");
+      else
+        RelaunchAndClose(hwnd, restartArgs,
+                         isCampaign ? "restart mission" : "restart match");
+    }
+  } else if (nextMissionEntry >= 0 && activated == nextMissionEntry) {
+    if (confirmed(nextMissionEntry)) {
+      Close();
+      if (hostedSession)
+        HostReturnToLobby(hwnd, missionLobbyArgs(nextMission),
+                          "host next mission with everyone");
+      else
+        RelaunchAndClose(hwnd, NextMissionArgs(nextMission, LobbyReturnArgs(true)),
+                         "next mission");
+    }
+  } else if (pauseAllEntry >= 0 && activated == pauseAllEntry) {
+    MenuSounds::Click();
+    SetHostPauseForEveryone(!s_hostPausedAll);
+  } else if (aloneEntry >= 0 && activated == aloneEntry) {
+    if (confirmed(aloneEntry)) {
+      Close();
+      HostReturnToLobbyAlone(hwnd);
+    }
+  } else if (hostedSession && activated == leaveEntry) {
+    MenuSounds::Click();
+    Close();
+    HostReturnToLobby(hwnd, LobbyReturnArgs(true),
+                      "host return to lobby with everyone");
+  } else if (activated == settingsEntry) {
     MenuSounds::Click();
     Window::TakeLeftClicks();
     (void)Window::TakeWheelSteps();
     s_showSettings.store(true);
     NOBLE_INFO("PauseMenu: settings opened from the pause menu");
-  } else if (activated == 3) {
+  } else if (activated == controlsEntry) {
     MenuSounds::Click();
     Window::TakeLeftClicks();
     (void)Window::TakeWheelSteps();
@@ -3802,16 +4155,107 @@ static void DrawScoreboardPanel() {
 
       ImGui::SameLine(0.0f, 10.0f * s);
 
+      // ---- Host moderation: only the host sees these ----
       if (isHost && selEntry && !selEntry->local) {
+        HostModeration::PlayerRef ref;
+        ref.machineId = selEntry->machine;
+        ref.name = selEntry->name;
+        const bool canTarget = ref.machineId != 0;
+        ImGui::BeginDisabled(!canTarget);
         if (NobleStyle::DangerButton("KICK PLAYER", ImVec2(btnW, 38.0f * s))) {
-          s_status = "Kicked " + s_selected;
+          HostModeration::Kick(ref, "The host removed you from the game.");
+          s_status = "Kicked " + s_selected + " (they can't rejoin for 2 minutes)";
           s_showPlayerModal = false;
           MenuSounds::Click();
         }
-      } else {
-        ImGui::BeginDisabled(true);
-        ImGui::Button("KICK PLAYER", ImVec2(btnW, 38.0f * s));
         ImGui::EndDisabled();
+
+        ImGui::Spacing();
+        // BAN: pick the length, then ban. Kept by the player's name here (the
+        // match has no account ids); lobby bans also use the account.
+        static int s_banChoice = 0;
+        const int banCount = static_cast<int>(
+            sizeof(HostModeration::kBanChoices) / sizeof(int));
+        s_banChoice = std::clamp(s_banChoice, 0, banCount - 1);
+        const std::string lenLabel =
+            "LENGTH: " +
+            HostModeration::BanLengthText(HostModeration::kBanChoices[s_banChoice]);
+        if (ImGui::Button(lenLabel.c_str(), ImVec2(btnW, 38.0f * s))) {
+          s_banChoice = (s_banChoice + 1) % banCount;
+          MenuSounds::Change();
+        }
+        ImGui::SameLine(0.0f, 10.0f * s);
+        ImGui::BeginDisabled(!canTarget);
+        if (NobleStyle::DangerButton("BAN PLAYER", ImVec2(btnW, 38.0f * s))) {
+          const int minutes = HostModeration::kBanChoices[s_banChoice];
+          HostModeration::Ban(ref, minutes, "Banned by the host.");
+          s_status = "Banned " + s_selected + " (" +
+                     HostModeration::BanLengthText(minutes) + ")";
+          s_showPlayerModal = false;
+          MenuSounds::Click();
+        }
+        ImGui::EndDisabled();
+
+        ImGui::Spacing();
+        // Host mute: nobody in the game hears or reads this player.
+        const bool hostMuted =
+            canTarget && HostModeration::IsHostMuted(ref.machineId);
+        ImGui::BeginDisabled(!canTarget);
+        if (ImGui::Button(hostMuted ? "UNMUTE FOR EVERYONE"
+                                    : "MUTE FOR EVERYONE",
+                          ImVec2(btnW * 2.0f + 10.0f * s, 38.0f * s))) {
+          HostModeration::SetHostMuted(ref.machineId, !hostMuted);
+          s_status = (hostMuted ? "Unmuted " : "Muted ") + s_selected +
+                     " for everyone";
+          MenuSounds::Click();
+        }
+        ImGui::EndDisabled();
+
+        ImGui::Spacing();
+        // Co-host: may kick and mute for everyone (the host checks each one).
+        const bool coHost = canTarget && HostModeration::IsCoHost(ref.machineId);
+        ImGui::BeginDisabled(!canTarget);
+        if (ImGui::Button(coHost ? "REMOVE CO-HOST" : "MAKE CO-HOST",
+                          ImVec2(btnW * 2.0f + 10.0f * s, 38.0f * s))) {
+          HostModeration::SetCoHost(ref.machineId, !coHost);
+          s_status = s_selected + (coHost ? " is no longer a co-host"
+                                          : " is now a co-host");
+          MenuSounds::Click();
+        }
+        ImGui::EndDisabled();
+      } else if (!isHost && selEntry && !selEntry->local &&
+                 selEntry->machine != 0 && HostModeration::LocalIsCoHost()) {
+        // ---- Co-host: kick / mute for everyone, done by the host ----
+        if (NobleStyle::DangerButton("KICK PLAYER", ImVec2(btnW, 38.0f * s))) {
+          HostModeration::RequestCoHostAction("kick", selEntry->machine,
+                                              selEntry->name);
+          s_status = "Asked the host to remove " + s_selected;
+          s_showPlayerModal = false;
+          MenuSounds::Click();
+        }
+        ImGui::Spacing();
+        if (ImGui::Button("MUTE FOR EVERYONE",
+                          ImVec2(btnW * 2.0f + 10.0f * s, 38.0f * s))) {
+          HostModeration::RequestCoHostAction("mute", selEntry->machine,
+                                              selEntry->name);
+          s_status = "Asked the host to mute " + s_selected + " for everyone";
+          MenuSounds::Click();
+        }
+      }
+
+      // Text-only mute (this PC only): chat lines from this player are hidden.
+      if (selEntry && !selEntry->local) {
+        ImGui::Spacing();
+        const bool chatMuted =
+            HostModeration::IsChatMuted(selEntry->machine, selEntry->name);
+        if (ImGui::Button(chatMuted ? "UNMUTE CHAT" : "MUTE CHAT",
+                          ImVec2(btnW * 2.0f + 10.0f * s, 38.0f * s))) {
+          HostModeration::SetChatMuted(selEntry->machine, selEntry->name,
+                                       !chatMuted);
+          s_status = (chatMuted ? "Showing chat from " : "Hiding chat from ") +
+                     s_selected;
+          MenuSounds::Click();
+        }
       }
 
       ImGui::Spacing();
@@ -3896,6 +4340,52 @@ static void DrawScoreboardPanel() {
 // but the engine keeps pumping frames, so without this the guest just sits
 // frozen in the mission. Offers the only reliable exit - relaunch the menu
 // process.
+// Guest: the campaign host paused the match for everyone (PAUSE FOR EVERYONE).
+// Only a banner: the guest can still open its own menu, but only the host
+// resumes.
+static void DrawHostPausedBanner() {
+  using namespace NobleUi;
+  ImGuiIO &io = ImGui::GetIO();
+  const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f) * Settings::UiScale();
+  ImDrawList *dl = ImGui::GetBackgroundDrawList();
+  dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), IM_COL32(4, 9, 16, 150));
+  const float panelW = std::min(W * 0.6f, 560.0f * s), panelH = 110.0f * s;
+  const ImVec2 p0((W - panelW) * 0.5f, H * 0.22f),
+      p1(p0.x + panelW, p0.y + panelH);
+  dl->AddRectFilled(p0, p1, IM_COL32(10, 16, 26, 235), 6.0f * s);
+  dl->AddRect(p0, p1, IM_COL32(70, 120, 165, 220), 6.0f * s, 0, 2.0f * s);
+  dl->AddRectFilled(p0, ImVec2(p0.x + 6.0f * s, p1.y), kAccent, 6.0f * s);
+  Text(dl, NobleStyle::TitleFont(), 32.0f * s,
+       ImVec2(p0.x + 30.0f * s, p0.y + 20.0f * s), IM_COL32(236, 240, 244, 255),
+       "PAUSED BY HOST");
+  Text(dl, NobleStyle::SmallFont(), 15.0f * s,
+       ImVec2(p0.x + 32.0f * s, p0.y + 66.0f * s), IM_COL32(150, 190, 220, 255),
+       "The host paused the mission. It carries on when the host resumes.");
+}
+
+// Guest: anti-AFK warning for the last 30 s before the host's idle limit.
+static void DrawIdleWarningBanner(int secondsLeft) {
+  using namespace NobleUi;
+  ImGuiIO &io = ImGui::GetIO();
+  const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f) * Settings::UiScale();
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  const float panelW = std::min(W * 0.6f, 560.0f * s), panelH = 96.0f * s;
+  const ImVec2 p0((W - panelW) * 0.5f, H * 0.18f),
+      p1(p0.x + panelW, p0.y + panelH);
+  dl->AddRectFilled(p0, p1, IM_COL32(26, 16, 6, 235), 6.0f * s);
+  dl->AddRect(p0, p1, IM_COL32(230, 160, 60, 230), 6.0f * s, 0, 2.0f * s);
+  char title[64];
+  std::snprintf(title, sizeof(title), "IDLE: LEAVING IN %d S", secondsLeft);
+  Text(dl, NobleStyle::TitleFont(), 30.0f * s,
+       ImVec2(p0.x + 28.0f * s, p0.y + 16.0f * s), IM_COL32(255, 214, 150, 255),
+       title);
+  Text(dl, NobleStyle::SmallFont(), 15.0f * s,
+       ImVec2(p0.x + 30.0f * s, p0.y + 60.0f * s), IM_COL32(230, 200, 160, 255),
+       "This host removes idle players. Move or press any button to stay.");
+}
+
 static bool DrawConnectionLostPanel(HWND hwnd) {
   using namespace NobleUi;
   ImGuiIO &io = ImGui::GetIO();
@@ -5291,7 +5781,76 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     PollHostMatchState();
     if (s_guestReturnedToLobby.exchange(false))
       return;
+    UpdateGuestHostPause();
+    // Host moderation: the host kicked or banned this player.
+    NetworkTransport::HostRemoval removal;
+    if (NetworkTransport::Get().TakeHostRemoval(removal)) {
+      const std::string text = HostModeration::RemovalText(
+          removal.kind, removal.reason, removal.minutes);
+      NOBLE_INFO("PauseMenu: {}", text);
+      HostModeration::WriteRemovalNotice(text);
+      Career::EnsureMatchSaved("removed_by_host");
+      s_guestReturnedToLobby.store(true);
+      RelaunchAndClose(Window::ActiveHwnd(), L"-main-menu", "removed by the host");
+      return;
+    }
+    // Anti-AFK (host rule): this player checks its own idle time. Cutscenes,
+    // loading, the host's pause and the end of the match don't count, and the
+    // idle clock starts again after them.
+    s_afkSecondsLeft = -1;
+    const int afkMinutes = HostModeration::GuestAfkMinutes();
+    static ULONGLONG s_afkHeldAt = 0;
+    const ULONGLONG afkNow = GetTickCount64();
+    if (afkMinutes <= 0 || loading || s_gameOver.load() || s_guestHostPaused ||
+        EnginePatches::CinematicInProgress()) {
+      s_afkHeldAt = afkNow;
+    } else {
+      const double sinceHeld =
+          s_afkHeldAt == 0 ? 1e9 : static_cast<double>(afkNow - s_afkHeldAt) / 1000.0;
+      const double idle = (std::min)(HostModeration::LocalIdleSeconds(), sinceHeld);
+      const double limit = afkMinutes * 60.0;
+      if (idle >= limit) {
+        const std::string text = "You were removed for being idle for " +
+                                 std::to_string(afkMinutes) + " minutes.";
+        NOBLE_INFO("PauseMenu: {}", text);
+        HostModeration::WriteRemovalNotice(text);
+        Career::EnsureMatchSaved("idle");
+        s_guestReturnedToLobby.store(true);
+        RelaunchAndClose(Window::ActiveHwnd(), L"-main-menu", "removed for being idle");
+        return;
+      }
+      if (idle >= limit - 30.0)
+        s_afkSecondsLeft = static_cast<int>(limit - idle) + 1;
+    }
+  } else {
+    RefreshHostPause();
+    // Host moderation: send away banned / just-kicked players who are in the
+    // match (join in progress included).
+    if (NetworkTransport::Get().IsActive()) {
+      // Everyone connected to this host, named from the scoreboard when known.
+      std::vector<HostModeration::PlayerRef> refs;
+      for (const auto &kv : NetworkTransport::Get().GetAllPeerPingsMs()) {
+        if (kv.first == 0)
+          continue;
+        HostModeration::PlayerRef ref;
+        ref.machineId = kv.first;
+        refs.push_back(ref);
+      }
+      {
+        std::lock_guard<std::mutex> lock(s_boardMutex);
+        for (auto &ref : refs)
+          for (const auto &r : s_boardRows)
+            if (!r.local && r.machine == ref.machineId)
+              ref.name = r.name;
+      }
+      HostModeration::Tick(refs);
+    }
+#ifdef NOBLE_DEV_BUILD
+    PollHostMenuTest(loading);
+#endif
   }
+  const bool hostPausedBanner = guest && s_guestHostPaused;
+  const bool afkBanner = guest && s_afkSecondsLeft >= 0;
 
   const double hostSilence =
       guest ? NetworkTransport::Get().SecondsSinceRemotePacket() : 0.0;
@@ -5325,7 +5884,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
     }
   }
 
-  if (!loading && !open && !gameOver && guest && hostSilence > 15.0) {
+  if (!loading && !open && !gameOver && guest && hostSilence > 15.0 &&
+      !hostPausedBanner) {
     if (!s_connectionLost) {
       s_connectionLost = true;
       NOBLE_WARN("PauseMenu: host connection lost ({:.1f}s without packets) - "
@@ -5342,8 +5902,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
   // The engine's loading screen is gone before an online co-op host has all its players: keep drawing our screen as
   // WAITING FOR PLAYERS until the game session starts (otherwise this is a black frame with the FPS counter).
   if (!(open || gameOver || loading || waitingForPlayersScreen || showFps || showNet || scoreboardHeld ||
-        connectionLost || extraOverlay || SocialOverlay::WantsFrame() ||
-        isTheater) ||
+        connectionLost || hostPausedBanner || afkBanner || extraOverlay ||
+        SocialOverlay::WantsFrame() || isTheater) ||
       !swapChain || !ImGui::GetCurrentContext())
     return;
 
@@ -5617,6 +6177,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading, bool clear,
       bool relaunched = false;
       if (connectionLost)
         relaunched = DrawConnectionLostPanel(hwnd);
+      else if (hostPausedBanner && !open && !gameOver)
+        DrawHostPausedBanner();
+      else if (afkBanner && !gameOver)
+        DrawIdleWarningBanner(s_afkSecondsLeft);
       if (scoreboardHeld && !connectionLost && !relaunched) {
         DrawScoreboardPanel();
         // -scoreboard-demo: one screenshot about 30 s in, so the match is on

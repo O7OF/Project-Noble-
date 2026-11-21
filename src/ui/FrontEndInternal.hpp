@@ -488,7 +488,12 @@ struct MenuState {
   std::string lobbyModeSummary;
   bool teamsPushFailed = false;
   double autoStartAt =
-      0.0; // ImGui time the next rotation match starts; 0 = not counting
+      0.0;
+  // RESTART MISSION / NEXT MISSION with everyone (campaign, Firefight): the
+  // countdown holds until this many players are back in the lobby, at most
+  // until autoStartWaitLimit (ImGui time). 0 = don't wait.
+  int autoStartNeedPlayers = 0;
+  double autoStartWaitLimit = 0.0; // ImGui time the next rotation match starts; 0 = not counting
   std::filesystem::path
       optionsFile; // the saved mode being edited; empty for a new one
   std::string

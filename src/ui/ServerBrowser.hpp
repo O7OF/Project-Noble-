@@ -63,8 +63,8 @@ public:
     // True once after the player chose "RESTART TO UPDATE" here; the front end then closes so the
     // update script can replace the install.
     bool ConsumeCloseForUpdate() { const bool r = m_closeForUpdate; m_closeForUpdate = false; return r; }
-    bool IsModalOpen() const { return m_showDirectConnectModal || m_showMasterModal || m_showJoinCodeModal; }
-    void CloseModals() { m_showDirectConnectModal = false; m_showMasterModal = false; m_showJoinCodeModal = false; }
+    bool IsModalOpen() const { return m_showDirectConnectModal || m_showMasterModal || m_showJoinCodeModal || m_showJoinPasswordModal; }
+    void CloseModals() { m_showDirectConnectModal = false; m_showMasterModal = false; m_showJoinCodeModal = false; m_showJoinPasswordModal = false; }
     // Prominent "JOIN WITH CODE" entry point (Main Menu and Social screen call this, then switch to Screen::ServerBrowser).
     void OpenJoinCodeModal();
 
@@ -77,6 +77,7 @@ private:
     void RenderDirectConnectModal();
     void RenderMasterServerModal();
     void RenderJoinCodeModal();
+    void RenderJoinPasswordModal();
     void JoinByCode();
     void TryJoin(const std::string& address, uint16_t port, bool hasPassword);
     // Version gate: returns true (and sets the status line) when this client may not join `s`.
@@ -108,6 +109,12 @@ private:
     bool m_showDirectConnectModal = false;
     char m_directConnectIp[64] = "";
     char m_directConnectPassword[64] = { 0 };
+
+    // Lobby password asked before joining a password-protected game
+    bool m_showJoinPasswordModal = false;
+    bool m_joinPasswordGiven = false;
+    ServerEntry m_joinPasswordEntry;
+    char m_joinPassword[64] = {};
 
     // Join-by-code modal state
     bool m_showJoinCodeModal = false;

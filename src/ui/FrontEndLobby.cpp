@@ -1,5 +1,8 @@
 #include "FrontEndInternal.hpp"
 #include "network/InviteCode.hpp"
+#include "network/HostModeration.hpp"
+
+#include <ctime>
 
 namespace noble::fe {
 
@@ -11,6 +14,20 @@ constexpr bool kLobbyMaxPingEnabled = true;
 #else
 constexpr bool kLobbyMaxPingEnabled = false;
 #endif
+
+// A lobby roster entry as the host-moderation tools identify it: the account
+// id (stable, peerId > 1 when logged in), this session's machine id and name.
+static HostModeration::PlayerRef LobbyPlayerRef(const LobbyPlayer &p) {
+  HostModeration::PlayerRef ref;
+  ref.accountId = p.peerId > 1 ? p.peerId : 0;
+  try {
+    ref.machineId = p.machineId.empty() ? 0 : std::stoull(p.machineId, nullptr, 0);
+  } catch (...) {
+    ref.machineId = 0;
+  }
+  ref.name = p.username;
+  return ref;
+}
 
 struct PendingLobbyEvents {
   bool launch = false;
@@ -201,6 +218,7 @@ void EnterLobby(OverlayContext &ctx, const ServerEntry &s,
       UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0, 11774,
       s.hostAddress, s.port, AuthClient::Get().IsTester());
   if (state.ok) {
+    HostModeration::OnJoinedLobby();
     if (!state.sessionId.empty())
       ctx.st.lobbySessionId = state.sessionId;
     ctx.st.lobbyRoster = state.roster;
@@ -270,6 +288,9 @@ void SetupHostLobby(MenuState &st, const std::string &mapScenario,
     st.lobbyNetMode = 0; // Auto local play mode if not logged in
   }
   st.isLobbyHost = true;
+  // A new lobby starts open; coming back from a match restores the lobby's
+  // lock / invite / password state afterwards (FrontEndMenu).
+  HostModeration::BeginLobbyAccess();
   st.lobbyMap = mapScenario;
   st.lobbyMapOverride = mapOverride;
   st.lobbyMapVariant.clear(); // the Custom Game / Forge screen sets it after
@@ -311,7 +332,8 @@ void SetupHostLobby(MenuState &st, const std::string &mapScenario,
                           : Settings::Get().Snapshot().playerName;
   if (pName.empty())
     pName = "Host";
-  cfg.sessionName = pName + "'s Lobby";
+  // Server names never carry slurs or swear words (always on).
+  cfg.sessionName = HostModeration::FilterServerName(pName + "'s Lobby");
   cfg.gameMode = st.lobbyMode;
   cfg.mapName = st.lobbyMap;
   cfg.gametypeName = st.lobbyVariantName;
@@ -344,6 +366,7 @@ void SetupHostLobby(MenuState &st, const std::string &mapScenario,
     adv.modTitle = st.lobbyModTitle;
     adv.inProgress = false;
     adv.isPrivate = (st.lobbyPrivacy != 0);
+    adv.hasPassword = HostModeration::AdvertHasPassword();
     adv.hostPeerId = AuthClient::Get().IsLoggedIn()
                          ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
                          : 1ULL;
@@ -830,11 +853,169 @@ static void DrawLobbyMapPickerModal(OverlayContext &ctx, const Ui &ui,
             {{InputPrompts::Button::Y, "Y", "Toggle Variants"}});
 }
 
+// Host: FILTER WORDS editor (custom words for the word filter, one per line).
+// Takes over the lobby screen while open, like the map picker.
+static bool s_filterEditorOpen = false;
+static char s_filterEditorText[4096] = {};
+
+static void OpenFilterWordsEditor() {
+  std::string joined;
+  for (const std::string &w : HostModeration::CustomWords())
+    joined += w + "\n";
+  std::snprintf(s_filterEditorText, sizeof(s_filterEditorText), "%s",
+                joined.c_str());
+  s_filterEditorOpen = true;
+}
+
+static void DrawFilterWordsEditor(const Ui &ui, bool back) {
+  const float s = ui.s;
+  const ImVec2 size(760.0f * s, 520.0f * s);
+  ImGui::SetNextWindowPos(ImVec2(ui.origin.x + (ui.size.x - size.x) * 0.5f,
+                                 ui.origin.y + (ui.size.y - size.y) * 0.5f));
+  ImGui::SetNextWindowSize(size);
+  ImGui::SetNextWindowBgAlpha(0.97f);
+  ImGui::Begin("##filterwords", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                   ImGuiWindowFlags_NoSavedSettings);
+  ImGui::PushFont(NobleStyle::TitleFont());
+  ImGui::TextUnformatted("FILTER WORDS");
+  ImGui::PopFont();
+  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+  ImGui::TextWrapped(
+      "Your own words for the word filter, one per line. They are hidden in "
+      "chat in your lobby and your matches, also when spelled with numbers "
+      "or repeated letters. The built-in slur list is %s (WORD FILTER).",
+      HostModeration::FilterEnabled() ? "on" : "off");
+  ImGui::PopStyleColor();
+  ImGui::Dummy(ImVec2(0, 8.0f * s));
+  ImGui::InputTextMultiline("##filterwordstext", s_filterEditorText,
+                            sizeof(s_filterEditorText),
+                            ImVec2(-1.0f, 330.0f * s));
+  ImGui::Dummy(ImVec2(0, 8.0f * s));
+  const float bw = (ImGui::GetContentRegionAvail().x - 10.0f * s) * 0.5f;
+  bool save = ImGui::Button("SAVE", ImVec2(bw, 42.0f * s));
+  ImGui::SameLine(0.0f, 10.0f * s);
+  const bool cancel = ImGui::Button("CANCEL", ImVec2(bw, 42.0f * s)) ||
+                      (back && !ImGui::GetIO().WantTextInput);
+  if (save) {
+    std::vector<std::string> words;
+    std::string line;
+    for (const char *c = s_filterEditorText;; ++c) {
+      if (*c == '\n' || *c == '\r' || *c == 0) {
+        while (!line.empty() && line.back() == ' ')
+          line.pop_back();
+        size_t start = line.find_first_not_of(' ');
+        if (start != std::string::npos)
+          words.push_back(line.substr(start));
+        line.clear();
+        if (*c == 0)
+          break;
+      } else {
+        line += *c;
+      }
+    }
+    HostModeration::SetCustomWords(words);
+    NOBLE_INFO("FrontEndMenu: word filter custom words saved ({})",
+               words.size());
+    MenuSounds::Click();
+    s_filterEditorOpen = false;
+  } else if (cancel) {
+    MenuSounds::Back();
+    s_filterEditorOpen = false;
+  }
+  ImGui::End();
+}
+
+// Host: LOBBY PASSWORD editor. Same takeover as FILTER WORDS.
+static bool s_passwordEditorOpen = false;
+static bool s_passwordEditorShow = false;
+static char s_passwordEditorText[64] = {};
+
+static void OpenLobbyPasswordEditor() {
+  std::snprintf(s_passwordEditorText, sizeof(s_passwordEditorText), "%s",
+                HostModeration::LobbyPassword().c_str());
+  s_passwordEditorShow = false;
+  s_passwordEditorOpen = true;
+}
+
+static void ApplyLobbyAccessAdvert() {
+  MasterServerClient::Get().SetAdvertPassword(
+      HostModeration::AdvertHasPassword());
+}
+
+static void DrawLobbyPasswordEditor(const Ui &ui, bool back) {
+  const float s = ui.s;
+  const ImVec2 size(620.0f * s, 300.0f * s);
+  ImGui::SetNextWindowPos(ImVec2(ui.origin.x + (ui.size.x - size.x) * 0.5f,
+                                 ui.origin.y + (ui.size.y - size.y) * 0.5f));
+  ImGui::SetNextWindowSize(size);
+  ImGui::SetNextWindowBgAlpha(0.97f);
+  ImGui::Begin("##lobbypassword", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                   ImGuiWindowFlags_NoSavedSettings);
+  ImGui::PushFont(NobleStyle::TitleFont());
+  ImGui::TextUnformatted("LOBBY PASSWORD");
+  ImGui::PopFont();
+  ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+  ImGui::TextWrapped(
+      "Players who join need this password when JOINS is PASSWORD (or INVITE "
+      "ONLY, as a way in without an invite). Leave it empty to remove it. "
+      "Players already in your lobby stay in.");
+  ImGui::PopStyleColor();
+  ImGui::Dummy(ImVec2(0, 8.0f * s));
+  ImGui::SetNextItemWidth(-1.0f);
+  if (ImGui::IsWindowAppearing())
+    ImGui::SetKeyboardFocusHere();
+  const bool enter = ImGui::InputText(
+      "##lobbypwtext", s_passwordEditorText, sizeof(s_passwordEditorText),
+      ImGuiInputTextFlags_EnterReturnsTrue |
+          (s_passwordEditorShow ? 0 : ImGuiInputTextFlags_Password));
+  ImGui::Checkbox("Show password", &s_passwordEditorShow);
+  ImGui::Dummy(ImVec2(0, 8.0f * s));
+  const float bw = (ImGui::GetContentRegionAvail().x - 10.0f * s) * 0.5f;
+  const bool save = ImGui::Button("SAVE", ImVec2(bw, 42.0f * s)) || enter;
+  ImGui::SameLine(0.0f, 10.0f * s);
+  const bool cancel = ImGui::Button("CANCEL", ImVec2(bw, 42.0f * s)) ||
+                      (back && !ImGui::GetIO().WantTextInput);
+  if (save) {
+    std::string pw = s_passwordEditorText;
+    while (!pw.empty() && pw.back() == ' ')
+      pw.pop_back();
+    HostModeration::SetLobbyPassword(pw);
+    if (pw.empty() &&
+        HostModeration::Access() == HostModeration::JoinAccess::Password)
+      HostModeration::SetAccess(HostModeration::JoinAccess::InviteOnly);
+    ApplyLobbyAccessAdvert();
+    MenuSounds::Click();
+    s_passwordEditorOpen = false;
+  } else if (cancel) {
+    MenuSounds::Back();
+    s_passwordEditorOpen = false;
+  }
+  ImGui::End();
+}
+
 void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
                              float top, FrontEndChoice &choice, bool &done,
                              bool back) {
   MenuState &st = ctx.st;
   TakePendingLobbyEvents(st);
+  if (s_passwordEditorOpen) {
+    if (!st.isLobbyHost)
+      s_passwordEditorOpen = false;
+    else {
+      DrawLobbyPasswordEditor(ui, back);
+      return;
+    }
+  }
+  if (s_filterEditorOpen) {
+    if (!st.isLobbyHost)
+      s_filterEditorOpen = false;
+    else {
+      DrawFilterWordsEditor(ui, back);
+      return;
+    }
+  }
   if (st.lobbyMapPickerOpen) {
     DrawLobbyMapPickerModal(ctx, ui, left, top, back);
     return;
@@ -1195,6 +1376,48 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
           std::to_string(refusedPing) + " ms).");
       NOBLE_INFO("FrontEndMenu: left the lobby because of the host's max ping "
                  "setting");
+      return;
+    }
+  }
+
+  // Host moderation (kick / ban): the host sends banned or just-kicked players
+  // away again whenever they show up in its lobby; a removed guest leaves.
+  if (st.isLobbyHost) {
+    std::vector<HostModeration::PlayerRef> refs;
+    for (const LobbyPlayer &p : st.lobbyRoster) {
+      if (p.isHost)
+        continue;
+      refs.push_back(LobbyPlayerRef(p));
+    }
+    HostModeration::TickLobbyAccess(refs);
+    HostModeration::Tick(refs);
+  } else {
+    HostModeration::GuestLobbyTick();
+    NetworkTransport::HostRemoval removal;
+    if (NetworkTransport::Get().TakeHostRemoval(removal) &&
+        (!st.lobbySessionId.empty() || !st.lobbyHostEndpoint.empty())) {
+      uint64_t fallbackId =
+          (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+      if (fallbackId < 2ULL)
+        fallbackId = 2ULL;
+      const uint64_t pId =
+          AuthClient::Get().IsLoggedIn()
+              ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
+              : fallbackId;
+      if (!st.lobbySessionId.empty())
+        MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
+      NetworkTransport::Get().StopRelay();
+      ClearPendingLobbyEvents();
+      st.lobbyLaunchPending = false;
+      st.lobbySessionId.clear();
+      st.lobbySessionToken.clear();
+      st.lobbyHostEndpoint.clear();
+      st.lobbyRoster.clear();
+      st.screen = Screen::Servers;
+      const std::string text = HostModeration::RemovalText(
+          removal.kind, removal.reason, removal.minutes);
+      UIManager::GetServerBrowser().SetStatus(text);
+      NOBLE_INFO("FrontEndMenu: {}", text);
       return;
     }
   }
@@ -1767,6 +1990,82 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     optRows.insert(startIt, pingRow);
   }
 
+  // Host moderation rows (every mode): word filter, the ban list and lifting
+  // a ban. Placed just above the start button, after MAX PING.
+  static int s_banView = 0;
+  std::vector<HostModeration::BanEntry> bans;
+  if (st.isLobbyHost) {
+    bans = HostModeration::Bans();
+    s_banView = bans.empty() ? 0
+                             : std::clamp(s_banView, 0,
+                                          static_cast<int>(bans.size()) - 1);
+    std::vector<LobbyMenuOption> modRows;
+    {
+      const HostModeration::JoinAccess access = HostModeration::Access();
+      const bool hasPw = !HostModeration::LobbyPassword().empty();
+      std::string accessValue = HostModeration::AccessText(access);
+      if (access == HostModeration::JoinAccess::InviteOnly && hasPw)
+        accessValue = "INVITE OR PASSWORD";
+      modRows.push_back(
+          {"JOINS", accessValue, false, true,
+           "Who may join your lobby. OPEN: anyone. INVITE ONLY: players you "
+           "invite (or with the password, if set). PASSWORD: players with the "
+           "password or an invite. LOCKED: no new players (invites still get "
+           "in). Players already here always stay, also after a match."});
+      modRows.push_back(
+          {"LOBBY PASSWORD", hasPw ? std::string("SET") : std::string("NONE"),
+           false, true, "Set or remove your lobby password. Press to edit."});
+    }
+    modRows.push_back(
+        {"WORD FILTER", HostModeration::FilterEnabled() ? "ON" : "OFF", false,
+         true,
+         "Host option: hides slurs in chat in your lobby and your matches. "
+         "Add your own words with FILTER WORDS."});
+    const int customCount =
+        static_cast<int>(HostModeration::CustomWords().size());
+    modRows.push_back({"FILTER WORDS",
+                       customCount == 0 ? std::string("NONE")
+                                        : std::to_string(customCount) +
+                                              (customCount == 1 ? " WORD"
+                                                                : " WORDS"),
+                       false, true,
+                       "Edit your own filter words, one per line. Press to "
+                       "open the list."});
+    const int afk = HostModeration::AfkMinutes();
+    modRows.push_back(
+        {"ANTI-AFK", afk > 0 ? std::to_string(afk) + " MIN" : "OFF", false,
+         true,
+         "Host option: a player with no input for this long leaves the match "
+         "(they get a 30 s warning first). Cutscenes and loading don't count."});
+    std::string banValue = "NONE";
+    if (!bans.empty()) {
+      const HostModeration::BanEntry &b =
+          bans[static_cast<size_t>(s_banView)];
+      std::string timeLeft = "PERMANENT";
+      if (b.until != 0) {
+        const long long mins = (std::max)(
+            1LL, static_cast<long long>((b.until - std::time(nullptr) + 59) / 60));
+        timeLeft = mins >= 120 ? std::to_string(mins / 60) + " H LEFT"
+                           : std::to_string(mins) + " MIN LEFT";
+      }
+      banValue = Upper(b.name.empty() ? std::string("PLAYER") : b.name) +
+                 " \xC2\xB7 " + timeLeft + "  (" + std::to_string(s_banView + 1) +
+                 "/" + std::to_string(bans.size()) + ")";
+    }
+    modRows.push_back({"BANS", banValue, false, !bans.empty(),
+                       "Players banned from your games. Left / right steps "
+                       "through the list. Bans follow the player's account, "
+                       "so a new name doesn't get around them."});
+    if (!bans.empty())
+      modRows.push_back({"LIFT BAN", "", false, true,
+                         "Lift the ban shown in BANS. That player can join "
+                         "your games again."});
+    auto startIt = std::find_if(
+        optRows.begin(), optRows.end(),
+        [](const LobbyMenuOption &r) { return r.isStart; });
+    optRows.insert(startIt, modRows.begin(), modRows.end());
+  }
+
   const int totalRows = static_cast<int>(optRows.size());
   st.lobbyMenuRow = std::clamp(st.lobbyMenuRow, 0, totalRows - 1);
   if (st.lobbyRoster.empty())
@@ -1905,6 +2204,49 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       Settings::Get().Update(d);
       NOBLE_INFO("FrontEndMenu: lobby max ping set to {} ms (0 = no limit)",
                  d.hostMaxPingMs);
+      MenuSounds::Change();
+    } else if (row.label == "JOINS") {
+      if (!st.isLobbyHost)
+        return;
+      const int cur = static_cast<int>(HostModeration::Access());
+      const auto next =
+          static_cast<HostModeration::JoinAccess>((cur + dir + 4) % 4);
+      HostModeration::SetAccess(next);
+      ApplyLobbyAccessAdvert();
+      NOBLE_INFO("FrontEndMenu: lobby joins set to {}",
+                 HostModeration::AccessText(next));
+      // PASSWORD needs one: ask for it straight away.
+      if (next == HostModeration::JoinAccess::Password &&
+          HostModeration::LobbyPassword().empty())
+        OpenLobbyPasswordEditor();
+      MenuSounds::Change();
+    } else if (row.label == "LOBBY PASSWORD") {
+      if (!st.isLobbyHost)
+        return;
+      OpenLobbyPasswordEditor();
+      MenuSounds::Click();
+    } else if (row.label == "WORD FILTER") {
+      if (!st.isLobbyHost)
+        return;
+      HostModeration::SetFilterEnabled(!HostModeration::FilterEnabled());
+      MenuSounds::Change();
+    } else if (row.label == "ANTI-AFK") {
+      if (!st.isLobbyHost)
+        return;
+      const int n = static_cast<int>(sizeof(HostModeration::kAfkChoices) /
+                                     sizeof(int));
+      int idx = 0;
+      for (int i = 0; i < n; ++i)
+        if (HostModeration::kAfkChoices[i] == HostModeration::AfkMinutes())
+          idx = i;
+      HostModeration::SetAfkMinutes(
+          HostModeration::kAfkChoices[(idx + dir + n) % n]);
+      MenuSounds::Change();
+    } else if (row.label == "BANS") {
+      if (!st.isLobbyHost || bans.empty())
+        return;
+      const int n = static_cast<int>(bans.size());
+      s_banView = (s_banView + dir + n) % n;
       MenuSounds::Change();
     } else if (row.label == "TEAM COUNT") {
       if (!st.isLobbyHost)
@@ -2191,7 +2533,19 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       MenuSounds::Back();
     } else if (!st.voteId.empty()) {
       st.autoStartAt += ImGui::GetIO().DeltaTime;
+    } else if (st.autoStartNeedPlayers > 0 &&
+               static_cast<int>(st.lobbyRoster.size()) <
+                   st.autoStartNeedPlayers &&
+               ImGui::GetTime() < st.autoStartWaitLimit) {
+      // Everyone from the last mission / Firefight game must be back first.
+      st.autoStartAt += ImGui::GetIO().DeltaTime;
     } else if (ImGui::GetTime() >= st.autoStartAt) {
+      if (st.autoStartNeedPlayers > 0 &&
+          static_cast<int>(st.lobbyRoster.size()) < st.autoStartNeedPlayers)
+        NOBLE_WARN("FrontEndMenu: starting without everyone back ({} of {} "
+                   "after 90 s)",
+                   st.lobbyRoster.size(), st.autoStartNeedPlayers);
+      st.autoStartNeedPlayers = 0;
       st.autoStartAt = 0.0;
       NOBLE_INFO("FrontEndMenu: countdown finished, starting the next match");
       startMatch();
@@ -2205,6 +2559,16 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       startMatch();
     } else if (cur.label == "VOTE") {
       StartLobbyVote(ctx);
+    } else if (cur.label == "FILTER WORDS" && st.isLobbyHost) {
+      OpenFilterWordsEditor();
+      MenuSounds::Click();
+    } else if (cur.label == "LOBBY PASSWORD" && st.isLobbyHost) {
+      OpenLobbyPasswordEditor();
+      MenuSounds::Click();
+    } else if (cur.label == "LIFT BAN" && st.isLobbyHost) {
+      HostModeration::Unban(static_cast<size_t>(s_banView));
+      s_banView = 0;
+      MenuSounds::Click();
     } else if ((cur.label == "MAP" || cur.label == "MISSION") && cur.editable) {
       st.lobbyMapPickerOpen = true;
       st.mapSearch[0] = 0;
@@ -2428,7 +2792,9 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       st.lobbyFocusZone = 0;
       st.lobbyMenuRow = i;
       if (row.label == "CHANGE TEAM" || row.label == "GAME OPTIONS" ||
-          row.label == "VOTE" || row.label == "GAME TYPE") {
+          row.label == "VOTE" || row.label == "GAME TYPE" ||
+          row.label == "LIFT BAN" || row.label == "FILTER WORDS" ||
+          row.label == "LOBBY PASSWORD") {
         triggerAction();
       } else {
         cycleOption(ImGui::GetMousePos().x < colX + colW * 0.48f + 28.0f * ui.s
@@ -2630,11 +2996,18 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY + 42.0f * ui.s),
          IM_COL32(255, 190, 120, 255), st.voteMessage.c_str(), colX + colW);
   if (st.autoStartAt > 0.0 && st.isLobbyHost && !pickerWasOpen) {
-    char countdown[64];
-    std::snprintf(countdown, sizeof(countdown),
-                  "Next match in %d s. B or Esc cancels.",
-                  std::max(0, static_cast<int>(st.autoStartAt -
-                                               ImGui::GetTime() + 0.999)));
+    char countdown[96];
+    const int back = static_cast<int>(st.lobbyRoster.size());
+    if (st.autoStartNeedPlayers > 0 && back < st.autoStartNeedPlayers &&
+        ImGui::GetTime() < st.autoStartWaitLimit)
+      std::snprintf(countdown, sizeof(countdown),
+                    "Waiting for everyone: %d of %d back. B or Esc cancels.",
+                    back, st.autoStartNeedPlayers);
+    else
+      std::snprintf(countdown, sizeof(countdown),
+                    "Next match in %d s. B or Esc cancels.",
+                    std::max(0, static_cast<int>(st.autoStartAt -
+                                                 ImGui::GetTime() + 0.999)));
     Text(ui, NobleStyle::TitleFont(), 17.0f,
          ImVec2(colX, lobbyTipY + 62.0f * ui.s), kAccent, countdown);
   }
@@ -3151,6 +3524,80 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
             std::clamp(player.team, 1,
                        std::clamp(st.lobbyTeamCount, 2, kTeamCount)) -
             1;
+        MenuSounds::Click();
+      }
+      y += 36.0f * ui.s;
+    }
+    // ---- Host moderation: only the host sees these, never on its own card ----
+    if (st.isLobbyHost && !local && !player.isHost) {
+      const HostModeration::PlayerRef ref = LobbyPlayerRef(player);
+      const float half = (cardW - 8.0f * ui.s) * 0.5f;
+      static int s_lobbyBanChoice = 0;
+      const int banCount = static_cast<int>(
+          sizeof(HostModeration::kBanChoices) / sizeof(int));
+      s_lobbyBanChoice = std::clamp(s_lobbyBanChoice, 0, banCount - 1);
+      if (ActionButton(ui, "lobby_kick", ImVec2(cardX, y), half, "KICK",
+                       false)) {
+        HostModeration::Kick(ref, "The host removed you from the lobby.");
+        MenuSounds::Click();
+      }
+      const bool hostMuted =
+          ref.machineId != 0 && HostModeration::IsHostMuted(ref.machineId);
+      if (ActionButton(ui, "lobby_hostmute",
+                       ImVec2(cardX + half + 8.0f * ui.s, y), half,
+                       hostMuted ? "UNMUTE FOR ALL" : "MUTE FOR ALL", false)) {
+        HostModeration::SetHostMuted(ref.machineId, !hostMuted);
+        MenuSounds::Click();
+      }
+      y += 36.0f * ui.s;
+      const std::string lenLabel =
+          "BAN LENGTH: " + HostModeration::BanLengthText(
+                               HostModeration::kBanChoices[s_lobbyBanChoice]);
+      if (ActionButton(ui, "lobby_banlen", ImVec2(cardX, y), half,
+                       lenLabel.c_str(), false)) {
+        s_lobbyBanChoice = (s_lobbyBanChoice + 1) % banCount;
+        MenuSounds::Change();
+      }
+      if (ActionButton(ui, "lobby_ban", ImVec2(cardX + half + 8.0f * ui.s, y),
+                       half, "BAN", false)) {
+        HostModeration::Ban(ref, HostModeration::kBanChoices[s_lobbyBanChoice],
+                            "Banned by the host.");
+        MenuSounds::Click();
+      }
+      y += 36.0f * ui.s;
+      const bool coHost =
+          ref.machineId != 0 && HostModeration::IsCoHost(ref.machineId);
+      if (ActionButton(ui, "lobby_cohost", ImVec2(cardX, y), cardW,
+                       coHost ? "REMOVE CO-HOST" : "MAKE CO-HOST", false)) {
+        HostModeration::SetCoHost(ref.machineId, !coHost);
+        MenuSounds::Click();
+      }
+      y += 36.0f * ui.s;
+    } else if (!st.isLobbyHost && !local && !player.isHost &&
+               HostModeration::LocalIsCoHost()) {
+      // ---- Co-host: kick / mute for everyone, done by the host ----
+      const HostModeration::PlayerRef ref = LobbyPlayerRef(player);
+      const float half = (cardW - 8.0f * ui.s) * 0.5f;
+      if (ActionButton(ui, "lobby_cokick", ImVec2(cardX, y), half, "KICK",
+                       false)) {
+        HostModeration::RequestCoHostAction("kick", ref.machineId, ref.name);
+        MenuSounds::Click();
+      }
+      if (ActionButton(ui, "lobby_comute",
+                       ImVec2(cardX + half + 8.0f * ui.s, y), half,
+                       "MUTE FOR ALL", false)) {
+        HostModeration::RequestCoHostAction("mute", ref.machineId, ref.name);
+        MenuSounds::Click();
+      }
+      y += 36.0f * ui.s;
+    }
+    // Text-only mute, this PC only (anyone, for anyone but themselves).
+    if (!local) {
+      const HostModeration::PlayerRef ref = LobbyPlayerRef(player);
+      const bool chatMuted = HostModeration::IsChatMuted(ref.machineId, ref.name);
+      if (ActionButton(ui, "lobby_chatmute", ImVec2(cardX, y), cardW,
+                       chatMuted ? "UNMUTE CHAT" : "MUTE CHAT", false)) {
+        HostModeration::SetChatMuted(ref.machineId, ref.name, !chatMuted);
         MenuSounds::Click();
       }
       y += 36.0f * ui.s;

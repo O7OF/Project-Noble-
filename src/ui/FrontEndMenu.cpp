@@ -2,6 +2,7 @@
 #include "engine/ParticleTint.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "host/SlotPatch.hpp"
+#include "network/HostModeration.hpp"
 
 namespace noble {
 namespace fe {
@@ -5359,6 +5360,17 @@ void ContainerMatchEnded(OverlayContext &ctx, DWORD exitCode) {
     ctx.st.focusRow = 0;
   }
 
+  // The host kicked or banned this player during the match: say so on the
+  // server browser instead of dropping them on the main menu silently.
+  {
+    const std::string notice = HostModeration::TakeRemovalNotice();
+    if (!notice.empty()) {
+      ctx.st.screen = Screen::Servers;
+      UIManager::GetServerBrowser().SetStatus(notice);
+      NOBLE_INFO("FrontEndMenu: {}", notice);
+    }
+  }
+
   MasterServerClient::Get().RequestOnlineCount();
   ReachAudio::SetMenuMusicEnabled(true);
   ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
@@ -6992,6 +7004,11 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
             path(L"-lobby-map-override"), text(L"-lobby-map-title"),
             path(L"-lobby-map-image"), path(L"-lobby-map-thumb"),
             text(L"-lobby-session"), text(L"-lobby-session-token"));
+        // Same lobby as before the match: keep its lock / invite / password
+        // state and the players it let in.
+        HostModeration::RestoreLobbyAccess();
+        MasterServerClient::Get().SetAdvertPassword(
+            HostModeration::AdvertHasPassword());
         // The playlist carries on: NEXT IN ROTATION moves to its next entry,
         // RETURN TO LOBBY stays on this one.
         const std::filesystem::path listFile = path(L"-lobby-playlist");
@@ -7022,6 +7039,20 @@ void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
               ApplyEntryToLobby(ctx.st, resolved);
           }
           ctx.st.playlistPosition = at;
+        }
+        // RESTART MISSION / NEXT MISSION from the host's in-match menu: the party comes back to this lobby and
+        // the match starts again by itself after a countdown (B / Esc cancels it, like a rotation countdown).
+        const std::string autoStart = text(L"-lobby-autostart");
+        if (!autoStart.empty()) {
+          const int seconds = std::clamp(std::atoi(autoStart.c_str()), 3, 60);
+          ctx.st.autoStartAt = seconds + 2.0; // ImGui time starts at 0 here
+          const std::string need = text(L"-lobby-autostart-players");
+          ctx.st.autoStartNeedPlayers =
+              need.empty() ? 0 : std::clamp(std::atoi(need.c_str()), 0, 64);
+          ctx.st.autoStartWaitLimit = 90.0; // then start with whoever is back
+          NOBLE_INFO("FrontEndMenu: lobby restarts the match by itself in {} s "
+                     "(waits for {} player(s))",
+                     seconds, ctx.st.autoStartNeedPlayers);
         }
       } else {
         ServerEntry s;

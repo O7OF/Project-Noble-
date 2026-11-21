@@ -2,9 +2,14 @@
 #include "common/Logger.hpp"
 #include "network/UPnP.hpp"
 #include "network/SessionManager.hpp"
+#include "network/HostModeration.hpp"
+#include "network/NetworkTransport.hpp"
 #include "hooks/LobbyPatches.hpp"
 
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
+#include <vector>
 #include <iostream>
 #include <chrono>
 #include <winsock2.h>
@@ -140,8 +145,11 @@ void DedicatedServer::ProcessConsoleCommand(const std::string& cmd) {
                   << "  map <name>        - Changes active map (e.g. 'map forge_halo')\n"
                   << "  gametype <name>   - Sets gametype mode\n"
                   << "  say <message>     - Broadcasts admin message to players\n"
-                  << "  kick <player_id>  - Kicks player from session\n"
-                  << "  ban <player_id>   - Bans player ID\n"
+                  << "  players           - Lists connected players (machine ids)\n"
+                  << "  kick <id|name>    - Removes a player (2-minute rejoin cooldown)\n"
+                  << "  ban <id|name> [minutes] - Bans a player (no minutes = permanent)\n"
+                  << "  bans              - Lists bans\n"
+                  << "  unban <number>    - Lifts the ban with that number from 'bans'\n"
                   << "  quit / exit       - Gracefully shuts down dedicated server\n";
     } else if (cmd == "status") {
         std::cout << "[STATUS] Server: " << m_config.serverName << "\n"
@@ -153,6 +161,65 @@ void DedicatedServer::ProcessConsoleCommand(const std::string& cmd) {
         std::string newMap = cmd.substr(4);
         m_config.initialMap = newMap;
         std::cout << "[SERVER] Active map changed to: " << newMap << "\n";
+    } else if (cmd == "players") {
+        const auto peers = NetworkTransport::Get().GetAllPeerPingsMs();
+        std::cout << "[PLAYERS] " << peers.size() << " connected\n";
+        for (const auto& [id, ping] : peers) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "  0x%016llX  %d ms\n", static_cast<unsigned long long>(id), ping);
+            std::cout << buf;
+        }
+    } else if (cmd.rfind("kick ", 0) == 0 || cmd.rfind("ban ", 0) == 0) {
+        // Same moderation as a player host (HostModeration): the host's tick sends the player away and keeps
+        // sending banned / cooling-down players away when they come back.
+        const bool ban = cmd.rfind("ban ", 0) == 0;
+        std::string rest = cmd.substr(ban ? 4 : 5);
+        int minutes = 0;
+        if (ban) {
+            const size_t sp = rest.find_last_of(' ');
+            if (sp != std::string::npos) {
+                const std::string tail = rest.substr(sp + 1);
+                if (!tail.empty() && tail.find_first_not_of("0123456789") == std::string::npos) {
+                    minutes = std::atoi(tail.c_str());
+                    rest = rest.substr(0, sp);
+                }
+            }
+        }
+        HostModeration::PlayerRef ref;
+        try {
+            size_t used = 0;
+            ref.machineId = std::stoull(rest, &used, 0);
+            if (used != rest.size()) ref.machineId = 0;
+        } catch (...) {
+            ref.machineId = 0;
+        }
+        if (ref.machineId == 0) ref.name = rest;
+        if (rest.empty()) {
+            std::cout << "Usage: " << (ban ? "ban <id|name> [minutes]" : "kick <id|name>") << "\n";
+        } else if (ban) {
+            HostModeration::Ban(ref, minutes, "Banned by the server admin.");
+            std::cout << "[SERVER] Banned '" << rest << "' "
+                      << HostModeration::BanLengthText(minutes) << "\n";
+        } else {
+            HostModeration::Kick(ref, "Removed by the server admin.");
+            std::cout << "[SERVER] Kicked '" << rest << "'\n";
+        }
+    } else if (cmd == "bans") {
+        const auto bans = HostModeration::Bans();
+        std::cout << "[BANS] " << bans.size() << "\n";
+        for (size_t i = 0; i < bans.size(); ++i) {
+            std::cout << "  " << (i + 1) << ". " << (bans[i].name.empty() ? "(no name)" : bans[i].name)
+                      << (bans[i].until == 0 ? "  permanent" : "  timed") << "\n";
+        }
+    } else if (cmd.rfind("unban ", 0) == 0) {
+        const int n = std::atoi(cmd.substr(6).c_str());
+        const auto bans = HostModeration::Bans();
+        if (n >= 1 && static_cast<size_t>(n) <= bans.size()) {
+            HostModeration::Unban(static_cast<size_t>(n - 1));
+            std::cout << "[SERVER] Lifted ban " << n << "\n";
+        } else {
+            std::cout << "No ban " << n << " (see 'bans').\n";
+        }
     } else if (cmd.rfind("say ", 0) == 0) {
         std::cout << "[BROADCAST] ADMIN: " << cmd.substr(4) << "\n";
     } else if (cmd == "quit" || cmd == "exit") {
@@ -168,6 +235,18 @@ void DedicatedServer::RunServerLoop() {
     while (m_isRunning.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1000 / m_config.tickRate));
         tick++;
+
+        // Moderation: send banned / just-kicked players away (rate-limited inside).
+        {
+            std::vector<HostModeration::PlayerRef> refs;
+            for (const auto& [id, ping] : NetworkTransport::Get().GetAllPeerPingsMs()) {
+                (void)ping;
+                HostModeration::PlayerRef r;
+                r.machineId = id;
+                refs.push_back(r);
+            }
+            HostModeration::Tick(refs);
+        }
 
         // Periodic heartbeat beacon every 5 seconds
         if (tick % (m_config.tickRate * 5) == 0) {

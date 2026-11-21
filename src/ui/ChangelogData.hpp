@@ -30,6 +30,40 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02033Items = {
+        {"HOST TOOLS", "Campaign Host Menu",
+         "Hosts get new rows in the pause menu: restart the mission, go to the next mission, revert to the last checkpoint, pause the game for everyone, and return to the lobby with your players or on your own."},
+        {"HOST TOOLS", "Kick and Ban Players",
+         "Hosts can kick a player (they can't rejoin for 2 minutes) or ban them for 30 minutes, 1 hour, 24 hours or for good. Bans follow the player's account, so a new name doesn't get around them. The lobby shows your ban list, and you can lift a ban."},
+        {"HOST TOOLS", "Mute for Everyone and Co-hosts",
+         "Hosts can mute a player's voice and text chat for the whole game, and make a player a co-host who can kick and mute too."},
+        {"LOBBY", "Lock Your Lobby or Add a Password",
+         "New JOINS option: open, invite only, password or locked. Players already in your lobby always stay, also after a match, and friends you invite can still get in. Password lobbies ask for the password in the server browser."},
+        {"LOBBY", "Anti-AFK",
+         "Hosts can remove players who stop playing after 3, 5 or 10 minutes. Players get a 30 second warning, and cutscenes and loading screens don't count."},
+        {"CHAT", "Mute Someone's Chat for Yourself",
+         "Every player can now hide one player's chat messages on their own screen, from the lobby or the scoreboard."},
+        {"CHAT", "Word Filter",
+         "Hosts can hide slurs in chat, plus their own list of words. It is off by default; the first-time setup asks if you want it."},
+        {"SERVER BROWSER", "Clean Server Names",
+         "Server names no longer show slurs or swear words. Only whole words are hidden, so normal names stay the same."},
+        {"CAREER", "No Credits for Very Short Games",
+         "Leaving or restarting a game in under 5 minutes no longer pays credits, challenges or commendations. Games that end normally pay as before."},
+        {"CAMPAIGN", "Restarts Wait for Everyone",
+         "When the host restarts a campaign mission or Firefight game, the lobby now waits for every player to come back before starting again."},
+        {"FIX", "Disbanding a LAN Lobby",
+         "Players in LAN and direct games now leave properly when the host disbands the lobby."},
+        {"DEDICATED SERVER", "Kick and Ban Commands",
+         "The server console now has working players, kick, ban, bans and unban commands."}
+    };
+
+    notes.push_back({
+        "v0.20.33",
+        "Host Tools",
+        "Kick, Ban, Mute, Lock Your Lobby and Campaign Host Options",
+        v02033Items
+    });
+
     const std::vector<ChangeItem> v02032Items = {
         {"CAMPAIGN", "Up to 8 Players in Campaign Co-op",
          "When hosting a campaign game you can now pick 4, 5, 6 or 8 players. The menu was still limited to 4 from before the co-op joining fix."}

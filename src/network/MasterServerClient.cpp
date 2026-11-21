@@ -963,6 +963,8 @@ void MasterServerClient::DoHeartbeat() {
         // and joined with the wrong map file.
         body["mod_id"] = m_advert.modId;
         body["mod_title"] = m_advert.modTitle;
+        // The host can turn its lobby password on after listing it (Tyler 2026-11-20).
+        body["has_password"] = m_advert.hasPassword;
     }
     const auto peerPings = NetworkTransport::Get().GetAllPeerPingsMs();
     if (!peerPings.empty()) {
@@ -1580,6 +1582,11 @@ bool MasterServerClient::CastVoteSync(const std::string& sessionId, uint64_t pee
 void MasterServerClient::SetAdvertHostTeam(int team) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_advert.hostTeam = team;
+}
+
+void MasterServerClient::SetAdvertPassword(bool hasPassword) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_advert.hasPassword = hasPassword;
 }
 
 bool MasterServerClient::SetTeamsSync(const std::string& sessionId, const std::vector<std::pair<uint64_t, int>>& teams) {

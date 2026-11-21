@@ -17,6 +17,7 @@
 #include "network/NetworkTransport.hpp"
 #include "network/SessionManager.hpp"
 #include "network/InviteCode.hpp"
+#include "network/HostModeration.hpp"
 #include "network/UPnP.hpp"
 #include "FrontEndMenu.hpp"
 #include "NobleUi.hpp"
@@ -386,7 +387,7 @@ void ServerBrowser::RefreshServers() {
         const HostConfig& cfg = sessions.GetHostConfig();
         if (cfg.maxPlayers > 0 && !cfg.mapName.empty()) {
             ServerEntry e;
-            e.name = cfg.sessionName;
+            e.name = HostModeration::FilterServerName(cfg.sessionName);
             std::string pubIp = UPnP::Get().GetExternalIP();
             if (UPnP::Get().IsPublicIP(pubIp)) {
                 e.hostAddress = pubIp;
@@ -419,7 +420,7 @@ void ServerBrowser::RefreshServers() {
     for (const auto& d : sessions.GetDiscoveredSessions()) {
         if (d.maxPlayers <= 0 || d.mapName.empty()) continue;
         ServerEntry e;
-        e.name = d.sessionName;
+        e.name = HostModeration::FilterServerName(d.sessionName);
         e.hostAddress = d.hostAddress;
         e.port = d.port;
         e.ping = d.pingMs;
@@ -470,7 +471,7 @@ void ServerBrowser::RefreshServers() {
         if (mergedWithLan) continue;
         ServerEntry e;
         e.id = m.id;
-        e.name = m.name;
+        e.name = HostModeration::FilterServerName(m.name);
         e.hostAddress = m.address;
         e.port = m.port;
         const std::string pingKey = m.address + ":" + std::to_string(m.port);
@@ -673,6 +674,7 @@ void ServerBrowser::Render() {
     if (m_showDirectConnectModal) RenderDirectConnectModal();
     if (m_showJoinCodeModal) RenderJoinCodeModal();
     if (m_showMasterModal) RenderMasterServerModal();
+    if (m_showJoinPasswordModal) RenderJoinPasswordModal();
 }
 
 void ServerBrowser::RenderFilterBar() {
@@ -683,7 +685,7 @@ void ServerBrowser::RenderFilterBar() {
     ImFont* titleFont = NobleStyle::TitleFont() ? NobleStyle::TitleFont() : ImGui::GetFont();
     ImFont* bodyFont = ImGui::GetFont();
 
-    const bool modalBlocking = ImGui::GetIO().WantTextInput || m_showDirectConnectModal || m_showMasterModal || ModDownloadPrompt::Get().IsActive();
+    const bool modalBlocking = ImGui::GetIO().WantTextInput || m_showDirectConnectModal || m_showMasterModal || m_showJoinPasswordModal || ModDownloadPrompt::Get().IsActive();
     if (!modalBlocking) {
         if (UiPad::TabPrev()) {
             m_modeFilter = (m_modeFilter + 4) % 5;
@@ -1062,7 +1064,7 @@ void ServerBrowser::RenderServerList() {
         if (!selectedVisible) m_selectedServerIndex = static_cast<int>(visible.front() - m_servers.data());
     }
 
-    const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal && !ModDownloadPrompt::Get().IsActive();
+    const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal && !m_showJoinPasswordModal && !ModDownloadPrompt::Get().IsActive();
     bool scrollToSelected = false;
     if (padFree && s_browserPane == 0 && !visible.empty()) {
         const int count = static_cast<int>(visible.size());
@@ -1375,7 +1377,7 @@ void ServerBrowser::RenderServerDetails() {
 
     const ServerEntry& s = m_servers[m_selectedServerIndex];
 
-    const bool modalBlocking = ImGui::GetIO().WantTextInput || m_showDirectConnectModal || m_showMasterModal || ModDownloadPrompt::Get().IsActive();
+    const bool modalBlocking = ImGui::GetIO().WantTextInput || m_showDirectConnectModal || m_showMasterModal || m_showJoinPasswordModal || ModDownloadPrompt::Get().IsActive();
     bool& triggerFocusedBtn = s_detailTriggerFocused;
     triggerFocusedBtn = false;
     if (!modalBlocking && s_browserPane == 1) {
@@ -1745,6 +1747,16 @@ void ServerBrowser::AttemptJoin(const ServerEntry& s) {
         NOBLE_WARN("ServerBrowser join refused (full): {}", m_status);
         return;
     }
+    // Password-protected lobby: ask for the password first; the lobby sends it
+    // (hashed) to the host, which checks it.
+    if (s.isPasswordProtected && !m_joinPasswordGiven) {
+        m_joinPasswordEntry = s;
+        m_joinPassword[0] = 0;
+        m_showJoinPasswordModal = true;
+        return;
+    }
+    if (!s.isPasswordProtected) HostModeration::SetJoinPassword("");
+    m_joinPasswordGiven = false;
     if (!CanStartJoinNow(m_status)) return;
     if (m_joinLobbyHandler) {
         StampJoinAttemptNow();
@@ -1983,6 +1995,7 @@ void ServerBrowser::RenderDirectConnectModal() {
         ImGui::Spacing();
         ImGui::BeginDisabled(!valid);
         if (NobleStyle::PrimaryButton("CONNECT", ImVec2(U(120), U(34))) || (padActivate && valid && s_dcBtn == 0)) {
+            HostModeration::SetJoinPassword(m_directConnectPassword);
             TryJoin(address, port, m_directConnectPassword[0] != 0);
             m_showDirectConnectModal = false;
             ImGui::CloseCurrentPopup();
@@ -2001,6 +2014,48 @@ void ServerBrowser::RenderDirectConnectModal() {
             ImGui::CloseCurrentPopup();
         }
         drawBtnFocus(2);
+        ImGui::EndPopup();
+    }
+}
+
+void ServerBrowser::RenderJoinPasswordModal() {
+    ImGui::OpenPopup("LOBBY PASSWORD");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(U(420), 0));
+    if (ImGui::BeginPopupModal("LOBBY PASSWORD", &m_showJoinPasswordModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (UiPad::BackPressed() || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            UiPad::ConsumeBack();
+            m_showJoinPasswordModal = false;
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            return;
+        }
+        ImGui::TextWrapped("'%s' needs a password.", m_joinPasswordEntry.name.c_str());
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        const bool enter = ImGui::InputText("##JoinPassword", m_joinPassword, IM_ARRAYSIZE(m_joinPassword),
+                                            ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::Spacing();
+        const bool join = NobleStyle::PrimaryButton("JOIN", ImVec2(U(120), U(34))) ||
+                          enter || (!ImGui::GetIO().WantTextInput && UiPad::AcceptPressed());
+        ImGui::SameLine();
+        const bool cancel = ImGui::Button("CANCEL", ImVec2(U(95), U(34)));
+        if (join) {
+            UiPad::ConsumeAccept();
+            HostModeration::SetJoinPassword(m_joinPassword);
+            m_showJoinPasswordModal = false;
+            m_joinPasswordGiven = true;
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            const ServerEntry entry = m_joinPasswordEntry;
+            AttemptJoin(entry);
+            return;
+        }
+        if (cancel) {
+            m_showJoinPasswordModal = false;
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 }

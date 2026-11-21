@@ -129,6 +129,26 @@ public:
   // Guest: true once (and fills limit/ping) after the host asked this machine to leave for its ping.
   bool TakePingLimitRefusal(int &limitMs, int &pingMs);
 
+  // Host option "pause for everyone" (campaign): the host sends {"type":"host_pause","paused":bool} and repeats it
+  // while paused. Guest: -1 = no request seen, 0 = host resumed, 1 = host paused; HostPauseAgeMs is the time since
+  // the last copy arrived (a host that vanished while paused stops refreshing it).
+  void SendHostPause(bool paused);
+  int HostPauseState() const { return m_hostPauseState.load(); }
+  uint64_t HostPauseAgeMs() const;
+  void ClearHostPause() { m_hostPauseState.store(-1); }
+
+  // Host moderation (HostModeration.cpp): the host tells one player to leave.
+  // kind "kick" (may rejoin after a cooldown) or "ban" (minutes left, 0 =
+  // permanent). The guest leaves the lobby or the match to its main menu.
+  struct HostRemoval {
+    std::string kind, reason;
+    int minutes = 0;
+  };
+  void SendHostRemove(uint64_t machineId, const std::string &kind,
+                      const std::string &reason, int minutes);
+  // Guest: true once after the host removed this player.
+  bool TakeHostRemoval(HostRemoval &out);
+
   // Master Server WebSocket packet relay & lobby signaling
   using LobbyLaunchCallback = std::function<void(
       const std::string &map, const std::string &mode,
@@ -229,6 +249,12 @@ private:
   uint64_t m_localMachineId = 0;
   uint64_t m_hostMachineId = 0;
   std::atomic<bool> m_pingRefused{false};
+  std::atomic<int> m_hostPauseState{-1};
+  std::mutex m_removalMutex;
+  bool m_removalPending = false;
+  uint64_t m_removalAtMs = 0;
+  HostRemoval m_removal;
+  std::atomic<uint64_t> m_hostPauseAtMs{0};
   std::atomic<int> m_pingRefusedLimit{0};
   std::atomic<int> m_pingRefusedPing{0};
   std::atomic<uint64_t> m_pingRefusedAtMs{0};

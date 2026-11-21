@@ -1,4 +1,5 @@
 #include "FrontEndInternal.hpp"
+#include "network/HostModeration.hpp"
 
 namespace noble::fe {
 
@@ -970,6 +971,7 @@ bool DrawFirstStart(const Ui &ui) {
 
   static int s_step = 0, s_focus = 0;
   static bool s_controller = false, s_loaded = false;
+  static bool s_setupPath = false; // NEW PLAYER (true) or REGULAR / RETURNING
   static float s_sensitivity = 1.0f;
   static char s_name[16] = "", s_tag[5] = "";
   if (!s_loaded) {
@@ -1064,10 +1066,14 @@ bool DrawFirstStart(const Ui &ui) {
   if (s_step == 0) {
     heading("NEW TO HALO: REACH?", "This is only asked once. You can run the "
                                    "setup again from Settings > System.");
-    if (option(0, "NEW PLAYER"))
+    if (option(0, "NEW PLAYER")) {
+      s_setupPath = true;
       nextStep(1);
-    if (option(1, "REGULAR OR RETURNING PLAYER"))
-      finish(false);
+    }
+    if (option(1, "REGULAR OR RETURNING PLAYER")) {
+      s_setupPath = false;
+      nextStep(4);
+    }
   } else if (s_step == 1) {
     heading("HOW WILL YOU PLAY?",
             "Both always work, and Noble switches to whichever you touched "
@@ -1099,6 +1105,21 @@ bool DrawFirstStart(const Ui &ui) {
     ImGui::Dummy(ImVec2(0, 10.0f * s));
     if (option(0, "CONTINUE") || nameDone || tagDone)
       nextStep(3);
+  } else if (s_step == 4) {
+    // Last question for everyone: the word filter for games this player hosts.
+    // Off unless they choose it (Tyler 2026-11-20).
+    heading("FILTER SLURS?",
+            "When you host, Noble can hide slurs in chat and player names for "
+            "everyone in your lobby and matches. You can change this any time "
+            "with WORD FILTER in your lobby.");
+    if (option(0, "YES, FILTER SLURS")) {
+      HostModeration::SetFilterEnabled(true);
+      finish(s_setupPath);
+    }
+    if (option(1, "NO")) {
+      HostModeration::SetFilterEnabled(false);
+      finish(s_setupPath);
+    }
   } else {
     rows = 1;
     heading("LOOK SPEED", s_controller
@@ -1116,8 +1137,8 @@ bool DrawFirstStart(const Ui &ui) {
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
     ImGui::SliderFloat("##firststartlook", &s_sensitivity, lo, hi, "%.2fx");
     ImGui::Dummy(ImVec2(0, 10.0f * s));
-    if (option(0, "FINISH"))
-      finish(true);
+    if (option(0, "CONTINUE"))
+      nextStep(4);
   }
   if (up)
     s_focus = (s_focus + rows - 1) % rows;
@@ -1125,7 +1146,9 @@ bool DrawFirstStart(const Ui &ui) {
     s_focus = (s_focus + 1) % rows;
   if (back && s_step > 0) {
     s_focus = 0;
-    --s_step;
+    // The filter question follows LOOK SPEED for new players and the first
+    // question for returning ones.
+    s_step = s_step == 4 ? (s_setupPath ? 3 : 0) : s_step - 1;
     MenuSounds::Back();
   }
   ImGui::End();

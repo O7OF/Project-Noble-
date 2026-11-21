@@ -79,6 +79,10 @@ constexpr int kStatDeaths = 11;
 constexpr double kPayPerMinuteBase = 13.0;      // Recruit
 constexpr double kPayPerMinutePerRank = 6.0;    // + this per rank above Recruit
 constexpr double kMinuteCap = 90.0;             // minutes paid at most per match, every base type
+// Anti-farm lock (Tyler 2026-11-20): a match the player left early (restart, next mission, back to the lobby, quit,
+// removed by the host) pays nothing before this many minutes, and never the "Mission complete" bonus - only a mission
+// that really ended pays that. Matches the engine ended itself pay as before.
+constexpr double kEarlyExitMinMinutes = 5.0;
 constexpr int64_t kPerKill = 10;
 constexpr int64_t kPerAssist = 5;
 constexpr int64_t kPerMedal = 25;
@@ -994,6 +998,7 @@ struct MatchInput {
     int64_t deaths = 0;
     int64_t medals = 0;
     int64_t score = 0;
+    bool leftEarly = false;   // the player left before the engine ended the match
 };
 
 BaseType TypeFromName(const std::string& name) {
@@ -1109,6 +1114,7 @@ void SettleLocked(const MatchInput& in, const char* reason, bool provisional) {
     a.rankBefore = RankIndex(s_totals.credits);
 
     const bool unpaid = UnpaidMission(type, map);
+    const bool tooShort = in.leftEarly && minutes < kEarlyExitMinMinutes;
 
     // One reward structure per base type (see BaseType); modded content pays as its base type.
     const double paidMinutes = std::clamp(minutes, 0.0, kMinuteCap);
@@ -1120,7 +1126,8 @@ void SettleLocked(const MatchInput& in, const char* reason, bool provisional) {
     if (performance > 0) a.lines.push_back({ "Performance", performance });
 
     // Campaign scoring: a bonus for finishing the mission by difficulty, more with skulls on.
-    if (type == BaseType::Campaign) {
+    // Only when the mission really ended, not when the player left it.
+    if (type == BaseType::Campaign && !in.leftEarly) {
         const int d = std::clamp(difficulty, 0, 3);
         const int64_t bonus = kMissionBonus[d];
         a.lines.push_back({ std::string("Mission complete (") + DifficultyName(d) + ")", bonus });
@@ -1141,6 +1148,9 @@ void SettleLocked(const MatchInput& in, const char* reason, bool provisional) {
     if (unpaid) {
         a.lines.clear();
         a.lines.push_back({ "No cR, challenges or commendations in Noble Actual or Lone Wolf", 0 });
+    } else if (tooShort) {
+        a.lines.clear();
+        a.lines.push_back({ "Left before 5 minutes: no cR, challenges or commendations", 0 });
     }
 
     // Lifetime numbers first (commendations read them).
@@ -1160,7 +1170,7 @@ void SettleLocked(const MatchInput& in, const char* reason, bool provisional) {
     const std::vector<ActiveChallenge> active = ActiveChallenges();   // dailies first, then weeklies
     const std::vector<ActiveChallenge> none;
     int newDailies = 0, dailiesDone = 0, dailyCount = 0;
-    for (const ActiveChallenge& c : unpaid ? none : active) {
+    for (const ActiveChallenge& c : (unpaid || tooShort) ? none : active) {
         if (!c.weekly) ++dailyCount;
         if (s_extra.challengeClaimed[c.key]) {
             if (!c.weekly) ++dailiesDone;
@@ -1199,7 +1209,7 @@ void SettleLocked(const MatchInput& in, const char* reason, bool provisional) {
     // Commendations: count this game, then pay every tier reached since the last match.
     for (size_t i = 0; i < std::size(kCommendations); ++i) {
         const CommendationDef& c = kCommendations[i];
-        const int64_t add = unpaid ? 0 : CommendationAmount(c, type, map, kills, assists, deaths, medals);
+        const int64_t add = (unpaid || tooShort) ? 0 : CommendationAmount(c, type, map, kills, assists, deaths, medals);
         const int64_t valueBefore = CommendationValue(i);
         if (add > 0) s_extra.commendationCount[CommendationKey(c)] += add;
         const int reached = TierFor(c, CommendationValue(i));
@@ -1523,6 +1533,13 @@ void EnsureMatchSavedImpl(const char* reason, bool engineReportedEnd) {
     in.difficulty = s_difficulty;
     in.skulls = s_skulls;
     in.minutes = minutes;
+    // Reasons that mean the match really ended (the host's match_over reaching a guest, the end-of-match
+    // watchdog) are not early exits.
+    {
+        const char* why = reason ? reason : "";
+        in.leftEarly = !engineReportedEnd && std::strcmp(why, "match_over") != 0 &&
+                       std::strcmp(why, "match_end_watchdog") != 0;
+    }
 
     const SettingsData settings = Settings::Get().Snapshot();
 
