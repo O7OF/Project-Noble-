@@ -728,20 +728,23 @@ static uint32_t FindSquadTemplate(const std::string& name) {
 // (char[32] name, u16 type, 7 = short). Runtime values: the data array "hs globals" (8-byte records, value at +4); the
 // scenario's globals follow the engine's own, so global i is record (used - count + i). The array is found by name
 // through the game-state root, so this runs on the game thread. Returns the number of timers changed.
-static int ScaleFirefightTimers(int percent) {
+// The scenario's script globals and where their runtime values live (game thread only). On success: block = scenario
+// globals (0x28 bytes each), count, records = "hs globals" records, first = record index of scenario global 0.
+static bool ScenarioGlobals(uintptr_t& block, int32_t& count, uintptr_t& records, int& first) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(noble::ReachModule());
     uintptr_t scenario = 0;
-    if (!base || !ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A230), &scenario, 8) || !scenario) return 0;
-    int32_t count = 0; uint32_t packed = 0;
+    if (!base || !ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A230), &scenario, 8) || !scenario) return false;
+    uint32_t packed = 0;
+    count = 0;
     ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x43C), &count, 4);
     ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x440), &packed, 4);
-    const uintptr_t block = TagPageAddress(packed);
-    if (count <= 0 || count > 4096 || !block) return 0;
+    block = TagPageAddress(packed);
+    if (count <= 0 || count > 4096 || !block) return false;
     uint32_t tlsIndex = 0;
     uintptr_t root = 0;
     ReadBytesSEH(reinterpret_cast<void*>(base + 0xC17B18), &tlsIndex, 4);
     ReadBytesSEH(reinterpret_cast<void*>(__readgsqword(0x58) + tlsIndex * 8ULL), &root, 8);
-    if (!root) return 0;
+    if (!root) return false;
     uintptr_t header = 0;
     for (uint32_t off = 0; off < 0x1000 && !header; off += 8) {
         uintptr_t candidate = 0;
@@ -750,20 +753,44 @@ static int ScaleFirefightTimers(int percent) {
             ReadBytesSEH(reinterpret_cast<void*>(candidate), name, 11) && std::memcmp(name, "hs globals", 11) == 0)
             header = candidate;
     }
-    if (!header) return 0;
+    if (!header) return false;
     int32_t capacity = 0;
-    uintptr_t records = 0;
     int64_t bitmapOffset = 0;
+    records = 0;
     ReadBytesSEH(reinterpret_cast<void*>(header + 0x2C), &capacity, 4);
     ReadBytesSEH(reinterpret_cast<void*>(header + 0x50), &records, 8);
     ReadBytesSEH(reinterpret_cast<void*>(header + 0x68), &bitmapOffset, 8);
-    if (capacity <= 0 || capacity > 65536 || !records || bitmapOffset <= 0) return 0;
+    if (capacity <= 0 || capacity > 65536 || !records || bitmapOffset <= 0) return false;
     std::vector<uint32_t> bitmap(static_cast<size_t>(capacity + 31) / 32);
-    if (!ReadBytesSEH(reinterpret_cast<void*>(header + bitmapOffset), bitmap.data(), bitmap.size() * 4)) return 0;
+    if (!ReadBytesSEH(reinterpret_cast<void*>(header + bitmapOffset), bitmap.data(), bitmap.size() * 4)) return false;
     int used = 0;
     for (uint32_t w : bitmap) used += std::popcount(w);
-    const int first = used - count;
-    if (first < 0) return 0;
+    first = used - count;
+    return first >= 0;
+}
+
+// Pointer to a short scenario global's runtime value by name, or nullptr (game thread only).
+static int16_t* ShortGlobal(const std::string& wanted) {
+    uintptr_t block = 0, records = 0;
+    int32_t count = 0;
+    int first = 0;
+    if (!ScenarioGlobals(block, count, records, first)) return nullptr;
+    for (int i = 0; i < count; ++i) {
+        char rec[0x24] = {};
+        if (!ReadBytesSEH(reinterpret_cast<void*>(block + static_cast<uintptr_t>(i) * 0x28), rec, sizeof(rec))) break;
+        if (std::string(rec, strnlen(rec, 32)) != wanted) continue;
+        uint16_t type = 0;
+        std::memcpy(&type, rec + 0x20, 2);
+        return type == 7 ? reinterpret_cast<int16_t*>(records + static_cast<uintptr_t>(first + i) * 8 + 4) : nullptr;
+    }
+    return nullptr;
+}
+
+static int ScaleFirefightTimers(int percent) {
+    uintptr_t block = 0, records = 0;
+    int32_t count = 0;
+    int first = 0;
+    if (!ScenarioGlobals(block, count, records, first)) return 0;
     int changed = 0;
     for (int i = 0; i < count; ++i) {
         char rec[0x24] = {};
@@ -910,6 +937,48 @@ void ReachHost::GameThreadTick() {
                 RequestFirefightAllies(s_kind, s_squads);
                 s_kind = 0;
             }
+        }
+    }
+    // Dev: "-ff-global k_sur_squad_per_wave_limit=12,k_sur_ai_end_limit=40" sets short script globals from 5 s in (again
+    // whenever the script changes them), and every 15 s logs the wave limits, to see what caps enemy counts.
+    {
+        static std::vector<std::pair<std::string, int16_t>> s_sets;
+        static bool s_parsed = false;
+        static ULONGLONG s_start = 0, s_lastSet = 0, s_lastLog = 0;
+        if (!s_parsed) {
+            s_parsed = true;
+            const std::wstring arg = CommandLineValue(L"-ff-global");
+            std::string spec(arg.size(), '\0');
+            for (size_t k = 0; k < arg.size(); ++k) spec[k] = static_cast<char>(arg[k] < 128 ? arg[k] : '?');
+            size_t at = 0;
+            while (at < spec.size()) {
+                size_t comma = spec.find(',', at);
+                if (comma == std::string::npos) comma = spec.size();
+                const std::string item = spec.substr(at, comma - at);
+                const size_t eq = item.find('=');
+                if (eq != std::string::npos)
+                    s_sets.emplace_back(item.substr(0, eq), static_cast<int16_t>(std::atoi(item.c_str() + eq + 1)));
+                at = comma + 1;
+            }
+        }
+        const ULONGLONG now = GetTickCount64();
+        if (!s_start) s_start = now;
+        if (!s_sets.empty() && now - s_start >= 5000 && now - s_lastSet >= 1000) {
+            s_lastSet = now;
+            for (const auto& [name, value] : s_sets)
+                if (int16_t* p = ShortGlobal(name); p && *p != value) {
+                    NOBLE_INFO("ReachHost: -ff-global {} {} -> {}", name, *p, value);
+                    *p = value;
+                }
+        }
+        if (wcsstr(GetCommandLineW(), L"-ff-global") && now - s_start >= 5000 && now - s_lastLog >= 15000) {
+            s_lastLog = now;
+            std::string line;
+            for (const char* name : { "k_sur_squad_per_wave_limit", "k_sur_wave_per_round_limit", "k_sur_ai_rand_limit",
+                                      "k_sur_ai_end_limit", "k_sur_ai_final_limit", "k_sur_rand_wave_limit",
+                                      "k_sur_bonus_squad_limit" })
+                if (const int16_t* p = ShortGlobal(name)) line += std::string(" ") + (name + 6) + "=" + std::to_string(*p);
+            NOBLE_INFO("ReachHost: Firefight globals:{}", line);
         }
     }
 #endif
