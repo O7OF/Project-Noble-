@@ -7,7 +7,8 @@ param(
     [string]$Hrek = 'D:\Steam\steamapps\common\HREK',
     [string]$Tag = 'levels\multi\forge_halo\forge_halo',
     [double[]]$Centre = @(-157.351, -224.8386, 4.8),
-    [switch]$Save
+    [switch]$Save,
+    [switch]$Replace   # remove the existing noble_ai_* squads first (to move them)
 )
 $ErrorActionPreference = 'Stop'
 $out = Join-Path $Hrek 'temp\noble_forge_ai_squads_out.txt'
@@ -53,6 +54,7 @@ try {
     }
 
     $sq = TopBlock $tf 'squads'
+    if ($Replace) { for ($i = $sq.Elements.Count - 1; $i -ge 0; $i--) { if ((F $sq.Elements[$i] 'name').Data -like 'noble_ai_*') { $sq.RemoveElement($i); Log "squad removed [$i]" } } }
     $have = @{}
     foreach ($e in $sq.Elements) { $have[(F $e 'name').Data] = $true }
     $first = $true

@@ -22,6 +22,8 @@ namespace noble::spawn {
 
 void WatchAllies();   // defined with PlaceAllies below; called from the game tick
 void WatchActors();   // -ai-watch, defined with WatchAllies
+void PlayerAtStep();  // -player-at, defined with WatchAllies
+void MpPathingStep(); // -mp-ai-pathing, defined with WatchAllies
 
 namespace {
 
@@ -608,6 +610,8 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
     noble::ReachHost::GameThreadTick();   // queued squad placements (Firefight allies) need this thread
     WatchAllies();
     WatchActors();
+    PlayerAtStep();
+    MpPathingStep();
     if (!s_firstTick) s_firstTick = GetTickCount64();
 #ifndef NOBLE_DEDICATED
     const bool isDev = noble::AuthClient::Get().IsDeveloper();
@@ -790,6 +794,12 @@ void Install(HMODULE engine) {
                 s_hordeNoTeleport = true;
                 SetEnvironmentVariableW(L"NOBLE_HORDE_NO_TELEPORT", L"1");
             }
+            if (hasValue && _wcsicmp(argv[i], L"-player-at") == 0) {
+                SetEnvironmentVariableW(L"NOBLE_PLAYER_AT", argv[i + 1]);   // "x,y,z@seconds"
+            }
+            if (_wcsicmp(argv[i], L"-mp-ai-pathing") == 0) {
+                SetEnvironmentVariableW(L"NOBLE_MP_AI_PATHING", L"1");   // carried into the relaunched match process
+            }
             if (_wcsicmp(argv[i], L"-ai-watch") == 0) {
                 SetEnvironmentVariableW(L"NOBLE_AI_WATCH", L"1");   // carried into the relaunched match process
             }
@@ -823,6 +833,26 @@ void Install(HMODULE engine) {
         if (argv2) LocalFree(argv2);
         wchar_t mpEnv[8] = {};
         if (GetEnvironmentVariableW(L"NOBLE_MP_AI", mpEnv, 8) > 0 && mpEnv[0] == L'1') mpAi = true;
+        // -mp-ai-all (Phase 7 DIAGNOSTIC only): game_is_campaign_or_survival() itself returns true everywhere
+        // (first bytes of 0x58B5C -> mov al, 1 ; ret). Changes team rules, damage and more; for finding which
+        // caller keeps AI from moving in MP, never for play.
+        bool mpAiAll = false;
+        LPWSTR* argv3 = CommandLineToArgvW(GetCommandLineW(), &argc2);
+        for (int i = 1; argv3 && i < argc2; ++i)
+            if (_wcsicmp(argv3[i], L"-mp-ai-all") == 0) { mpAiAll = true; SetEnvironmentVariableW(L"NOBLE_MP_AI_ALL", L"1"); }
+        if (argv3) LocalFree(argv3);
+        if (GetEnvironmentVariableW(L"NOBLE_MP_AI_ALL", mpEnv, 8) > 0 && mpEnv[0] == L'1') mpAiAll = true;
+        if (mpAiAll) {
+            auto* fn = reinterpret_cast<uint8_t*>(s_base + 0x58B5C);
+            static const uint8_t fnPatch[] = { 0xB0, 0x01, 0xC3 };
+            DWORD old = 0;
+            if (VirtualProtect(fn, sizeof(fnPatch), PAGE_EXECUTE_READWRITE, &old)) {
+                std::memcpy(fn, fnPatch, sizeof(fnPatch));
+                VirtualProtect(fn, sizeof(fnPatch), old, &old);
+                FlushInstructionCache(GetCurrentProcess(), fn, sizeof(fnPatch));
+                NOBLE_WARN("SpawnTest: -mp-ai-all: game_is_campaign_or_survival() forced true (diagnostic)");
+            }
+        }
         if (mpAi) {
             constexpr uintptr_t kAiPlaceGateCallRva = 0x6C2B2B;   // E8 2C 60 99 FF  call 0x58B5C
             static const uint8_t expect[] = { 0xE8, 0x2C, 0x60, 0x99, 0xFF };
@@ -938,6 +968,74 @@ void WatchActors() {
         now.push_back(w);
     }
     s_aiWatched = std::move(now);
+    // Once per match, 20 s after actors first exist: hex dump of the first actor's record (0xD00 bytes) and its
+    // body position, to find the actor's pathfinding location / sector fields by comparing maps (Phase 7 research).
+    static ULONGLONG s_firstActorsAt = 0;
+    static bool s_dumped = false;
+    if (total > 0 && !s_firstActorsAt) s_firstActorsAt = GetTickCount64();
+    if (total > 0 && !s_dumped && GetTickCount64() - s_firstActorsAt > 20000) {
+        s_dumped = true;
+        // The actor that has travelled furthest from where it was first seen (a walking one if any walk).
+        int pick = -1; float pickTravel = -1.0f;
+        for (const WatchedActor& w : s_aiWatched) {
+            const float tx = w.pos[0] - w.start[0], ty = w.pos[1] - w.start[1];
+            if (tx * tx + ty * ty > pickTravel) { pickTravel = tx * tx + ty * ty; pick = w.actor & 0xFFFF; }
+        }
+        NOBLE_INFO("SpawnTest: ai-watch: dumping actor slot {} (travelled {:.1f} m)", pick, std::sqrt((std::max)(0.0f, pickTravel)));
+        // Runtime pathfinding data per BSP (collision_surface_get_sector 0x724D24 reads qword hr+0x27B7C18 + bsp*0x490;
+        // 0 = no sectors for that BSP) and the picked actor's biped ground contact (biped_find_pathfinding_location
+        // 0x4A4424: +0x9DC bsp, +0x9E4 collision surface, +0x9E8 sector ref).
+        for (int bsp = 0; bsp < 4; ++bsp)
+            NOBLE_INFO("SpawnTest: ai-watch: pathfinding data bsp {} = 0x{:X}", bsp,
+                *reinterpret_cast<const uint64_t*>(s_base + 0x27B7C18 + static_cast<size_t>(bsp) * 0x490));
+        // The loader (0x97C70) only sets that pointer when: the BSP's bit is set in the active mask (hr+0x4E2FB2C),
+        // the scenario's structure bsps[bsp].flags (element 0xAC bytes, u16 at +0x50) lacks 0x200 "no pathfinding",
+        // and the BSP tag's resource (u16 index at bsp tag +0x520) holds a non-empty block.
+        {
+            const uint8_t* scen = *reinterpret_cast<uint8_t* const*>(s_base + kScenarioRva);
+            const uint32_t mask = *reinterpret_cast<const uint32_t*>(s_base + 0x4E2FB2C);
+            const auto* pages = reinterpret_cast<const uint64_t*>(s_base + 0x4E39F20);
+            const uint8_t* tagTable = *reinterpret_cast<uint8_t* const*>(s_base + 0xC1A600);
+            const int32_t count = scen ? *reinterpret_cast<const int32_t*>(scen + 0x50) : 0;
+            const uint32_t packed = scen ? *reinterpret_cast<const uint32_t*>(scen + 0x54) : 0;
+            (void)mask;
+            for (int bsp = 0; scen && bsp < count && bsp < 4; ++bsp) {
+                const uint32_t p = packed + static_cast<uint32_t>(bsp) * 0x2B;
+                const uint8_t* el = reinterpret_cast<const uint8_t*>(pages[packed >> 28] + static_cast<uint64_t>(p) * 4);
+                const uint16_t flags = *reinterpret_cast<const uint16_t*>(el + 0x50);
+                const uint16_t tagIndex = *reinterpret_cast<const uint16_t*>(el + 0xC);
+                const uint32_t tagPacked = tagTable ? *reinterpret_cast<const uint32_t*>(tagTable + 4 + static_cast<size_t>(tagIndex) * 8) : 0;
+                const uint8_t* tag = tagPacked ? reinterpret_cast<const uint8_t*>(pages[tagPacked >> 28] + static_cast<uint64_t>(tagPacked) * 4) : nullptr;
+                NOBLE_INFO("SpawnTest: ai-watch: bsp {} active {} | scenario flags 0x{:X} (no pathfinding {}) | bsp tag 0x{:X} resource index {}",
+                    bsp, (mask >> bsp) & 1, flags, (flags & 0x200) ? "SET" : "clear", tagIndex,
+                    tag ? *reinterpret_cast<const uint16_t*>(tag + 0x520) : 0xFFFF);
+                (void)flags; (void)tag; (void)tagIndex;   // the log line is compiled out of noble-client
+            }
+        }
+        if (pick >= 0 && ActorSlotUsed(actors, pick)) {
+            const uint8_t* unit = ObjectData(objects, ActorUnit(actors, ActorHandle(actors, pick)));
+            if (unit)
+                NOBLE_INFO("SpawnTest: ai-watch: biped ground bsp {} surface {} sector 0x{:08X} | actor +0x500 (no location) {}",
+                    *reinterpret_cast<const int16_t*>(unit + 0x9DC), *reinterpret_cast<const int32_t*>(unit + 0x9E4),
+                    *reinterpret_cast<const uint32_t*>(unit + 0x9E8),
+                    actors.records[static_cast<size_t>(pick) * kActorSize + 0x500]);
+        }
+        for (int i = (std::max)(0, pick); i < actors.capacity; ++i) {
+            if (!ActorSlotUsed(actors, i)) continue;
+            const uint8_t* rec = actors.records + static_cast<size_t>(i) * kActorSize;
+            const uint8_t* body = ObjectData(objects, ActorUnit(actors, ActorHandle(actors, i)));
+            float bp[3] = {};
+            if (body) std::memcpy(bp, body + 0x44, sizeof(bp));
+            NOBLE_INFO("SpawnTest: ai-watch: actor dump slot {} body {:.3f},{:.3f},{:.3f}", i, bp[0], bp[1], bp[2]);
+            for (size_t off = 0; off < kActorSize; off += 32) {
+                char line[32 * 3 + 16];
+                int n = std::snprintf(line, sizeof(line), "%04zX:", off);
+                for (size_t k = 0; k < 32; ++k) n += std::snprintf(line + n, sizeof(line) - n, " %02X", rec[off + k]);
+                NOBLE_INFO("ADUMP {}", line);
+            }
+            break;
+        }
+    }
     if (total == 0) {
         // The ai_place gates (0x6C2B10 -> 0x694CB4): game globals +0x10 == 1 or 0x58BBC(), and AI globals +1 != 0.
         const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_base + kTlsIndexRva);
@@ -954,6 +1052,96 @@ void WatchActors() {
         total, moved, travelMax, zMin, zMax, havePlayer ? dMin : 0.0f, havePlayer ? dSum / total : 0.0f, havePlayer ? dMax : 0.0f,
         havePlayer ? "" : " (no player)", detail);
     if (havePlayer) NOBLE_INFO("SpawnTest: ai-watch: player at {:.1f},{:.1f},{:.1f}", player[0], player[1], player[2]);
+}
+
+// -mp-ai-pathing (Phase 7, dev): HREK's cache builder packs the baked nav mesh into the structure BSP's resource
+// only for SOLO scenarios (Firefight maps such as ff20 are solo; Forge World is multiplayer), so on an MP-built map
+// the runtime pathfinding pointer (qword hr+0x27B7C18 + bsp*0x490, set by 0x97C70 when the BSP loads) stays 0 and no
+// actor finds a sector. The fix pairs with a Forge World built with scenario type = solo: its BSP carries the nav
+// mesh, and this switch sets the in-memory scenario type (u16 at scenario+0: 0 solo, 1 multiplayer) back to
+// multiplayer at the first game tick of a multiplayer match, after the BSPs have loaded. Without it the solo type
+// crashes player-view / HUD code (hr+0x30D5A8) in an MP match.
+int s_mpPathingState = -1;   // -1 not read, 0 off, 1 on
+const uint8_t* s_mpPathingScenario = nullptr;
+void MpPathingStep() {
+    if (s_mpPathingState < 0) {
+        wchar_t env[8] = {};
+        s_mpPathingState = (GetEnvironmentVariableW(L"NOBLE_MP_AI_PATHING", env, 8) > 0 && env[0] == L'1') ? 1 : 0;
+    }
+    auto* scen = *reinterpret_cast<uint8_t* const*>(s_base + kScenarioRva);
+    static const uint8_t* s_headLogged = nullptr;
+    if (scen && scen != s_headLogged && s_aiWatch == 1) {   // research: scenario tag head (u16 type at +0)
+        s_headLogged = scen;
+        NOBLE_INFO("SpawnTest: ai-watch: scenario type {} | pathfinding data bsp 0 = 0x{:X}", *reinterpret_cast<const uint16_t*>(scen),
+            *reinterpret_cast<const uint64_t*>(s_base + 0x27B7C18));
+    }
+    if (s_mpPathingState != 1 || !scen || scen == s_mpPathingScenario) return;
+    const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_base + kTlsIndexRva);
+    auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
+    const uint8_t* game = (tls && tls[tlsIndex]) ? *reinterpret_cast<uint8_t* const*>(tls[tlsIndex] + 0x48) : nullptr;
+    if (!game) return;
+    s_mpPathingScenario = scen;
+    auto* type = reinterpret_cast<uint16_t*>(scen);
+    if (game[0x10] == 3 && *type == 0) {   // multiplayer match on a solo-built scenario
+        DWORD old = 0;
+        if (VirtualProtect(type, sizeof(*type), PAGE_READWRITE, &old)) {
+            *type = 1;
+            VirtualProtect(type, sizeof(*type), old, &old);
+        } else {
+            *type = 1;
+        }
+        NOBLE_INFO("SpawnTest: -mp-ai-pathing: solo-built scenario in a multiplayer match: type set to multiplayer | pathfinding data bsp 0 = 0x{:X}",
+            *reinterpret_cast<const uint64_t*>(s_base + 0x27B7C18));
+    }
+}
+
+// -player-at x,y,z@seconds (Phase 7, dev): moves the local player's body to a point once, that many seconds after the
+// first game tick (repeated every 10 s while the player is more than 20 m away, so a respawn goes back too).
+int s_playerAtState = -1;   // -1 = not read, 0 = off, 1 = on
+float s_playerAt[3] = {};
+ULONGLONG s_playerAtDelay = 0, s_playerAtFirst = 0, s_playerAtLast = 0;
+void PlayerAtStep() {
+    if (s_playerAtState < 0) {
+        wchar_t env[96] = {};
+        s_playerAtState = 0;
+        if (GetEnvironmentVariableW(L"NOBLE_PLAYER_AT", env, 96) > 0) {
+            float x = 0, y = 0, z = 0; int sec = 20;
+            if (swscanf_s(env, L"%f,%f,%f@%d", &x, &y, &z, &sec) >= 3) {
+                s_playerAt[0] = x; s_playerAt[1] = y; s_playerAt[2] = z;
+                s_playerAtDelay = static_cast<ULONGLONG>(sec) * 1000;
+                s_playerAtState = 1;
+                NOBLE_INFO("SpawnTest: -player-at {:.1f},{:.1f},{:.1f} after {} s", x, y, z, sec);
+            }
+        }
+    }
+    if (s_playerAtState != 1 || !s_objectSetPosition || !s_objectRefresh) return;
+    const ULONGLONG now = GetTickCount64();
+    if (!s_playerAtFirst) s_playerAtFirst = now;
+    if (now - s_playerAtFirst < s_playerAtDelay || now - s_playerAtLast < 10000) return;
+    ObjectPool objects;
+    if (!GetObjectPool(objects)) return;
+    const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_base + kTlsIndexRva);
+    auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
+    uint8_t* header = (tls && tls[tlsIndex]) ? *reinterpret_cast<uint8_t**>(tls[tlsIndex] + 0x18) : nullptr;
+    if (!header || std::strncmp(reinterpret_cast<const char*>(header), "players", 32) != 0) return;
+    const int32_t cap = *reinterpret_cast<const int32_t*>(header + 0x2C);
+    const uint8_t* records = *reinterpret_cast<uint8_t**>(header + 0x50);
+    const auto* bitmap = reinterpret_cast<const uint32_t*>(header + *reinterpret_cast<const int64_t*>(header + 0x68));
+    for (int i = 0; records && i < cap; ++i) {
+        if (!((bitmap[i >> 5] >> (i & 31)) & 1)) continue;
+        const int32_t unit = *reinterpret_cast<const int32_t*>(records + static_cast<size_t>(i) * 0x490 + 0x28);
+        const uint8_t* body = ObjectData(objects, unit);
+        if (!body) continue;
+        float at[3];
+        std::memcpy(at, body + 0x44, sizeof(at));
+        const float dx = at[0] - s_playerAt[0], dy = at[1] - s_playerAt[1];
+        s_playerAtLast = now;
+        if (dx * dx + dy * dy < 20.0f * 20.0f) return;
+        s_objectSetPosition(unit, s_playerAt, nullptr, nullptr, 0, 0);
+        s_objectRefresh(unit);
+        NOBLE_INFO("SpawnTest: -player-at moved the player from {:.1f},{:.1f},{:.1f}", at[0], at[1], at[2]);
+        return;
+    }
 }
 
 bool ActorsInUse(int& used, int& capacity) { return ActorUsage(used, capacity); }

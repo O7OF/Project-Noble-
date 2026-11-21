@@ -24,6 +24,7 @@ function Val($f) {
         if ($f -is [Bungie.Tags.TagFieldEnum]) { return 'enum ' + $f.Value + ' (' + $f.Items[$f.Value].EnumName + ')' }
         if ($f -is [Bungie.Tags.TagFieldReference]) { return 'ref ' + $(if ($f.Path) { $f.Path.RelativePathWithExtension } else { 'none' }) }
         if ($f -is [Bungie.Tags.TagFieldBlock]) { return 'block count=' + $f.Elements.Count }
+        if ($f -is [Bungie.Tags.TagFieldBlockIndex]) { return 'index ' + $f.Value }
         if ($f.PSObject.Properties['Data']) { $d = $f.Data; if ($d -is [array]) { return ($d -join ',') } ; return "$d" }
     } catch { return '?' }
     return ''

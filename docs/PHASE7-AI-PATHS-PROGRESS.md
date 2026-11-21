@@ -2,12 +2,47 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
-## Status (2026-11-21 12:00)
+## Status (2026-11-21 13:25) - AI WALK ON FORGE WORLD
 
-**Proven on Forge World (HREK-built map, dev switches):** 14 AI (Elites, Grunts, Jackals, Brutes, Troopers) spawn,
-stand on baked ground without falling through, see the player and attack (an Elite sword-killed the player, run p7d).
-**Not yet:** they hardly move (0-2.5 m in 60 s). Squads have no zone / areas / firing positions, so the actors pick
-nowhere to go. Next step: give them firing positions and a default objective (plan step 5).
+**Proven (run p7v):** on a Forge World built with scenario type = solo, with `-mp-ai -mp-ai-pathing`, 14 AI spawn,
+walk on the baked ground (up to 15 m, 6-10 of 12 moving per 5 s), close to 1-10 m of the player and fight; the
+Slayer match ran 90 s with no crash. Forge mode ("Basic Editing") also loads and runs on that build (p7w).
+
+**The blocker that took the afternoon:** HREK's cache builder packs the baked nav mesh into the structure BSP's
+resource **only for solo scenarios**. ff20 (and every Firefight map) is a *solo* scenario; Forge World is
+*multiplayer*, so on an MP-built map the runtime pathfinding pointer stays 0, every actor's sector lookup fails
+(actor `+0x500` "no pathfinding location" = 1) and AI can shoot but never walk. Zones / firing positions / objectives
+were not the cause (they are still needed for good behaviour).
+
+**The fix (dev):** build Forge World with `scenario.type = solo` (keeps the nav mesh), and at the first game tick of
+a multiplayer match set the in-memory type (u16 at scenario+0) back to 1 = multiplayer (`-mp-ai-pathing`). Without
+that reset the solo type crashes player-view / HUD code (`hr+0x30D88A` in `0x30D5A8`) after ~25 s (run p7s).
+
+### Runtime facts (MCC haloreach.dll, verified)
+- Per-BSP runtime records: `hr+0x27B7BA0`, 0x490 bytes each, filled by `0x97C70(bsp, record)`; record +0x78
+  (= `hr+0x27B7C18 + bsp*0x490`) = pathfinding data pointer. Set only if the BSP is active (bit in `hr+0x4E2FB2C`),
+  `scenario.structure bsps[bsp].flags` (element 0xAC, u16 at +0x50) lacks 0x200 "no pathfinding", and the BSP tag's
+  resource (u16 index at BSP tag +0x520) holds a non-empty block.
+- `collision_surface_get_sector` = `0x724D24` (reads that pointer; 0 -> no sector).
+- `biped_find_pathfinding_location` = `0x4A4424`: biped +0x9DC bsp, +0x9E4 ground collision surface, +0x9E8 sector.
+- `actor_find_pathfinding_location` = `0x75B2C8`: actor (0xD00) +0x40C computed flag, +0x410 point, +0x41C ref frame /
+  bsp, +0x420 sector ref, +0x4EC last valid, **+0x500 = 1 when no location** (360 layout is MCC - 0x10 here).
+- Scenario tag: u16 type at +0 (0 solo, 1 multiplayer); structure bsps count +0x50 / block +0x54.
+- ff20 in multiplayer mode and Forge World in Firefight mode both fail to start (engine loop returns 1).
+
+### Test squads, zone, objective (HREK scenario, scripts in tools\)
+- Squads (`noble-forge-ai-squads.ps1 -Centre @(38.4,84.5,5.5) -Replace`): 5 squads, 14 AI, 6 m around the MP
+  respawn point (38.4, 84.5) on the Island (dry land; the scenario's player start at (-157,-225) is a beach and
+  `-player-at` there drowned the player).
+- Zone / objective (`noble-forge-ai-zone.ps1 -CentreX 38.4 -CentreY 84.5 -CentreZ 4.4`): `noble_zone` with 16 areas
+  (4x4 grid of 12 m, corners from baked vertices), 576 firing positions (2 m grid; heights from nearby baked
+  vertices; tool.exe does not generate firing positions, only Sapien does), `noble_obj` with one task
+  `noble_fight` over all areas, squads' initial zone / objective set. `generate-pathfinding` fills the firing
+  positions' cluster / sector (50 of 576 report "outside BSP" and are dropped).
+- Run order: squads -> zone -> `tool generate-pathfinding` -> `tool build-cache-file`.
+
+### Earlier status (12:00)
+14 AI spawn, stand on baked ground and attack, but hardly move. (Cause found at 13:15, above.)
 
 ## Decision: approach
 
@@ -74,9 +109,19 @@ HREK build)
 - `maps\forge_halo.map` rebuilt (836 MB). **Not copied to `data\maps`** (the shipped map is unchanged).
 - Logs: `noble_mods\phase7_genpath_1.log` (flag set, empty), `phase7_genpath_2.log` (real bake), `phase7_build_1.log`.
 
+## HREK state (13:25)
+- `forge_halo.scenario` is now **type solo** + baked + squads / zone / objective. Backups in
+  `noble_mods\phase7_backup_2026-11-21\`: `forge_halo.scenario` (stock), `*.mp_with_ai_13h15` (MP type with AI,
+  scenario and map). `HREK\maps\forge_halo.map` = the solo build (803 MB). `data\maps` (shipped) unchanged.
+- Dev switches: `-mp-ai`, `-mp-ai-pathing`, `-mp-ai-all` (diagnostic only: forces game_is_campaign_or_survival),
+  `-ai-watch` (now also dumps one actor, the per-BSP pathfinding pointers and the biped ground fields once),
+  `-player-at x,y,z@s`.
+
 ## Next
-1. Movement: zones / areas / firing positions for the test squads (or dynamic firing positions), and a default
-   objective ("fight the players"), then re-test that they walk to and chase the player on the ground.
+1. Check what the solo build dropped (803 vs 836 MB): Forge palette / map variant objects, MP spawns, game types;
+   if something MP-only is missing, try building MP and copying only the BSP resource, or patching the builder's
+   choice instead.
 2. Forge pieces: place a small layout's objects as scenery in a scenario copy, bake, confirm AI walk onto them.
-3. Team rules in MP (Troopers vs Covenant vs players), the 3 deaths in p7d.
-4. Shipping: map size (+50 MB), map hash for online play, and whether `-mp-ai` becomes a host option.
+3. Team rules in MP (Troopers vs Covenant vs players); one spawn point at (?, ?) drops an actor to z -47.
+4. Shipping: map size, map hash for online play, guests (the host places AI; guests need the same map), and
+   whether `-mp-ai` / `-mp-ai-pathing` become a host option.
