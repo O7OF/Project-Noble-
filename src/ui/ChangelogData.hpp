@@ -30,6 +30,42 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02034Items = {
+        {"FIREFIGHT", "Extra Enemies",
+         "New host option in the Firefight lobby: add 2, 4, 6 or 8 extra Covenant squads to every wave. A wave only ends when they are dead too. On Courtyard the first wave goes from 28 enemies to 36 with +4 squads and 48 with +8."},
+        {"FIREFIGHT", "Wave Pacing",
+         "Hosts can make the breaks between waves, rounds and sets shorter (half as long) or longer (one and a half or two times as long)."},
+        {"FIREFIGHT", "Wave Squads, Dropships and Bonus Round in Game Options",
+         "GAME OPTIONS for Firefight now has a Firefight Waves group: enemy squads in the opening, main and boss waves and in the bonus round, dropships on or off, and the bonus round length."},
+        {"FIREFIGHT", "Allied Elites",
+         "Optional host setting: up to 5 squads of Elites fight on your side, follow the players and come back after they have all died."},
+        {"HOST TOOLS", "Votes",
+         "Players can call a vote to kick a player, end the round or end the game. Hosts choose which votes are allowed and can turn voting off."},
+        {"HOST TOOLS", "Next Map Vote",
+         "After a game, players can vote on the next map from the lobby."},
+        {"HOST TOOLS", "Team Controls",
+         "Hosts can balance or shuffle the teams, and lock them so players can't switch."},
+        {"HOST TOOLS", "Restart With Everyone",
+         "Hosts can restart a multiplayer game and bring every player back with them."},
+        {"HOST TOOLS", "Friendly Fire, Betrayal Booting and Team Changing",
+         "These social settings are now in GAME OPTIONS for custom games."},
+        {"LOBBY", "Join in Progress",
+         "Hosts can stop players from joining a game that is already running."},
+        {"LOBBY", "Lobby Rules",
+         "Hosts can write a short set of rules that every player sees at the top of the lobby."},
+        {"LOBBY", "Reorder Playlists",
+         "Playlist entries can be moved up and down with LB / RB or Ctrl + Up / Down."},
+        {"HOST TOOLS", "Disband From the Match",
+         "The host's in-match menu now has DISBAND LOBBY."}
+    };
+
+    notes.push_back({
+        "v0.20.34",
+        "Bigger Firefight & More Host Tools",
+        "Extra Enemies, Wave Pacing, Votes, Team Controls and Join in Progress",
+        v02034Items
+    });
+
     const std::vector<ChangeItem> v02033Items = {
         {"HOST TOOLS", "Campaign Host Menu",
          "Hosts get new rows in the pause menu: restart the mission, go to the next mission, revert to the last checkpoint, pause the game for everyone, and return to the lobby with your players or on your own."},
