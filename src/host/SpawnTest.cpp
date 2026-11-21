@@ -19,6 +19,8 @@
 
 namespace noble::spawn {
 
+void WatchAllies();   // defined with PlaceAllies below; called from the game tick
+
 namespace {
 
 // RVAs in haloreach.dll 1.3528.0.0. Identical in stock, V16 and V16+particles (checked byte for byte).
@@ -602,6 +604,7 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
 #endif
     noble::pelican::GameTick(s_base);
     noble::ReachHost::GameThreadTick();   // queued squad placements (Firefight allies) need this thread
+    WatchAllies();
     if (!s_firstTick) s_firstTick = GetTickCount64();
 #ifndef NOBLE_DEDICATED
     const bool isDev = noble::AuthClient::Get().IsDeveloper();
@@ -815,6 +818,34 @@ void Install(HMODULE engine) {
         (s_autoHorde > 0 ? ", -horde " + std::to_string(s_autoHorde) : std::string()));
 }
 
+// Allies placed this match, logged every 5 s (alive, distance to the local player) so a run shows whether they
+// reached the player and survive the waves (i.e. fight on the players' side).
+std::vector<int32_t> s_allyWatch;
+ULONGLONG s_allyWatchLast = 0;
+void WatchAllies() {
+    if (s_allyWatch.empty() || GetTickCount64() - s_allyWatchLast < 5000) return;
+    s_allyWatchLast = GetTickCount64();
+    ObjectPool objects;
+    ActorPool actors;
+    if (!GetObjectPool(objects) || !GetActorPool(actors)) return;
+    float player[3] = {}, fwd[2] = {};
+    const bool havePlayer = PlayerPosition(objects, player, fwd);
+    int alive = 0;
+    std::string dist;
+    for (const int32_t a : s_allyWatch) {
+        if (!ActorAlive(actors, a)) continue;
+        ++alive;
+        const uint8_t* body = ObjectData(objects, ActorUnit(actors, a));
+        if (body && havePlayer) {
+            float at[3];
+            std::memcpy(at, body + 0x44, sizeof(at));
+            const float dx = at[0] - player[0], dy = at[1] - player[1], dz = at[2] - player[2];
+            dist += " " + std::to_string(static_cast<int>(std::sqrt(dx * dx + dy * dy + dz * dz))) + "m";
+        }
+    }
+    NOBLE_INFO("SpawnTest: allies alive {} / {}, distance to player:{}", alive, s_allyWatch.size(), dist);
+}
+
 // Firefight allies (Phase 5b). Game thread only. `place` performs one engine squad placement; every actor it creates
 // is moved into scenario squad `destSquad` (ai_migrate's per-actor step), given that squad's runtime team, and walked
 // next to the local player through the horde's teleport queue. The destination is a Firefight fireteam squad
@@ -851,6 +882,7 @@ int PlaceAllies(const std::function<bool()>& place, int destSquad) {
             NOBLE_INFO("SpawnTest: allies: new actor 0x{:X} unit 0x{:X} definition 0x{:X}", static_cast<uint32_t>(actor),
                        static_cast<uint32_t>(ActorUnit(actors, actor)), body ? *reinterpret_cast<const uint32_t*>(body) : 0u);
         }
+        s_allyWatch.push_back(actor);
         migrate(static_cast<uint32_t>(actor), static_cast<uint32_t>(destSquad));
         if (team >= 0) setTeam(static_cast<uint32_t>(actor), team);
         if (havePlayer && s_objectSetPosition && s_objectRefresh && s_actorTeleported && s_unitExitVehicle) {
