@@ -870,6 +870,36 @@ static void PlaceFirefightAllies(int kind, int squads) {
     NOBLE_INFO("ReachHost: allies: kind {} squads {} -> {} actors", kind, squads, total);
 }
 
+// EXTRA ENEMIES (Phase 5b, Tyler: "more enemies against us"). Firefight's own caps (the scenario's 8 wave squads, the
+// script) keep a wave near its variant size whatever the squad count says, so the host adds `squads` Covenant squads
+// of its own when a wave arrives: Firefight's squad templates placed through the wave squads' spawn points (the same
+// call ai_place_wave makes). They stay in those wave squads on the Covenant team, so the wave ends only when they are
+// dead too. Capped to leave 8 free actor slots. Returns the number of actors created.
+static int PlaceExtraEnemies(int squads) {
+    static const char* const kTemplates[] = { "sq_ff_cov_e1_g3", "sq_ff_jackal_4", "sq_ff_grunt_4", "sq_ff_cov_e1_j3",
+                                              "sq_ff_skirmisher_4", "sq_ff_elite_4", "sq_ff_cov_b1_g3", "sq_ff_cov_js1_j3" };
+    static int s_next = 0;
+    int total = 0;
+    for (int i = 0; i < squads; ++i) {
+        int used = 0, capacity = 0;
+        if (!noble::spawn::ActorsInUse(used, capacity) || used + 8 >= capacity) {
+            NOBLE_INFO("ReachHost: extra enemies: actor pool nearly full ({} / {}), stopped after {} squads", used, capacity, i);
+            break;
+        }
+        char wave[32];
+        std::snprintf(wave, sizeof(wave), "sq_sur_wave_%02d", (s_next % 8) + 1);
+        const int host = FindScenarioSquad(wave);
+        const uint32_t datum = FindSquadTemplate(kTemplates[s_next % (sizeof(kTemplates) / sizeof(kTemplates[0]))]);
+        ++s_next;
+        if (host < 0 || datum == 0xFFFFFFFFu) continue;
+        const int before = used;
+        // Count 4: the templates' default gave only ~2 actors per squad on ff20 (+8 squads = +14 actors).
+        if (PlaceTemplateDatum(host, datum, 4) && noble::spawn::ActorsInUse(used, capacity)) total += used - before;
+    }
+    NOBLE_INFO("ReachHost: extra enemies: {} squads asked, {} actors added", squads, total);
+    return total;
+}
+
 bool ReachHost::PlaceSquadByName(const char* squadName, int count) {
     HMODULE reach = noble::ReachModule();
     const int index = FindScenarioSquad(squadName);
@@ -995,7 +1025,7 @@ void ReachHost::GameThreadTick() {
             for (auto& ch : mode) ch = static_cast<wchar_t>(std::towlower(ch));
             s_mode = (mode == L"firefight" && CommandLineValue(L"-connect").empty()) ? 1 : 0;
         }
-        static int s_kind = 0, s_squads = 2, s_pacing = 100;
+        static int s_kind = 0, s_squads = 2, s_pacing = 100, s_extra = 0;
         static ULONGLONG s_settingsRead = 0;
         const ULONGLONG now = GetTickCount64();
         if (s_mode == 1 && now - s_settingsRead >= 1000) {   // not every frame: Snapshot copies the whole settings
@@ -1004,6 +1034,7 @@ void ReachHost::GameThreadTick() {
             s_kind = settings.hostFirefightAllies;
             s_squads = settings.hostFirefightAllySquads;
             s_pacing = settings.hostFirefightWavePacing;
+            s_extra = settings.hostFirefightExtraEnemies;
         }
         // WAVE PACING: from 5 s in, once a second, scale the break timers whenever the script has set a new value.
         static ULONGLONG s_pacingStart = 0, s_pacingTry = 0;
@@ -1012,6 +1043,23 @@ void ReachHost::GameThreadTick() {
             if (now - s_pacingStart >= 5000 && now - s_pacingTry >= 1000) {
                 s_pacingTry = now;
                 ScaleFirefightTimers(s_pacing);
+            }
+        }
+        // EXTRA ENEMIES: once a second, a jump of 3+ live actors (25 s or more after the last extras) is a new wave
+        // arriving; add the host's extra squads to it.
+        static int s_lastActors = -1;
+        static ULONGLONG s_extraSample = 0, s_lastExtra = 0;
+        if (s_mode == 1 && s_extra > 0 && now - s_extraSample >= 1000) {
+            s_extraSample = now;
+            int used = 0, capacity = 0;
+            if (noble::spawn::ActorsInUse(used, capacity)) {
+                if (s_lastActors >= 0 && used - s_lastActors >= 3 && now - s_lastExtra >= 25000) {
+                    s_lastExtra = now;
+                    NOBLE_INFO("ReachHost: extra enemies: wave arriving ({} -> {} actors), adding {} squads", s_lastActors, used, s_extra);
+                    PlaceExtraEnemies(s_extra);
+                    noble::spawn::ActorsInUse(used, capacity);
+                }
+                s_lastActors = used;
             }
         }
         struct { int hostFirefightAllies, hostFirefightAllySquads; } settings{ s_kind, s_squads };

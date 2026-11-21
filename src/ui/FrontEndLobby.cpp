@@ -2068,6 +2068,15 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
              false, true,
              "Host option: how many allied squads (1-5). Each squad is a few "
              "Elites."});
+      optRows.push_back(
+          {"EXTRA ENEMIES",
+           allies.hostFirefightExtraEnemies == 0
+               ? std::string("OFF")
+               : "+" + std::to_string(allies.hostFirefightExtraEnemies) + " SQUADS",
+           false, true,
+           "Host option: extra Covenant squads added to every wave (each squad "
+           "is 2-6 enemies). The wave ends only when they are dead too. Stops "
+           "early if the game's AI limit is nearly reached."});
       const int pacing = allies.hostFirefightWavePacing;
       optRows.push_back(
           {"WAVE PACING",
@@ -2462,6 +2471,14 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       d.hostFirefightAllySquads = (d.hostFirefightAllySquads - 1 + dir + 5) % 5 + 1;
       Settings::Get().Update(d);
       NOBLE_INFO("FrontEndMenu: Firefight ally squads {}", d.hostFirefightAllySquads);
+      MenuSounds::Change();
+    } else if (row.label == "EXTRA ENEMIES") {
+      if (!st.isLobbyHost)
+        return;
+      SettingsData d = Settings::Get().Snapshot();
+      d.hostFirefightExtraEnemies = (d.hostFirefightExtraEnemies / 2 + dir + 5) % 5 * 2;
+      Settings::Get().Update(d);
+      NOBLE_INFO("FrontEndMenu: Firefight extra enemies +{} squads", d.hostFirefightExtraEnemies);
       MenuSounds::Change();
     } else if (row.label == "WAVE PACING") {
       if (!st.isLobbyHost)

@@ -168,6 +168,9 @@ void Settings::Load() {
     if (d.hostFirefightAllies != 0 && d.hostFirefightAllies != 5) d.hostFirefightAllies = 0;
     Read(j, "hostFirefightAllySquads", d.hostFirefightAllySquads);
     if (d.hostFirefightAllySquads < 1 || d.hostFirefightAllySquads > 5) d.hostFirefightAllySquads = 2;
+    Read(j, "hostFirefightExtraEnemies", d.hostFirefightExtraEnemies);
+    if (d.hostFirefightExtraEnemies < 0 || d.hostFirefightExtraEnemies > 8 || d.hostFirefightExtraEnemies % 2)
+        d.hostFirefightExtraEnemies = 0;
     Read(j, "hostFirefightWavePacing", d.hostFirefightWavePacing);
     if (d.hostFirefightWavePacing != 50 && d.hostFirefightWavePacing != 150 && d.hostFirefightWavePacing != 200)
         d.hostFirefightWavePacing = 100;
@@ -443,6 +446,7 @@ bool Settings::Save() {
     j["hostFirefightAllies"] = d.hostFirefightAllies;
     j["hostFirefightAllySquads"] = d.hostFirefightAllySquads;
     j["hostFirefightWavePacing"] = d.hostFirefightWavePacing;
+    j["hostFirefightExtraEnemies"] = d.hostFirefightExtraEnemies;
     j["hostMinPingMs"] = d.hostMinPingMs;
     j["packetRedundancy"] = d.packetRedundancy;
         j["exclusiveFullscreen"] = d.exclusiveFullscreen;

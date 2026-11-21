@@ -846,6 +846,8 @@ void WatchAllies() {
     NOBLE_INFO("SpawnTest: allies alive {} / {}, distance to player:{}", alive, s_allyWatch.size(), dist);
 }
 
+bool ActorsInUse(int& used, int& capacity) { return ActorUsage(used, capacity); }
+
 int AlliesAlive() {
     ActorPool actors;
     if (s_allyWatch.empty() || !GetActorPool(actors)) return 0;

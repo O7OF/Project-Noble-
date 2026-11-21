@@ -30,6 +30,8 @@ namespace noble::spawn {
 int PlaceAllies(const std::function<bool()>& place, int destSquad);
 // Allies from PlaceAllies still alive (game thread). 0 clears the list.
 int AlliesAlive();
+// Live actor pool usage (game thread). False if the pool is not readable.
+bool ActorsInUse(int& used, int& capacity);
 
 // Development builds only (no-op otherwise). Call once after haloreach.dll is loaded.
 void Install(HMODULE engine);
