@@ -84,6 +84,8 @@ const std::vector<Rule>& Rules() {
     constexpr const char* kLook = "Appearance";
     constexpr const char* kSense = "Sensors";
     constexpr const char* kFirefight = "Firefight Waves";
+    constexpr const char* kSocial = "Social";
+    static const Names s_teamChange = { "Off", "On", "Balancing Only" };
     static const std::vector<int> s_ffInitial = { 0x786, 0x7BA };
     static const std::vector<int> s_ffMain = { 0x795, 0x7C9 };
     static const std::vector<int> s_ffBoss = { 0x7A4, 0x7D8 };
@@ -128,6 +130,12 @@ const std::vector<Rule>& Rules() {
         { "aura", "Aura", kLook, "A glow drawn around each player.", 0x327, -1, 0, 4, "", &s_aura },
         { "tracker_mode", "Motion Tracker Mode", kSense, "When the motion tracker works.", 0x32C, -1, 0, 4, "", &s_tracker },
         { "tracker_range", "Motion Tracker Range", kSense, "How far it sees.", 0x32D, -1, 0, 4, "", &s_range },
+        // Social options: decoded 0x2FC = the runtime variant's +0x2F8 social flags (haloreach FUN_1800f26dc fills them
+        // from the tag: bit 0 friendly fire, 1 betrayal booting, 2 enemy voice, 3 open channel, 4 dead player voice),
+        // 0x2FE = team changing. Matches the stock modes: Slayer and Classic Firefight have friendly fire on, Firefight off.
+        { "friendly_fire", "Friendly Fire", kSocial, "Players can hurt their teammates.", 0x2FC, 0, 0, 1, "", &s_offOn01 },
+        { "betrayal_booting", "Betrayal Booting", kSocial, "A player killed by a teammate can boot them.", 0x2FC, 1, 0, 1, "", &s_offOn01 },
+        { "team_changing", "Team Changing", kSocial, "Whether players may switch teams during the game.", 0x2FE, -1, 0, 2, "", &s_teamChange },
         // Firefight waves (decoded survival record, mapped 2026-11-21 by diffing the stock Firefight modes): each of
         // the three rounds at 0x74C / 0x780 / 0x7B4 holds a 4-byte skull mask and three 15-byte waves (initial, main,
         // boss): dropship flag, order flag, squad count, 12 squad types. The bonus round time is at 0x7E8 and its wave
