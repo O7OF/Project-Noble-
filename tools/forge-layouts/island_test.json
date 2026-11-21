@@ -1,0 +1,5 @@
+﻿[
+  { "tag": "levels\\multi\\dlc\\objects\\dlc_ff_bridge_2x5\\dlc_ff_bridge_2x5", "pos": [44.0, 32.4, 4.0], "rot": [0, 0, 0] },
+  { "tag": "levels\\multi\\dlc\\objects\\dlc_ff_wall_2x4\\dlc_ff_wall_2x4", "pos": [38.2, 38.0, 3.5], "rot": [0, 0, 0] },
+  { "tag": "levels\\multi\\dlc\\objects\\dlc_ff_ramp_1x2_shallow\\dlc_ff_ramp_1x2_shallow", "pos": [32.0, 32.4, 3.6], "rot": [0, 0, 0] }
+]
