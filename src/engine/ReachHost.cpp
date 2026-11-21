@@ -1081,6 +1081,46 @@ void ReachHost::GameThreadTick() {
                 s_allDeadSince = 0;
             }
         }
+
+        // MAP AI (custom games / Forge host): on maps built with AI paths (baked nav mesh + squads, e.g. Noble's Forge
+        // World), lift ai_place's campaign / Firefight gate and place the map's squads 15 s into the match, then
+        // again 20 s after the last actor died. Maps without AI paths are left alone.
+        static int s_mpMode = -1;
+        if (s_mpMode < 0) {
+            std::wstring mode = CommandLineValue(L"-mode");
+            for (auto& ch : mode) ch = static_cast<wchar_t>(std::towlower(ch));
+            s_mpMode = ((mode == L"multiplayer" || mode == L"forge") && CommandLineValue(L"-connect").empty()) ? 1 : 0;
+        }
+        static int s_mapAi = 0;
+        static ULONGLONG s_mapAiRead = 0, s_mapAiFirst = 0, s_mapAiEmptySince = 0;
+        static int s_mapAiState = 0;   // 0 waiting, 1 placed, -1 map has no AI paths
+        if (s_mpMode == 1 && now - s_mapAiRead >= 1000) {
+            s_mapAiRead = now;
+            s_mapAi = Settings::Get().Snapshot().hostMapAi;
+        }
+        if (s_mpMode == 1 && s_mapAi == 1 && s_mapAiState >= 0) {
+            if (!s_mapAiFirst) s_mapAiFirst = now;
+            if (s_mapAiState == 0 && now - s_mapAiFirst >= 15000) {
+                if (!noble::spawn::MapHasAiPaths()) {
+                    s_mapAiState = -1;
+                    NOBLE_INFO("ReachHost: map AI is on, but this map has no AI paths (no baked nav mesh / squads); nothing placed");
+                } else if (noble::spawn::EnableMpAiPlacement() && noble::spawn::PlaceMapSquads() >= 0) {
+                    s_mapAiState = 1;
+                }
+            } else if (s_mapAiState == 1 && now - s_mapAiRead < 50) {   // checked once a second
+                int used = 0, capacity = 0;
+                if (noble::spawn::ActorsInUse(used, capacity) && used == 0) {
+                    if (!s_mapAiEmptySince) s_mapAiEmptySince = now;
+                    if (now - s_mapAiEmptySince >= 20000) {
+                        s_mapAiEmptySince = 0;
+                        NOBLE_INFO("ReachHost: map AI: all AI down for 20 s, placing the squads again");
+                        noble::spawn::PlaceMapSquads();
+                    }
+                } else {
+                    s_mapAiEmptySince = 0;
+                }
+            }
+        }
     }
 }
 

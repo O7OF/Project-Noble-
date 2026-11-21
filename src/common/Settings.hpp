@@ -43,6 +43,7 @@ struct SettingsData {
     int hostFirefightAllies = 0;      // host option, Firefight: allied AI kind (0 off, 5 Elites; 1-4 humans need tags the maps lack)
     int hostFirefightAllySquads = 2;  // host option, Firefight: allied squads (1-5, one fireteam squad each)
     int hostFirefightExtraEnemies = 0; // host option, Firefight: extra Covenant squads added to each wave (0, 2, 4, 6, 8)
+    int hostMapAi = 0;                 // host option, custom games / Forge: place the map's own AI squads on maps built with AI paths (0 off, 1 on)
     int hostFirefightWavePacing = 100; // host option, Firefight: breaks between waves / rounds / sets in % (50, 100, 150, 200)
     int hostMinPingMs = 0;           // host option: players whose ping to this host stays below this leave the lobby (keeps games regional); 0 = no minimum
     int hostMaxPingMs = 0;           // host option: players whose ping to this host stays above this leave the lobby; 0 = no limit

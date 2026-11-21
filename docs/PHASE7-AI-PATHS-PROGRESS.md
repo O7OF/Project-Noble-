@@ -2,6 +2,32 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
+## Status (2026-11-21 16:10) - Step 2: MAP AI host option + whole-map zones (tested)
+
+**MAP AI (host option, custom games and Forge lobbies):** `Settings::hostMapAi` (0/1), lobby row "MAP AI" (host
+only). In the match the host (`-mode multiplayer|forge`, no `-connect`) checks once a second; 15 s in, if the map has
+AI paths (`spawn::MapHasAiPaths()`: a non-zero per-BSP pathfinding pointer and at least one squad), it lifts the
+ai_place gate (`spawn::EnableMpAiPlacement()`, the same 5-byte patch as `-mp-ai`) and places every squad
+(`spawn::PlaceMapSquads()`); 20 s after the actor count reaches 0 it places them again. Maps without AI paths are
+logged and left alone. Guests never place AI.
+
+**Whole-map zones:** `tools\noble-ai-zones-from-navmesh.ps1` walks every walkable sector of the baked nav mesh (links
+-> outline), samples a 3.5 m grid inside each, and writes one zone + one objective ("fight" task over all its areas)
+per 160 m tile, 20 m areas (<= 64 per zone, the task-area limit), <= 2,000 firing positions per zone (limit 2,048).
+Forge World: 7,795 walkable sectors -> 17 zones, 17,398 firing positions in ~3 s; the bake then drops 2,040 points
+lying just outside the ground (12%). Squads matching `noble_ai_*` get the zone / objective of their tile. Limits
+found with `tools\research\block-maxima.ps1`: zones 128, firing positions 2,048 / zone, areas 128 / zone, objectives
+64, tasks 100, task areas 64, squads 256, spawn points 128 / squad.
+
+**Test p8a** (settings `hostMapAi: 1` only, no dev switches, player placed 52 m from the squads): "placed 5 squads |
+actors 0 -> 14"; an Elite walked 52 m to the player across the generated zone and killed them on every respawn;
+others moved up to 15 m. One spawn point drops an actor to z -50 (spawn height is a fixed 5.5; take it from the nav
+mesh next).
+
+Tools: `tools\research\navmesh-near.ps1 -X -Y` (nearest nav-mesh vertices, for test positions).
+Note: a `Settings.hpp` change recompiles most files and prints the project's existing warnings (ChangelogData,
+main.cpp, ReachHost a1..a3, etc.); none come from these changes.
+
 ## Status (2026-11-21 14:15) - PROPER FIX: "don't strip pathfinding" (no solo build, no runtime hack)
 
 The scenario's top-level `flags` field has bit 1 **"don't strip pathfinding"** (bit 13 is "survival"; ff20 = 8192).

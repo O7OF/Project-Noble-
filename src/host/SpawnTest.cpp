@@ -24,6 +24,7 @@ void WatchAllies();   // defined with PlaceAllies below; called from the game ti
 void WatchActors();   // -ai-watch, defined with WatchAllies
 void PlayerAtStep();  // -player-at, defined with WatchAllies
 void MpPathingStep(); // -mp-ai-pathing, defined with WatchAllies
+bool EnableMpAiPlacement();   // MAP AI / -mp-ai, defined with ActorsInUse
 
 namespace {
 
@@ -853,21 +854,7 @@ void Install(HMODULE engine) {
                 NOBLE_WARN("SpawnTest: -mp-ai-all: game_is_campaign_or_survival() forced true (diagnostic)");
             }
         }
-        if (mpAi) {
-            constexpr uintptr_t kAiPlaceGateCallRva = 0x6C2B2B;   // E8 2C 60 99 FF  call 0x58B5C
-            static const uint8_t expect[] = { 0xE8, 0x2C, 0x60, 0x99, 0xFF };
-            static const uint8_t patch[] = { 0xB0, 0x01, 0x90, 0x90, 0x90 };   // mov al, 1 ; nop x3
-            auto* site = reinterpret_cast<uint8_t*>(s_base + kAiPlaceGateCallRva);
-            DWORD old = 0;
-            if (std::memcmp(site, expect, sizeof(expect)) == 0 && VirtualProtect(site, sizeof(patch), PAGE_EXECUTE_READWRITE, &old)) {
-                std::memcpy(site, patch, sizeof(patch));
-                VirtualProtect(site, sizeof(patch), old, &old);
-                FlushInstructionCache(GetCurrentProcess(), site, sizeof(patch));
-                NOBLE_INFO("SpawnTest: -mp-ai: ai_place allowed outside campaign / Firefight (patched hr+0x{:X})", kAiPlaceGateCallRva);
-            } else {
-                NOBLE_WARN("SpawnTest: -mp-ai: ai_place gate bytes at hr+0x{:X} do not match; not patched", kAiPlaceGateCallRva);
-            }
-        }
+        if (mpAi) noble::spawn::EnableMpAiPlacement();
     }
     if (!HookManager::InstallHook(reinterpret_cast<void*>(s_base + kTickRva), reinterpret_cast<void*>(&Hook_Tick),
             reinterpret_cast<void**>(&s_originalTick), "spawn_test_tick")) {
@@ -1145,6 +1132,51 @@ void PlayerAtStep() {
 }
 
 bool ActorsInUse(int& used, int& capacity) { return ActorUsage(used, capacity); }
+
+bool EnableMpAiPlacement() {
+    static bool s_done = false;
+    if (s_done) return true;
+    if (!s_base) return false;
+    constexpr uintptr_t kAiPlaceGateCallRva = 0x6C2B2B;   // E8 2C 60 99 FF  call 0x58B5C (game_is_campaign_or_survival)
+    static const uint8_t expect[] = { 0xE8, 0x2C, 0x60, 0x99, 0xFF };
+    static const uint8_t patch[] = { 0xB0, 0x01, 0x90, 0x90, 0x90 };   // mov al, 1 ; nop x3
+    auto* site = reinterpret_cast<uint8_t*>(s_base + kAiPlaceGateCallRva);
+    if (std::memcmp(site, patch, sizeof(patch)) == 0) { s_done = true; return true; }
+    DWORD old = 0;
+    if (std::memcmp(site, expect, sizeof(expect)) == 0 && VirtualProtect(site, sizeof(patch), PAGE_EXECUTE_READWRITE, &old)) {
+        std::memcpy(site, patch, sizeof(patch));
+        VirtualProtect(site, sizeof(patch), old, &old);
+        FlushInstructionCache(GetCurrentProcess(), site, sizeof(patch));
+        NOBLE_INFO("SpawnTest: map AI: ai_place allowed outside campaign / Firefight (patched hr+0x{:X})", kAiPlaceGateCallRva);
+        s_done = true;
+        return true;
+    }
+    NOBLE_WARN("SpawnTest: map AI: ai_place gate bytes at hr+0x{:X} do not match; not patched", kAiPlaceGateCallRva);
+    return false;
+}
+
+bool MapHasAiPaths() {
+    if (!s_base) return false;
+    const uint8_t* scen = *reinterpret_cast<uint8_t* const*>(s_base + kScenarioRva);
+    if (!scen || *reinterpret_cast<const int32_t*>(scen + 0x398) <= 0) return false;
+    const int32_t bsps = (std::min)(*reinterpret_cast<const int32_t*>(scen + 0x50), 16);
+    for (int bsp = 0; bsp < bsps; ++bsp)   // per-BSP runtime pathfinding pointer (set by 0x97C70 when the BSP loads)
+        if (*reinterpret_cast<const uint64_t*>(s_base + 0x27B7C18 + static_cast<size_t>(bsp) * 0x490)) return true;
+    return false;
+}
+
+int PlaceMapSquads() {
+    if (!s_base || !s_aiPlace) return -1;
+    const uint8_t* scen = *reinterpret_cast<uint8_t* const*>(s_base + kScenarioRva);
+    if (!scen) return -1;
+    const int32_t squads = *reinterpret_cast<const int32_t*>(scen + 0x398);
+    int before = 0, after = 0, capacity = 0;
+    if (!ActorUsage(before, capacity)) return -1;
+    for (int32_t i = 0; i < squads; ++i) s_aiPlace(0x20000000u | static_cast<uint32_t>(i), -1, 0);
+    ActorUsage(after, capacity);
+    NOBLE_INFO("SpawnTest: map AI: placed {} squads | actors {} -> {} / {}", squads, before, after, capacity);
+    return after - before;
+}
 
 int AlliesAlive() {
     ActorPool actors;

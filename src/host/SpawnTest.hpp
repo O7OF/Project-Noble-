@@ -33,6 +33,15 @@ int AlliesAlive();
 // Live actor pool usage (game thread). False if the pool is not readable.
 bool ActorsInUse(int& used, int& capacity);
 
+// MAP AI (Phase 7). ai_place refuses outside campaign / Firefight; this lets it run in custom games and Forge by
+// changing only ai_place's own game_is_campaign_or_survival call (hr+0x6C2B2B). Idempotent; true once patched.
+bool EnableMpAiPlacement();
+// True when the loaded map has AI paths: a baked nav mesh loaded for one of its BSPs and at least one squad
+// (game thread). Stock MP maps have neither.
+bool MapHasAiPaths();
+// ai_place for every squad the map defines (game thread). Returns the number of new actors, -1 if not possible.
+int PlaceMapSquads();
+
 // Development builds only (no-op otherwise). Call once after haloreach.dll is loaded.
 void Install(HMODULE engine);
 

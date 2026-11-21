@@ -1950,6 +1950,10 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   const char *const kOptionsTip =
       "Uses the game type's own settings. Edit them from GAME OPTIONS on "
       "Custom Game, before hosting.";
+  const char *const kMapAiTip =
+      "Host option: on maps built with AI paths (Noble's Forge World), the "
+      "map's own AI squads join the match a few seconds in and come back "
+      "after they have all died. No effect on other maps.";
   const bool playlistActive =
       st.isLobbyHost && st.playlistChoice >= 0 &&
       st.playlistChoice < static_cast<int>(st.playlists.size());
@@ -2032,6 +2036,10 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     optRows.push_back({"GAME OPTIONS", forgeOptVal, false, st.isLobbyHost,
                        "Customize player traits, shields, speed, damage, and "
                        "game options for Forge."});
+    if (st.isLobbyHost)
+      optRows.push_back({"MAP AI",
+                         Settings::Get().Snapshot().hostMapAi ? "ON" : "OFF",
+                         false, true, kMapAiTip});
     if (st.isLobbyHost)
       optRows.push_back(
           {"START GAME", "", true, true, "Start the selected Forge session."});
@@ -2157,6 +2165,10 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     else
       optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
                          false, false, hostModeTip});
+    if (st.isLobbyHost)
+      optRows.push_back({"MAP AI",
+                         Settings::Get().Snapshot().hostMapAi ? "ON" : "OFF",
+                         false, true, kMapAiTip});
     if (st.isLobbyHost)
       optRows.push_back(
           {"START GAME", "", true, true, "Start the selected custom game."});
@@ -2455,6 +2467,14 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       Settings::Get().Update(d);
       NOBLE_INFO("FrontEndMenu: lobby max ping set to {} ms (0 = no limit)",
                  d.hostMaxPingMs);
+      MenuSounds::Change();
+    } else if (row.label == "MAP AI") {
+      if (!st.isLobbyHost)
+        return;
+      SettingsData d = Settings::Get().Snapshot();
+      d.hostMapAi = d.hostMapAi ? 0 : 1;
+      Settings::Get().Update(d);
+      NOBLE_INFO("FrontEndMenu: map AI {}", d.hostMapAi ? "on" : "off");
       MenuSounds::Change();
     } else if (row.label == "ALLIES") {
       if (!st.isLobbyHost)
