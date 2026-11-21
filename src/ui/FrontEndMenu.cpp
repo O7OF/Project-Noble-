@@ -1,5 +1,7 @@
 #include "FrontEndInternal.hpp"
+#include "common/EngineModule.hpp"
 #include "engine/ParticleTint.hpp"
+#include "engine/VariantRules.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "host/SlotPatch.hpp"
 #include "network/HostModeration.hpp"
@@ -6643,6 +6645,57 @@ bool FrontEndMenu::ShouldShow() {
   return !hasMap || menuRequested;
 }
 
+#ifdef NOBLE_DEV_BUILD
+// Dev: "-decode-variants" (runs once, on the first menu frame after haloreach.dll
+// is loaded, which the decoder needs).
+static void DumpVariantsForResearch(OverlayContext &ctx) {
+  static bool s_done = false;
+  if (s_done || !noble::ReachModule())
+    return;
+  s_done = true;
+  // Dev: "-decode-variants" decodes every Firefight variant (and the stock Slayer)
+  // with the engine's own decoder and saves the decoded records to
+  // data\userdata\claude-tests-2026-11-11\vdump, to map the Firefight rules.
+  if (wcsstr(GetCommandLineW(), L"-decode-variants") != nullptr) {
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const std::filesystem::path dir = std::filesystem::path(exe).parent_path() /
+                                      "data" / "userdata" /
+                                      "claude-tests-2026-11-11" / "vdump";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::vector<const MenuVariant *> all;
+    for (const MenuVariant &v : ctx.ffVariants)
+      all.push_back(&v);
+    for (const MenuVariant &v : ctx.variants)
+      if (v.path.filename() == L"slayer_054.bin")
+        all.push_back(&v);
+    int written = 0;
+    for (const MenuVariant *v : all) {
+      std::vector<uint8_t> decoded;
+      if (v->custom) {
+        // A player-made mode: decode its base and apply its rules, as a launch does.
+        VariantRules::Preset preset;
+        if (!VariantRules::Load(v->path, preset) ||
+            !VariantRules::Decode(VariantBasePath(ctx.reachDir, preset.base), decoded))
+          continue;
+        VariantRules::Apply(preset, decoded.data());
+      } else if (!VariantRules::Decode(v->path, decoded)) {
+        continue;
+      }
+      std::ofstream out(dir / (v->path.stem().wstring() + L".dec"),
+                        std::ios::binary | std::ios::trunc);
+      out.write(reinterpret_cast<const char *>(decoded.data()),
+                static_cast<std::streamsize>(decoded.size()));
+      ++written;
+      NOBLE_INFO("FrontEndMenu: -decode-variants {} ('{}')",
+                 v->path.filename().string(), v->label);
+    }
+    NOBLE_INFO("FrontEndMenu: -decode-variants wrote {} file(s)", written);
+  }
+}
+#endif
+
 void FrontEndMenu::Initialize(const std::filesystem::path &reachDir) {
   // A relaunch request is only valid while the match that wrote it is exiting
   // (PLAY AGAIN / NEXT MISSION). One left over from a killed match must not
@@ -7302,6 +7355,9 @@ bool FrontEndMenu::HoldFrame() {
 }
 
 void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain *swapChain, bool clear) {
+#ifdef NOBLE_DEV_BUILD
+  DumpVariantsForResearch(GetOverlayCtx());
+#endif
   if (IsMatchRunning())
     return;
   OverlayContext &ctx = GetOverlayCtx();

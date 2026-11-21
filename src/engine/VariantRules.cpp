@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -82,6 +83,12 @@ const std::vector<Rule>& Rules() {
     constexpr const char* kMove = "Movement";
     constexpr const char* kLook = "Appearance";
     constexpr const char* kSense = "Sensors";
+    constexpr const char* kFirefight = "Firefight Waves";
+    static const std::vector<int> s_ffInitial = { 0x786, 0x7BA };
+    static const std::vector<int> s_ffMain = { 0x795, 0x7C9 };
+    static const std::vector<int> s_ffBoss = { 0x7A4, 0x7D8 };
+    static const std::vector<int> s_ffDropships = { 0x75F, 0x76E, 0x784, 0x793, 0x7A2, 0x7B8, 0x7C7, 0x7D6 };
+    static const Names s_offOn01 = { "Off", "On" };
     static const std::vector<Rule> s_rules = {
         { "teams", "Teams", kGeneral, "Players fight in teams instead of every player for themselves.", 0x2BC, 0, 0, 1, "", nullptr },
         { "score_to_win", "Score to Win", kGeneral, "Points needed to win. Each game type counts them its own way.", 0xF840, -1, 0, 1000, "", nullptr, 2 },
@@ -121,6 +128,16 @@ const std::vector<Rule>& Rules() {
         { "aura", "Aura", kLook, "A glow drawn around each player.", 0x327, -1, 0, 4, "", &s_aura },
         { "tracker_mode", "Motion Tracker Mode", kSense, "When the motion tracker works.", 0x32C, -1, 0, 4, "", &s_tracker },
         { "tracker_range", "Motion Tracker Range", kSense, "How far it sees.", 0x32D, -1, 0, 4, "", &s_range },
+        // Firefight waves (decoded survival record, mapped 2026-11-21 by diffing the stock Firefight modes): each of
+        // the three rounds at 0x74C / 0x780 / 0x7B4 holds a 4-byte skull mask and three 15-byte waves (initial, main,
+        // boss): dropship flag, order flag, squad count, 12 squad types. The bonus round time is at 0x7E8 and its wave
+        // at 0x7F0.
+        { "ff_initial_squads", "Initial Wave Squads", kFirefight, "Enemy squads in the first wave of every round. Higher counts repeat the wave's own enemy types.", 0x752, -1, 1, 12, "", nullptr, 1, nullptr, &s_ffInitial, 1, true },
+        { "ff_main_squads", "Main Wave Squads", kFirefight, "Enemy squads in each main wave of every round.", 0x761, -1, 1, 12, "", nullptr, 1, nullptr, &s_ffMain, 1, true },
+        { "ff_boss_squads", "Boss Wave Squads", kFirefight, "Enemy squads in the last wave of every round.", 0x770, -1, 1, 12, "", nullptr, 1, nullptr, &s_ffBoss, 1, true },
+        { "ff_bonus_squads", "Bonus Wave Squads", kFirefight, "Enemy squads in the bonus round.", 0x7F2, -1, 1, 12, "", nullptr, 1, nullptr, nullptr, 1, true },
+        { "ff_dropships", "Dropships", kFirefight, "Enemies arrive by dropship (on) or appear at the map's spawn points (off).", 0x750, -1, 0, 1, "", &s_offOn01, 1, nullptr, &s_ffDropships, 0, true },
+        { "ff_bonus_time", "Bonus Round Time", kFirefight, "Seconds the bonus round lasts.", 0x7E8, -1, 15, 300, " s", nullptr, 2, nullptr, nullptr, 0, true },
     };
     return s_rules;
 }
@@ -181,18 +198,36 @@ int Read(const Rule& rule, const uint8_t* decoded) {
 
 void Write(const Rule& rule, uint8_t* decoded, int value) {
     value = std::clamp(value, rule.minValue, rule.maxValue);
-    if (rule.bytes == 2) {
-        decoded[rule.offset] = static_cast<uint8_t>(value & 0xFF);
-        decoded[rule.offset + 1] = static_cast<uint8_t>(value >> 8);
-        return;
+    std::vector<int> offsets = { rule.offset };
+    if (rule.also) offsets.insert(offsets.end(), rule.also->begin(), rule.also->end());
+    for (const int offset : offsets) {
+        if (offset < 0 || offset + 13 >= static_cast<int>(kDecodedSize)) continue;
+        if (rule.kind == 1) {
+            // Firefight squad count: fill the new squad-type slots with the wave's own types, in order.
+            const int old = decoded[offset];
+            decoded[offset] = static_cast<uint8_t>(value);
+            if (old > 0 && value > old)
+                for (int slot = old; slot < value && slot < 12; ++slot)
+                    decoded[offset + 1 + slot] = decoded[offset + 1 + (slot % old)];
+            continue;
+        }
+        if (rule.bytes == 2) {
+            decoded[offset] = static_cast<uint8_t>(value & 0xFF);
+            decoded[offset + 1] = static_cast<uint8_t>(value >> 8);
+            continue;
+        }
+        uint8_t& byte = decoded[offset];
+        if (rule.bit >= 0) byte = static_cast<uint8_t>(value ? byte | (1u << rule.bit) : byte & ~(1u << rule.bit));
+        else byte = static_cast<uint8_t>(value);
     }
-    uint8_t& byte = decoded[rule.offset];
-    if (rule.bit >= 0) byte = static_cast<uint8_t>(value ? byte | (1u << rule.bit) : byte & ~(1u << rule.bit));
-    else byte = static_cast<uint8_t>(value);
 }
 
 void Apply(const Preset& preset, uint8_t* decoded) {
+    std::string base = preset.base;
+    for (char& c : base) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const bool firefightBase = base.rfind("hr_ff_", 0) == 0;
     for (const Rule& rule : Rules()) {
+        if (rule.firefight && !firefightBase) continue;   // Firefight offsets never go into another mode
         const auto it = preset.values.find(rule.key);
         if (it != preset.values.end()) Write(rule, decoded, it->second);
     }

@@ -28,6 +28,10 @@ struct Rule {
     const std::vector<std::string>* names;   // optional labels: names[value - minValue]
     int bytes = 1;           // 2 = little-endian 16-bit
     const std::vector<int>* order = nullptr;  // optional: the values a player steps through, in order
+    const std::vector<int>* also = nullptr;   // optional: more offsets that get the same value (every round)
+    int kind = 0;            // 1 = a Firefight wave's squad count: the 12 squad-type slots follow the count byte,
+                             //     and raising the count copies the wave's own squad types into the new slots
+    bool firefight = false;  // only shown / applied for Firefight variants
 };
 
 const std::vector<Rule>& Rules();

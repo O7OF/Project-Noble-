@@ -1949,6 +1949,8 @@ void DrawTacticalGameOptions(OverlayContext &ctx, const Ui &ui, float left,
   const bool filtering = !query.empty() || st.optionsChangedOnly;
   for (int i = 0; i < static_cast<int>(rules.size()); ++i) {
     const VariantRules::Rule &r = rules[i];
+    if (r.firefight && !ff)
+      continue; // Firefight wave rules only in Firefight
     const bool isChanged = st.optionsValues.count(r.key) != 0;
     const bool matchesQuery = query.empty() || ContainsNoCase(r.label, query) ||
                               ContainsNoCase(r.help, query) ||
