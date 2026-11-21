@@ -2,6 +2,21 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
+## Status (2026-11-21 16:40) - Place a squad at any point; spawn heights from the nav mesh (tested, pushed)
+
+- `spawn::PlaceSquadAt(name, pos)` (commit 7ade3bb): moves the squad's spawn points to a 1.2 m ring around `pos`,
+  stands each on the nav mesh (`NavGroundZ`: nearest-height vertex within 4 m in x/y of the runtime pathfinding data,
+  vertices at +0x30 count / +0x34 packed, 12 bytes each), calls ai_place, then restores the map's points. Dev trigger
+  `-map-ai-at "squad|x,y,z@seconds"` (env `NOBLE_MAP_AI_AT`). This is the call a Forge-menu "place AI" will use.
+- Test p8f: two Elites placed at 38.2,32.4 stood at z 3.8-4.1 and walked off (23 m in 15 s).
+- p8c-p8e: 36.7,43.4 is a **death spot** (actors placed there end at z -3..-5 and die; a player teleported there
+  dies too), so it was the test site, not the code.
+- `PlaceMapSquads` (commit 4b0d0b5) now stands every squad spawn point on the nav mesh before placing (the fixed
+  authored z 5.5 dropped one actor to z -47/-50). p8g (settings `hostMapAi: 1`): 3 points corrected, 14 AI at
+  z 4.0-6.4, none fell; count drops to 12 because Troopers and Covenant fight each other.
+- Forge-menu "place AI" is **not wired yet**: Noble's `forge_palette.json` has no spawn UI. Needs a Forge-side
+  trigger (palette entry or hotkey) calling `PlaceSquadAt` at the cursor / player, and a hands-on test by Tyler.
+
 ## Status (2026-11-21 16:10) - Step 2: MAP AI host option + whole-map zones (tested)
 
 **MAP AI (host option, custom games and Forge lobbies):** `Settings::hostMapAi` (0/1), lobby row "MAP AI" (host
@@ -180,11 +195,11 @@ HREK build)
   `-ai-watch` (now also dumps one actor, the per-BSP pathfinding pointers and the biped ground fields once),
   `-player-at x,y,z@s`.
 
-## Next
-1. Check what the solo build dropped (803 vs 836 MB): Forge palette / map variant objects, MP spawns, game types;
-   if something MP-only is missing, try building MP and copying only the BSP resource, or patching the builder's
-   choice instead.
-2. Forge pieces: place a small layout's objects as scenery in a scenario copy, bake, confirm AI walk onto them.
-3. Team rules in MP (Troopers vs Covenant vs players); one spawn point at (?, ?) drops an actor to z -47.
-4. Shipping: map size, map hash for online play, guests (the host places AI; guests need the same map), and
-   whether `-mp-ai` / `-mp-ai-pathing` become a host option.
+## Next (16:40; Tyler's order 1 -> 5)
+1. Done: solo build dropped 403 MP tags; fixed with "don't strip pathfinding" (14:15).
+2. Mostly done: MAP AI host option, whole-map zones, PlaceSquadAt, nav-mesh heights. Left: Forge-menu trigger for
+   `PlaceSquadAt` (hands-on test); team rules (Troopers vs Covenant vs players).
+3. Forge pieces: place a small layout's objects as scenery in a scenario copy, bake, confirm AI walk onto them.
+4. One-command bake script for other maps (BSP flag, "don't strip pathfinding", characters, squads,
+   generate-pathfinding, zones from nav mesh, build-cache-file).
+5. Shipping: map size, map hash for online play, guests (the host places AI; guests need the same map).
