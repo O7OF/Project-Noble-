@@ -31,6 +31,16 @@ public:
     // Ends the current round on the engine thread's next frame (same call as the script command
     // mp_round_end). Used by a passed END ROUND vote.
     static void RequestRoundEnd();
+    // Places a scenario squad by name through the engine's ai_place worker. GAME thread only (the
+    // per-player control tick); the slot-1 frame tick lacks the engine's thread-local AI state.
+    static bool PlaceSquadByName(const char* squadName, int count);
+    // GAME thread only. Fills a scenario squad's spawn points with a squad_template tag (by tag index), the
+    // way ai_place_wave fills Firefight squads. count -1 = the template's default.
+    static bool PlaceSquadTemplate(const char* squadName, uint16_t templateTagIndex, int count);
+    // Thread-safe: queues a placement for the next game-thread tick. count -1 = the squad's default.
+    static void RequestSquadPlacement(const char* squadName, int count);
+    // Called by SpawnTest's per-player control tick hook (0x61A38, player 0) on the game thread.
+    static void GameThreadTick();
 
     // Sends the settled award to every connected guest as a match_over packet (host only). Called
     // after any settlement, including the fallback used when the engine never produced results, so

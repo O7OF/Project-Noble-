@@ -3,6 +3,7 @@
 #include "hooks/HookManager.hpp"
 #include "engine/DevCheats.hpp"
 #include "engine/PelicanControls.hpp"
+#include "engine/ReachHost.hpp"
 #include "network/AuthClient.hpp"
 
 #include <algorithm>
@@ -600,6 +601,7 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
     noble::DevCheats::GameTick(b);
 #endif
     noble::pelican::GameTick(s_base);
+    noble::ReachHost::GameThreadTick();   // queued squad placements (Firefight allies) need this thread
     if (!s_firstTick) s_firstTick = GetTickCount64();
 #ifndef NOBLE_DEDICATED
     const bool isDev = noble::AuthClient::Get().IsDeveloper();

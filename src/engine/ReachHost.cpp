@@ -7,6 +7,7 @@
 #include "ui/UiArt.hpp"
 #include "common/Logger.hpp"
 #include "common/EngineModule.hpp"
+#include "host/PoolReport.hpp"
 #include "common/SaveCodec.hpp"
 #include "common/ArmoryVisor.hpp"
 #include "common/ArmorEffects.hpp"
@@ -47,6 +48,7 @@
 #include <psapi.h>
 #include <intrin.h>
 #include <atomic>
+#include <cstring>
 #include <functional>
 #include <array>
 #include <utility>
@@ -310,6 +312,329 @@ static std::atomic<bool> s_testCaptureRequest{false};  // -scoreboard-at: screen
 // game session starts, the same as the script command mp_round_end (haloreach+0x7B3EC(-1, 0, 1),
 // called by its evaluator at +0x1B699C). Lets automated runs reach the post-game results (slot 6).
 // Runs on the engine thread (slot 1), which is where the engine's own scripts run.
+static bool ReadBytesSEH(const void* src, void* dst, size_t n) {
+    __try { std::memcpy(dst, src, n); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+#ifdef NOBLE_DEV_BUILD
+// Dev research (Phase 5b, Firefight allies): "-ff-dump-squads" logs the scenario's squad block once after loading,
+// to find where a squad's name is stored. Scenario pointer haloreach+0xC1A230; squad count at +0x398, block at
+// +0x39C (tag address: page table haloreach+0x4E39F20[addr >> 28] + addr * 4), 0x6C bytes per squad.
+static void DumpScenarioSquadsOnce() {
+    static bool s_done = false;
+    static const bool s_wanted = wcsstr(GetCommandLineW(), L"-ff-dump-squads") != nullptr;
+    if (s_done || !s_wanted) return;
+    HMODULE reach = noble::ReachModule();
+    if (!reach) return;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(reach);
+    uintptr_t scenario = 0;
+    // Retry every frame until the scenario and its squads are there (they arrive a little after loading ends).
+    if (!ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A230), &scenario, sizeof(scenario)) || !scenario) return;
+    int32_t count = 0; uint32_t blockAddr = 0;
+    ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x398), &count, 4);
+    ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x39C), &blockAddr, 4);
+    if (count <= 0 || blockAddr == 0) return;
+    s_done = true;
+    uintptr_t page = 0;
+    ReadBytesSEH(reinterpret_cast<void*>(base + 0x4E39F20 + static_cast<uintptr_t>(blockAddr >> 28) * 8), &page, 8);
+    const uintptr_t block = page + static_cast<uint64_t>(blockAddr) * 4;
+    NOBLE_INFO("SquadDump: scenario 0x{:X} squads {} block 0x{:X} -> 0x{:X}", scenario, count, blockAddr, block);
+    for (int i = 0; i < count && i < 400; ++i) {
+        uint8_t rec[0x6C] = {};
+        if (!ReadBytesSEH(reinterpret_cast<void*>(block + static_cast<uintptr_t>(i) * 0x6C), rec, sizeof(rec))) break;
+        // A printable name anywhere in the record?
+        std::string name;
+        for (int o = 0; o < 0x6C && name.empty(); ++o) {
+            int n = 0;
+            while (o + n < 0x6C && rec[o + n] >= 0x20 && rec[o + n] < 0x7F) ++n;
+            if (n >= 4 && (o + n == 0x6C || rec[o + n] == 0)) name = std::string(reinterpret_cast<char*>(rec + o), n) + " @+" + std::to_string(o);
+        }
+        char hex[0x6C * 3 + 1] = {};
+        for (int b = 0x20; b < 0x6C; ++b) std::snprintf(hex + (b - 0x20) * 3, 4, "%02X ", rec[b]);
+        // +0x48 is the field ai_place_wave matches against a wave template entry's +0x20 (FUN_18070bec8).
+        int32_t f48 = 0; std::memcpy(&f48, rec + 0x48, 4);
+        NOBLE_INFO("SquadDump: [{}] name '{}' +48={} | +20..: {}", i, name, f48, hex);
+    }
+    // Squad groups: count scenario+0x38C, block +0x390. Element size unknown: dump the raw head of the block.
+    {
+        int32_t groups = 0; uint32_t gAddr = 0; uintptr_t gPage = 0;
+        ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x38C), &groups, 4);
+        ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x390), &gAddr, 4);
+        ReadBytesSEH(reinterpret_cast<void*>(base + 0x4E39F20 + static_cast<uintptr_t>(gAddr >> 28) * 8), &gPage, 8);
+        const uintptr_t gBlock = gPage + static_cast<uint64_t>(gAddr) * 4;
+        NOBLE_INFO("SquadDump: {} squad groups, block 0x{:X}", groups, gBlock);
+        // Names are char[32]; find each by scanning the block for printable runs that start on a 4-byte boundary.
+        uint8_t raw[0x1000] = {};
+        const size_t want = std::min<size_t>(sizeof(raw), static_cast<size_t>(std::max(groups, 0)) * 0x40 + 0x40);
+        if (groups > 0 && ReadBytesSEH(reinterpret_cast<void*>(gBlock), raw, want)) {
+            for (size_t o = 0; o + 4 < want; o += 4) {
+                size_t n = 0;
+                while (o + n < want && raw[o + n] >= 0x20 && raw[o + n] < 0x7F) ++n;
+                if (n >= 4 && (o == 0 || raw[o - 1] == 0)) {
+                    NOBLE_INFO("SquadDump: group name '{}' at block+0x{:X}", std::string(reinterpret_cast<char*>(raw + o), n), o);
+                    o += (n & ~size_t(3));
+                }
+            }
+        }
+    }
+    // Wave templates (ai_place_wave): globals qword haloreach+0xC1A238, tag index at +0x50C; tag instance via the
+    // tag table (qword haloreach+0xC1A600, 8 bytes per tag, address at +4). Block count +0x40 / address +0x44,
+    // 0x14 bytes per entry: string_id name at +0, template tag index at +0x10. A template tag: count +0, address +4,
+    // 0x24 bytes per entry (+0x0C param, +0x1C weight, +0x1E/+0x1F limits, +0x20 squad match field).
+    {
+        auto pageAddr = [&](uint32_t packed) -> uintptr_t {
+            uintptr_t pg = 0;
+            ReadBytesSEH(reinterpret_cast<void*>(base + 0x4E39F20 + static_cast<uintptr_t>(packed >> 28) * 8), &pg, 8);
+            return pg ? pg + static_cast<uint64_t>(packed) * 4 : 0;
+        };
+        auto tagInstance = [&](uint32_t tagIndex) -> uintptr_t {
+            uintptr_t table = 0; uint32_t packed = 0;
+            ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A600), &table, 8);
+            if (!table || tagIndex == 0xFFFFFFFFu) return 0;
+            ReadBytesSEH(reinterpret_cast<void*>(table + 4 + static_cast<uintptr_t>(tagIndex & 0xFFFF) * 8), &packed, 4);
+            return packed ? pageAddr(packed) : 0;
+        };
+        uintptr_t globals = 0; uint32_t waveTag = 0xFFFFFFFFu;
+        ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A238), &globals, 8);
+        if (globals) ReadBytesSEH(reinterpret_cast<void*>(globals + 0x50C), &waveTag, 4);
+        const uintptr_t waves = tagInstance(waveTag);
+        int32_t nTemplates = 0; uint32_t tAddr = 0;
+        if (waves) {
+            ReadBytesSEH(reinterpret_cast<void*>(waves + 0x40), &nTemplates, 4);
+            ReadBytesSEH(reinterpret_cast<void*>(waves + 0x44), &tAddr, 4);
+        }
+        NOBLE_INFO("SquadDump: wave templates: globals 0x{:X} tag 0x{:X} instance 0x{:X} count {}", globals, waveTag, waves, nTemplates);
+        const uintptr_t tBlock = tAddr ? pageAddr(tAddr) : 0;
+        for (int i = 0; tBlock && i < nTemplates && i < 128; ++i) {
+            uint32_t rec[5] = {};
+            ReadBytesSEH(reinterpret_cast<void*>(tBlock + static_cast<uintptr_t>(i) * 0x14), rec, sizeof(rec));
+            const uintptr_t tmpl = tagInstance(rec[4]);
+            int32_t entries = 0; uint32_t eAddr = 0;
+            if (tmpl) { ReadBytesSEH(reinterpret_cast<void*>(tmpl), &entries, 4); ReadBytesSEH(reinterpret_cast<void*>(tmpl + 4), &eAddr, 4); }
+            std::string line;
+            const uintptr_t eBlock = eAddr ? pageAddr(eAddr) : 0;
+            for (int j = 0; eBlock && j < entries && j < 8; ++j) {
+                uint8_t e[0x24] = {};
+                ReadBytesSEH(reinterpret_cast<void*>(eBlock + static_cast<uintptr_t>(j) * 0x24), e, sizeof(e));
+                uint32_t p0c = 0; int16_t w = 0; int32_t match = 0;
+                std::memcpy(&p0c, e + 0x0C, 4); std::memcpy(&w, e + 0x1C, 2); std::memcpy(&match, e + 0x20, 4);
+                line += " {p=" + std::to_string(p0c) + " w=" + std::to_string(w) + " lim=" + std::to_string(int(int8_t(e[0x1E]))) +
+                        "/" + std::to_string(int(int8_t(e[0x1F]))) + " match=" + std::to_string(match) + "}";
+            }
+            NOBLE_INFO("SquadDump: template [{}] sid 0x{:X} tag 0x{:X} entries {}:{}", i, rec[0], rec[4], entries, line);
+        }
+    }
+}
+#endif
+
+// Firefight allies (Phase 5b): place a scenario squad by name on the engine thread through ai_place's worker
+// (haloreach+0x6C2B10, called by the ai_place script evaluators as worker(ai, count, in_limbo); a squad's ai value
+// is (1 << 29) | squad index).
+static int FindScenarioSquad(const char* wanted) {
+    HMODULE reach = noble::ReachModule();
+    if (!reach || !wanted || !*wanted) return -1;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(reach);
+    uintptr_t scenario = 0;
+    if (!ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A230), &scenario, sizeof(scenario)) || !scenario) return -1;
+    int32_t count = 0; uint32_t blockAddr = 0;
+    ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x398), &count, 4);
+    ReadBytesSEH(reinterpret_cast<void*>(scenario + 0x39C), &blockAddr, 4);
+    if (count <= 0 || count > 4096 || blockAddr == 0) return -1;
+    uintptr_t page = 0;
+    ReadBytesSEH(reinterpret_cast<void*>(base + 0x4E39F20 + static_cast<uintptr_t>(blockAddr >> 28) * 8), &page, 8);
+    const uintptr_t block = page + static_cast<uint64_t>(blockAddr) * 4;
+    for (int i = 0; i < count; ++i) {
+        char name[32] = {};
+        if (!ReadBytesSEH(reinterpret_cast<void*>(block + static_cast<uintptr_t>(i) * 0x6C), name, sizeof(name) - 1)) return -1;
+        if (_stricmp(name, wanted) == 0) return i;
+    }
+    return -1;
+}
+
+static DWORD s_placeExcCode = 0;
+static uintptr_t s_placeExcAddr = 0;
+static int PlaceSquadFilter(EXCEPTION_POINTERS* info) {
+    s_placeExcCode = info->ExceptionRecord->ExceptionCode;
+    s_placeExcAddr = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+static bool PlaceSquadSEH(uintptr_t fn, uint64_t ai, short count) {
+    __try {
+        reinterpret_cast<void(__fastcall*)(uint64_t, short, char)>(fn)(ai, count, 0);
+        return true;
+    } __except (PlaceSquadFilter(GetExceptionInformation())) {
+        return false;
+    }
+}
+
+// Places a squad template (squad_template tag) into a scenario squad's spawn points: the call ai_place_wave makes
+// for each squad it fills (FUN_18070bec8 -> FUN_180694cb4(squad, params)). params: int template datum, u16 -1,
+// u16 -1, i16 count (-1 = template default), u16 flags (2 = normal, 0x12 = in limbo), u8 0. Firefight squads have
+// spawn points but no characters of their own, so plain ai_place (template -1) creates nothing there.
+#pragma pack(push, 1)
+struct SquadPlaceParams {
+    int32_t templateDatum = -1;
+    uint16_t a = 0xFFFF;
+    uint16_t b = 0xFFFF;
+    int16_t count = -1;
+    uint16_t flags = 2;
+    uint8_t limbo = 0;
+    uint8_t pad[7] = {};
+};
+#pragma pack(pop)
+static bool PlaceTemplateSEH(uintptr_t fn, uint32_t squad, SquadPlaceParams* params) {
+    __try {
+        reinterpret_cast<void(__fastcall*)(uint64_t, void*)>(fn)(squad, params);
+        return true;
+    } __except (PlaceSquadFilter(GetExceptionInformation())) {
+        return false;
+    }
+}
+
+// Datum (salt << 16 | index) of a loaded tag by index, from the tag instance table (qword haloreach+0xC1A600,
+// 8 bytes per tag: u16 group index, u16 salt, u32 address). 0xFFFFFFFF if the slot is empty.
+static uint32_t TagDatumByIndex(uint16_t index) {
+    const uintptr_t base = reinterpret_cast<uintptr_t>(noble::ReachModule());
+    uintptr_t table = 0;
+    if (!base || !ReadBytesSEH(reinterpret_cast<void*>(base + 0xC1A600), &table, 8) || !table) return 0xFFFFFFFFu;
+    uint16_t entry[4] = {};
+    if (!ReadBytesSEH(reinterpret_cast<void*>(table + static_cast<uintptr_t>(index) * 8), entry, sizeof(entry))) return 0xFFFFFFFFu;
+    if (entry[2] == 0 && entry[3] == 0) return 0xFFFFFFFFu;
+    return (static_cast<uint32_t>(entry[1]) << 16) | index;
+}
+
+bool ReachHost::PlaceSquadTemplate(const char* squadName, uint16_t templateTagIndex, int count) {
+    HMODULE reach = noble::ReachModule();
+    const int index = FindScenarioSquad(squadName);
+    const uint32_t datum = TagDatumByIndex(templateTagIndex);
+    if (!reach || index < 0 || datum == 0xFFFFFFFFu) {
+        NOBLE_INFO("ReachHost: template placement refused (squad '{}' index {}, template 0x{:X} datum 0x{:X})",
+                   squadName ? squadName : "", index, templateTagIndex, datum);
+        return false;
+    }
+    SquadPlaceParams params;
+    params.templateDatum = static_cast<int32_t>(datum);
+    params.count = static_cast<int16_t>(count > 0 ? count : -1);
+    const bool ok = PlaceTemplateSEH(reinterpret_cast<uintptr_t>(reach) + 0x694CB4, static_cast<uint32_t>(index), &params);
+    NOBLE_INFO("ReachHost: placed template 0x{:X} (datum 0x{:X}) into squad '{}' (index {}, count {}) {}", templateTagIndex,
+               datum, squadName, index, count, ok ? "ok" : "FAILED");
+    if (!ok)
+        NOBLE_WARN("ReachHost: squad placement exception 0x{:X} at haloreach+0x{:X}", s_placeExcCode,
+                   s_placeExcAddr - reinterpret_cast<uintptr_t>(reach));
+    return ok;
+}
+
+bool ReachHost::PlaceSquadByName(const char* squadName, int count) {
+    HMODULE reach = noble::ReachModule();
+    const int index = FindScenarioSquad(squadName);
+    if (!reach || index < 0) {
+        NOBLE_INFO("ReachHost: squad '{}' not in this scenario", squadName ? squadName : "");
+        return false;
+    }
+    const uint64_t ai = (1ULL << 29) | static_cast<uint32_t>(index);
+    const bool ok = PlaceSquadSEH(reinterpret_cast<uintptr_t>(reach) + 0x6C2B10, ai,
+                                  static_cast<short>(count > 0 ? count : -1));
+    NOBLE_INFO("ReachHost: placed squad '{}' (index {}, count {}) {}", squadName, index, count, ok ? "ok" : "FAILED");
+    if (!ok)
+        NOBLE_WARN("ReachHost: ai_place worker exception 0x{:X} at haloreach+0x{:X}", s_placeExcCode,
+                   s_placeExcAddr - reinterpret_cast<uintptr_t>(reach));
+    return ok;
+}
+
+// Squad placements asked for from any thread. ai_place reads the engine's thread-local game state, so the
+// worker only works on the game thread: calling it from the slot-1 frame tick faults at haloreach+0x69552A.
+// SpawnTest's per-player control tick (0x61A38, installed in every build) drains this queue each frame.
+static std::mutex s_squadQueueLock;
+static std::vector<std::pair<std::string, int>> s_squadQueue;
+
+void ReachHost::RequestSquadPlacement(const char* squadName, int count) {
+    if (!squadName || !*squadName) return;
+    std::lock_guard<std::mutex> lock(s_squadQueueLock);
+    s_squadQueue.emplace_back(squadName, count);
+}
+
+#ifdef NOBLE_DEV_BUILD
+static void DumpScenarioSquadsOnce();
+static void PlaceSquadForTest();
+#endif
+
+void ReachHost::GameThreadTick() {
+#ifdef NOBLE_DEV_BUILD
+    DumpScenarioSquadsOnce();
+    PlaceSquadForTest();
+#endif
+    std::vector<std::pair<std::string, int>> work;
+    {
+        std::lock_guard<std::mutex> lock(s_squadQueueLock);
+        work.swap(s_squadQueue);
+    }
+    for (const auto& item : work) PlaceSquadByName(item.first.c_str(), item.second);
+}
+
+#ifdef NOBLE_DEV_BUILD
+// Dev: "-ff-place-squad <name> -ff-place-at <seconds after loading>" places one squad (research / tests).
+static void PlaceSquadForTest() {
+    static std::string s_name;
+    static double s_at = -1.0;
+    static int s_count = -1;
+    static int s_template = -1;   // squad_template tag index (hex on the command line), -1 = plain ai_place
+    static bool s_parsed = false, s_done = false;
+    static ULONGLONG s_start = 0;
+    if (!s_parsed) {
+        s_parsed = true;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-ff-place-squad") == 0) {
+                char narrow[64] = {};
+                WideCharToMultiByte(CP_UTF8, 0, argv[i + 1], -1, narrow, sizeof(narrow) - 1, nullptr, nullptr);
+                s_name = narrow;
+            }
+            if (_wcsicmp(argv[i], L"-ff-place-at") == 0) s_at = _wtof(argv[i + 1]);
+            if (_wcsicmp(argv[i], L"-ff-place-count") == 0) s_count = _wtoi(argv[i + 1]);
+            if (_wcsicmp(argv[i], L"-ff-place-template") == 0) s_template = static_cast<int>(wcstol(argv[i + 1], nullptr, 16));
+        }
+        if (argv) LocalFree(argv);
+    }
+    if (s_done || s_name.empty() || s_at < 0.0) return;
+    if (s_start == 0) s_start = GetTickCount64();
+    if (GetTickCount64() - s_start < static_cast<ULONGLONG>(s_at * 1000.0)) return;
+    s_done = true;
+    // Live actor/squad pool usage around the call proves whether the worker actually spawned anyone.
+    const uintptr_t base = reinterpret_cast<uintptr_t>(noble::ReachModule());
+    MODULEINFO mi{};
+    GetModuleInformation(GetCurrentProcess(), noble::ReachModule(), &mi, sizeof(mi));
+    auto usage = [&](const char* pool) -> int {
+        for (const auto& p : noble::pools::Scan(base, mi.SizeOfImage))
+            if (p.name == pool) return p.used == UINT32_MAX ? -1 : static_cast<int>(p.used);
+        return -1;
+    };
+    {
+        // Gates inside the worker: game globals (root+0x48)+0x10 == 1 (FUN_180058b5c) and the AI globals
+        // byte (root+0x30)+1 != 0 (FUN_180694cb4). Root = gs:[0x58][tls_index].
+        uint32_t tlsIndex = 0;
+        uint64_t tlsArray = __readgsqword(0x58), root = 0, gameGlobals = 0, aiGlobals = 0;
+        uint8_t authoritative = 0xEE, aiEnabled = 0xEE;
+        ReadBytesSEH(reinterpret_cast<void*>(base + 0xC17B18), &tlsIndex, 4);
+        ReadBytesSEH(reinterpret_cast<void*>(tlsArray + tlsIndex * 8ULL), &root, 8);
+        if (root) {
+            ReadBytesSEH(reinterpret_cast<void*>(root + 0x48), &gameGlobals, 8);
+            ReadBytesSEH(reinterpret_cast<void*>(root + 0x30), &aiGlobals, 8);
+        }
+        if (gameGlobals) ReadBytesSEH(reinterpret_cast<void*>(gameGlobals + 0x10), &authoritative, 1);
+        if (aiGlobals) ReadBytesSEH(reinterpret_cast<void*>(aiGlobals + 1), &aiEnabled, 1);
+        NOBLE_INFO("ReachHost: ai_place gates: thread {} root 0x{:X} game+0x10 = {} ai+1 = {}", GetCurrentThreadId(),
+                   root, authoritative, aiEnabled);
+    }
+    const int actorsBefore = usage("actor");
+    if (s_template >= 0)
+        ReachHost::PlaceSquadTemplate(s_name.c_str(), static_cast<uint16_t>(s_template), s_count);
+    else
+        ReachHost::PlaceSquadByName(s_name.c_str(), s_count);
+    NOBLE_INFO("ReachHost: test placement '{}' count {}: actors {} -> {}", s_name, s_count, actorsBefore, usage("actor"));
+}
+#endif
+
 static void EndRoundForTest() {
     // A passed END ROUND vote (or any other request) runs here, on the engine thread.
     if (s_roundEndRequest.exchange(false)) {
