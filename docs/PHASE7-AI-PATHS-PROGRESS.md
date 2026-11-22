@@ -307,3 +307,11 @@ HREK build)
    or keep it dev-only; map hash check so guests with the old map cannot join an AI session (O7: session / network);
    guests receive AI through the normal object sync (host-only placement; test with 2 players); MAP AI stays a host
    option. No public release without Tyler.
+
+## 2026-11-22 02:00 - Forge World pack: check for updates (3488105)
+
+- MODS > RECOMMENDED MAPS checks GitHub once per launch and on CHECK FOR UPDATES. It shows INSTALLED - <tag> / "Up to date", or UPDATE AVAILABLE with an UPDATE (size) button.
+- An old forge_halo.map is no longer reported as installed. The install record `data\cache\recommended\forge_world.installed` (tag, zip size, map size) decides. Without one, the map size is compared with the v0.20.35 AI map (838,791,168 bytes).
+- **Bug found and fixed:** GitHub's release list is ordered by tag commit date, not publish date. It listed v0.20.28 first, so DOWNLOAD in v0.20.35 fetches the **old v0.20.28 pack**. The lookup now asks /releases/latest first, then the newest published_at in the list.
+- **Released builds still have the bug** until a fix release (v0.20.36) ships. Waiting on Tyler's OK.
+- Tested: a scratch install with an old-size map showed "UPDATE AVAILABLE - v0.20.35"; the real install showed "INSTALLED - v0.20.35, up to date". Test files removed.
