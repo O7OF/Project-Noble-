@@ -2,6 +2,24 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
+## Status (2026-11-22 01:05) - our open items closed or advanced
+
+- **Dedicated server tick (Phase 5 item):** `0x61A38` is called from `0x62A78` in a loop over **local** players only
+  (max 4). `noble-dedicated` loads haloreach.dll but runs no engine session (stub), so nothing breaks today; when it
+  gets a session, GameThreadTick work (Firefight allies, wave pacing, MAP AI, PLACE AI) needs a game-thread hook not
+  tied to a local player.
+- **Guest up close (p12a, 2 players, MAP AI):** the guest's capture shows an Elite, a Jackal and a Grunt on screen
+  firing plasma at the guest, 9 red radar dots; the guest died and respawned; no crash. AI reach guests through the
+  engine's own sync. (`-player-at` on a guest moves player 0, the host's body, locally - use it on the host only.)
+- **Team rules (p12b):** 3 Troopers alone killed the player twice; Covenant also attack players; Troopers and
+  Covenant fight each other. Kept as is (every AI fights everyone); allying Troopers with players is Tyler's call.
+- **Forge pieces (step 3):** probes and results in `docs\REACH-PATHFINDING-DATA.md` section 4 (commit 618be77): pieces
+  resting on the ground already work (the engine uses the ground sector below); raised pieces give no sector and the
+  engine's ground finder (`0x4A41A4`) ignores Forge crates, so that is the next hook point.
+- **ReShade** (Tyler's request): ReShade 6.8 + RenoDX / DLSS5 feeder (installed 2026-10-17) were in MCC's
+  `Binaries\Win64` (and `host64`), and ReShade's `dxgi.dll` was being loaded into `noble-dev.exe` (Noble loads Reach from
+  that folder). All 24 items moved (not deleted) to `D:\MCC-ReShade-backup-2026-11-22\`; next run created no ReShade log.
+
 ## Status (2026-11-21 23:50) - PLACE AI button, AI Forge World in the pack, step 3 research
 
 - **PLACE AI / AI TYPE** (commit b1bbf2f): host's match menu in Forge. PLACE AI puts the chosen `noble_ai_*` squad
