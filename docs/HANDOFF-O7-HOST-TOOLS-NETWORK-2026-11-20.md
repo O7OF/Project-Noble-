@@ -103,7 +103,7 @@ Worth a look on your side: allies add up to ~20 actors on top of the waves (more
 ## Phase 7: MAP AI (2026-11-21, dev only, `19d89fb` ... `6c3998a`) - needs your sign-off before it ships
 
 What it is: a host-only lobby option "MAP AI" (custom games and Forge; setting `hostMapAi` in the host's
-`settings.json`). On a map built with a nav mesh and AI squads (today only the HREK-built AI Forge World, not shipped),
+`settings.json`). On a map built with a nav mesh and AI squads (today Noble's AI Forge World, the next Forge World pack map),
 the host lifts the engine's "AI only in campaign / Firefight" check (one 5-byte patch in its own process) and places
 the map's squads 15 s into the match, again 20 s after they are all dead. Guests (`-connect`) never place AI; the
 host's actors reach guests through the engine's own simulation replication, as with Firefight waves and allies.
@@ -116,10 +116,10 @@ host's actors reach guests through the engine's own simulation replication, as w
    join (lobby or master server) so a player with the older Forge World pack is refused with a clear message.
    AI-build SHA-256 `EB9899D54AE9741879956ADA74AEEDA34AF3369C59BEE3186383AD904307FDB9`; v0.20.34 pack map
    `81CD2BDE820A8B4B...`.
-4. **Forge PLACE AI** (`b1bbf2f`): host-only menu rows; placement is in the host's process like MAP AI. No messages.
 2. **Traffic:** 14 AI on Forge World today (squads are per map). Same concern as the Firefight allies note above.
 3. **Tested:** one PC, host + 1 guest LAN (`p9c`): guest stable for 70 s with 14 host AI, guest has no local actors
    (expected). Not yet tested: guest close to the AI (sees / fights them), 3+ players, relay.
+4. **Forge PLACE AI** (`b1bbf2f`): host-only menu rows; placement is in the host's process like MAP AI. No messages.
 
 ## Tested on one PC
 
