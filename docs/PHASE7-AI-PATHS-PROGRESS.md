@@ -2,6 +2,27 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
+## Day summary (2026-11-21, reviewed 21:00): what, how, why
+
+| Commit | What | How | Why |
+|---|---|---|---|
+| `f648900` | `-mp-ai`, `-ai-watch`, HREK tag tools | 5-byte patch of the ai_place gate call; ManagedBlam scripts to read / set flags, add squads | ai_place refuses in MP; stock Forge World had no nav mesh / squads |
+| `704fc56` | AI walk (solo-built map, superseded) | built Forge World as type solo + runtime type reset | proved the nav mesh was being stripped from MP builds |
+| `aaa440d` | the real fix | scenario flag "don't strip pathfinding" (bit 1) | keeps the nav mesh in a normal MP build (no lost MP tags) |
+| `4a388a1` | size results, step-2 design | measured zips; `compress-most` crashed | Tyler's install-size question: +29 MB, not double |
+| `19d89fb` | MAP AI host option + whole-map zones | lobby row -> `hostMapAi`; host places squads 15 s in; zones / firing positions generated from nav-mesh sectors | AI usable without dev switches; AI need somewhere to go map-wide |
+| `7ade3bb` | `PlaceSquadAt`, `-map-ai-at` | move a squad's spawn points to the target, place, restore | the call a Forge-menu "place AI" will use |
+| `4b0d0b5` | nav-mesh spawn heights | `NavGroundZ` reads the loaded nav-mesh vertices | authored heights dropped an AI through the map |
+| `6c3998a` | `noble-map-ai-bake.ps1`, Forge piece tool | one script runs every step; pieces as crates / scenery wrappers | step 4 (other maps); step 3 research |
+| `23d9539`, `65eb86c` | docs | | |
+
+Review at 21:00: both gates build with 0 warnings in the changed files; `main` = `origin/main`; no attribution
+lines; only source, tools and docs committed (no logs, dumps or RR data); userdata restored from `phase7-pre`, no
+`host_*` files left (a stale `Release2\...\host_notice.txt` from the 11-20 join-in-progress test was deleted).
+Docs updated: this file, plan (status block), compendium (section 9 + A.5), knowledge bank (section 9), O7 handoff
+(MAP AI sign-off items), project TODO / progress copies. `tools\noble-forge-ai-zone.ps1` (old local 4x4 zone) is
+superseded by `noble-ai-zones-from-navmesh.ps1`; kept for reference. `-mp-ai-pathing` is obsolete (solo-built maps).
+
 ## Status (2026-11-21 16:50) - Step 4 done (one-command bake); step 3 blocked (bake removes added objects)
 
 **Step 4: `tools\noble-map-ai-bake.ps1 -Tag <scenario> -Centre x,y,z [-Bsp 0] [-SkipBuild] [-SkipSquads]`**

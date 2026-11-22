@@ -32,6 +32,7 @@
 6. Forge and the pack pipeline
 7. Tooling and runbook
 8. Bug archaeology and open questions
+9. AI paths on custom and Forge maps (Phase 7, 2026-11-21)
 - Appendix A: RVA quick reference
 - Appendix B: source and documentation map
 - Appendix C: tools, engines and reference material
@@ -701,6 +702,29 @@ The slot patch is generated, not hand-written: `tools\limits\gen_sites.py`, `gen
 
 ---
 
+## 9. AI paths on custom and Forge maps (Phase 7, 2026-11-21)
+
+Full log, every test and the next steps: `docs\PHASE7-AI-PATHS-PROGRESS.md`; plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
+
+### 9.1 Why AI could not walk on Forge World
+- Ground AI walk on a **baked** nav mesh (sectors, links, vertices, hints) stored in the scenario's `ai pathfinding data`; the engine has no runtime generator. *proven.*
+- Stock Forge World has none: `structure bsps[0].flags` bit 9 "no pathfinding" is set, and there are no characters, squads, zones or objectives. With the flag set, `tool generate-pathfinding` reports success but writes nothing. *proven.*
+- `ai_place` refuses outside campaign / Firefight (`game_is_campaign_or_survival`). *proven.*
+- **HREK's cache builder strips the nav mesh from multiplayer scenarios** unless the scenario's top-level `flags` bit 1 **"don't strip pathfinding"** is set. Without it the per-BSP pathfinding pointer stays 0, actors cannot find a sector and only stand and shoot. Building the scenario as solo also keeps the nav mesh but drops 403 MP tags (`globals\mp` and everything under it) and crashes the player view; do not use it. *proven.*
+
+### 9.2 What works now (dev, closed `main`)
+- **AI-capable Forge World build** (HREK only, not shipped): flag cleared + "don't strip pathfinding" + bake + characters (elite, grunt, jackal, brute, trooper) + 5 `noble_ai_*` squads + whole-map zones. 10,972 sectors; same 16,992 tags as the plain MP build; ~800 MB map, 682 MB zipped (+29 MB over today's Forge World pack). *proven.*
+- **MAP AI host option** (`Settings::hostMapAi`, lobby row in custom games and Forge): 15 s into the match the host lifts the ai_place gate (one 5-byte patch) and places every squad; places them again 20 s after all are dead; guests never place AI; maps without a nav mesh are left alone. *proven* (one PC; a 2-player run kept the guest stable).
+- **Whole-map zones** from the nav mesh (one zone + "fight" objective per 160 m tile, 20 m areas, ~17,300 firing positions). Engine limits: zones 128, firing positions 2,048 / zone, areas 128 / zone, task areas 64, objectives 64, squads 256. *proven.*
+- **`spawn::PlaceSquadAt(name, pos)`**: places a map squad at any point; spawn heights come from the nav mesh (`NavGroundZ`) so no actor drops through the map. *proven.*
+- **One command per map:** `tools\noble-map-ai-bake.ps1 -Tag <scenario> -Centre x,y,z` (backups, flags, squads, bake, zones, bake, build; ~6 min on Forge World). *proven.*
+
+### 9.3 Open
+- Forge pieces are not in the nav mesh: `generate-pathfinding` writes Forge World's scenario back without any crates / scenery added to it (palette entries too), while other edits survive. *proven*; cause unknown.
+- Forge-menu "place AI" trigger; MP team rules for AI; shipping (pack choice, map hash for guests: O7) - see the progress doc.
+
+---
+
 ## Appendix A - RVA quick reference
 
 **Provenance:** all RVAs are for MCC `haloreach.dll` build 1.3528.0.0, SHA-256 `738dd2d2...0894`, image base `0x180000000`. Retail (Xbox 360) names come from the v3 retail decompile; retail -> MCC matches are maintained in `docs/02-engine-reference/mcc-address-table.md` and must be added there only after static matching.
@@ -769,6 +793,21 @@ The slot patch is generated, not hand-written: `tools\limits\gen_sites.py`, `gen
 | Saved-film manager session monitor | `0x3ABE70` |
 | Armour-composite fallback / null-biped / whitespace crash patches | `0x105324`->`0x1055C1`, `0x99A0D`, `0x8262E8` |
 
+### A.5 AI placement and pathfinding (Phase 7, 2026-11-21)
+
+| What | RVA / offset |
+|---|---|
+| `ai_place` core -> per-squad placement | `0x6C2B10` -> `0x694CB4` |
+| `game_is_campaign_or_survival` (game globals root+0x48, +0x10: 1 campaign, 2 survival, 3 MP / Forge) | `0x58B5C`; MAP AI patches only its call at `0x6C2B2B` (`E8 2C 60 99 FF` -> `B0 01 90 90 90`) |
+| AI globals enabled byte | root+0x30, +1 |
+| Per-BSP runtime records (0x490 each, filled by `0x97C70`); pathfinding data pointer at +0x78 | `0x27B7BA0` (pointer `0x27B7C18` + bsp*0x490); nav vertices at data +0x30 count / +0x34 packed, 12 bytes each |
+| Active BSP mask | `0x4E2FB2C` |
+| `collision_surface_get_sector` | `0x724D24` |
+| `biped_find_pathfinding_location` (biped +0x9DC bsp, +0x9E4 surface, +0x9E8 sector) | `0x4A4424` |
+| `actor_find_pathfinding_location` (actor 0xD00: +0x410 point, +0x420 sector ref, +0x500 = 1 no location) | `0x75B2C8` |
+| Scenario squads (count / packed; 0x6C each, name char[32] +0, spawn points +0x3C / +0x40, 0x7C each, position +0x14) | scenario +0x398 / +0x39C |
+| Player-view crash when a solo-type scenario runs as MP | `0x30D88A` in `0x30D5A8` |
+
 ---
 
 ## Appendix B - source and documentation map
@@ -780,6 +819,7 @@ The slot patch is generated, not hand-written: `tools\limits\gen_sites.py`, `gen
 | `docs/00-README-START-HERE.md` | index of the 2026-11-15 documentation packet (its state blocks describe v0.19.103; superseded by this file) |
 | `docs/multiplayer-session-2026-11-16.md` | multiplier status of the 2026-11-16 session: fixes, 5-player evidence, high-slot history (the seat blocker it describes was fixed in `0fdcf97`), harness quick reference |
 | `docs/ANTI-REVERSING.md` | what the release build hides and how to verify it (7.5) |
+| `docs/PLAN-PHASE7-AI-PATHS-2026-11-21.md` / `docs/PHASE7-AI-PATHS-PROGRESS.md` | Phase 7 plan and full progress log: AI paths on Forge / custom maps (section 9) |
 | `docs/01-guides/` | modder guide (68 hooks with MCC RVAs, launch flags, tooling, variant rules) and player guide (Firefight, Armory, appearance) |
 | `docs/02-engine-reference/` | retail -> MCC address table, master upgrade opportunity list (68 items), decompile index, TOPIC chapters: networking, AI/pathfinding/objectives, armour/appearance/armory, lighting/rendering, **scaling past 32 players (64/128 capacity plan)** |
 | `docs/03-qa-and-release/` | QA verification log, stabilization report, stage-1 status (pool inspector readings), release draft |

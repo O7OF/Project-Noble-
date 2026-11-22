@@ -76,3 +76,27 @@ See HANDOFF-ELITE-RR-TEXTURES-2026-11-12.md and FINDINGS-ELITE-ORIGINALS-COMPARE
 - **Spec tint map tiling** is missing in the Bungie cook_torrance shader; adding it means editing material_models.fx / cook_torrance.fx (transform_texcoord).
 - **Shader functions**: only float values animate in shader functions; periodic functions do nothing directly on frame index/colour values unless fed from an object function; evaluators take time as a parameter.
 - **Wiki/tools mentioned**: Microsoft Learn shader docs, c20 compiling-shaders, c20 pbr-shader, Crabtool, "Foundry".
+
+## 9. HREK pathfinding and AI on multiplayer maps (tested 2026-11-21, Phase 7)
+Full log: `docs\PHASE7-AI-PATHS-PROGRESS.md`. All tested on Forge World with HREK's own tool.exe / ManagedBlam.
+- **Bake:** `tool generate-pathfinding <scenario>` (no Sapien needed; ~70 s for Forge World). Writes the scenario's
+  `ai pathfinding data` (per BSP: sectors, links, bsp2d refs / nodes, vertices, object refs, hints, instanced geometry
+  refs, seams). The BSP tag's own pathfinding block stays empty on every map.
+- **"no pathfinding" BSP flag:** `structure bsps[n].flags` bit 9 (raw 512). If set, the bake "succeeds" and writes
+  nothing. Stock Forge World has it set; ff20 sets it only on non-playable BSPs.
+- **"don't strip pathfinding" scenario flag:** top-level `flags` bit 1 (raw 2; bit 13 is "survival"). Without it
+  `build-cache-file` strips the nav mesh from **multiplayer** scenarios. Building as `type = solo` also keeps it but
+  drops every `globals\mp` tag (403 on Forge World): do not.
+- **Firing positions:** tool.exe does not generate them (Sapien does); write them yourself, then bake again so the
+  bake fills each one's sector / cluster (points just outside the ground are dropped).
+- **Block limits** (scenario definition maxima): zones 128, firing positions 2,048 per zone, areas 128 per zone,
+  objectives 64, tasks 100, task areas 64, squads 256, spawn points 128 per squad.
+- **Objects added to Forge World's scenario do not survive the bake:** crates or scenery added with ManagedBlam
+  (plus their palette entries) are gone after `generate-pathfinding`; other edits (flags, squads, zones) stay.
+  Cause not found yet.
+- **ManagedBlam gotchas:** one `ManagedBlamSystem.Start` per process (run each script in its own process); pass
+  arrays to scripts with `& script.ps1`, not `powershell -File` (it joins them, and drops empty-string arguments);
+  in PowerShell never write `$x = if (...) { $element }` with a tag element (it unrolls into its fields); set enums by
+  option name (option lists differ between tag types). `tool get-tag-field-value` is slow and crash-prone.
+- **`build-cache-file ... compress-most`** ran ~25 min then failed "hash mismatch, verification failed": not usable.
+- **One command:** `tools\noble-map-ai-bake.ps1 -Tag <scenario> -Centre x,y,z` does all of the above for a map.

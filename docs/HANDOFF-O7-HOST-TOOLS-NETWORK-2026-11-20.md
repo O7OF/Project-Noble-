@@ -1,4 +1,4 @@
-# Handoff for O7: host tools network changes (v0.20.33, 2026-11-20; updated 2026-11-21 06:10)
+# Handoff for O7: host tools network changes (v0.20.33, 2026-11-20; updated 2026-11-21 21:00)
 
 Tyler and Claude built the host tools (Phase 1-2 and the start of Phase 3 of
 `claude/TODO-HOST-TOOLS-AND-REMAINING-2026-11-20.md`). They touch your networking
@@ -99,6 +99,22 @@ in its match process (engine calls on the game thread); guests (`-connect`) neve
 guests through the engine's own simulation replication, the same as wave enemies, so there are no new Noble messages.
 New host settings `hostFirefightAllies` / `hostFirefightAllySquads` live only in the host's `settings.json`.
 Worth a look on your side: allies add up to ~20 actors on top of the waves (more simulation traffic in a 4-player game).
+
+## Phase 7: MAP AI (2026-11-21, dev only, `19d89fb` ... `6c3998a`) - needs your sign-off before it ships
+
+What it is: a host-only lobby option "MAP AI" (custom games and Forge; setting `hostMapAi` in the host's
+`settings.json`). On a map built with a nav mesh and AI squads (today only the HREK-built AI Forge World, not shipped),
+the host lifts the engine's "AI only in campaign / Firefight" check (one 5-byte patch in its own process) and places
+the map's squads 15 s into the match, again 20 s after they are all dead. Guests (`-connect`) never place AI; the
+host's actors reach guests through the engine's own simulation replication, as with Firefight waves and allies.
+**No new Noble messages; no server change.** Things for you to decide or check:
+1. **Map hash for the AI Forge World.** The AI build is a different `forge_halo.map` (~800 MB, nav mesh + AI tags)
+   from today's Forge World pack. A guest with the old map joining an AI session would desync or crash on the AI tags.
+   Options: ship the AI build as the one Forge World pack (+29 MB zipped) so everyone has it, and/or a map hash /
+   pack version check at join (lobby or master server). Which side owns that check is your call.
+2. **Traffic:** 14 AI on Forge World today (squads are per map). Same concern as the Firefight allies note above.
+3. **Tested:** one PC, host + 1 guest LAN (`p9c`): guest stable for 70 s with 14 host AI, guest has no local actors
+   (expected). Not yet tested: guest close to the AI (sees / fights them), 3+ players, relay.
 
 ## Tested on one PC
 
