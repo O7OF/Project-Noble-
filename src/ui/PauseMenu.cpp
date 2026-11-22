@@ -28,6 +28,7 @@
 #include "engine/SessionVariant.hpp"
 #include "hooks/EnginePatches.hpp"
 #include "hooks/LobbyPatches.hpp"
+#include "host/SpawnTest.hpp"
 #include "host/Window.hpp"
 #include "mvar/ForgePlacementApply.hpp"
 #include "mvar/MapVariant.hpp"
@@ -1883,6 +1884,28 @@ void PauseMenu::DrawMenu(HWND hwnd) {
          "and Forge.",
          "FORGE", false, true});
   }
+  // Forge, host only: PLACE AI puts one AI squad 6 m in front of you (maps
+  // with AI paths, e.g. Noble's Forge World); AI TYPE picks which squad.
+  int placeAiEntry = -1, aiTypeEntry = -1;
+  static int s_forgeAiType = 0;
+  static const char *const kForgeAiTypes[] = {"ELITES", "GRUNTS", "JACKALS",
+                                              "BRUTES", "TROOPERS"};
+  static std::string s_placeAiLabel;
+  if (_stricmp(currentMode.c_str(), "forge") == 0 && !isGuest) {
+    s_placeAiLabel = std::string("PLACE AI: ") + kForgeAiTypes[s_forgeAiType];
+    placeAiEntry = static_cast<int>(entries.size());
+    entries.push_back(
+        {s_placeAiLabel.c_str(), nullptr,
+         "Place a squad of AI 6 m in front of you. They walk the map, fight "
+         "players and each other. Needs a map with AI paths (Noble Forge "
+         "World).",
+         "AI", false, true});
+    aiTypeEntry = static_cast<int>(entries.size());
+    entries.push_back({"AI TYPE", nullptr,
+                       "Choose the squad PLACE AI uses: Elites, Grunts, "
+                       "Jackals, Brutes or Troopers.",
+                       kForgeAiTypes[s_forgeAiType], false, true});
+  }
   int teamEntry = -1;
   const bool isMultiOrForge = (currentMode == "multiplayer" ||
                                currentMode == "forge" || currentMode.empty());
@@ -2268,6 +2291,15 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         RelaunchAndClose(hwnd, NextMissionArgs(nextMission, LobbyReturnArgs(true)),
                          "next mission");
     }
+  } else if (placeAiEntry >= 0 && activated == placeAiEntry) {
+    MenuSounds::Click();
+    noble::spawn::RequestPlaceAiInFront(s_forgeAiType);
+    NOBLE_INFO("PauseMenu: PLACE AI {}", kForgeAiTypes[s_forgeAiType]);
+    Close(); // the squad is placed on the next game tick; the result shows as a note
+  } else if (aiTypeEntry >= 0 && activated == aiTypeEntry) {
+    MenuSounds::Click();
+    s_forgeAiType = (s_forgeAiType + 1) %
+                    static_cast<int>(sizeof(kForgeAiTypes) / sizeof(kForgeAiTypes[0]));
   } else if (pauseAllEntry >= 0 && activated == pauseAllEntry) {
     MenuSounds::Click();
     SetHostPauseForEveryone(!s_hostPausedAll);
@@ -4443,10 +4475,26 @@ static void DrawHostPausedBanner() {
 // and the keys. F1 = yes, F2 = no (D-pad left / right on a controller); the
 // host can veto with F3 when HOST VETO is on.
 static std::string s_voteNotice;
+static std::string s_voteNoticeTitle = "VOTE";
 static ULONGLONG s_voteNoticeUntil = 0;
 static void VoteNotice(const std::string &text) {
   s_voteNotice = text;
+  s_voteNoticeTitle = "VOTE";
   s_voteNoticeUntil = GetTickCount64() + 4000;
+}
+// Forge PLACE AI result (from the game tick) on the same card.
+static void PollPlaceAiNotice() {
+  static uint32_t s_seen = 0;
+  uint32_t serial = 0;
+  const std::string text = noble::spawn::PlaceAiResult(serial);
+  if (serial == s_seen)
+    return;
+  s_seen = serial;
+  if (text.empty())
+    return;
+  s_voteNotice = text;
+  s_voteNoticeTitle = "AI";
+  s_voteNoticeUntil = GetTickCount64() + 5000;
 }
 
 static bool KeyEdge(int vk, bool &held) {
@@ -4458,6 +4506,7 @@ static bool KeyEdge(int vk, bool &held) {
 
 static void DrawVoteCard(HWND hwnd) {
   using namespace NobleUi;
+  PollPlaceAiNotice();
   const HostVotes::View v = HostVotes::Current();
   const bool notice = GetTickCount64() < s_voteNoticeUntil;
   if (!v.active && !v.showResult && !notice)
@@ -4514,7 +4563,7 @@ static void DrawVoteCard(HWND hwnd) {
     line1 = v.vetoed ? "The host vetoed the vote."
                      : (v.passed ? "The vote passed." : "The vote failed.");
   } else {
-    title = "VOTE";
+    title = s_voteNoticeTitle;
     line1 = s_voteNotice;
   }
   Text(dl, NobleStyle::TitleFont(), 22.0f * s,

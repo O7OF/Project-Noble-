@@ -20,7 +20,9 @@
 // Progress, refusals and the object pool's live usage go to the log ("SpawnTest: ..."). On Stock,
 // object_new starts refusing near 2,048 objects; with V16 it continues toward 32,767.
 #include <windows.h>
+#include <cstdint>
 #include <functional>
+#include <string>
 
 namespace noble::spawn {
 
@@ -45,6 +47,11 @@ int PlaceMapSquads();
 // placement and then restored (game thread). Returns the number of new actors, -1 if not possible. The building
 // block for AI placed from the Forge menu.
 int PlaceSquadAt(const char* squadName, const float pos[3]);
+// Forge pause-menu "PLACE AI" (any thread): queues one squad of `kind` (0 Elites, 1 Grunts, 2 Jackals, 3 Brutes,
+// 4 Troopers; the map's noble_ai_* squads) to be placed 6 m in front of the local player on the next game tick.
+void RequestPlaceAiInFront(int kind);
+// The last PLACE AI result line (empty before the first); `serial` changes with every new result.
+std::string PlaceAiResult(uint32_t& serial);
 
 // Development builds only (no-op otherwise). Call once after haloreach.dll is loaded.
 void Install(HMODULE engine);

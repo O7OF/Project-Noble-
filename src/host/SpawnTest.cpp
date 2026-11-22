@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <shellapi.h>
@@ -26,6 +27,8 @@ void PlayerAtStep();  // -player-at, defined with WatchAllies
 void MpPathingStep(); // -mp-ai-pathing, defined with WatchAllies
 bool EnableMpAiPlacement();   // MAP AI / -mp-ai, defined with ActorsInUse
 void MapAiAtStep();           // -map-ai-at, defined with PlaceSquadAt
+void PlaceAiRequestStep();    // Forge PLACE AI, defined after MapAiAtStep
+void PlaceAiAtStep();         // -place-ai-at (dev test of PLACE AI), defined with it
 
 namespace {
 
@@ -615,6 +618,8 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
     PlayerAtStep();
     MpPathingStep();
     MapAiAtStep();
+    PlaceAiAtStep();
+    PlaceAiRequestStep();
     if (!s_firstTick) s_firstTick = GetTickCount64();
 #ifndef NOBLE_DEDICATED
     const bool isDev = noble::AuthClient::Get().IsDeveloper();
@@ -1328,6 +1333,92 @@ void MapAiAtStep() {
     s_state = 2;
     EnableMpAiPlacement();
     PlaceSquadAt(s_squad.c_str(), s_pos);
+}
+
+// Forge "PLACE AI" (pause menu). The menu thread queues a kind; the game tick places that squad 6 m in front of the
+// local player, on the nav mesh, and leaves a one-line result for the menu to show.
+namespace {
+constexpr const char* kForgeAiSquads[] = {"noble_ai_elite", "noble_ai_grunt", "noble_ai_jackal", "noble_ai_brute",
+                                          "noble_ai_trooper"};
+constexpr const char* kForgeAiNames[] = {"Elites", "Grunts", "Jackals", "Brutes", "Troopers"};
+constexpr int kForgeAiKinds = static_cast<int>(sizeof(kForgeAiSquads) / sizeof(kForgeAiSquads[0]));
+std::atomic<int> s_placeAiRequest{-1};
+std::mutex s_placeAiMutex;
+std::string s_placeAiResult;
+uint32_t s_placeAiSerial = 0;
+
+void SetPlaceAiResult(const std::string& text) {
+    std::lock_guard<std::mutex> lock(s_placeAiMutex);
+    s_placeAiResult = text;
+    ++s_placeAiSerial;
+    NOBLE_INFO("SpawnTest: PLACE AI: {}", text);
+}
+}  // namespace
+
+void RequestPlaceAiInFront(int kind) {
+    if (kind >= 0 && kind < kForgeAiKinds) s_placeAiRequest.store(kind);
+}
+
+std::string PlaceAiResult(uint32_t& serial) {
+    std::lock_guard<std::mutex> lock(s_placeAiMutex);
+    serial = s_placeAiSerial;
+    return s_placeAiResult;
+}
+
+void PlaceAiRequestStep() {
+    const int kind = s_placeAiRequest.exchange(-1);
+    if (kind < 0) return;
+    if (!MapHasAiPaths()) { SetPlaceAiResult("This map has no AI paths. Use an AI-ready map (Noble Forge World)."); return; }
+    ObjectPool objects;
+    float player[3], fwd[2];
+    if (!GetObjectPool(objects) || !PlayerPosition(objects, player, fwd)) { SetPlaceAiResult("Could not find your position."); return; }
+    // 6 m ahead first, then nearer / further along the same line, then where you stand. The Monitor flies, so each
+    // try takes the walkable ground nearest to the player's height.
+    static const float kDistances[] = {6.0f, 4.0f, 8.0f, 3.0f, 10.0f, 12.0f, 0.0f};
+    float target[3] = {};
+    bool found = false;
+    for (const float d : kDistances) {
+        float ground = 0.0f;
+        const float x = player[0] + fwd[0] * d, y = player[1] + fwd[1] * d;
+        if (NavGroundZ(x, y, player[2], ground)) { target[0] = x; target[1] = y; target[2] = ground; found = true; break; }
+    }
+    if (!found) {
+        NOBLE_INFO("SpawnTest: PLACE AI: no nav mesh near {:.1f},{:.1f},{:.1f} facing {:.2f},{:.2f}", player[0], player[1],
+                   player[2], fwd[0], fwd[1]);
+        SetPlaceAiResult("No walkable ground in front of you. Face open ground and try again.");
+        return;
+    }
+    EnableMpAiPlacement();
+    const int made = PlaceSquadAt(kForgeAiSquads[kind], target);
+    char msg[160];
+    if (made > 0)
+        std::snprintf(msg, sizeof(msg), "Placed %d %s in front of you.", made, kForgeAiNames[kind]);
+    else
+        std::snprintf(msg, sizeof(msg), "Could not place %s (the map has no '%s' squad, or the AI limit is reached).",
+                      kForgeAiNames[kind], kForgeAiSquads[kind]);
+    SetPlaceAiResult(msg);
+}
+
+// -place-ai-at <kind>@<seconds> (dev test of the Forge PLACE AI row; kind 0 Elites .. 4 Troopers): presses the row
+// once, the same request the menu makes.
+void PlaceAiAtStep() {
+    static int s_state = -1, s_kind = 0;
+    static ULONGLONG s_delay = 0, s_first = 0;
+    if (s_state < 0) {
+        s_state = 0;
+        const wchar_t* arg = wcsstr(GetCommandLineW(), L"-place-ai-at ");
+        int kind = 0, sec = 0;
+        if (arg && swscanf_s(arg + 13, L"%d@%d", &kind, &sec) == 2) {
+            s_kind = kind; s_delay = static_cast<ULONGLONG>(sec) * 1000; s_state = 1;
+            NOBLE_INFO("SpawnTest: -place-ai-at kind {} after {} s", kind, sec);
+        }
+    }
+    if (s_state != 1) return;
+    const ULONGLONG now = GetTickCount64();
+    if (!s_first) s_first = now;
+    if (now - s_first < s_delay) return;
+    s_state = 2;
+    RequestPlaceAiInFront(s_kind);
 }
 
 int AlliesAlive() {
