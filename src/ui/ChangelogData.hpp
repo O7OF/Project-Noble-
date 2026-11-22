@@ -30,6 +30,22 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02036Items = {
+        {"FORGE", "Forge Menu Names",
+         "The Pelican, Spectre, Boathog and orbital beacons now have names in the Forge menu (for example Needler Spectre, Gauss Boathog, MAC Round and Spirit Drop: Wraith) instead of blank rows. Update Noble Forge World in MODS > RECOMMENDED MAPS to get them."},
+        {"MODS", "Forge World Updates",
+         "MODS > RECOMMENDED MAPS now checks whether your Noble Forge World is the newest one. It shows Up to date, or UPDATE AVAILABLE with an UPDATE button that downloads the new map. CHECK FOR UPDATES checks again."},
+        {"FIXES", "Newest Forge World Pack",
+         "DOWNLOAD in v0.20.35 could fetch an older Forge World pack without AI paths. It now always gets the newest pack, and an older Forge World no longer shows as Installed. If PLACE AI says the map has no AI paths, it tells you where to update."}
+    };
+
+    notes.push_back({
+        "v0.20.36",
+        "Forge World Updates",
+        "Forge menu names for the new vehicles and beacons, and Forge World updates from MODS",
+        v02036Items
+    });
+
     const std::vector<ChangeItem> v02035Items = {
         {"FORGE", "AI Can Walk Forge World",
          "The Noble Forge World map now has AI paths across the whole map, so Elites, Grunts, Jackals, Brutes and Troopers walk around, chase players and fight. Download the new Forge World pack: the old one has no AI paths."},

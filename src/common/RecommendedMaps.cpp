@@ -378,9 +378,10 @@ void RecommendedMaps::Initialize(const std::filesystem::path& installDir) {
                                                // pack as a client update (see Updater.cpp asset selection).
     forge.installedMarker = std::filesystem::path("data") / "maps" / "forge_halo.map";
     forge.approxBytes = 682ull * 1024ull * 1024ull;   // shown until the release reports the real asset size
-    // v0.20.35 pack (AI Forge World, SHA-256 EB9899D5...FDB9). The v0.20.34 map (796,790,784 bytes, no AI paths) now
-    // shows UPDATE AVAILABLE instead of INSTALLED. Change this whenever a new pack map is published.
-    forge.currentMarkerBytes = 838791168ull;
+    // v0.20.36 pack (AI Forge World + Forge menu names for the Pelican, Spectre, Boathog and orbital beacons, SHA-256
+    // 82E125E5...0DC5). Older maps (v0.20.35 838,791,168 bytes: blank names; v0.20.34 796,790,784 bytes: no AI paths)
+    // show UPDATE AVAILABLE instead of INSTALLED. Change this whenever a new pack map is published.
+    forge.currentMarkerBytes = 838799360ull;
     m_items.push_back(forge);
     m_status.clear();
     m_updates.clear();
