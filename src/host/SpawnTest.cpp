@@ -30,6 +30,7 @@ void MapAiAtStep();           // -map-ai-at, defined with PlaceSquadAt
 void PlaceAiRequestStep();    // Forge PLACE AI, defined after MapAiAtStep
 void PlaceAiAtStep();         // -place-ai-at (dev test of PLACE AI), defined with it
 void NavDumpStep();           // -nav-dump (step 3 research), defined before PlaceAiAtStep
+void ForgePieceAtStep();      // -forge-piece-at (step 3 research), defined before PlaceAiAtStep
 
 namespace {
 
@@ -330,6 +331,9 @@ const uint8_t* ObjectData(const ObjectPool& pool, int32_t handle) {
     return *reinterpret_cast<uint8_t* const*>(pool.records + static_cast<size_t>(handle & 0xFFFF) * 24 + 0x10);
 }
 
+const uint8_t* s_lastPlayerBody = nullptr;   // body data of the last PlayerPosition hit (game thread, research logs)
+int32_t s_lastPlayerUnit = -1;               // its object handle
+
 // The local player's body: players pool (game-state root +0x18, 0x490-byte records), unit handle at +0x28.
 bool PlayerPosition(const ObjectPool& objects, float pos[3], float fwd[2]) {
     const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_base + kTlsIndexRva);
@@ -344,6 +348,8 @@ bool PlayerPosition(const ObjectPool& objects, float pos[3], float fwd[2]) {
         if (!((bitmap[i >> 5] >> (i & 31)) & 1)) continue;
         const uint8_t* body = ObjectData(objects, *reinterpret_cast<const int32_t*>(records + static_cast<size_t>(i) * 0x490 + 0x28));
         if (!body) continue;
+        s_lastPlayerBody = body;
+        s_lastPlayerUnit = *reinterpret_cast<const int32_t*>(records + static_cast<size_t>(i) * 0x490 + 0x28);
         std::memcpy(pos, body + 0x44, sizeof(float) * 3);
         float f[3];
         std::memcpy(f, body + 0x50, sizeof(f));
@@ -602,6 +608,54 @@ bool CinematicInProgress() {
     }
 }
 
+// -nav-probe (Phase 7 step 3 research, dev): hooks 0x76F1E8 (object handle, bsp -> object ref index; see
+// docs\REACH-PATHFINDING-DATA.md) and logs each distinct object the engine asks about, with its type and position,
+// to confirm that a biped standing on a Forge piece reaches this lookup.
+using ObjectNavRefFn = uint16_t(__fastcall*)(uint16_t object, int16_t bsp);
+ObjectNavRefFn s_originalObjectNavRef = nullptr;
+std::atomic<int> s_navProbeLogged{0};
+uint16_t __fastcall Hook_ObjectNavRef(uint16_t object, int16_t bsp) {
+    const uint16_t result = s_originalObjectNavRef(object, bsp);
+    static uint16_t s_seen[64] = {};
+    static int s_seenCount = 0;
+    bool seen = false;
+    for (int i = 0; i < s_seenCount; ++i) if (s_seen[i] == object) { seen = true; break; }
+    if (!seen && s_seenCount < 64) {
+        s_seen[s_seenCount++] = object;
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_base + kTlsIndexRva);
+        auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
+        const uint8_t* data = nullptr;
+        if (tls && tls[tlsIndex]) {   // objects header: root +0x10, records at +0x50, 0x18 bytes, data pointer at +0x10
+            const uint8_t* header = *reinterpret_cast<uint8_t**>(tls[tlsIndex] + 0x10);
+            const uint8_t* records = header ? *reinterpret_cast<uint8_t**>(const_cast<uint8_t*>(header) + 0x50) : nullptr;
+            if (records) data = *reinterpret_cast<uint8_t* const*>(records + static_cast<size_t>(object) * 0x18 + 0x10);
+        }
+        if (data) {
+            const float* p = reinterpret_cast<const float*>(data + 0x44);
+            NOBLE_INFO("SpawnTest: nav-probe: object {} type {} tag {:08X} at {:.1f},{:.1f},{:.1f} bsp {} -> object ref {}",
+                       object, static_cast<int>(data[0x8E]), *reinterpret_cast<const uint32_t*>(data), p[0], p[1], p[2], bsp,
+                       static_cast<int16_t>(result));
+            (void)p;   // log-only (the client build compiles NOBLE_INFO out)
+        } else {
+            NOBLE_INFO("SpawnTest: nav-probe: object {} (no data) bsp {} -> object ref {}", object, bsp, static_cast<int16_t>(result));
+        }
+        ++s_navProbeLogged;
+    }
+    return result;
+}
+
+void InstallNavProbe() {
+    void* target = reinterpret_cast<void*>(s_base + 0x76F1E8);
+    char bytes[64] = {};   // logged so a different game build shows up in the log
+    const uint8_t* t = reinterpret_cast<const uint8_t*>(target);
+    std::snprintf(bytes, sizeof(bytes), "%02X %02X %02X %02X %02X %02X %02X %02X", t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]);
+    if (HookManager::InstallHook(target, reinterpret_cast<void*>(&Hook_ObjectNavRef),
+                                 reinterpret_cast<void**>(&s_originalObjectNavRef), "nav_probe_object_ref"))
+        NOBLE_INFO("SpawnTest: nav-probe: hooked 0x76F1E8 (first bytes {})", bytes);
+    else
+        NOBLE_WARN("SpawnTest: nav-probe: could not hook 0x76F1E8");
+}
+
 uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e) {
     const uint64_t result = s_originalTick(a, b, c, d, e);
     // FUN_180061A38(a, playerIndex, c, dt1, dt2): the second argument is the player index (it is
@@ -622,6 +676,7 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
     PlaceAiAtStep();
     PlaceAiRequestStep();
     NavDumpStep();
+    ForgePieceAtStep();
     if (!s_firstTick) s_firstTick = GetTickCount64();
 #ifndef NOBLE_DEDICATED
     const bool isDev = noble::AuthClient::Get().IsDeveloper();
@@ -873,6 +928,7 @@ void Install(HMODULE engine) {
         NOBLE_WARN("SpawnTest: could not hook the game tick; spawn test disabled");
         return;
     }
+    if (wcsstr(GetCommandLineW(), L"-nav-probe")) InstallNavProbe();
     if (s_autoHorde > 0 && (!s_aiPlace || !s_unitExitVehicle))
         NOBLE_WARN("SpawnTest: -horde needs ai_place, unit_exit_vehicle and the teleport calls, which this build does not have; horde disabled");
     NOBLE_INFO("SpawnTest: auto-spawns wait for gameplay ({}){}; keys need Num Lock on: Numpad 9 = 500 objects, Numpad 8 = crowd of 128 Spartans on/off, Numpad 7 = place every AI squad, Numpad 6 = horde +100 actors around you; stops at {} objects{}",
@@ -1070,7 +1126,23 @@ void WatchActors() {
     NOBLE_INFO("SpawnTest: ai-watch: actors {} | moved >1m in 5s {} | furthest from spawn {:.1f}m | z {:.1f}..{:.1f} | to player {:.0f}/{:.0f}/{:.0f}m (min/avg/max){} |{}",
         total, moved, travelMax, zMin, zMax, havePlayer ? dMin : 0.0f, havePlayer ? dSum / total : 0.0f, havePlayer ? dMax : 0.0f,
         havePlayer ? "" : " (no player)", detail);
-    if (havePlayer) NOBLE_INFO("SpawnTest: ai-watch: player at {:.1f},{:.1f},{:.1f}", player[0], player[1], player[2]);
+    if (havePlayer && s_lastPlayerBody) {   // biped ground fields (docs\REACH-PATHFINDING-DATA.md): bsp, surface, object
+        const uint8_t* b = s_lastPlayerBody;
+        if (s_originalObjectNavRef && s_lastPlayerUnit != -1) {
+            // -nav-probe: ask for the player's pathfinding location the way an AI asks for its target's
+            // (0x75AF38(unit, sector ref out, point out)); this fills the ground fields logged below.
+            using UnitNavLocationFn = void(__fastcall*)(uint64_t unit, uint32_t* sectorRef, void* point);
+            uint32_t ref = 0xFFFFFFFF;
+            alignas(16) uint8_t point[16] = {};
+            reinterpret_cast<UnitNavLocationFn>(s_base + 0x75AF38)(static_cast<uint32_t>(s_lastPlayerUnit), &ref, point);
+            NOBLE_INFO("SpawnTest: nav-probe: player nav location sector ref {:08X}", ref);
+        }
+        NOBLE_INFO("SpawnTest: ai-watch: player at {:.1f},{:.1f},{:.1f} | ground bsp {} surface {} instance {} object {:08X} sector {:08X}",
+                   player[0], player[1], player[2], *reinterpret_cast<const int16_t*>(b + 0x9DC),
+                   *reinterpret_cast<const int32_t*>(b + 0x9E4), *reinterpret_cast<const int32_t*>(b + 0x9EC),
+                   *reinterpret_cast<const uint32_t*>(b + 0x9F0), *reinterpret_cast<const uint32_t*>(b + 0x9E8));
+        (void)b;
+    }
 }
 
 // -mp-ai-pathing (Phase 7, dev): HREK's cache builder packs the baked nav mesh into the structure BSP's resource
@@ -1262,7 +1334,7 @@ bool NavGroundZ(float x, float y, float z, float& out) {
 // Squads in the scenario tag (runtime layout, Phase 7): scenario +0x398 count / +0x39C packed address, 0x6C bytes per
 // squad, char[32] name at +0; spawn points block at squad +0x3C (count) / +0x40 (packed); spawn point elements 0x7C
 // bytes, position (real_point3d) at +0x14.
-int PlaceSquadAt(const char* squadName, const float pos[3]) {
+int PlaceSquadAt(const char* squadName, const float pos[3], bool snapToNavMesh) {
     if (!s_base || !s_aiPlace || !squadName || !pos) return -1;
     const uint8_t* scen = *reinterpret_cast<uint8_t* const*>(s_base + kScenarioRva);
     if (!scen) return -1;
@@ -1293,7 +1365,7 @@ int PlaceSquadAt(const char* squadName, const float pos[3]) {
         p[0] = pos[0] + (points > 1 ? 1.2f * std::cos(a) : 0.0f);
         p[1] = pos[1] + (points > 1 ? 1.2f * std::sin(a) : 0.0f);
         float ground = 0.0f;   // a point inside the terrain drops the actor through the map: stand it on the nav mesh
-        const bool onMesh = NavGroundZ(p[0], p[1], pos[2], ground);
+        const bool onMesh = snapToNavMesh && NavGroundZ(p[0], p[1], pos[2], ground);
         p[2] = onMesh ? ground + 0.4f : pos[2];
         NOBLE_INFO("SpawnTest: map AI: spawn point {} -> {:.1f},{:.1f},{:.1f} ({})", k, p[0], p[1], p[2], onMesh ? "nav mesh" : "no nav vertex near");
     }
@@ -1334,7 +1406,8 @@ void MapAiAtStep() {
     if (now - s_first < s_delay) return;
     s_state = 2;
     EnableMpAiPlacement();
-    PlaceSquadAt(s_squad.c_str(), s_pos);
+    const bool exact = !s_squad.empty() && s_squad[0] == '!';   // "!squad": keep the given height (e.g. on a Forge piece)
+    PlaceSquadAt(s_squad.c_str() + (exact ? 1 : 0), s_pos, !exact);
 }
 
 // Forge "PLACE AI" (pause menu). The menu thread queues a kind; the game tick places that squad 6 m in front of the
@@ -1443,6 +1516,55 @@ void NavDumpStep() {
         NOBLE_INFO("SpawnTest: nav-dump:   checksum {:08X}, object refs {}", *reinterpret_cast<const uint32_t*>(pf + 0x60), refs);
         (void)refs;
     }
+}
+
+// -forge-piece-at <first tag index hex>|x,y,z@seconds (step 3 research, dev): places one Forge piece with the
+// engine's own object_placement_data_new / object_new. A piece name has several tags (crate, model, collision, ...);
+// this tries the 8 indices from the given one and places the first whose tag data starts with object type 10
+// (crate), logging what it saw. Index from tools\research\map-tag-names.ps1 on the loaded .map.
+void ForgePieceAtStep() {
+    static int s_state = -1;
+    static uint32_t s_first = 0;
+    static float s_pos[3] = {};
+    static ULONGLONG s_delay = 0, s_start = 0;
+    if (s_state < 0) {
+        s_state = 0;
+        const wchar_t* arg = wcsstr(GetCommandLineW(), L"-forge-piece-at ");
+        unsigned idx = 0; float x = 0, y = 0, z = 0; int sec = 0;
+        if (arg && swscanf_s(arg + 16, L"%x|%f,%f,%f@%d", &idx, &x, &y, &z, &sec) == 5) {
+            s_first = idx; s_pos[0] = x; s_pos[1] = y; s_pos[2] = z; s_delay = static_cast<ULONGLONG>(sec) * 1000; s_state = 1;
+            NOBLE_INFO("SpawnTest: -forge-piece-at tags from {:X} at {:.1f},{:.1f},{:.1f} after {} s", idx, x, y, z, sec);
+        }
+    }
+    if (s_state != 1 || !s_placementNew || !s_objectNew) return;
+    const ULONGLONG now = GetTickCount64();
+    if (!s_start) s_start = now;
+    if (now - s_start < s_delay) return;
+    s_state = 2;
+    const auto* pages = reinterpret_cast<const uint64_t*>(s_base + 0x4E39F20);
+    const uint8_t* instances = *reinterpret_cast<uint8_t* const*>(s_base + 0xC1A600);   // 8 bytes per tag
+    if (!instances) return;
+    for (uint32_t idx = s_first; idx < s_first + 8; ++idx) {
+        const uint8_t* e = instances + static_cast<size_t>(idx) * 8;
+        const uint16_t group = *reinterpret_cast<const uint16_t*>(e), salt = *reinterpret_cast<const uint16_t*>(e + 2);
+        const uint32_t packed = *reinterpret_cast<const uint32_t*>(e + 4);
+        if (!packed) continue;
+        const auto* tag = reinterpret_cast<const uint8_t*>(pages[packed >> 28] + static_cast<uint64_t>(packed) * 4);
+        const uint16_t first = *reinterpret_cast<const uint16_t*>(tag);
+        NOBLE_INFO("SpawnTest: -forge-piece-at tag {:X} group {} salt {:04X} first u16 {}", idx, group, salt, first);
+        (void)group;
+        if (first != 10) continue;
+        alignas(16) uint8_t placement[kPlacementSize + 16];
+        std::memset(placement, 0, sizeof(placement));
+        const int32_t datum = static_cast<int32_t>((static_cast<uint32_t>(salt) << 16) | idx);
+        s_placementNew(placement, datum, -1, nullptr);
+        std::memcpy(placement + 0x1C, s_pos, sizeof(s_pos));
+        const int32_t handle = s_objectNew(placement);
+        NOBLE_INFO("SpawnTest: -forge-piece-at placed tag {:08X} -> object {:08X}", static_cast<uint32_t>(datum), static_cast<uint32_t>(handle));
+        (void)handle;
+        return;
+    }
+    NOBLE_WARN("SpawnTest: -forge-piece-at found no crate tag in {:X}..{:X}", s_first, s_first + 7);
 }
 
 // -place-ai-at <kind>@<seconds> (dev test of the Forge PLACE AI row; kind 0 Elites .. 4 Troopers): presses the row

@@ -57,6 +57,25 @@ Sources: MCC decompile (`D:\MCC_DECOMP\...\hr_000NN.c`, `tools\research\extract-
    touches ground sectors. This is the least known part; study a baked map with object refs (ff60_airview: 182).
 5. Firing positions on pieces (optional): AI already use dynamic firing positions near players.
 
+## 4. Probe results (2026-11-22 00:30-01:00, runs p13a-p13h, AI Forge World)
+Dev switches: `-nav-probe` (hooks `0x76F1E8`, logs each object asked about; every 5 s calls `0x75AF38` on the
+player like an AI asking for its target, and logs the player's ground fields), `-forge-piece-at <tag hex>|x,y,z@s`
+(places a Forge piece with object_placement_data_new / object_new; picks a tag by a weak heuristic, it placed
+`ff_bridge_diag` 0x24DA), `-map-ai-at "!squad|..."` (no snap to the nav mesh).
+- **Piece resting on the ground** (p13g, bridge at z 3.6, player standing on it, capture confirms): the engine
+  reports the **ground BSP surface and a valid sector** under the player. Low pieces need nothing: AI locate a
+  player on them through the ground below. **proven**
+- **Raised piece** (p13h, bridge at z 7, player on top at z 7.0): ground bsp / surface / object all -1, location
+  sector ref `FFFFFFFF`. `0x76F1E8` is **never called**: the ground finder (`0x4A41A4`, called from `0x4A4424`) does not
+  treat a Forge crate as pathfinding ground at all. **proven**
+- The map's own spawn platform (63.5,236.4,44.6) is BSP, not a Forge piece.
+- `ai_place` places nothing at a spawn point with no nav sector under it (Elites above a raised piece: actors 0 -> 0).
+
+**Design change:** hooking `0x76F1E8` alone is not enough. Next: decompile `0x4A41A4` (which collision it accepts as
+ground: BSP, instanced geometry, objects with pathfinding data) and hook there for bipeds over a registered Forge
+piece. Cheap partial fix first: when a biped is over a raised Forge piece, return the ground sector straight below
+(AI then come to the spot under the piece and shoot up instead of losing the target). Full fix as in section 3.
+
 Proof order: (a) hook `0x76F1E8` and log which objects the engine asks about while a biped stands on a Forge
 block (confirms the path); (b) one hand-made flat sector for one block type, registered for one placed block, check
 `+0x500` (no location) clears for an actor standing on it; (c) links to the ground; (d) the generator.

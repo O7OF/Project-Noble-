@@ -46,7 +46,7 @@ int PlaceMapSquads();
 // Places one map squad (by name) at a point: its spawn points are moved to a 1.2 m ring around `pos` for the
 // placement and then restored (game thread). Returns the number of new actors, -1 if not possible. The building
 // block for AI placed from the Forge menu.
-int PlaceSquadAt(const char* squadName, const float pos[3]);
+int PlaceSquadAt(const char* squadName, const float pos[3], bool snapToNavMesh = true);
 // Forge pause-menu "PLACE AI" (any thread): queues one squad of `kind` (0 Elites, 1 Grunts, 2 Jackals, 3 Brutes,
 // 4 Troopers; the map's noble_ai_* squads) to be placed 6 m in front of the local player on the next game tick.
 void RequestPlaceAiInFront(int kind);
