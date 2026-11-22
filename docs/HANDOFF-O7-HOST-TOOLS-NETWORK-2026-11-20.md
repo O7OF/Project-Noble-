@@ -109,7 +109,8 @@ the map's squads 15 s into the match, again 20 s after they are all dead. Guests
 host's actors reach guests through the engine's own simulation replication, as with Firefight waves and allies.
 **No new Noble messages; no server change.** Things for you to decide or check:
 1. **Map hash for the AI Forge World.** The AI build is a different `forge_halo.map` (~800 MB, nav mesh + AI tags)
-   from today's Forge World pack. A guest with the old map joining an AI session would desync or crash on the AI tags.
+   from today's Forge World pack. A guest with the old map joining an AI session is expected to desync or crash on
+   the AI tags (not tested).
    Options: ship the AI build as the one Forge World pack (+29 MB zipped) so everyone has it, and/or a map hash /
    pack version check at join (lobby or master server). Which side owns that check is your call.
 2. **Traffic:** 14 AI on Forge World today (squads are per map). Same concern as the Firefight allies note above.
