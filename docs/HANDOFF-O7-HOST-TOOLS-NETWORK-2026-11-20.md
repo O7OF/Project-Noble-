@@ -111,8 +111,12 @@ host's actors reach guests through the engine's own simulation replication, as w
 1. **Map hash for the AI Forge World.** The AI build is a different `forge_halo.map` (~800 MB, nav mesh + AI tags)
    from today's Forge World pack. A guest with the old map joining an AI session is expected to desync or crash on
    the AI tags (not tested).
-   Options: ship the AI build as the one Forge World pack (+29 MB zipped) so everyone has it, and/or a map hash /
-   pack version check at join (lobby or master server). Which side owns that check is your call.
+   **Tyler decided (2026-11-21 22:44): the AI build becomes the Forge World pack map** (+29 MB zipped; staged in
+   `build\bin\Release\data\maps`, ships with the next release). Still your call: a map hash / pack version check at
+   join (lobby or master server) so a player with the older Forge World pack is refused with a clear message.
+   AI-build SHA-256 `EB9899D54AE9741879956ADA74AEEDA34AF3369C59BEE3186383AD904307FDB9`; v0.20.34 pack map
+   `81CD2BDE820A8B4B...`.
+4. **Forge PLACE AI** (`b1bbf2f`): host-only menu rows; placement is in the host's process like MAP AI. No messages.
 2. **Traffic:** 14 AI on Forge World today (squads are per map). Same concern as the Firefight allies note above.
 3. **Tested:** one PC, host + 1 guest LAN (`p9c`): guest stable for 70 s with 14 host AI, guest has no local actors
    (expected). Not yet tested: guest close to the AI (sees / fights them), 3+ players, relay.

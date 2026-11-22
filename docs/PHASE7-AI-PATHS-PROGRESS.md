@@ -2,6 +2,27 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
+## Status (2026-11-21 23:50) - PLACE AI button, AI Forge World in the pack, step 3 research
+
+- **PLACE AI / AI TYPE** (commit b1bbf2f): host's match menu in Forge. PLACE AI puts the chosen `noble_ai_*` squad
+  (Elites, Grunts, Jackals, Brutes, Troopers; AI TYPE cycles) on the nav mesh in front of the player (6 m, then
+  4/8/3/10/12 m, then where the player stands); result on the in-match note card ("Placed 2 Elites in front of you."
+  or why not). Queued for the game tick (`spawn::RequestPlaceAiInFront`). Dev trigger `-place-ai-at <kind>@<s>`.
+  p10b: 2 Elites placed 4 m ahead and walked; p10c (no map override): MAP AI placed 14 and PLACE AI 3 Jackals.
+  **Waiting for Tyler's hands-on test.**
+- **AI Forge World is now the Forge World pack map** (Tyler, 22:44): `build\bin\Release\data\maps\forge_halo.map`
+  = the HREK AI build (838,791,168 bytes, SHA-256 EB9899D5...FDB9). The old one (v0.20.34, 81CD2BDE...) is backed up as
+  `HREK\noble_mods\phase7_backup_2026-11-21\forge_halo.map.shipped_v0.20.34`. Tag check: the AI build has 872 more
+  tags (AI characters and effects) and lacks 2 (`spartans\fx\flashlight\flashlight_1p`,
+  `armor_fx\cheap_lights\bungie_helmet`), which only the 11-13 flashlight experiment's `spartans.biped` (now
+  `spartans.biped.bak`) referenced; the flashlight is parked. `publish-release.ps1` packs this file into the
+  ForgeWorld zip at the next release (no release made). Guests need it too (O7 map-check item).
+- **Step 3 research** (commits fde2836, 79cc976): `docs\REACH-PATHFINDING-DATA.md` - runtime nav layout (element
+  sizes measured with the new `-nav-dump` probe), how an actor's sector is found, and that objects resolve through
+  `0x76F1E8` (scenario placement entry -> pathfinding references -> object ref; object sectors in object-local
+  space). Forge pieces have no scenario entry, so the route is: hook `0x76F1E8` for Forge pieces, add per-piece-type
+  sectors in a free tag page (pages 0 and 6-11 are free), and add links to the ground. Proof order in that doc.
+
 ## Day summary (2026-11-21, reviewed 21:00): what, how, why
 
 | Commit | What | How | Why |
