@@ -712,16 +712,20 @@ Full log, every test and the next steps: `docs\PHASE7-AI-PATHS-PROGRESS.md`; pla
 - `ai_place` refuses outside campaign / Firefight (`game_is_campaign_or_survival`). *proven.*
 - **HREK's cache builder strips the nav mesh from multiplayer scenarios** unless the scenario's top-level `flags` bit 1 **"don't strip pathfinding"** is set. Without it the per-BSP pathfinding pointer stays 0, actors cannot find a sector and only stand and shoot. Building the scenario as solo also keeps the nav mesh but drops 403 MP tags (`globals\mp` and everything under it) and crashes the player view; do not use it. *proven.*
 
-### 9.2 What works now (dev, closed `main`)
-- **AI-capable Forge World build** (HREK only, not shipped): flag cleared + "don't strip pathfinding" + bake + characters (elite, grunt, jackal, brute, trooper) + 5 `noble_ai_*` squads + whole-map zones. 10,972 sectors; same 16,992 tags as the plain MP build; ~800 MB map, 682 MB zipped (+29 MB over today's Forge World pack). *proven.*
+### 9.2 What works now (released in v0.20.35, 2026-11-22)
+- **AI-capable Forge World build** (the Forge World pack map from v0.20.35): flag cleared + "don't strip pathfinding" + bake + characters (elite, grunt, jackal, brute, trooper) + 5 `noble_ai_*` squads + whole-map zones. 10,972 sectors; same 16,992 tags as the plain MP build; ~800 MB map, 682 MB zipped (+29 MB over today's Forge World pack). *proven.*
 - **MAP AI host option** (`Settings::hostMapAi`, lobby row in custom games and Forge): 15 s into the match the host lifts the ai_place gate (one 5-byte patch) and places every squad; places them again 20 s after all are dead; guests never place AI; maps without a nav mesh are left alone. *proven* (one PC; a 2-player run kept the guest stable).
 - **Whole-map zones** from the nav mesh (one zone + "fight" objective per 160 m tile, 20 m areas, ~17,300 firing positions). Engine limits: zones 128, firing positions 2,048 / zone, areas 128 / zone, task areas 64, objectives 64, squads 256. *proven.*
 - **`spawn::PlaceSquadAt(name, pos)`**: places a map squad at any point; spawn heights come from the nav mesh (`NavGroundZ`) so no actor drops through the map. *proven.*
 - **One command per map:** `tools\noble-map-ai-bake.ps1 -Tag <scenario> -Centre x,y,z` (backups, flags, squads, bake, zones, bake, build; ~6 min on Forge World). *proven.*
+- **Forge PLACE AI / AI TYPE** (host's match menu in Forge): places one `noble_ai_*` squad on the nav mesh in front of the player; the result shows on the in-match note card. *proven* (one PC).
+- **Shipped in v0.20.35:** the AI-capable build is the Forge World pack map (SHA-256 `EB9899D5...FDB9`, 838,791,168 bytes); a 2-player run showed the guest seeing and fighting the host's AI (engine replication, no new messages). *proven.*
+- **Team rules:** every AI fights everyone (players, and Troopers vs Covenant). *observed*; allying Troopers with players is open.
 
 ### 9.3 Open
-- Forge pieces are not in the nav mesh: `generate-pathfinding` writes Forge World's scenario back without any crates / scenery added to it (palette entries too), while other edits survive. *proven*; cause unknown.
-- Forge-menu "place AI" trigger; MP team rules for AI; shipping (pack choice, map hash for guests: O7) - see the progress doc.
+- Forge pieces: the HREK bake removes objects added to Forge World's scenario. Runtime route researched in `docs\REACH-PATHFINDING-DATA.md`: pieces resting on the ground already resolve to the ground sector below; on a raised piece the engine's ground finder (`0x4A41A4`) ignores Forge crates (no sector), so that is the next hook point. *proven.*
+- Dedicated server: the game tick Noble uses (`0x61A38`) runs only for local players, so a future dedicated session needs another game-thread hook for allies / pacing / MAP AI. *decompile.*
+- Map hash for guests (O7).
 
 ---
 
@@ -807,6 +811,9 @@ Full log, every test and the next steps: `docs\PHASE7-AI-PATHS-PROGRESS.md`; pla
 | `actor_find_pathfinding_location` (actor 0xD00: +0x410 point, +0x420 sector ref, +0x500 = 1 no location) | `0x75B2C8` |
 | Scenario squads (count / packed; 0x6C each, name char[32] +0, spawn points +0x3C / +0x40, 0x7C each, position +0x14) | scenario +0x398 / +0x39C |
 | Player-view crash when a solo-type scenario runs as MP | `0x30D88A` in `0x30D5A8` |
+| Unit nav location `0x75AF38(unit, sector ref out, point out)`; biped ground finder | `0x75AF38`; `0x4A41A4` |
+| Object -> nav object ref (scenario placement entry -> pathfinding references) | `0x76F1E8` |
+| Per-player control tick caller (loops over local players only) | `0x62A78` -> `0x61A38` |
 
 ---
 
@@ -820,6 +827,7 @@ Full log, every test and the next steps: `docs\PHASE7-AI-PATHS-PROGRESS.md`; pla
 | `docs/multiplayer-session-2026-11-16.md` | multiplier status of the 2026-11-16 session: fixes, 5-player evidence, high-slot history (the seat blocker it describes was fixed in `0fdcf97`), harness quick reference |
 | `docs/ANTI-REVERSING.md` | what the release build hides and how to verify it (7.5) |
 | `docs/PLAN-PHASE7-AI-PATHS-2026-11-21.md` / `docs/PHASE7-AI-PATHS-PROGRESS.md` | Phase 7 plan and full progress log: AI paths on Forge / custom maps (section 9) |
+| `docs/REACH-PATHFINDING-DATA.md` | runtime nav-mesh layout, how actors / objects find sectors, Forge-piece design and probe results |
 | `docs/01-guides/` | modder guide (68 hooks with MCC RVAs, launch flags, tooling, variant rules) and player guide (Firefight, Armory, appearance) |
 | `docs/02-engine-reference/` | retail -> MCC address table, master upgrade opportunity list (68 items), decompile index, TOPIC chapters: networking, AI/pathfinding/objectives, armour/appearance/armory, lighting/rendering, **scaling past 32 players (64/128 capacity plan)** |
 | `docs/03-qa-and-release/` | QA verification log, stabilization report, stage-1 status (pool inspector readings), release draft |

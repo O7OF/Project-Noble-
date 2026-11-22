@@ -30,6 +30,24 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02035Items = {
+        {"FORGE", "AI Can Walk Forge World",
+         "The Noble Forge World map now has AI paths across the whole map, so Elites, Grunts, Jackals, Brutes and Troopers walk around, chase players and fight. Download the new Forge World pack: the old one has no AI paths."},
+        {"HOST TOOLS", "Map AI",
+         "New host option in the custom games and Forge lobbies. Turn on MAP AI and AI squads join the game 15 seconds in and come back after they have all been killed. It only works on maps with AI paths (the new Forge World)."},
+        {"FORGE", "Place AI in Forge",
+         "In Forge, the host's match menu has PLACE AI and AI TYPE. Pick Elites, Grunts, Jackals, Brutes or Troopers and place a squad on the ground in front of you."},
+        {"AI", "Who the AI Fight",
+         "AI fight everyone: players, and Troopers against the Covenant. Everyone in the game sees and fights the host's AI. AI walk on the map's ground and on Forge pieces that sit on the ground; they don't climb onto raised Forge pieces yet."}
+    };
+
+    notes.push_back({
+        "v0.20.35",
+        "AI on Forge World",
+        "Map AI, Place AI in Forge and a Forge World with AI paths",
+        v02035Items
+    });
+
     const std::vector<ChangeItem> v02034Items = {
         {"FIREFIGHT", "Extra Enemies",
          "New host option in the Firefight lobby: add 2, 4, 6 or 8 extra Covenant squads to every wave. A wave only ends when they are dead too. On Courtyard the first wave goes from 28 enemies to 36 with +4 squads and 48 with +8."},

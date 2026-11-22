@@ -1,4 +1,4 @@
-# Handoff for O7: host tools network changes (v0.20.33, 2026-11-20; updated 2026-11-21 21:00)
+# Handoff for O7: host tools network changes (v0.20.33, 2026-11-20; updated 2026-11-22 01:15)
 
 Tyler and Claude built the host tools (Phase 1-2 and the start of Phase 3 of
 `claude/TODO-HOST-TOOLS-AND-REMAINING-2026-11-20.md`). They touch your networking
@@ -100,7 +100,7 @@ guests through the engine's own simulation replication, the same as wave enemies
 New host settings `hostFirefightAllies` / `hostFirefightAllySquads` live only in the host's `settings.json`.
 Worth a look on your side: allies add up to ~20 actors on top of the waves (more simulation traffic in a 4-player game).
 
-## Phase 7: MAP AI (2026-11-21, dev only, `19d89fb` ... `6c3998a`) - needs your sign-off before it ships
+## Phase 7: MAP AI and PLACE AI (2026-11-21/22, `19d89fb` ... `618be77`; released in v0.20.35)
 
 What it is: a host-only lobby option "MAP AI" (custom games and Forge; setting `hostMapAi` in the host's
 `settings.json`). On a map built with a nav mesh and AI squads (today Noble's AI Forge World, the next Forge World pack map),
@@ -117,9 +117,16 @@ host's actors reach guests through the engine's own simulation replication, as w
    AI-build SHA-256 `EB9899D54AE9741879956ADA74AEEDA34AF3369C59BEE3186383AD904307FDB9`; v0.20.34 pack map
    `81CD2BDE820A8B4B...`.
 2. **Traffic:** 14 AI on Forge World today (squads are per map). Same concern as the Firefight allies note above.
-3. **Tested:** one PC, host + 1 guest LAN (`p9c`): guest stable for 70 s with 14 host AI, guest has no local actors
-   (expected). Not yet tested: guest close to the AI (sees / fights them), 3+ players, relay.
+3. **Tested:** one PC, host + 1 guest LAN. `p9c`: guest stable for 70 s with 14 host AI, no local actors (expected).
+   `p12a` (2026-11-22): the guest's capture shows an Elite, a Jackal and a Grunt firing at the guest, 9 red radar dots;
+   the guest died and respawned; no crash. Not yet tested: 3+ players, relay.
 4. **Forge PLACE AI** (`b1bbf2f`): host-only menu rows; placement is in the host's process like MAP AI. No messages.
+5. **Released in v0.20.35** (2026-11-22, Tyler's OK) with the AI Forge World as the pack map. The map check for
+   guests with an older pack (item 1) is still open.
+6. **Dedicated server, for when it runs a real session:** Noble's game-thread work (Firefight allies, wave pacing,
+   MAP AI, PLACE AI) hangs off the per-player control tick `0x61A38`, which the engine (`0x62A78`) calls only for
+   **local** players. A dedicated session with no local player would never run it; it needs another game-thread
+   hook. Today `noble-dedicated` runs no engine session, so nothing is broken.
 
 ## Tested on one PC
 

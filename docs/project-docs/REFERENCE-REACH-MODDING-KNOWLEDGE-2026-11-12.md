@@ -100,3 +100,14 @@ Full log: `docs\PHASE7-AI-PATHS-PROGRESS.md`. All tested on Forge World with HRE
   option name (option lists differ between tag types). `tool get-tag-field-value` is slow and crash-prone.
 - **`build-cache-file ... compress-most`** ran ~25 min then failed "hash mismatch, verification failed": not usable.
 - **One command:** `tools\noble-map-ai-bake.ps1 -Tag <scenario> -Centre x,y,z` does all of the above for a map.
+
+## 10. Things that load into Noble from MCC's folder; Forge pieces and AI (2026-11-22)
+- **ReShade / proxy DLLs in `MCC\Binaries\Win64` load into Noble too.** Noble loads Reach from that folder, so a
+  ReShade `dxgi.dll` there was injected into `noble-dev.exe` (ReShade.log named it). Tyler's ReShade 6.8 + RenoDX /
+  DLSS5 feeder (installed 2026-10-17, also a `host64` folder) were moved to `D:\MCC-ReShade-backup-2026-11-22\`; copy
+  them back to restore. When a Noble run behaves oddly on a player's PC, ask about ReShade / proxy DLLs in that folder.
+- **Forge pieces and AI:** a player on a Forge piece resting on the ground is located on the ground sector below
+  (AI can chase them); on a raised piece the engine finds no sector, because its ground finder ignores Forge crates.
+  Details: `docs\REACH-PATHFINDING-DATA.md`.
+- **Forge piece tags in a .map:** one piece name has several tags (crate, model, collision, render ...);
+  `tools\research\map-tag-names.ps1 -Map <.map> -Pattern <regex>` lists them with their indices.
