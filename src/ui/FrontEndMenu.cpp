@@ -6375,8 +6375,34 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
           ImGui::TextUnformatted(item.title.c_str());
           ImGui::TextColored(ImVec4(0.65f, 0.72f, 0.80f, 1.0f), "%s",
                              item.description.c_str());
+          // Check the release for a newer pack once per run, the first time
+          // MODS shows this item; CHECK FOR UPDATES repeats it on demand.
+          static std::vector<std::string> s_updateChecked;
+          if (std::find(s_updateChecked.begin(), s_updateChecked.end(),
+                        item.id) == s_updateChecked.end()) {
+            s_updateChecked.push_back(item.id);
+            recommended.CheckForUpdates(item.id);
+          }
+          const RecommendedMaps::UpdateInfo update =
+              recommended.UpdateSnapshot(item.id);
           if (installed) {
-            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.45f, 1.0f), "INSTALLED");
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.45f, 1.0f), "INSTALLED%s%s",
+                               update.installedTag.empty() ? "" : " - ",
+                               update.installedTag.c_str());
+            if (update.checking) {
+              ImGui::TextColored(ImVec4(0.65f, 0.72f, 0.80f, 1.0f),
+                                 "Checking for updates...");
+            } else {
+              if (update.checked && update.error.empty())
+                ImGui::TextColored(ImVec4(0.65f, 0.72f, 0.80f, 1.0f),
+                                   "Up to date (newest pack: %s).",
+                                   update.latestTag.c_str());
+              else if (!update.error.empty())
+                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1.0f),
+                                   "Update check failed: %s", update.error.c_str());
+              if (ImGui::Button("CHECK FOR UPDATES##chk", ImVec2(200.0f, 28.0f)))
+                recommended.CheckForUpdates(item.id);
+            }
           } else if (status.state == RecommendedMaps::State::Resolving ||
                      status.state == RecommendedMaps::State::Downloading ||
                      status.state == RecommendedMaps::State::Verifying ||
@@ -6404,9 +6430,16 @@ void DrawFrontEndContents(OverlayContext &ctx, ID3D11Device *device,
               ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1.0f),
                                  "DOWNLOAD FAILED: %s", status.error.c_str());
             }
-            std::string buttonLabel = "DOWNLOAD##dl";
+            const bool outdated = recommended.IsOutdated(item);
+            if (outdated)
+              ImGui::TextColored(ImVec4(0.98f, 0.78f, 0.30f, 1.0f),
+                                 "UPDATE AVAILABLE%s%s: your copy is an older "
+                                 "version of this pack.",
+                                 update.latestTag.empty() ? "" : " - ",
+                                 update.latestTag.c_str());
+            std::string buttonLabel = outdated ? "UPDATE##dl" : "DOWNLOAD##dl";
             if (item.approxBytes)
-              buttonLabel = "DOWNLOAD (" +
+              buttonLabel = std::string(outdated ? "UPDATE (" : "DOWNLOAD (") +
                             RecommendedMaps::FormatBytes(item.approxBytes) +
                             ")##dl";
             if (ImGui::Button(buttonLabel.c_str(), ImVec2(200.0f, 28.0f)))

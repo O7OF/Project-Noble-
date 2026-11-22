@@ -1443,7 +1443,10 @@ std::string PlaceAiResult(uint32_t& serial) {
 void PlaceAiRequestStep() {
     const int kind = s_placeAiRequest.exchange(-1);
     if (kind < 0) return;
-    if (!MapHasAiPaths()) { SetPlaceAiResult("This map has no AI paths. Use an AI-ready map (Noble Forge World)."); return; }
+    if (!MapHasAiPaths()) {
+        SetPlaceAiResult("This map has no AI paths. On Forge World, update Noble Forge World in MODS > RECOMMENDED MAPS.");
+        return;
+    }
     ObjectPool objects;
     float player[3], fwd[2];
     if (!GetObjectPool(objects) || !PlayerPosition(objects, player, fwd)) { SetPlaceAiResult("Could not find your position."); return; }

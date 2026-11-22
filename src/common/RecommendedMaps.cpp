@@ -22,9 +22,11 @@ namespace noble {
 namespace {
 
 constexpr const wchar_t kUserAgent[] = L"ProjectNoble";
-// Newest-first list. Looking past the newest release matters: a maintainer can publish a base-only release (v0.19.90
-// was one), and the optional pack must still be found in an older release instead of leaving the row broken.
-const std::string kReleaseApi = NOBLE_OBF("https://api.github.com/repos/O7OF/Project-Noble-/releases?per_page=10");
+// /latest is asked first. The list is the fallback for a base-only latest release (v0.19.90 was one), so the pack
+// shipped with an earlier release is still found. The list is ordered by the tag's commit date, not by publish date
+// (on 2026-11-22 v0.20.28 came first and v0.20.35 third), so the list is searched by published_at.
+const std::string kReleaseApi = NOBLE_OBF("https://api.github.com/repos/O7OF/Project-Noble-/releases?per_page=30");
+const std::string kLatestReleaseApi = NOBLE_OBF("https://api.github.com/repos/O7OF/Project-Noble-/releases/latest");
 
 std::wstring Widen(const std::string& s) {
     if (s.empty()) return L"";
@@ -247,11 +249,44 @@ struct ReleaseAsset {
     std::string url;
     std::string shaUrl;
     std::string tag;
+    uint64_t size = 0;   // zip size on the release
 };
 
-// Picks the newest release that carries a `<assetPrefix>*.zip` asset (plus its optional `.sha256` sibling). The release
-// list is newest-first, so a base-only release at the top does not hide the pack shipped with the previous one. A single
-// release object is accepted too (in case the URL is ever pointed at a /latest endpoint).
+// Picks the most recently published release that carries a `<assetPrefix>*.zip` asset (plus its optional `.sha256`
+// sibling). Accepts a release list or a single release object (/latest).
+bool FindReleaseAsset(const std::string& body, const std::string& assetPrefix, ReleaseAsset& found, std::string& error);
+
+// What was installed last (written after a successful download): data\cache\recommended\<id>.installed, three lines:
+// release tag, pack zip size, installed marker size. Missing for packs installed by hand or before 0.20.36.
+struct InstalledRecord {
+    std::string tag;
+    uint64_t zipBytes = 0;
+    uint64_t markerBytes = 0;
+};
+
+std::filesystem::path InstalledRecordPath(const std::filesystem::path& installDir, const std::string& id) {
+    return installDir / "data" / "cache" / "recommended" / (id + ".installed");
+}
+
+bool ReadInstalledRecord(const std::filesystem::path& path, InstalledRecord& out) {
+    std::ifstream in(path);
+    if (!in) return false;
+    std::string zip, marker;
+    std::getline(in, out.tag);
+    std::getline(in, zip);
+    std::getline(in, marker);
+    out.zipBytes = std::strtoull(zip.c_str(), nullptr, 10);
+    out.markerBytes = std::strtoull(marker.c_str(), nullptr, 10);
+    return !out.tag.empty() || out.zipBytes != 0;
+}
+
+void WriteInstalledRecord(const std::filesystem::path& path, const InstalledRecord& record) {
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream out(path, std::ios::trunc);
+    if (out) out << record.tag << "\n" << record.zipBytes << "\n" << record.markerBytes << "\n";
+}
+
 bool FindReleaseAsset(const std::string& body, const std::string& assetPrefix, ReleaseAsset& found, std::string& error) {
     const nlohmann::json root = nlohmann::json::parse(body, nullptr, false);
     nlohmann::json releases = nlohmann::json::array();
@@ -263,15 +298,21 @@ bool FindReleaseAsset(const std::string& body, const std::string& assetPrefix, R
         error = "GitHub release JSON could not be parsed";
         return false;
     }
+    // Several releases carry the pack; take the most recently published one (the list order is not publish order).
+    bool any = false;
+    std::string bestPublished;
     for (const auto& release : releases) {
         if (!release.is_object() || !release.contains("assets") || !release["assets"].is_array()) continue;
+        if (release.value("draft", false)) continue;
         std::string name, url;
+        uint64_t size = 0;
         for (const auto& asset : release["assets"]) {
             const std::string candidate = asset.value("name", "");
             if (candidate.rfind(assetPrefix, 0) == 0 && candidate.size() > 4 &&
                 candidate.compare(candidate.size() - 4, 4, ".zip") == 0) {
                 name = candidate;
                 url = asset.value("browser_download_url", "");
+                size = asset.value("size", static_cast<uint64_t>(0));
                 break;
             }
         }
@@ -284,11 +325,31 @@ bool FindReleaseAsset(const std::string& body, const std::string& assetPrefix, R
                 break;
             }
         }
-        found = ReleaseAsset{name, url, sha, release.value("tag_name", "")};
-        return true;
+        const std::string published = release.value("published_at", "");   // ISO 8601: compares as text
+        if (any && published <= bestPublished) continue;
+        found = ReleaseAsset{name, url, sha, release.value("tag_name", ""), size};
+        bestPublished = published;
+        any = true;
     }
+    if (any) return true;
     error = "no " + assetPrefix + "* asset in the latest releases";
     return false;
+}
+
+// The newest published pack: /releases/latest first, else the newest-published release in the list that has one.
+// NOBLE_RECOMMENDED_API_URL (test hook) replaces both with one local JSON document.
+bool ResolveNewestAsset(const std::string& assetPrefix, ReleaseAsset& found, std::string& error) {
+    std::string body;
+    if (const char* overrideApi = std::getenv("NOBLE_RECOMMENDED_API_URL"); overrideApi && *overrideApi) {
+        if (!HttpGetText(overrideApi, body, error)) return false;
+        return FindReleaseAsset(body, assetPrefix, found, error);
+    }
+    std::string latestError;
+    if (HttpGetText(kLatestReleaseApi, body, latestError) && FindReleaseAsset(body, assetPrefix, found, latestError))
+        return true;
+    body.clear();
+    if (!HttpGetText(kReleaseApi, body, error)) return false;
+    return FindReleaseAsset(body, assetPrefix, found, error);
 }
 
 } // namespace
@@ -311,21 +372,109 @@ void RecommendedMaps::Initialize(const std::filesystem::path& installDir) {
     Item forge;
     forge.id = "forge_world";
     forge.title = "Noble Forge World";
-    forge.description = "Pelican, Spectre, Boathog and the targeting laser in the Forge palette. Optional download.";
+    forge.description = "AI paths for MAP AI and PLACE AI, plus the Pelican, Spectre, Boathog and the targeting laser in "
+                        "the Forge palette. Optional download.";
     forge.assetPrefix = "Noble-ForgeWorld-";   // deliberately not "Project-Noble-*": the updater must not see this
                                                // pack as a client update (see Updater.cpp asset selection).
     forge.installedMarker = std::filesystem::path("data") / "maps" / "forge_halo.map";
-    forge.approxBytes = 653ull * 1024ull * 1024ull;   // shown until the release reports the real asset size
+    forge.approxBytes = 682ull * 1024ull * 1024ull;   // shown until the release reports the real asset size
+    // v0.20.35 pack (AI Forge World, SHA-256 EB9899D5...FDB9). The v0.20.34 map (796,790,784 bytes, no AI paths) now
+    // shows UPDATE AVAILABLE instead of INSTALLED. Change this whenever a new pack map is published.
+    forge.currentMarkerBytes = 838791168ull;
     m_items.push_back(forge);
     m_status.clear();
-    for (const Item& item : m_items) m_status.emplace_back(item.id, Status{});
+    m_updates.clear();
+    for (const Item& item : m_items) {
+        m_status.emplace_back(item.id, Status{});
+        m_updates.emplace_back(item.id, UpdateInfo{});
+    }
     NOBLE_INFO("RecommendedMaps: install folder {}", m_installDir.string());
 }
 
 bool RecommendedMaps::IsInstalled(const Item& item) const {
     std::error_code ec;
     if (m_installDir.empty()) return false;
-    return std::filesystem::is_regular_file(m_installDir / item.installedMarker, ec);
+    if (!std::filesystem::is_regular_file(m_installDir / item.installedMarker, ec)) return false;
+    return !IsOutdated(item);
+}
+
+bool RecommendedMaps::IsOutdated(const Item& item) const {
+    std::error_code ec;
+    if (m_installDir.empty()) return false;
+    const std::filesystem::path marker = m_installDir / item.installedMarker;
+    if (!std::filesystem::is_regular_file(marker, ec)) return false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& [key, info] : m_updates)
+            if (key == item.id && info.checked && info.available) return true;   // CHECK FOR UPDATES found a newer pack
+    }
+    if (item.currentMarkerBytes == 0) return false;
+    const uint64_t size = std::filesystem::file_size(marker, ec);
+    return !ec && size != item.currentMarkerBytes;
+}
+
+RecommendedMaps::UpdateInfo RecommendedMaps::UpdateSnapshot(const std::string& id) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& [key, info] : m_updates)
+        if (key == id) return info;
+    return {};
+}
+
+void RecommendedMaps::CheckForUpdates(const std::string& id) {
+    Item item;
+    std::filesystem::path installDir;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_installDir.empty()) return;
+        installDir = m_installDir;
+        for (const Item& candidate : m_items)
+            if (candidate.id == id) item = candidate;
+        if (item.id.empty()) return;
+        for (auto& [key, info] : m_updates) {
+            if (key != id) continue;
+            if (info.checking) return;   // already running
+            info.checking = true;
+            info.error.clear();
+        }
+    }
+    std::thread([this, item, installDir] {
+        UpdateInfo result;
+        result.checked = true;
+        std::string error;
+        ReleaseAsset asset;
+        if (!ResolveNewestAsset(item.assetPrefix, asset, error)) {
+            result.error = error.empty() ? "update check failed" : error;
+            NOBLE_WARN("RecommendedMaps: update check for {} failed: {}", item.id, result.error);
+        } else {
+            result.latestTag = asset.tag;
+            result.latestBytes = asset.size;
+            std::error_code ec;
+            const std::filesystem::path marker = installDir / item.installedMarker;
+            const bool present = std::filesystem::is_regular_file(marker, ec);
+            InstalledRecord record;
+            if (!present) {
+                result.available = false;   // nothing installed: the DOWNLOAD button covers it
+            } else if (ReadInstalledRecord(InstalledRecordPath(installDir, item.id), record)) {
+                result.installedTag = record.tag;
+                // A different pack zip on the release than the one installed = an update. (Every release re-attaches
+                // the pack; an unchanged map gives the same zip size, so an unchanged pack is not offered again.)
+                result.available = asset.size != 0 && record.zipBytes != 0 && asset.size != record.zipBytes;
+            } else {
+                // Installed by hand or before install records: trust the marker size this client knows.
+                const uint64_t size = std::filesystem::file_size(marker, ec);
+                result.available = item.currentMarkerBytes != 0 && !ec && size != item.currentMarkerBytes;
+                if (!result.available && !ec) {   // current: remember it so later checks compare zips
+                    WriteInstalledRecord(InstalledRecordPath(installDir, item.id), InstalledRecord{asset.tag, asset.size, size});
+                    result.installedTag = asset.tag;
+                }
+            }
+            NOBLE_INFO("RecommendedMaps: update check {}: latest {} ({} bytes), installed '{}', update {}", item.id,
+                       asset.tag, asset.size, result.installedTag, result.available ? "available" : "not needed");
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& [key, info] : m_updates)
+            if (key == item.id) info = result;
+    }).detach();
 }
 
 RecommendedMaps::Status RecommendedMaps::Snapshot(const std::string& id) const {
@@ -385,7 +534,8 @@ void RecommendedMaps::Worker(const std::string& id) {
     status.state = State::Resolving;
     SetStatus(id, status);
 
-    std::string assetUrl, assetName, shaUrl, error;
+    std::string assetUrl, assetName, shaUrl, error, assetTag;
+    uint64_t assetBytes = 0;
     // Test hook: a local HTTP server can stand in for the GitHub release.
     if (const char* overrideUrl = std::getenv("NOBLE_RECOMMENDED_ASSET_URL"); overrideUrl && *overrideUrl) {
         assetUrl = overrideUrl;
@@ -399,20 +549,8 @@ void RecommendedMaps::Worker(const std::string& id) {
     } else {
         // Test hook: point the release lookup at a local JSON document so the fallback can be exercised without a real
         // GitHub release. NOBLE_RECOMMENDED_ASSET_URL (above) skips the lookup entirely.
-        std::string releaseApi = kReleaseApi;
-        if (const char* overrideApi = std::getenv("NOBLE_RECOMMENDED_API_URL"); overrideApi && *overrideApi) {
-            releaseApi = overrideApi;
-        }
-        std::string body;
-        if (!HttpGetText(releaseApi, body, error)) {
-            status.state = State::Error;
-            status.error = error;
-            SetStatus(id, status);
-            NOBLE_WARN("RecommendedMaps: release lookup failed: {}", error);
-            return;
-        }
         ReleaseAsset asset;
-        if (!FindReleaseAsset(body, item.assetPrefix, asset, error)) {
+        if (!ResolveNewestAsset(item.assetPrefix, asset, error)) {
             status.state = State::Error;
             status.error = error;
             SetStatus(id, status);
@@ -422,6 +560,8 @@ void RecommendedMaps::Worker(const std::string& id) {
         assetName = asset.name;
         assetUrl = asset.url;
         shaUrl = asset.shaUrl;
+        assetTag = asset.tag;
+        assetBytes = asset.size;
         NOBLE_INFO("RecommendedMaps: {} from release {}", assetName, asset.tag);
     }
 
@@ -492,6 +632,17 @@ void RecommendedMaps::Worker(const std::string& id) {
         return;
     }
 
+    {   // record what was installed, for CHECK FOR UPDATES
+        std::error_code sizeEc;
+        const uint64_t markerBytes = std::filesystem::file_size(installDir / item.installedMarker, sizeEc);
+        WriteInstalledRecord(InstalledRecordPath(installDir, id), InstalledRecord{assetTag, assetBytes, sizeEc ? 0 : markerBytes});
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& [key, info] : m_updates) {
+            if (key != id) continue;
+            info.available = false;
+            info.installedTag = assetTag;
+        }
+    }
     status.state = State::Installed;
     status.progress = 1.0f;
     SetStatus(id, status);
