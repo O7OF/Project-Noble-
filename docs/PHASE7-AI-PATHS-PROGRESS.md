@@ -2,6 +2,22 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
+## Released: v0.20.36 (2026-11-22 03:10, Tyler's OK)
+
+Commits `3488105` (update check), `1b9f05f` (version, Forge names). https://github.com/O7OF/Project-Noble-/releases/tag/v0.20.36:
+main zip 377,030,356 bytes, `Noble-ForgeWorld-v0.20.36-win64.zip` 714,932,661 bytes, both with .sha256. `/releases/latest`
+= v0.20.36; the dev client's update check reports it up to date.
+- **Forge menu names:** palette entries and variants are named by string ids (`pelican`, `spectre_needler`,
+  `target_laser_mac`...) looked up in `ui\cui\strings\forge_strings`; the new items had no entries there, so their
+  names were blank. `tools\noble-forge-add-strings.ps1 [-Save]` added 26 (backup in
+  `HREK\noble_mods\forge_strings_backup\`), then `tool build-cache-file` (339 s). Map 838,799,360 bytes, SHA-256
+  82E125E5...0DC5, same 16,992 tags. Old map: `forge_strings_backup\forge_halo.map.shipped_v0.20.35`. fs36c: Forge
+  loads, PLACE AI placed 2 Elites. The names in the menu itself were not checked by hand (no mouse use).
+- `RecommendedMaps` expects the new map size, so v0.20.35 maps show UPDATE AVAILABLE.
+- **Mistake (dev folder only):** restoring test settings with `robocopy /MIR` from `userdata\claude-tests-2026-11-11\phase7-pre`
+  into `userdata` deleted the rest of `build\bin\Release\data\userdata` (test profile, audio cache, the claude-tests
+  backups). Tyler accepted the loss; profile `261d49fe1e88a6f4` copied back from `Release2`. **Keep test backups
+  outside the folder they restore, and never /MIR into a parent of the source.**
 ## Released: v0.20.35 (2026-11-22 01:15, Tyler's OK)
 
 Commit `50e60df` (version, release notes `release-notes\v0.20.35.md`, in-client changelog). Published with
