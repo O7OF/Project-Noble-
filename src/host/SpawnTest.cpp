@@ -29,6 +29,7 @@ bool EnableMpAiPlacement();   // MAP AI / -mp-ai, defined with ActorsInUse
 void MapAiAtStep();           // -map-ai-at, defined with PlaceSquadAt
 void PlaceAiRequestStep();    // Forge PLACE AI, defined after MapAiAtStep
 void PlaceAiAtStep();         // -place-ai-at (dev test of PLACE AI), defined with it
+void NavDumpStep();           // -nav-dump (step 3 research), defined before PlaceAiAtStep
 
 namespace {
 
@@ -620,6 +621,7 @@ uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e)
     MapAiAtStep();
     PlaceAiAtStep();
     PlaceAiRequestStep();
+    NavDumpStep();
     if (!s_firstTick) s_firstTick = GetTickCount64();
 #ifndef NOBLE_DEDICATED
     const bool isDev = noble::AuthClient::Get().IsDeveloper();
@@ -1397,6 +1399,48 @@ void PlaceAiRequestStep() {
         std::snprintf(msg, sizeof(msg), "Could not place %s (the map has no '%s' squad, or the AI limit is reached).",
                       kForgeAiNames[kind], kForgeAiSquads[kind]);
     SetPlaceAiResult(msg);
+}
+
+// -nav-dump (Phase 7 step 3 research, once, 20 s in): the loaded nav mesh's runtime block table (per BSP, data at
+// qword hr+0x27B7C18 + bsp*0x490; 12-byte block headers: count, packed address) and the tag page table
+// (hr+0x4E39F20, 16 pages; address = pages[packed >> 28] + packed * 4). Element sizes are measured as the distance
+// between consecutive blocks when they sit back to back.
+void NavDumpStep() {
+    static int s_state = -1;
+    static ULONGLONG s_first = 0;
+    if (s_state < 0) s_state = wcsstr(GetCommandLineW(), L"-nav-dump") ? 1 : 0;
+    if (s_state != 1) return;
+    const ULONGLONG now = GetTickCount64();
+    if (!s_first) s_first = now;
+    if (now - s_first < 20000) return;
+    s_state = 2;
+    const auto* pages = reinterpret_cast<const uint64_t*>(s_base + 0x4E39F20);
+    std::string pageLine;
+    for (int i = 0; i < 16; ++i) {
+        char b[40];
+        std::snprintf(b, sizeof(b), " [%d]%llX", i, static_cast<unsigned long long>(pages[i]));
+        pageLine += b;
+    }
+    NOBLE_INFO("SpawnTest: nav-dump: tag pages{}", pageLine);
+    static const char* const kBlocks[] = {"sectors", "links", "bsp2d refs", "bsp2d nodes", "vertices", "object refs",
+                                          "hints", "instanced geometry refs"};
+    for (int bsp = 0; bsp < 4; ++bsp) {
+        const uint8_t* pf = reinterpret_cast<const uint8_t*>(*reinterpret_cast<const uint64_t*>(s_base + 0x27B7C18 + static_cast<size_t>(bsp) * 0x490));
+        if (!pf) continue;
+        NOBLE_INFO("SpawnTest: nav-dump: bsp {} data {}", bsp, static_cast<const void*>(pf));
+        uint64_t prevAddr = 0; int prevCount = 0;
+        for (int k = 0; k < 8; ++k) {
+            const int32_t count = *reinterpret_cast<const int32_t*>(pf + k * 12);
+            const uint32_t packed = *reinterpret_cast<const uint32_t*>(pf + k * 12 + 4);
+            const uint64_t addr = packed ? pages[packed >> 28] + static_cast<uint64_t>(packed) * 4 : 0;
+            const long long stride = (k > 0 && prevCount > 0 && addr > prevAddr) ? static_cast<long long>((addr - prevAddr) / prevCount) : -1;
+            NOBLE_INFO("SpawnTest: nav-dump:   +0x{:02X} {:<24} count {:>6} packed {:08X} page {:>2} addr {:X} (previous block {} bytes / element)",
+                       k * 12, kBlocks[k], count, packed, packed >> 28, addr, stride);
+            prevAddr = addr; prevCount = count;
+        }
+        const int32_t refs = *reinterpret_cast<const int32_t*>(pf + 0x3C);
+        NOBLE_INFO("SpawnTest: nav-dump:   checksum {:08X}, object refs {}", *reinterpret_cast<const uint32_t*>(pf + 0x60), refs);
+    }
 }
 
 // -place-ai-at <kind>@<seconds> (dev test of the Forge PLACE AI row; kind 0 Elites .. 4 Troopers): presses the row
