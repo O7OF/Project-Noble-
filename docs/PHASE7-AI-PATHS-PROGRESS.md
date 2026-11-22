@@ -2,6 +2,14 @@
 
 Written for the next agent. Newest first inside each section. Plan: `docs\PLAN-PHASE7-AI-PATHS-2026-11-21.md`.
 
+## Released: v0.20.35 (2026-11-22 01:15, Tyler's OK)
+
+Commit `50e60df` (version, release notes `release-notes\v0.20.35.md`, in-client changelog). Published with
+`tools\publish-release.ps1` to https://github.com/O7OF/Project-Noble-/releases/tag/v0.20.35: main zip 377,018,294
+bytes, Forge World pack `Noble-ForgeWorld-v0.20.35-win64.zip` 714,923,083 bytes (the AI Forge World), both with
+.sha256. Players need the new Forge World pack for MAP AI / PLACE AI. Pre-release smoke run (rel35, 2 players,
+Forge, MAP AI): 0.20.35-dev, 14 AI placed, guest no crash.
+
 ## Status (2026-11-22 01:05) - our open items closed or advanced
 
 - **Dedicated server tick (Phase 5 item):** `0x61A38` is called from `0x62A78` in a loop over **local** players only
