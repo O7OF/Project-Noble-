@@ -1436,10 +1436,12 @@ void NavDumpStep() {
             const long long stride = (k > 0 && prevCount > 0 && addr > prevAddr) ? static_cast<long long>((addr - prevAddr) / prevCount) : -1;
             NOBLE_INFO("SpawnTest: nav-dump:   +0x{:02X} {:<24} count {:>6} packed {:08X} page {:>2} addr {:X} (previous block {} bytes / element)",
                        k * 12, kBlocks[k], count, packed, packed >> 28, addr, stride);
+            (void)stride;   // log-only (the client build compiles NOBLE_INFO out)
             prevAddr = addr; prevCount = count;
         }
         const int32_t refs = *reinterpret_cast<const int32_t*>(pf + 0x3C);
         NOBLE_INFO("SpawnTest: nav-dump:   checksum {:08X}, object refs {}", *reinterpret_cast<const uint32_t*>(pf + 0x60), refs);
+        (void)refs;
     }
 }
 
