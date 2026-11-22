@@ -3,7 +3,7 @@
 Research plan written before the work. **Status 2026-11-21 21:00:** option A (bake with HREK's tool) is built and
 tested; see `docs\PHASE7-AI-PATHS-PROGRESS.md` for everything done. Changes to this plan since:
 - Extra blocker found and solved: the cache builder strips the nav mesh from multiplayer scenarios unless the
-  scenario flag "don't strip pathfinding" (bit 1) is set (section 5 risk "MP build keeps the data?" = yes, with it).
+  scenario flag "don't strip pathfinding" (bit 1) is set (not foreseen in section 5).
 - Built: MAP AI host option, whole-map zones from the nav mesh, PlaceSquadAt, one-command bake
   (`tools\noble-map-ai-bake.ps1`).
 - Step "Forge pieces as scenery, bake" is blocked: the bake removes objects added to Forge World's scenario.
