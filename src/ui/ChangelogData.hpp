@@ -30,6 +30,22 @@ inline std::vector<ReleaseNotes> BuildReleaseNotes() {
     const std::string currentVer = CurrentChangelogVersionKey();
     std::vector<ReleaseNotes> notes;
 
+    const std::vector<ChangeItem> v02037Items = {
+        {"UI", "Pre-Game Lobby Redesign",
+         "Reorganized pre-game lobby options into MATCH SETUP and LOBBY SETTINGS tabs for hosts. The Start button is placed directly at Row 0 for instant access."},
+        {"UI", "Zero Overlap Layout",
+         "Strictly bounded and clipped option viewports so settings can never collide or overlap with the Friends list or Hosting P2P invite code cards."},
+        {"CONTROLLER", "Scroll & Navigation",
+         "Added smooth mouse-wheel, trigger (LT/RT), and right-stick scrolling with a tactical scrollbar thumb. B/Esc returns cleanly from Lobby Settings back to Match Setup."}
+    };
+
+    notes.push_back({
+        "v0.20.37",
+        "Lobby UI Redesign & Layout Cleanup",
+        "Clean tabbed pre-game lobby options, zero card overlap, and smooth scrolling",
+        v02037Items
+    });
+
     const std::vector<ChangeItem> v02036Items = {
         {"FORGE", "Forge Menu Names",
          "The Pelican, Spectre, Boathog and orbital beacons now have names in the Forge menu (for example Needler Spectre, Gauss Boathog, MAC Round and Spirit Drop: Wraith) instead of blank rows. Update Noble Forge World in MODS > RECOMMENDED MAPS to get them."},

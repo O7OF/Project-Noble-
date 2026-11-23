@@ -270,6 +270,8 @@ void EnterLobby(OverlayContext &ctx, const ServerEntry &s,
     ctx.st.lobbyRoster.push_back(me);
   }
 
+  ctx.st.lobbyTab = 0;
+  ctx.st.lobbyScrollY = 0.0f;
   ctx.st.screen = Screen::PreGameLobby;
 }
 
@@ -451,6 +453,8 @@ void SetupHostLobby(MenuState &st, const std::string &mapScenario,
   }
   st.lobbyRoster.push_back(me);
 
+  st.lobbyTab = 0;
+  st.lobbyScrollY = 0.0f;
   st.screen = Screen::PreGameLobby;
 }
 
@@ -1940,11 +1944,20 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   struct LobbyMenuOption {
     std::string label;
     std::string value;
-    bool isStart;
-    bool editable;
+    bool isStart = false;
+    bool editable = false;
     std::string tooltip;
+    bool isHeader = false;
   };
   std::vector<LobbyMenuOption> optRows;
+  static int s_banView = 0;
+  std::vector<HostModeration::BanEntry> bans;
+  if (st.isLobbyHost) {
+    bans = HostModeration::Bans();
+    s_banView = bans.empty() ? 0
+                             : std::clamp(s_banView, 0,
+                                          static_cast<int>(bans.size()) - 1);
+  }
   const char *const kReadyTip =
       "Your own ready state. It isn't sent to the host yet.";
   const char *const kOptionsTip =
@@ -1982,362 +1995,398 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   // rows) agree with the mode from the first frame.
   RefreshLobbyMode(ctx);
 
-  if (campaign) {
-    optRows.push_back({"READY", st.lobbyReady ? "READY" : "NOT READY", false,
-                       true, kReadyTip});
-    optRows.push_back({"MISSION", mapDisplay, false, st.isLobbyHost,
-                       "Select which campaign mission to play."});
-    int skullCount = 0;
-    for (int b = 0; b < 64; ++b)
-      if ((st.lobbySkulls >> b) & 1ULL)
-        ++skullCount;
-    optRows.push_back(
-        {"SKULLS",
-         skullCount >= kSkullCount ? std::string("ALL ON")
-                                   : std::to_string(skullCount) + " ON",
-         false, false,
-         "Skulls are chosen on the Campaign screen before hosting."});
-    static const char *kDiffs[] = {"EASY", "NORMAL", "HEROIC", "LEGENDARY"};
-    optRows.push_back({"DIFFICULTY",
-                       kDiffs[std::clamp(st.lobbyDifficulty, 0, 3)], false,
-                       st.isLobbyHost, "Set campaign difficulty level."});
-    if (st.isLobbyHost)
-      optRows.push_back({"START CO-OP CAMPAIGN", "", true, true,
-                         "Start the selected mission."});
-  } else if (forge) {
-    optRows.push_back({"GAME TYPE", "BASIC EDITING", false, false,
-                       "Forge uses Basic Editing as base."});
-    optRows.push_back({"MAP", mapDisplay, false, st.isLobbyHost,
-                       "Choose which map to forge."});
-    if (st.lobbyTeamsOn) {
-      // Forge is red/blue only: the engine ignores side overrides in a Forge
-      // session, so the lobby must not offer colours the match cannot show
-      // (there is no TEAM COUNT row here for the same reason).
-      constexpr int teams = 2;
-      if (!st.lobbyRoster.empty()) {
-        const LobbyPlayer &selectedPlayer = st.lobbyRoster[std::clamp(
-            st.lobbyRosterSelection, 0,
-            static_cast<int>(st.lobbyRoster.size()) - 1)];
-        const int shownTeam = selectedPlayer.team > 0
-                                  ? std::clamp(selectedPlayer.team, 1, teams)
-                                  : 0;
+  if (st.isLobbyHost) {
+    if (st.lobbyTab == 0) {
+      // TAB 0: MATCH SETUP
+      if (campaign) {
+        optRows.push_back({"START CO-OP CAMPAIGN", "", true, true,
+                           "Start the selected mission."});
+        optRows.push_back({"MISSION", mapDisplay, false, true,
+                           "Select which campaign mission to play."});
+        int skullCount = 0;
+        for (int b = 0; b < 64; ++b)
+          if ((st.lobbySkulls >> b) & 1ULL)
+            ++skullCount;
         optRows.push_back(
-            {"CHANGE TEAM",
-             shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName)
-                           : std::string("AUTO"),
-             false, st.isLobbyHost,
-             "Opens the team list: pick a team by name and colour."});
-      }
-    }
-    const std::string forgeOptVal =
-        st.lobbyModeChanges > 0
-            ? std::to_string(st.lobbyModeChanges) + " CHANGED"
-            : (st.forgeCustomVariant.empty() ? "DEFAULTS" : "CUSTOM");
-    optRows.push_back({"GAME OPTIONS", forgeOptVal, false, st.isLobbyHost,
-                       "Customize player traits, shields, speed, damage, and "
-                       "game options for Forge."});
-    if (st.isLobbyHost)
-      optRows.push_back({"MAP AI",
-                         Settings::Get().Snapshot().hostMapAi ? "ON" : "OFF",
-                         false, true, kMapAiTip});
-    if (st.isLobbyHost)
-      optRows.push_back(
-          {"START GAME", "", true, true, "Start the selected Forge session."});
-  } else if (firefight) {
-    optRows.push_back({"READY", st.lobbyReady ? "READY" : "NOT READY", false,
-                       true, kReadyTip});
-    optRows.push_back(
-        {"GAME TYPE",
-         st.lobbyVariantName.empty() ? "NORMAL" : st.lobbyVariantName, false,
-         st.isLobbyHost, "Select Firefight game variant."});
-    optRows.push_back({"MAP", mapDisplay, false, st.isLobbyHost,
-                       "Choose which Firefight map to play."});
-    if (st.isLobbyHost) {
-      const std::string ffModeValue =
-          st.lobbyModeChanges > 0
-              ? std::to_string(st.lobbyModeChanges) + " CHANGED"
-              : std::string("DEFAULTS");
-      const std::string ffModeTip = st.lobbyModeChanges > 0
+            {"SKULLS",
+             skullCount >= kSkullCount ? std::string("ALL ON")
+                                       : std::to_string(skullCount) + " ON",
+             false, false,
+             "Skulls are chosen on the Campaign screen before hosting."});
+        static const char *kDiffs[] = {"EASY", "NORMAL", "HEROIC", "LEGENDARY"};
+        optRows.push_back({"DIFFICULTY",
+                           kDiffs[std::clamp(st.lobbyDifficulty, 0, 3)], false,
+                           true, "Set campaign difficulty level."});
+      } else if (forge) {
+        optRows.push_back(
+            {"START GAME", "", true, true, "Start the selected Forge session."});
+        optRows.push_back({"GAME TYPE", "BASIC EDITING", false, false,
+                           "Forge uses Basic Editing as base."});
+        optRows.push_back({"MAP", mapDisplay, false, true,
+                           "Choose which map to forge."});
+        if (st.lobbyTeamsOn) {
+          constexpr int teams = 2;
+          if (!st.lobbyRoster.empty()) {
+            const LobbyPlayer &selectedPlayer = st.lobbyRoster[std::clamp(
+                st.lobbyRosterSelection, 0,
+                static_cast<int>(st.lobbyRoster.size()) - 1)];
+            const int shownTeam = selectedPlayer.team > 0
+                                      ? std::clamp(selectedPlayer.team, 1, teams)
+                                      : 0;
+            optRows.push_back(
+                {"CHANGE TEAM",
+                 shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName)
+                               : std::string("AUTO"),
+                 false, true,
+                 "Opens the team list: pick a team by name and colour."});
+          }
+        }
+        const std::string forgeOptVal =
+            st.lobbyModeChanges > 0
+                ? std::to_string(st.lobbyModeChanges) + " CHANGED"
+                : (st.forgeCustomVariant.empty() ? "DEFAULTS" : "CUSTOM");
+        optRows.push_back({"GAME OPTIONS", forgeOptVal, false, true,
+                           "Customize player traits, shields, speed, damage, and "
+                           "game options for Forge."});
+        optRows.push_back({"MAP AI",
+                           Settings::Get().Snapshot().hostMapAi ? "ON" : "OFF",
+                           false, true, kMapAiTip});
+      } else if (firefight) {
+        optRows.push_back(
+            {"START FIREFIGHT", "", true, true, "Start the Firefight match."});
+        optRows.push_back(
+            {"GAME TYPE",
+             st.lobbyVariantName.empty() ? "NORMAL" : st.lobbyVariantName, false,
+             true, "Select Firefight game variant."});
+        optRows.push_back({"MAP", mapDisplay, false, true,
+                           "Choose which Firefight map to play."});
+        const std::string ffModeValue =
+            st.lobbyModeChanges > 0
+                ? std::to_string(st.lobbyModeChanges) + " CHANGED"
+                : std::string("DEFAULTS");
+        const std::string ffModeTip = st.lobbyModeChanges > 0
+                                          ? st.lobbyModeSummary
+                                          : std::string(kOptionsTip);
+        optRows.push_back(
+            {"GAME OPTIONS", ffModeValue, false, true, ffModeTip});
+        const SettingsData allies = Settings::Get().Snapshot();
+        optRows.push_back(
+            {"ALLIES", allies.hostFirefightAllies == 5 ? "ELITES" : "OFF", false,
+             true,
+             "Host option: allied AI that fight the waves with you. They spawn a "
+             "few seconds into the match, follow the players and are sent again "
+             "after they have all died. Elites only for now: Firefight maps do "
+             "not carry the Marine / ODST / Spartan AI."});
+        if (allies.hostFirefightAllies != 0)
+          optRows.push_back(
+              {"ALLY SQUADS", std::to_string(allies.hostFirefightAllySquads),
+               false, true,
+               "Host option: how many allied squads (1-5). Each squad is a few "
+               "Elites."});
+        optRows.push_back(
+            {"EXTRA ENEMIES",
+             allies.hostFirefightExtraEnemies == 0
+                 ? std::string("OFF")
+                 : "+" + std::to_string(allies.hostFirefightExtraEnemies) + " SQUADS",
+             false, true,
+             "Host option: extra Covenant squads added to every wave (each squad "
+             "is 2-6 enemies). The wave ends only when they are dead too. Stops "
+             "early if the game's AI limit is nearly reached."});
+        const int pacing = allies.hostFirefightWavePacing;
+        optRows.push_back(
+            {"WAVE PACING",
+             pacing == 50    ? "FAST (0.5X BREAKS)"
+             : pacing == 150 ? "SLOW (1.5X BREAKS)"
+             : pacing == 200 ? "SLOWEST (2X BREAKS)"
+                             : "NORMAL",
+             false, true,
+             "Host option: the breaks between waves, rounds and sets. FAST halves "
+             "them, SLOW and SLOWEST make them longer. Bonus round length is in "
+             "GAME OPTIONS."});
+      } else { // Custom Game
+        optRows.push_back(
+            {"START GAME", "", true, true, "Start the selected custom game."});
+        optRows.push_back(
+            {"GAME TYPE",
+             st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false,
+             true, "Choose game type and rule set."});
+        optRows.push_back({"MAP", mapDisplay, false, true,
+                           "Choose which map you want to play."});
+        if (st.lobbyTeamsOn) {
+          const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
+          char countTip[200];
+          std::snprintf(countTip, sizeof(countTip),
+                        "This game type assigns teams. %d team%s in this lobby; "
+                        "the host deals players across them. "
+                        "Halo: Reach's multi-team modes use up to 8.",
+                        teams, teams == 1 ? "" : "s");
+          optRows.push_back({"TEAM COUNT", std::to_string(teams), false,
+                             true, countTip});
+          if (!st.lobbyRoster.empty()) {
+            const LobbyPlayer &selectedPlayer = st.lobbyRoster[std::clamp(
+                st.lobbyRosterSelection, 0,
+                static_cast<int>(st.lobbyRoster.size()) - 1)];
+            const int shownTeam = selectedPlayer.team > 0
+                                      ? std::clamp(selectedPlayer.team, 1, teams)
+                                      : 0;
+            const std::string teamText =
+                shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName)
+                              : std::string("AUTO");
+            char teamTip[220];
+            std::snprintf(teamTip, sizeof(teamTip),
+                          "Opens the team list for %s: pick a team by name and "
+                          "colour. The host owns the teams in this lobby.",
+                          selectedPlayer.username.empty()
+                              ? "the host"
+                              : selectedPlayer.username.c_str());
+            optRows.push_back(
+                {"CHANGE TEAM", teamText, false, true, teamTip});
+          }
+        }
+        const std::string modeValue =
+            st.lobbyModeChanges > 0
+                ? std::to_string(st.lobbyModeChanges) + " CHANGED"
+                : std::string("DEFAULTS");
+        const std::string modeTip = st.lobbyModeChanges > 0
                                         ? st.lobbyModeSummary
                                         : std::string(kOptionsTip);
-      optRows.push_back(
-          {"GAME OPTIONS", ffModeValue, false, st.isLobbyHost, ffModeTip});
-      const SettingsData allies = Settings::Get().Snapshot();
-      optRows.push_back(
-          {"ALLIES", allies.hostFirefightAllies == 5 ? "ELITES" : "OFF", false,
-           true,
-           "Host option: allied AI that fight the waves with you. They spawn a "
-           "few seconds into the match, follow the players and are sent again "
-           "after they have all died. Elites only for now: Firefight maps do "
-           "not carry the Marine / ODST / Spartan AI."});
-      if (allies.hostFirefightAllies != 0)
-        optRows.push_back(
-            {"ALLY SQUADS", std::to_string(allies.hostFirefightAllySquads),
-             false, true,
-             "Host option: how many allied squads (1-5). Each squad is a few "
-             "Elites."});
-      optRows.push_back(
-          {"EXTRA ENEMIES",
-           allies.hostFirefightExtraEnemies == 0
-               ? std::string("OFF")
-               : "+" + std::to_string(allies.hostFirefightExtraEnemies) + " SQUADS",
-           false, true,
-           "Host option: extra Covenant squads added to every wave (each squad "
-           "is 2-6 enemies). The wave ends only when they are dead too. Stops "
-           "early if the game's AI limit is nearly reached."});
-      const int pacing = allies.hostFirefightWavePacing;
-      optRows.push_back(
-          {"WAVE PACING",
-           pacing == 50    ? "FAST (0.5X BREAKS)"
-           : pacing == 150 ? "SLOW (1.5X BREAKS)"
-           : pacing == 200 ? "SLOWEST (2X BREAKS)"
-                           : "NORMAL",
-           false, true,
-           "Host option: the breaks between waves, rounds and sets. FAST halves "
-           "them, SLOW and SLOWEST make them longer. Bonus round length is in "
-           "GAME OPTIONS."});
-    } else
-      optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
-                         false, false, hostModeTip});
-    if (st.isLobbyHost)
-      optRows.push_back(
-          {"START FIREFIGHT", "", true, true, "Start the Firefight match."});
-  } else { // Custom Game
-    optRows.push_back({"READY", st.lobbyReady ? "READY" : "NOT READY", false,
-                       true, kReadyTip});
-    optRows.push_back(
-        {"GAME TYPE",
-         st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false,
-         st.isLobbyHost, "Choose game type and rule set."});
-    optRows.push_back({"MAP", mapDisplay, false, st.isLobbyHost,
-                       "Choose which map you want to play."});
-    if (st.lobbyTeamsOn) {
-      // Multi-team: the host sets how many teams the lobby deals, and any team
-      // can be handed out.
-      const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
-      char countTip[200];
-      std::snprintf(countTip, sizeof(countTip),
-                    "This game type assigns teams. %d team%s in this lobby; "
-                    "the host deals players across them. "
-                    "Halo: Reach's multi-team modes use up to 8.",
-                    teams, teams == 1 ? "" : "s");
-      optRows.push_back({"TEAM COUNT", std::to_string(teams), false,
-                         st.isLobbyHost, countTip});
-      if (!st.lobbyRoster.empty()) {
-        const LobbyPlayer &selectedPlayer = st.lobbyRoster[std::clamp(
-            st.lobbyRosterSelection, 0,
-            static_cast<int>(st.lobbyRoster.size()) - 1)];
-        const int shownTeam = selectedPlayer.team > 0
-                                  ? std::clamp(selectedPlayer.team, 1, teams)
-                                  : 0;
-        const std::string teamText =
-            shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName)
-                          : std::string("AUTO");
-        char teamTip[220];
-        std::snprintf(teamTip, sizeof(teamTip),
-                      "Opens the team list for %s: pick a team by name and "
-                      "colour. The host owns the teams"
-                      " in this lobby.",
-                      selectedPlayer.username.empty()
-                          ? "the host"
-                          : selectedPlayer.username.c_str());
-        optRows.push_back(
-            {"CHANGE TEAM", teamText, false, st.isLobbyHost, teamTip});
+        if (playlistActive)
+          optRows.push_back(
+              {"VOTE", "START", false, false,
+               st.lobbyModeChanges > 0
+                   ? "Vote on what's next. This mode: " + st.lobbyModeSummary
+                   : "Press to let everyone vote on what to play next from this "
+                     "playlist."});
+        else
+          optRows.push_back(
+              {"GAME OPTIONS", modeValue, false, true, modeTip});
+        optRows.push_back({"MAP AI",
+                           Settings::Get().Snapshot().hostMapAi ? "ON" : "OFF",
+                           false, true, kMapAiTip});
       }
-    }
-    const std::string modeValue =
-        st.lobbyModeChanges > 0
-            ? std::to_string(st.lobbyModeChanges) + " CHANGED"
-            : std::string("DEFAULTS");
-    const std::string modeTip = st.lobbyModeChanges > 0
-                                    ? st.lobbyModeSummary
-                                    : std::string(kOptionsTip);
-    if (playlistActive)
       optRows.push_back(
-          {"VOTE", "START", false, false,
-           st.lobbyModeChanges > 0
-               ? "Vote on what's next. This mode: " + st.lobbyModeSummary
-               : "Press to let everyone vote on what to play next from this "
-                 "playlist."});
-    else if (st.isLobbyHost)
+          {"LOBBY SETTINGS >", "CONFIGURE", false, true,
+           "Open lobby host settings: player joins, passwords, voting, rules, filters, and ping limits."});
+    } else {
+      // TAB 1: LOBBY SETTINGS (Host only)
       optRows.push_back(
-          {"GAME OPTIONS", modeValue, false, st.isLobbyHost, modeTip});
-    else
-      optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
-                         false, false, hostModeTip});
-    if (st.isLobbyHost)
-      optRows.push_back({"MAP AI",
-                         Settings::Get().Snapshot().hostMapAi ? "ON" : "OFF",
-                         false, true, kMapAiTip});
-    if (st.isLobbyHost)
-      optRows.push_back(
-          {"START GAME", "", true, true, "Start the selected custom game."});
-  }
+          {"< BACK TO MATCH", "SETUP", false, true,
+           "Return to match setup (map and game type selection)."});
 
-  // Host option for every mode (campaign, custom games, Forge, Firefight):
-  // the highest ping this lobby accepts. Placed just above the start button.
-  if (st.isLobbyHost && kLobbyMaxPingEnabled) {
-    const int maxPing = Settings::Get().Snapshot().hostMaxPingMs;
-    LobbyMenuOption pingRow{
-        "MAX PING", maxPing > 0 ? std::to_string(maxPing) + " MS" : "NO LIMIT",
-        false, true,
-        "Host option: players whose ping to you stays above this for 5 "
-        "seconds are asked to leave the lobby. Checked only before the game "
-        "starts, never during a match."};
-    const int minPing = Settings::Get().Snapshot().hostMinPingMs;
-    const bool minIgnored = minPing > 0 && maxPing > 0 && minPing >= maxPing;
-    LobbyMenuOption minRow{
-        "MIN PING",
-        minPing > 0 ? std::to_string(minPing) + " MS" +
-                          (minIgnored ? std::string(" (OFF: NOT BELOW MAX)") : std::string())
-                    : "NO MINIMUM",
-        false, true,
-        "Host option: players whose ping to you stays below this for 5 seconds "
-        "are asked to leave, to keep games regional. Ignored unless it is "
-        "below MAX PING. Checked only before the game starts."};
-    auto startIt = std::find_if(optRows.begin(), optRows.end(),
-                                [](const LobbyMenuOption &r) { return r.isStart; });
-    startIt = optRows.insert(startIt, minRow);
-    ++startIt;
-    optRows.insert(startIt, pingRow);
-  }
-
-  // Host moderation rows (every mode): word filter, the ban list and lifting
-  // a ban. Placed just above the start button, after MAX PING.
-  static int s_banView = 0;
-  std::vector<HostModeration::BanEntry> bans;
-  if (st.isLobbyHost) {
-    bans = HostModeration::Bans();
-    s_banView = bans.empty() ? 0
-                             : std::clamp(s_banView, 0,
-                                          static_cast<int>(bans.size()) - 1);
-    std::vector<LobbyMenuOption> modRows;
-    {
+      // --- ACCESS & NETWORK ---
+      optRows.push_back({"ACCESS & NETWORK", "", false, false, "", true});
       const HostModeration::JoinAccess access = HostModeration::Access();
       const bool hasPw = !HostModeration::LobbyPassword().empty();
       std::string accessValue = HostModeration::AccessText(access);
       if (access == HostModeration::JoinAccess::InviteOnly && hasPw)
         accessValue = "INVITE OR PASSWORD";
-      modRows.push_back(
+      optRows.push_back(
           {"JOINS", accessValue, false, true,
            "Who may join your lobby. OPEN: anyone. INVITE ONLY: players you "
            "invite (or with the password, if set). PASSWORD: players with the "
-           "password or an invite. LOCKED: no new players (invites still get "
-           "in). Players already here always stay, also after a match."});
-      modRows.push_back(
+           "password or an invite. LOCKED: no new players."});
+      optRows.push_back(
           {"LOBBY PASSWORD", hasPw ? std::string("SET") : std::string("NONE"),
            false, true, "Set or remove your lobby password. Press to edit."});
-      if (st.lobbyTeamsOn) {
-        modRows.push_back({"BALANCE TEAMS", "", false, true,
-                           "Deal the players out evenly over the teams."});
-        modRows.push_back({"SHUFFLE TEAMS", "", false, true,
-                           "Mix the players up, then deal them out evenly."});
-        modRows.push_back(
-            {"LOCK TEAMS",
-             HostModeration::TeamsLocked() ? std::string("ON") : std::string("OFF"),
-             false, true,
-             "Host option: players can't change team themselves in the match. "
-             "You still set teams here."});
-      }
-      // In-match votes (vote kick, end round, end game).
-      const bool votesOn = HostVotes::VotesEnabled();
-      modRows.push_back({"VOTES", votesOn ? std::string("ON") : std::string("OFF"),
-                         false, true,
-                         "Host option: players can start votes in the match "
-                         "(kick a player, end the round, end the game)."});
-      if (votesOn) {
-        modRows.push_back(
-            {"VOTE TO PASS", std::to_string(HostVotes::PassPercent()) + "%",
-             false, true,
-             "Share of the voters who must say yes. A kick vote is only for "
-             "the player's own team."});
-        modRows.push_back(
-            {"HOST VETO", HostVotes::HostVeto() ? std::string("ON") : std::string("OFF"),
-             false, true, "Host option: you can cancel any vote with F3."});
-        modRows.push_back(
-            {"NEXT MAP VOTE",
-             HostVotes::NextMapVote() ? std::string("ON") : std::string("OFF"),
-             false, true,
-             "With a playlist: when everyone is back from a match, the map "
-             "vote opens by itself so players pick the next map."});
-        modRows.push_back(
-            {"VOTE COOLDOWN", std::to_string(HostVotes::CooldownSeconds()) + " S",
-             false, true, "Time after a vote before another one can start."});
-      }
-      const std::string rulesText = HostModeration::LobbyRules();
-      modRows.push_back(
-          {"LOBBY RULES",
-           rulesText.empty() ? std::string("NONE") : std::string("SET"), false,
-           true,
-           "A short message players see when they join your lobby. Press to "
-           "edit."});
-      modRows.push_back(
+      optRows.push_back(
           {"JOIN IN PROGRESS",
            HostModeration::JoinInProgress() ? std::string("ON")
                                             : std::string("OFF"),
            false, true,
            "Host option: OFF means nobody new can join once the match has "
            "started (players who drop can still come back)."});
-    }
-    modRows.push_back(
-        {"WORD FILTER", HostModeration::FilterEnabled() ? "ON" : "OFF", false,
-         true,
-         "Host option: hides slurs in chat in your lobby and your matches. "
-         "Add your own words with FILTER WORDS."});
-    const int customCount =
-        static_cast<int>(HostModeration::CustomWords().size());
-    modRows.push_back({"FILTER WORDS",
-                       customCount == 0 ? std::string("NONE")
-                                        : std::to_string(customCount) +
-                                              (customCount == 1 ? " WORD"
-                                                                : " WORDS"),
-                       false, true,
-                       "Edit your own filter words, one per line. Press to "
-                       "open the list."});
-    const int afk = HostModeration::AfkMinutes();
-    modRows.push_back(
-        {"ANTI-AFK", afk > 0 ? std::to_string(afk) + " MIN" : "OFF", false,
-         true,
-         "Host option: a player with no input for this long leaves the match "
-         "(they get a 30 s warning first). Cutscenes and loading don't count."});
-    std::string banValue = "NONE";
-    if (!bans.empty()) {
-      const HostModeration::BanEntry &b =
-          bans[static_cast<size_t>(s_banView)];
-      std::string timeLeft = "PERMANENT";
-      if (b.until != 0) {
-        const long long mins = (std::max)(
-            1LL, static_cast<long long>((b.until - std::time(nullptr) + 59) / 60));
-        timeLeft = mins >= 120 ? std::to_string(mins / 60) + " H LEFT"
-                           : std::to_string(mins) + " MIN LEFT";
+      if (kLobbyMaxPingEnabled) {
+        const int minPing = Settings::Get().Snapshot().hostMinPingMs;
+        const int maxPing = Settings::Get().Snapshot().hostMaxPingMs;
+        const bool minIgnored = minPing > 0 && maxPing > 0 && minPing >= maxPing;
+        optRows.push_back({
+            "MIN PING",
+            minPing > 0 ? std::to_string(minPing) + " MS" +
+                              (minIgnored ? std::string(" (OFF: NOT BELOW MAX)") : std::string())
+                        : "NO MINIMUM",
+            false, true,
+            "Host option: players whose ping to you stays below this for 5 seconds "
+            "are asked to leave, to keep games regional. Ignored unless it is "
+            "below MAX PING."});
+        optRows.push_back({
+            "MAX PING", maxPing > 0 ? std::to_string(maxPing) + " MS" : "NO LIMIT",
+            false, true,
+            "Host option: players whose ping to you stays above this for 5 "
+            "seconds are asked to leave the lobby. Checked before match start."});
       }
-      banValue = Upper(b.name.empty() ? std::string("PLAYER") : b.name) +
-                 " \xC2\xB7 " + timeLeft + "  (" + std::to_string(s_banView + 1) +
-                 "/" + std::to_string(bans.size()) + ")";
+
+      // --- VOTING & RULES ---
+      optRows.push_back({"VOTING & RULES", "", false, false, "", true});
+      const bool votesOn = HostVotes::VotesEnabled();
+      optRows.push_back({"VOTES", votesOn ? std::string("ON") : std::string("OFF"),
+                         false, true,
+                         "Host option: players can start votes in the match "
+                         "(kick a player, end the round, end the game)."});
+      if (votesOn) {
+        optRows.push_back(
+            {"VOTE TO PASS", std::to_string(HostVotes::PassPercent()) + "%",
+             false, true,
+             "Share of the voters who must say yes. A kick vote is only for "
+             "the player's own team."});
+        optRows.push_back(
+            {"HOST VETO", HostVotes::HostVeto() ? std::string("ON") : std::string("OFF"),
+             false, true, "Host option: you can cancel any vote with F3."});
+        optRows.push_back(
+            {"NEXT MAP VOTE",
+             HostVotes::NextMapVote() ? std::string("ON") : std::string("OFF"),
+             false, true,
+             "With a playlist: when everyone is back from a match, the map "
+             "vote opens by itself so players pick the next map."});
+        optRows.push_back(
+            {"VOTE COOLDOWN", std::to_string(HostVotes::CooldownSeconds()) + " S",
+             false, true, "Time after a vote before another one can start."});
+      }
+      const std::string rulesText = HostModeration::LobbyRules();
+      optRows.push_back(
+          {"LOBBY RULES",
+           rulesText.empty() ? std::string("NONE") : std::string("SET"), false,
+           true,
+           "A short message players see when they join your lobby. Press to "
+           "edit."});
+
+      // --- MODERATION & CHAT ---
+      optRows.push_back({"MODERATION & CHAT", "", false, false, "", true});
+      optRows.push_back(
+          {"WORD FILTER", HostModeration::FilterEnabled() ? "ON" : "OFF", false,
+           true,
+           "Host option: hides slurs in chat in your lobby and your matches. "
+           "Add your own words with FILTER WORDS."});
+      const int customCount =
+          static_cast<int>(HostModeration::CustomWords().size());
+      optRows.push_back({"FILTER WORDS",
+                         customCount == 0 ? std::string("NONE")
+                                          : std::to_string(customCount) +
+                                                (customCount == 1 ? " WORD"
+                                                                  : " WORDS"),
+                         false, true,
+                         "Edit your own filter words, one per line. Press to "
+                         "open the list."});
+      const int afk = HostModeration::AfkMinutes();
+      optRows.push_back(
+          {"ANTI-AFK", afk > 0 ? std::to_string(afk) + " MIN" : "OFF", false,
+           true,
+           "Host option: a player with no input for this long leaves the match "
+           "(they get a 30 s warning first)."});
+      std::string banValue = "NONE";
+      if (!bans.empty()) {
+        const HostModeration::BanEntry &b =
+            bans[static_cast<size_t>(s_banView)];
+        std::string timeLeft = "PERMANENT";
+        if (b.until != 0) {
+          const long long mins = (std::max)(
+              1LL, static_cast<long long>((b.until - std::time(nullptr) + 59) / 60));
+          timeLeft = mins >= 120 ? std::to_string(mins / 60) + " H LEFT"
+                             : std::to_string(mins) + " MIN LEFT";
+        }
+        banValue = Upper(b.name.empty() ? std::string("PLAYER") : b.name) +
+                   " \xC2\xB7 " + timeLeft + "  (" + std::to_string(s_banView + 1) +
+                   "/" + std::to_string(bans.size()) + ")";
+      }
+      optRows.push_back({"BANS", banValue, false, !bans.empty(),
+                         "Players banned from your games. Left / right steps "
+                         "through the list."});
+      if (!bans.empty())
+        optRows.push_back({"LIFT BAN", "", false, true,
+                           "Lift the ban shown in BANS. That player can join "
+                           "your games again."});
+
+      // --- TEAM MANAGEMENT (if st.lobbyTeamsOn) ---
+      if (st.lobbyTeamsOn) {
+        optRows.push_back({"TEAM MANAGEMENT", "", false, false, "", true});
+        optRows.push_back({"BALANCE TEAMS", "", false, true,
+                           "Deal the players out evenly over the teams."});
+        optRows.push_back({"SHUFFLE TEAMS", "", false, true,
+                           "Mix the players up, then deal them out evenly."});
+        optRows.push_back(
+            {"LOCK TEAMS",
+             HostModeration::TeamsLocked() ? std::string("ON") : std::string("OFF"),
+             false, true,
+             "Host option: players can't change team themselves in the match."});
+      }
     }
-    modRows.push_back({"BANS", banValue, false, !bans.empty(),
-                       "Players banned from your games. Left / right steps "
-                       "through the list. Bans follow the player's account, "
-                       "so a new name doesn't get around them."});
-    if (!bans.empty())
-      modRows.push_back({"LIFT BAN", "", false, true,
-                         "Lift the ban shown in BANS. That player can join "
-                         "your games again."});
-    auto startIt = std::find_if(
-        optRows.begin(), optRows.end(),
-        [](const LobbyMenuOption &r) { return r.isStart; });
-    optRows.insert(startIt, modRows.begin(), modRows.end());
+  } else {
+    // GUEST (Non-Host)
+    optRows.push_back({"READY", st.lobbyReady ? "READY" : "NOT READY", false,
+                       true, kReadyTip});
+    if (campaign) {
+      optRows.push_back({"MISSION", mapDisplay, false, false,
+                         "Select which campaign mission to play."});
+      int skullCount = 0;
+      for (int b = 0; b < 64; ++b)
+        if ((st.lobbySkulls >> b) & 1ULL)
+          ++skullCount;
+      optRows.push_back(
+          {"SKULLS",
+           skullCount >= kSkullCount ? std::string("ALL ON")
+                                     : std::to_string(skullCount) + " ON",
+           false, false,
+           "Skulls are chosen on the Campaign screen before hosting."});
+      static const char *kDiffs[] = {"EASY", "NORMAL", "HEROIC", "LEGENDARY"};
+      optRows.push_back({"DIFFICULTY",
+                         kDiffs[std::clamp(st.lobbyDifficulty, 0, 3)], false,
+                         false, "Set campaign difficulty level."});
+    } else if (forge) {
+      optRows.push_back({"GAME TYPE", "BASIC EDITING", false, false,
+                         "Forge uses Basic Editing as base."});
+      optRows.push_back({"MAP", mapDisplay, false, false,
+                         "Choose which map to forge."});
+      optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
+                         false, false, hostModeTip});
+    } else if (firefight) {
+      optRows.push_back(
+          {"GAME TYPE",
+           st.lobbyVariantName.empty() ? "NORMAL" : st.lobbyVariantName, false,
+           false, "Select Firefight game variant."});
+      optRows.push_back({"MAP", mapDisplay, false, false,
+                         "Choose which Firefight map to play."});
+      optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
+                         false, false, hostModeTip});
+    } else { // Custom Game
+      optRows.push_back(
+          {"GAME TYPE",
+           st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false,
+           false, "Choose game type and rule set."});
+      optRows.push_back({"MAP", mapDisplay, false, false,
+                         "Choose which map you want to play."});
+      optRows.push_back({"HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN",
+                         false, false, hostModeTip});
+    }
   }
 
   const int totalRows = static_cast<int>(optRows.size());
-  st.lobbyMenuRow = std::clamp(st.lobbyMenuRow, 0, totalRows - 1);
+  st.lobbyMenuRow = std::clamp(st.lobbyMenuRow, 0, std::max(0, totalRows - 1));
   if (st.lobbyRoster.empty())
     st.lobbyFocusZone = 0;
 
+  // Make sure st.lobbyMenuRow is not on a header
+  if (st.lobbyMenuRow >= 0 && st.lobbyMenuRow < totalRows &&
+      optRows[st.lobbyMenuRow].isHeader) {
+    for (int i = 0; i < totalRows; ++i) {
+      if (!optRows[i].isHeader) {
+        st.lobbyMenuRow = i;
+        break;
+      }
+    }
+  }
+
   // Controller & Keyboard Navigation
   auto stepRow = [&](int d) {
-    st.lobbyMenuRow = (st.lobbyMenuRow + d + totalRows) % totalRows;
-    MenuSounds::Scroll();
+    if (totalRows <= 0)
+      return;
+    int next = st.lobbyMenuRow;
+    for (int step = 0; step < totalRows; ++step) {
+      next = (next + d + totalRows) % totalRows;
+      if (!optRows[next].isHeader) {
+        st.lobbyMenuRow = next;
+        MenuSounds::Scroll();
+        return;
+      }
+    }
   };
   if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen) {
     if (UiPad::TabPrev()) {
@@ -2354,6 +2403,12 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   }
   if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen &&
       st.lobbyFocusZone == 0) {
+    if (st.isLobbyHost && (UiPad::PageUp() || UiPad::PageDown())) {
+      st.lobbyTab = 1 - st.lobbyTab;
+      st.lobbyMenuRow = 0;
+      st.lobbyScrollY = 0.0f;
+      MenuSounds::Tab(st.lobbyTab == 1 ? 1 : -1);
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down())
       stepRow(1);
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up())
@@ -2759,17 +2814,30 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   };
 
   if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen && !st.lobbyProfileOpen &&
-      st.lobbyFocusZone == 0) {
+      st.lobbyFocusZone == 0 && totalRows > 0) {
     const auto &curRow = optRows[st.lobbyMenuRow];
-    const bool isStepper = curRow.editable && !curRow.isStart;
+    const bool isNav =
+        curRow.label == "LOBBY SETTINGS >" || curRow.label == "< BACK TO MATCH";
+    const bool isStepper = curRow.editable && !curRow.isStart && !isNav;
     if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) || UiPad::Left()) {
       if (isStepper)
         cycleOption(-1);
+      else if (isNav && curRow.label == "< BACK TO MATCH") {
+        st.lobbyTab = 0;
+        st.lobbyMenuRow = 0;
+        st.lobbyScrollY = 0.0f;
+        MenuSounds::Back();
+      }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) || UiPad::Right()) {
       if (isStepper)
         cycleOption(1);
-      else if (!st.lobbyRoster.empty()) {
+      else if (isNav && curRow.label == "LOBBY SETTINGS >") {
+        st.lobbyTab = 1;
+        st.lobbyMenuRow = 0;
+        st.lobbyScrollY = 0.0f;
+        MenuSounds::Click();
+      } else if (!st.lobbyRoster.empty()) {
         st.lobbyFocusZone = 1;
         MenuSounds::Scroll();
       }
@@ -2947,6 +3015,18 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     const auto &cur = optRows[st.lobbyMenuRow];
     if (cur.isStart) {
       startMatch();
+    } else if (cur.label == "LOBBY SETTINGS >") {
+      st.lobbyTab = 1;
+      st.lobbyMenuRow = 0;
+      st.lobbyScrollY = 0.0f;
+      MenuSounds::Click();
+      return;
+    } else if (cur.label == "< BACK TO MATCH") {
+      st.lobbyTab = 0;
+      st.lobbyMenuRow = 0;
+      st.lobbyScrollY = 0.0f;
+      MenuSounds::Back();
+      return;
     } else if (cur.label == "VOTE") {
       StartLobbyVote(ctx);
     } else if (cur.label == "FILTER WORDS" && st.isLobbyHost) {
@@ -3031,22 +3111,75 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     triggerAction();
   }
 
-  // Option rows. The start button keeps one place whichever mode's list is
-  // above it.
-  const float rowsY = top + 108.0f * ui.s;
-  const float rowStep = 36.0f * ui.s;
-  // The start button sits under however many option rows this mode has
-  // (Campaign, Forge and Custom Game each have a different count, and the team
-  // rows added two more) - a fixed 4-row offset drew it over them.
-  int optionRowCount = 0;
-  for (const auto &r : optRows) {
-    if (!r.isStart)
-      ++optionRowCount;
+  // Calculate bottom panels first so options area and tooltips have fixed non-overlapping bounds
+  const std::string extIp = UPnP::Get().GetExternalIP();
+  const bool ipKnown = !extIp.empty() && extIp != "Unknown";
+  const std::string hostEp = st.isLobbyHost
+                                 ? (ipKnown ? extIp + ":11774" : std::string())
+                                 : st.lobbyHostEndpoint;
+  std::string joinCode;
+  if (st.isLobbyHost && st.lobbySessionId.size() == 16) {
+    InviteCodeInfo codeInfo;
+    codeInfo.sessionId = st.lobbySessionId;
+    codeInfo.isPrivate = st.lobbyPrivacy != 0;
+    joinCode = EncodeInviteCode(codeInfo);
   }
-  const float startY =
-      rowsY + rowStep * static_cast<float>(optionRowCount) + 10.0f * ui.s;
+
+  const float netH = joinCode.empty() ? (48.0f * ui.s) : (88.0f * ui.s);
+  const float netY = ui.origin.y + ui.size.y - 58.0f * ui.s - 8.0f * ui.s - netH;
+  const float friendRowH = 24.0f * ui.s;
+  const float friendHdrH = 26.0f * ui.s;
+  const int maxFriendRows = 2;
+  const float friendsH = friendHdrH + friendRowH * static_cast<float>(maxFriendRows);
+  const float friendsY = netY - 8.0f * ui.s - friendsH;
+
+  const float tooltipH = 46.0f * ui.s;
+  const float tooltipY = friendsY - tooltipH - 4.0f * ui.s;
+  const float tabY = top + 90.0f * ui.s;
+  const float tabH = 24.0f * ui.s;
+  const float optionsTop = st.isLobbyHost ? (tabY + tabH + 8.0f * ui.s) : (top + 96.0f * ui.s);
+  const float optionsBottom = tooltipY - 6.0f * ui.s;
+  const float optionsH = std::max(60.0f * ui.s, optionsBottom - optionsTop);
+
+  if (st.isLobbyHost) {
+    const float tabW = (colW - 6.0f * ui.s) * 0.5f;
+    const char *tabNames[] = {"MATCH SETUP", "LOBBY SETTINGS"};
+    for (int t = 0; t < 2; ++t) {
+      const ImVec2 tb0(colX + t * (tabW + 6.0f * ui.s), tabY);
+      const ImVec2 tb1(tb0.x + tabW, tabY + tabH);
+      ImGui::SetCursorScreenPos(tb0);
+      char tbId[32];
+      std::snprintf(tbId, sizeof(tbId), "##lobby_tab_%d", t);
+      if (ImGui::InvisibleButton(tbId, ImVec2(tabW, tabH))) {
+        if (st.lobbyTab != t) {
+          st.lobbyTab = t;
+          st.lobbyMenuRow = 0;
+          st.lobbyScrollY = 0.0f;
+          MenuSounds::Tab(t == 1 ? 1 : -1);
+        }
+      }
+      const bool isSel = st.lobbyTab == t;
+      const bool isHov = ImGui::IsItemHovered();
+      ui.dl->AddRectFilled(
+          tb0, tb1,
+          isSel ? IM_COL32(32, 64, 92, 230)
+                : (isHov ? IM_COL32(20, 32, 46, 180) : IM_COL32(10, 16, 24, 150)),
+          3.0f * ui.s);
+      if (isSel) {
+        ui.dl->AddRectFilled(ImVec2(tb0.x, tb1.y - 2.0f * ui.s), tb1, kAccent,
+                             1.0f * ui.s);
+      }
+      const float txtW =
+          TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, tabNames[t]);
+      Text(ui, NobleStyle::SmallFont(), 14.0f,
+           ImVec2(tb0.x + (tabW - txtW) * 0.5f, tb0.y + 5.0f * ui.s),
+           isSel ? kWhite
+                 : (isHov ? IM_COL32(200, 220, 240, 240) : kDim),
+           tabNames[t]);
+    }
+  }
+
   const bool mouseMoved = NobleUi::IsMouseMoved(2.5f);
-  float curY = rowsY;
   float teamRowY = -1.0f;
   const bool pickerWasOpen = st.lobbyPickerOpen;
   const bool teamPickerWasOpen = st.lobbyTeamPickerOpen;
@@ -3060,8 +3193,8 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     char head[64];
     std::snprintf(head, sizeof(head), "VOTE: WHAT'S NEXT?   %d s",
                   std::max(0, (st.voteMsLeft + 999) / 1000));
-    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(colX, rowsY - 26.0f * ui.s),
-         kAccent, head);
+    Text(ui, NobleStyle::TitleFont(), 18.0f,
+         ImVec2(colX, optionsTop - 26.0f * ui.s), kAccent, head);
     st.voteRow = std::clamp(st.voteRow, 0, choices - 1);
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) {
       st.voteRow = (st.voteRow + 1) % choices;
@@ -3073,7 +3206,7 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     }
     int cast = AcceptPressed() ? st.voteRow : -1;
     for (int i = 0; i < choices; ++i) {
-      const ImVec2 r0(colX, rowsY + i * 40.0f * ui.s),
+      const ImVec2 r0(colX, optionsTop + i * 40.0f * ui.s),
           r1(colX + colW, r0.y + 36.0f * ui.s);
       ImGui::SetCursorScreenPos(r0);
       ImGui::PushID(i);
@@ -3121,9 +3254,6 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     st.lobbyPickerOpen = false;
   }
   if (st.lobbyPickerOpen && !voteUp) {
-    // The game types this map can host, from the variants that ship with the
-    // game. Nothing here is invented: the settings inside a variant can't be
-    // read until the variant viewer exists.
     const std::vector<MenuVariant> &varList =
         firefight ? ctx.ffVariants : ctx.variants;
     const bool anyMap =
@@ -3137,11 +3267,12 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     }
     VariantRow shown;
     const MenuVariant *picked = DrawVariantList(
-        ui, st, varList, st.lobbyMap, anyMap, ImVec2(colX, rowsY),
+        ui, st, varList, st.lobbyMap, anyMap, ImVec2(colX, optionsTop),
         colW - 10.0f * ui.s, 32.0f, 5, !pickerJustOpened, shown);
     DrawVariantInfo(
         ui,
-        ImVec2(colX, rowsY + 40.0f * ui.s + 32.0f * ui.s * 5.0f + 10.0f * ui.s),
+        ImVec2(colX,
+               optionsTop + 40.0f * ui.s + 32.0f * ui.s * 5.0f + 10.0f * ui.s),
         colW, shown, true);
     if (picked) {
       st.lobbyVariantPath = picked->path.string();
@@ -3157,38 +3288,99 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       MenuSounds::Back();
     }
   }
+
+  // Calculate row heights, offsets, and total content height
+  std::vector<float> itemHeights(totalRows);
+  std::vector<float> itemOffsets(totalRows);
+  float totalContentH = 0.0f;
+  for (int i = 0; i < totalRows; ++i) {
+    itemOffsets[i] = totalContentH;
+    const float h = optRows[i].isHeader
+                        ? (24.0f * ui.s)
+                        : (optRows[i].isStart ? (44.0f * ui.s) : (32.0f * ui.s));
+    const float gap = optRows[i].isHeader ? (6.0f * ui.s) : (4.0f * ui.s);
+    itemHeights[i] = h;
+    totalContentH += h + gap;
+  }
+  const float maxScroll = std::max(0.0f, totalContentH - optionsH);
+
+  // Auto-scroll focused row into view
+  if (st.lobbyMenuRow >= 0 && st.lobbyMenuRow < totalRows &&
+      st.lobbyFocusZone == 0) {
+    const float itemTop = itemOffsets[st.lobbyMenuRow];
+    const float itemBottom = itemTop + itemHeights[st.lobbyMenuRow];
+    if (itemTop < st.lobbyScrollY) {
+      st.lobbyScrollY = itemTop;
+    } else if (itemBottom > st.lobbyScrollY + optionsH) {
+      st.lobbyScrollY = itemBottom - optionsH;
+    }
+  }
+
+  // Mouse wheel & stick scrolling on options list
+  if (ImGui::IsMouseHoveringRect(ImVec2(colX, optionsTop),
+                                 ImVec2(colX + colW, optionsBottom), false)) {
+    const float wheel = ImGui::GetIO().MouseWheel;
+    if (wheel != 0.0f) {
+      st.lobbyScrollY -= wheel * (36.0f * ui.s);
+    }
+  }
+  const float rStickLobby = UiPad::AnalogScrollY(false);
+  if (rStickLobby != 0.0f && st.lobbyFocusZone == 0) {
+    st.lobbyScrollY += rStickLobby;
+  }
+  st.lobbyScrollY = std::clamp(st.lobbyScrollY, 0.0f, maxScroll);
+
+  // Render options within strictly clipped bounds
+  ui.dl->PushClipRect(ImVec2(colX - 4.0f * ui.s, optionsTop),
+                      ImVec2(colX + colW + 8.0f * ui.s, optionsBottom), true);
+
   for (int i = 0; i < totalRows && !pickerWasOpen; ++i) {
     const auto &row = optRows[i];
     const bool focused = st.lobbyFocusZone == 0 && st.lobbyMenuRow == i;
+    const float rY = optionsTop + itemOffsets[i] - st.lobbyScrollY;
+    const float h = itemHeights[i];
+    if (rY + h < optionsTop - 10.0f * ui.s || rY > optionsBottom + 10.0f * ui.s)
+      continue;
+
+    const ImVec2 r0(colX, rY), r1(colX + colW, rY + h);
+
+    if (row.isHeader) {
+      // Sleek section header with accent bar
+      const ImVec2 h0(colX, rY + 4.0f * ui.s);
+      const ImVec2 h1(colX + colW, rY + h);
+      ui.dl->AddRectFilled(h0, h1, IM_COL32(14, 22, 32, 190), 2.0f * ui.s);
+      ui.dl->AddRectFilled(h0, ImVec2(h0.x + 3.0f * ui.s, h1.y), kAccent,
+                           1.0f * ui.s);
+      Text(ui, NobleStyle::SmallFont(), 13.0f,
+           ImVec2(h0.x + 8.0f * ui.s, h0.y + 3.0f * ui.s), kAccent,
+           row.label.c_str());
+      continue;
+    }
+
     if (row.isStart) {
-      if (BigAction(ui, "lobby_start", ImVec2(colX, startY), colW,
-                    row.label.c_str(), row.tooltip.c_str(), true, true,
-                    focused)) {
+      if (BigAction(ui, "lobby_start", r0, colW, row.label.c_str(),
+                    row.tooltip.c_str(), true, true, focused)) {
         st.lobbyFocusZone = 0;
         st.lobbyMenuRow = i;
         startMatch();
       }
-      // Only a moved mouse takes the focus: a pointer left resting on a row
-      // used to pull the controller's focus back to that row every frame.
       if (ImGui::IsItemHovered() && mouseMoved) {
         st.lobbyFocusZone = 0;
         st.lobbyMenuRow = i;
       }
       continue;
     }
+
     char rowId[32];
     std::snprintf(rowId, sizeof(rowId), "##lobby_row_%d", i);
-    const float h = 32.0f * ui.s;
-    const ImVec2 r0(colX, curY), r1(colX + colW, curY + h);
     ImGui::SetCursorScreenPos(r0);
-    // While the team dropdown is up it owns the mouse: the rows underneath are
-    // drawn but inert, so a click on a team never also hits START GAME / the
-    // row below it.
+    const bool isNav = row.label == "LOBBY SETTINGS >" ||
+                       row.label == "< BACK TO MATCH";
     if (!st.lobbyTeamPickerOpen &&
         ImGui::InvisibleButton(rowId, ImVec2(colW, h))) {
       st.lobbyFocusZone = 0;
       st.lobbyMenuRow = i;
-      if (row.label == "CHANGE TEAM" || row.label == "GAME OPTIONS" ||
+      if (isNav || row.label == "CHANGE TEAM" || row.label == "GAME OPTIONS" ||
           row.label == "VOTE" || row.label == "GAME TYPE" ||
           row.label == "LIFT BAN" || row.label == "FILTER WORDS" ||
           row.label == "LOBBY PASSWORD" || row.label == "LOBBY RULES" ||
@@ -3206,8 +3398,7 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
       st.lobbyMenuRow = i;
       MenuSounds::Scroll();
     }
-    // The same plate, focus band, accent edge, font and arrows as OptionRow; a
-    // row that can't change has no arrows.
+
     ui.dl->AddRectFilled(r0, r1, IM_COL32(8, 12, 18, 165));
     if (focused) {
       NobleUi::DrawFocusHighlight(ui.dl, r0, r1, ui.s, true);
@@ -3217,17 +3408,27 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     }
     Text(ui, NobleStyle::TitleFont(), 18.0f,
          ImVec2(r0.x + 10.0f * ui.s, r0.y + 6.0f * ui.s),
-         focused ? kWhite : kDim, row.label.c_str());
+         focused ? kWhite : (isNav ? kAccent : kDim), row.label.c_str());
     const float vx = colX + colW * 0.48f, vw = colW * 0.52f, aw = 28.0f * ui.s;
     const float cy = r0.y + h * 0.5f, ah = 6.0f * ui.s;
     const bool teamRow = row.label == "CHANGE TEAM";
     if (teamRow) {
-      // A dropdown, not a stepper: one chevron on the right.
       teamRowY = r0.y;
       const float cx = vx + vw - aw * 0.6f;
       ui.dl->AddTriangleFilled(ImVec2(cx - ah, cy - ah * 0.35f),
                                ImVec2(cx + ah, cy - ah * 0.35f),
                                ImVec2(cx, cy + ah), focused ? kWhite : kDim);
+    } else if (isNav) {
+      const float cx = vx + vw - aw * 0.6f;
+      if (row.label == "LOBBY SETTINGS >") {
+        ui.dl->AddTriangleFilled(
+            ImVec2(cx - ah * 0.5f, cy - ah), ImVec2(cx - ah * 0.5f, cy + ah),
+            ImVec2(cx + ah * 0.5f, cy), focused ? kWhite : kDim);
+      } else {
+        ui.dl->AddTriangleFilled(
+            ImVec2(cx + ah * 0.5f, cy - ah), ImVec2(cx + ah * 0.5f, cy + ah),
+            ImVec2(cx - ah * 0.5f, cy), focused ? kWhite : kDim);
+      }
     } else if (row.editable) {
       ui.dl->AddTriangleFilled(
           ImVec2(vx + aw * 0.65f, cy - ah), ImVec2(vx + aw * 0.65f, cy + ah),
@@ -3248,12 +3449,33 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
          ImVec2(std::max(vx + aw, vx + (vw - tw) * 0.5f), r0.y + 6.0f * ui.s),
          row.editable ? kWhite : kDim, value.c_str());
     ui.dl->PopClipRect();
-    curY += rowStep;
   }
-  if (!st.isLobbyHost) {
-    BigAction(ui, "lobby_waiting", ImVec2(colX, startY), colW,
-              "WAITING FOR HOST", "The match starts when the host starts it.",
-              true, false);
+
+  if (!st.isLobbyHost && !pickerWasOpen) {
+    const float waitY = optionsTop + totalContentH + 8.0f * ui.s - st.lobbyScrollY;
+    if (waitY + 44.0f * ui.s <= optionsBottom + 4.0f * ui.s) {
+      BigAction(ui, "lobby_waiting", ImVec2(colX, waitY), colW,
+                "WAITING FOR HOST", "The match starts when the host starts it.",
+                true, false);
+    }
+  }
+
+  ui.dl->PopClipRect();
+
+  // Subtle tactical scrollbar thumb if list exceeds available height
+  if (totalContentH > optionsH) {
+    const float trackX = colX + colW + 3.0f * ui.s;
+    const float trackW = 4.0f * ui.s;
+    ui.dl->AddRectFilled(ImVec2(trackX, optionsTop),
+                         ImVec2(trackX + trackW, optionsBottom),
+                         IM_COL32(255, 255, 255, 18), 2.0f * ui.s);
+    const float thumbH =
+        std::max(20.0f * ui.s, (optionsH / totalContentH) * optionsH);
+    const float thumbY =
+        optionsTop + (st.lobbyScrollY / maxScroll) * (optionsH - thumbH);
+    ui.dl->AddRectFilled(ImVec2(trackX, thumbY),
+                         ImVec2(trackX + trackW, thumbY + thumbH), kAccent,
+                         2.0f * ui.s);
   }
 
   // ---- CHANGE TEAM dropdown: this mode's teams, by name and colour.
@@ -3265,17 +3487,18 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
     const float pickRowH = 30.0f * ui.s;
     const float panelH2 = teams * pickRowH + 8.0f * ui.s;
-    const float anchorY = teamRowY >= 0.0f ? teamRowY + 34.0f * ui.s : rowsY;
-    const float dy = std::min(anchorY, top + 540.0f * ui.s - panelH2);
+    const float anchorY =
+        teamRowY >= 0.0f ? teamRowY + 34.0f * ui.s : optionsTop;
+    const float dy = std::clamp(anchorY, optionsTop,
+                                ui.origin.y + ui.size.y - panelH2 - 60.0f * ui.s);
     const ImVec2 p0(colX, dy), p1(colX + colW, dy + panelH2);
     // Blocker in front of everything the panel covers (submitted first, so the
     // team rows below win the pointer).
     ImGui::SetCursorScreenPos(
-        ImVec2(colX - 40.0f * ui.s, rowsY - 40.0f * ui.s));
+        ImVec2(colX - 40.0f * ui.s, optionsTop - 40.0f * ui.s));
     ImGui::InvisibleButton(
         "##team_pick_blocker",
-        ImVec2(colW + 80.0f * ui.s,
-               startY + 60.0f * ui.s - (rowsY - 40.0f * ui.s)));
+        ImVec2(colW + 80.0f * ui.s, optionsH + 80.0f * ui.s));
     const bool acceptClicks =
         ImGui::GetTime() - st.lobbyTeamPickerOpenedAt > 0.15;
     ui.dl->AddRectFilled(ImVec2(p0.x + 2.0f * ui.s, p0.y + 3.0f * ui.s),
@@ -3361,90 +3584,50 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
   }
   // What the focused row does; the start button already says it on its own
   // second line.
-  float lobbyTipY = startY + 58.0f * ui.s;
   if (!hostModeKnown && !pickerWasOpen) {
-    // Greyed until the host can send its mode: a plain row, because nothing can
-    // be pressed yet.
-    const ImVec2 d0(colX, lobbyTipY), d1(colX + colW, lobbyTipY + 32.0f * ui.s);
+    const ImVec2 d0(colX, tooltipY), d1(colX + colW, tooltipY + 28.0f * ui.s);
     ui.dl->AddRectFilled(d0, d1, IM_COL32(8, 12, 18, 150));
-    Text(ui, NobleStyle::TitleFont(), 18.0f,
-         ImVec2(d0.x + 10.0f * ui.s, d0.y + 6.0f * ui.s), kDisabled,
+    Text(ui, NobleStyle::TitleFont(), 16.0f,
+         ImVec2(d0.x + 10.0f * ui.s, d0.y + 4.0f * ui.s), kDisabled,
          "DOWNLOAD MODE");
     const char *soon = "Coming later";
-    Text(ui, nullptr, 15.0f,
-         ImVec2(d1.x - TextWidth(nullptr, 15.0f * ui.s, soon) - 10.0f * ui.s,
-                d0.y + 7.0f * ui.s),
+    Text(ui, nullptr, 14.0f,
+         ImVec2(d1.x - TextWidth(nullptr, 14.0f * ui.s, soon) - 10.0f * ui.s,
+                d0.y + 5.0f * ui.s),
          kDisabled, soon);
-    lobbyTipY += 38.0f * ui.s;
-  }
-  if (!pickerWasOpen && !st.lobbyTeamPickerOpen &&
-      !optRows[st.lobbyMenuRow].isStart) {
-    Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY), kDim,
+  } else if (!pickerWasOpen && !st.lobbyTeamPickerOpen && st.lobbyMenuRow >= 0 &&
+             st.lobbyMenuRow < totalRows && !optRows[st.lobbyMenuRow].isStart &&
+             !optRows[st.lobbyMenuRow].tooltip.empty()) {
+    Text(ui, nullptr, 14.0f, ImVec2(colX, tooltipY), kDim,
          optRows[st.lobbyMenuRow].tooltip.c_str(), colX + colW);
   }
   if (playlistActive && !pickerWasOpen) {
     const Playlists::Playlist &active = st.playlists[st.playlistChoice];
     const std::string line =
         "PLAYLIST: " + active.name + (active.shuffle ? "  (shuffled)" : "");
-    Text(ui, NobleStyle::SmallFont(), 15.0f,
-         ImVec2(colX, lobbyTipY + 22.0f * ui.s), kAccent, line.c_str(),
+    Text(ui, NobleStyle::SmallFont(), 14.0f,
+         ImVec2(colX, tooltipY + 16.0f * ui.s), kAccent, line.c_str(),
          colX + colW);
   }
   if (!st.voteMessage.empty() && !pickerWasOpen)
-    Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY + 42.0f * ui.s),
+    Text(ui, nullptr, 14.0f, ImVec2(colX, tooltipY + 28.0f * ui.s),
          IM_COL32(255, 190, 120, 255), st.voteMessage.c_str(), colX + colW);
   if (st.autoStartAt > 0.0 && st.isLobbyHost && !pickerWasOpen) {
     char countdown[96];
-    const int back = static_cast<int>(st.lobbyRoster.size());
-    if (st.autoStartNeedPlayers > 0 && back < st.autoStartNeedPlayers &&
+    const int playersBack = static_cast<int>(st.lobbyRoster.size());
+    if (st.autoStartNeedPlayers > 0 && playersBack < st.autoStartNeedPlayers &&
         ImGui::GetTime() < st.autoStartWaitLimit)
       std::snprintf(countdown, sizeof(countdown),
                     "Waiting for everyone: %d of %d back. B or Esc cancels.",
-                    back, st.autoStartNeedPlayers);
+                    playersBack, st.autoStartNeedPlayers);
     else
       std::snprintf(countdown, sizeof(countdown),
                     "Next match in %d s. B or Esc cancels.",
                     std::max(0, static_cast<int>(st.autoStartAt -
                                                  ImGui::GetTime() + 0.999)));
-    Text(ui, NobleStyle::TitleFont(), 17.0f,
-         ImVec2(colX, lobbyTipY + 62.0f * ui.s), kAccent, countdown);
+    Text(ui, NobleStyle::TitleFont(), 16.0f,
+         ImVec2(colX, tooltipY + 28.0f * ui.s), kAccent, countdown);
   }
-
-  // The invite strip never prints the address: it copies it. A public IP on
-  // screen ends up in screenshots and streams.
-  const std::string extIp = UPnP::Get().GetExternalIP();
-  const bool ipKnown = !extIp.empty() && extIp != "Unknown";
-  const std::string hostEp = st.isLobbyHost
-                                 ? (ipKnown ? extIp + ":11774" : std::string())
-                                 : st.lobbyHostEndpoint;
-  // A shareable join code works for public AND private (unlisted) lobbies. It
-  // is just the session id in a short, typo-tolerant format - the joiner
-  // resolves the host through the master server, so no IP is exposed in the
-  // code.
-  std::string joinCode;
-  if (st.isLobbyHost && st.lobbySessionId.size() == 16) {
-    InviteCodeInfo codeInfo;
-    codeInfo.sessionId = st.lobbySessionId;
-    codeInfo.isPrivate = st.lobbyPrivacy != 0;
-    joinCode = EncodeInviteCode(codeInfo);
-  }
-
-  // Friends and the invite strip sit at the foot of the left column, above the
-  // prompts. Size the hosting card dynamically so a join code gets its own row
-  // without colliding with COPY CODE or overflowing the bottom border.
-  const float netH = joinCode.empty() ? (48.0f * ui.s) : (88.0f * ui.s);
-  const float netY =
-      ui.origin.y + ui.size.y - 58.0f * ui.s - 8.0f * ui.s - netH;
-  const float friendRowH = 24.0f * ui.s;
-  const float friendHdrH = 26.0f * ui.s;
-  const float minFriendsTop = lobbyTipY + 26.0f * ui.s;
-  const int maxFriendRows = std::clamp(
-      static_cast<int>((netY - 8.0f * ui.s - minFriendsTop - friendHdrH) /
-                       friendRowH),
-      2, 4);
-  const float friendsH =
-      friendHdrH + friendRowH * static_cast<float>(maxFriendRows);
-  const float friendsY = netY - 8.0f * ui.s - friendsH;
 
   const ImVec2 fr0(colX, friendsY), fr1(colX + colW, friendsY + friendsH);
   ui.dl->AddRectFilled(fr0, fr1, panelFill, 5.0f * ui.s);
@@ -4199,40 +4382,48 @@ void DrawPreGameLobby(OverlayContext &ctx, const Ui &ui, float left,
     st.lobbyProfileOpen = false;
     MenuSounds::Back();
   } else if (back && !pickerWasOpen && !profileWasOpen) {
-    UiPad::ConsumeBack();
-    st.lobbyLaunchPending = false;
-    ClearPendingLobbyEvents();
-    if (st.isLobbyHost) {
-      MasterServerClient::Get().StopAdvertisingSync();
-      SessionManager::Get().StopHosting();
-      NetworkTransport::Get().StopRelay();
-      st.lobbySessionId.clear();
-      st.lobbySessionToken.clear();
-      st.lobbyRoster.clear();
-      st.screen = campaign    ? Screen::Campaign
-                  : firefight ? Screen::Firefight
-                  : forge     ? Screen::Forge
-                              : Screen::CustomGame;
+    if (st.isLobbyHost && st.lobbyTab == 1) {
+      UiPad::ConsumeBack();
+      st.lobbyTab = 0;
+      st.lobbyMenuRow = 0;
+      st.lobbyScrollY = 0.0f;
+      MenuSounds::Back();
     } else {
-      uint64_t fallbackId =
-          (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-      if (fallbackId < 2ULL)
-        fallbackId = 2ULL;
-      uint64_t pId = AuthClient::Get().IsLoggedIn()
-                         ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
-                         : fallbackId;
-      if (!st.lobbySessionId.empty()) {
-        MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
+      UiPad::ConsumeBack();
+      st.lobbyLaunchPending = false;
+      ClearPendingLobbyEvents();
+      if (st.isLobbyHost) {
+        MasterServerClient::Get().StopAdvertisingSync();
+        SessionManager::Get().StopHosting();
+        NetworkTransport::Get().StopRelay();
+        st.lobbySessionId.clear();
+        st.lobbySessionToken.clear();
+        st.lobbyRoster.clear();
+        st.screen = campaign    ? Screen::Campaign
+                    : firefight ? Screen::Firefight
+                    : forge     ? Screen::Forge
+                                : Screen::CustomGame;
+      } else {
+        uint64_t fallbackId =
+            (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+        if (fallbackId < 2ULL)
+          fallbackId = 2ULL;
+        uint64_t pId = AuthClient::Get().IsLoggedIn()
+                           ? static_cast<uint64_t>(AuthClient::Get().GetUserId())
+                           : fallbackId;
+        if (!st.lobbySessionId.empty()) {
+          MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
+        }
+        NetworkTransport::Get().StopRelay();
+        st.lobbySessionId.clear();
+        st.lobbySessionToken.clear();
+        st.lobbyHostEndpoint.clear();
+        st.lobbyRoster.clear();
+        st.screen = Screen::Servers;
       }
-      NetworkTransport::Get().StopRelay();
-      st.lobbySessionId.clear();
-      st.lobbySessionToken.clear();
-      st.lobbyHostEndpoint.clear();
-      st.lobbyRoster.clear();
-      st.screen = Screen::Servers;
+      st.focusRow = 0;
+      MenuSounds::Back();
     }
-    st.focusRow = 0;
-    MenuSounds::Back();
   }
 
   std::vector<HintExtra> extras = {{InputPrompts::Button::Y, "F", "Friends"}};

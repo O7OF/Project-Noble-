@@ -5223,6 +5223,8 @@ void ContainerMatchEnded(OverlayContext &ctx, DWORD exitCode) {
 
   if (isLobbyReturn) {
     ctx.st.screen = Screen::PreGameLobby;
+    ctx.st.lobbyTab = 0;
+    ctx.st.lobbyScrollY = 0.0f;
     ctx.st.isLobbyHost =
         (successor.find(L"-lobby-return host") != std::wstring::npos);
     ctx.st.lastLobbyPoll = 0.0;

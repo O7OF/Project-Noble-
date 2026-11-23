@@ -454,6 +454,8 @@ struct MenuState {
       0; // consecutive failed lobby-state fetches; a guest only leaves after 3
   int lobbyMenuRow = 0;   // Focused row in pre-game options list
   int lobbyFocusZone = 0; // 0 = left options list, 1 = right session roster
+  int lobbyTab = 0;       // 0 = MATCH SETUP, 1 = LOBBY SETTINGS (Host only)
+  float lobbyScrollY = 0.0f; // Smooth scroll offset for options list
   // Playlists. -1 = none chosen.
   std::vector<Playlists::Playlist> playlists;
   int playlistChoice = -1;
